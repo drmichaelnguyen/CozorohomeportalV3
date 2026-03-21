@@ -6,6 +6,10 @@ dist
 .env.local
 *.log
 .codex-logs/
+githubhpmini
+githubhpmini.pub
+temp/
+api.zip
 tools/cloudflared.exe
 portal/.env.local
 portal/feedback/*.json

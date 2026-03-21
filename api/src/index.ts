@@ -17,6 +17,7 @@ import {
   sendAcCommand,
   sendAcCommandToRoom
 } from "./ac-controller.js";
+import { getUserAirFryerContext, startAirFryerUse } from "./airfryer-controller.js";
 
 import {
   adminAssignCleaningTask,
@@ -75,6 +76,10 @@ let overdueCleaningSweepRunning = false;
 const allowedOriginPatterns = [
   /^http:\/\/localhost:\d+$/i,
   /^http:\/\/127\.0\.0\.1:\d+$/i,
+  /^https:\/\/app\.cozorohome\.com$/i,
+  /^https:\/\/api\.cozorohome\.com$/i,
+  /^https:\/\/cozorohome\.com$/i,
+  /^https:\/\/www\.cozorohome\.com$/i,
   /^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/i,
   /^https:\/\/[a-z0-9-]+\.ngrok-free\.app$/i,
   /^https:\/\/[a-z0-9-]+\.ngrok\.app$/i,
@@ -159,6 +164,9 @@ const clientLookupSchema = z.object({
 const acCommandSchema = z.object({
   email: z.string().email(),
   action: z.enum(["ON", "OFF"])
+});
+const airFryerStartSchema = z.object({
+  email: z.string().email()
 });
 const privilegedAcCommandSchema = z.object({
   roomId: z.string().min(1),
@@ -523,6 +531,44 @@ app.post("/controller/ac/rooms/command", async (request, response) => {
   } catch (error) {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to send room AC command"
+    });
+  }
+});
+
+app.get("/controller/airfryer", async (request, response) => {
+  const parsed = clientLookupSchema.safeParse({
+    email: request.query.email
+  });
+
+  if (!parsed.success) {
+    return response.status(400).json({
+      error: "A valid email query parameter is required"
+    });
+  }
+
+  try {
+    const context = await getUserAirFryerContext(parsed.data.email);
+    return response.json(context);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to load air fryer status"
+    });
+  }
+});
+
+app.post("/controller/airfryer/start", async (request, response) => {
+  const parsed = airFryerStartSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid air fryer start payload" });
+  }
+
+  try {
+    const result = await startAirFryerUse(parsed.data);
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to start air fryer use"
     });
   }
 });
