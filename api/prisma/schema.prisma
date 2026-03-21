@@ -1,0 +1,156 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum ResourceType {
+  WASHER
+  DRYER
+  AIRFRYER
+}
+
+enum BookingStatus {
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum CoinReason {
+  BOOKING_CHARGE
+  TOPUP
+  ADJUSTMENT
+  REFUND
+  CLEANING_REWARD
+  CLEANING_REVERSAL
+}
+
+enum CleaningTaskType {
+  KITCHEN_D2
+  KITCHEN_D7
+  TRASH_D7
+}
+
+enum CleaningTaskStatus {
+  ASSIGNED
+  DONE_PENDING_AUDIT
+  APPROVED
+  REJECTED
+  MISSED
+}
+
+enum CleaningAvailabilityType {
+  AVAILABLE
+  UNAVAILABLE
+  PREFERRED
+}
+
+enum CleaningAuditDecision {
+  APPROVE
+  REJECT
+}
+
+model Branch {
+  id        String     @id
+  name      String
+  resources Resource[]
+}
+
+model Resource {
+  id            String       @id @default(cuid())
+  branchId      String
+  branch        Branch       @relation(fields: [branchId], references: [id])
+  type          ResourceType
+  label         String
+  calendarId    String?
+  slotMinutes   Int          @default(60)
+  bufferMinutes Int          @default(10)
+  active        Boolean      @default(true)
+  bookings      Booking[]
+
+  @@index([branchId, active])
+}
+
+model Booking {
+  id          String        @id @default(cuid())
+  userId      String
+  resourceId  String
+  resource    Resource      @relation(fields: [resourceId], references: [id])
+  startAt     DateTime
+  endAt       DateTime
+  status      BookingStatus @default(CONFIRMED)
+  gcalEventId String?
+  priceCoins  Int
+  createdAt   DateTime      @default(now())
+
+  @@index([resourceId, startAt])
+  @@index([resourceId, endAt])
+  @@index([resourceId, startAt, endAt])
+}
+
+model CoinLedger {
+  id        String     @id @default(cuid())
+  userId    String
+  delta     Int
+  reason    CoinReason
+  refType   String?
+  refId     String?
+  createdAt DateTime   @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model CleaningAvailability {
+  id        String                  @id @default(cuid())
+  userEmail String
+  branchId  String
+  floor     Int?
+  date      DateTime
+  type      CleaningAvailabilityType
+  note      String?
+  createdAt DateTime                @default(now())
+  updatedAt DateTime                @updatedAt
+
+  @@unique([userEmail, date])
+  @@index([branchId, date])
+}
+
+model CleaningTask {
+  id               String             @id @default(cuid())
+  userEmail        String
+  userName         String?
+  branchId         String
+  floor            Int?
+  type             CleaningTaskType
+  scheduledDate    DateTime
+  calendarId       String?
+  calendarEventId  String?
+  status           CleaningTaskStatus @default(ASSIGNED)
+  rewardCoins      Int
+  completedAt      DateTime?
+  completionNote   String?
+  completionPhoto  String?
+  auditorNote      String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  audits           CleaningAudit[]
+
+  @@index([userEmail, scheduledDate])
+  @@index([branchId, scheduledDate])
+  @@index([type, scheduledDate])
+}
+
+model CleaningAudit {
+  id         String               @id @default(cuid())
+  taskId      String
+  task        CleaningTask        @relation(fields: [taskId], references: [id])
+  reviewer    String
+  decision    CleaningAuditDecision
+  note        String?
+  createdAt   DateTime            @default(now())
+
+  @@index([taskId, createdAt])
+}
