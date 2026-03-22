@@ -1,68 +1,121 @@
 # Handoff
 
-Use this file to quickly resume work from another device or a new chat.
+This file is for the next agent or future chat to resume quickly without re-discovering the current behavior.
 
-## Project Summary
+## Working Summary
 
-Cozorohome Portal V3 is a user-facing portal with:
+Cozorohome Portal V3 is a portal + management app with a Next.js frontend and an Express/Prisma backend. Local development is done on Windows, and there are helper `.cmd` scripts to restart the portal, API, and Cloudflare tunnel.
 
-- login required before using user functions
-- session-based user identity using the logged-in email
-- service tabs for laundry and controller
-- billing tabs for laundry fee, fines, and payments
-- coins summary and history
-- schedule tab with cleaning and next laundry
-- floating feedback button that saves JSON files locally
-- admin and manager pages kept separate from the regular user view
+## Current Important State
 
-## Current Local Setup
+- local manual email/password login works
+- public manual login depends on deployment rebuild and correct production API env
+- Google login is still unreliable and should be treated as a separate follow-up
+- the login page is intentionally shorter now
+- the long admin content was moved into the dedicated manager workspace
+- manager statistics panels were compacted to avoid very long pages
 
-- repo root: `C:\Users\User\Desktop\cozorohome webapp`
-- frontend: Next.js app in `portal/`
-- backend: Express + Prisma app in `api/`
-- GitHub repo: `https://github.com/drmichaelnguyen/CozorohomeportalV3`
+## Current Access Model
 
-## Important Implementation Notes
+- `app_admin`
+- `owner`
+- `manager`
+- `user`
 
-- The signed-in email is the single user identifier across user pages.
-- User pages should not ask for email again after login.
-- Password should only be requested on login.
-- Regular users should not see `Manager`, `Admin Cleaning`, or `Client Login`.
-- The home page is the user dashboard/account overview.
-- Payment history under Billings is shown as a table.
-- Coin upgrades are paid and create a `COZORO COINS` sheet entry like `Upgrade to Gold`.
-- D2 should not show dryer-related free laundry bonus.
-- Feedback is saved into `portal/feedback/`.
+Rules currently expected:
 
-## Tunnel Notes
+- app admin can reset passwords for owners, managers, and users
+- owner can reset passwords for managers and users
+- manager cannot reset passwords
+- manager cannot view sensitive identity or birthday-style fields
 
-- The frontend should be tunneled on port `3000`.
-- The frontend now uses a local proxy path for API requests instead of relying on a hardcoded external API tunnel.
-- If tunnel changes are not visible, restart the frontend and open a fresh tunnel to `http://localhost:3000`.
+## Files To Read First
 
-## Files To Check First
-
-- `portal/app/page.tsx`
-- `portal/components/home-dashboard-client.tsx`
-- `portal/components/site-shell.tsx`
+- `README.md`
+- `docs/local-operations.md`
 - `portal/components/client-login-client.tsx`
-- `portal/components/bookings-client.tsx`
-- `portal/components/payments-client.tsx`
-- `portal/components/coins-client.tsx`
-- `portal/components/account-overview-client.tsx`
-- `portal/components/controller-client.tsx`
+- `portal/components/manager-client.tsx`
+- `portal/components/portal-session.tsx`
+- `portal/app/manager/page.tsx`
 - `api/src/index.ts`
+- `api/src/staff-access.ts`
 - `api/src/google-sheets.ts`
+
+## Local Startup
+
+Best one-click option:
+
+- `C:\Users\User\Desktop\Restart Cozoro App.cmd`
+
+That script starts:
+
+- API on `4000`
+- portal on `3000`
+- Cloudflare tunnel
+
+Other helpers:
+
+- `C:\Users\User\Desktop\Restart Cozoro Portal.cmd`
+- `portal/refresh-portal.cmd`
+- `api/refresh-api.cmd`
+- `tools/refresh-tunnel.cmd`
+
+## Common Local Problems
+
+### Portal looks stale
+
+Usually this is old `.next` output or a half-restarted dev server.
+
+Use:
+
+- `Restart Cozoro App.cmd`
+
+### Portal works but login page shows proxy errors
+
+If you see `ECONNREFUSED 127.0.0.1:4000`, the API is not running.
+
+### Public site fails while localhost works
+
+Most likely:
+
+- portal deployment has not rebuilt from latest `main`
+- production portal env is missing `API_SERVER_ORIGIN` or absolute `NEXT_PUBLIC_API_BASE_URL`
+- Google origin config is wrong if the problem is Google-only
+
+## Current Login Intent
+
+- logged-out users should see manual email/password form
+- logged-in users on the same browser should not see that form
+- Google sign-in can remain visible, but do not depend on it for core access until production config is cleaned up
+
+## Current Manager UI Intent
+
+- login page only links to manager workspace
+- `/manager` is the main management surface
+- `Owners & employees` and `Cleaning schedule assigning` should be visible there
+- laundry and other statistics entries should stay in compact scroll panels
+
+## Deployment Reminder
+
+Portal production proxy behavior is controlled in:
+
+- `portal/next.config.ts`
+
+If production login fails, verify:
+
+- deploy picked up latest commit
+- `API_SERVER_ORIGIN` points to real production API
+- or `NEXT_PUBLIC_API_BASE_URL` is an absolute public API URL
+
+## Suggested Next Work
+
+- fix production manual login env if still broken after deploy
+- fix Google login origins and client separation
+- continue Vietnamese cleanup where mojibake remains
+- tighten manager UX further if the workspace still feels heavy
 
 ## Suggested Resume Prompt
 
 ```text
-This is my CozorohomeportalV3 project. Please inspect the repo, read README.md and HANDOFF.md first, then continue helping from the current state.
+Read README.md, HANDOFF.md, and docs/local-operations.md. Then inspect the current login flow, manager workspace, and production portal env assumptions before making changes.
 ```
-
-## Next Good Tasks
-
-- polish mobile spacing and visual consistency across all tabs
-- add an in-app admin feedback viewer
-- review remaining Vietnamese strings for encoding issues
-- document the required env files more precisely once local setup is finalized
