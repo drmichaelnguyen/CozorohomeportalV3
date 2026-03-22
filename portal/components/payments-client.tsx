@@ -4,13 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
-const TIMESTAMP_COLUMN = "Dáº¤U THá»œI GIAN";
-const EMAIL_COLUMN = "Äá»‹a chá»‰ email";
-const AMOUNT_COLUMN = "Sá» TIá»€N";
-const PURPOSE_COLUMN = "Má»¤C ÄÃCH";
-const DETAILS_COLUMN = "Má»¤C ÄÃCH - GHI RÃ•";
-const PAYER_COLUMN = "NGÆ¯á»œI ÄÃ“NG TIá»€N";
-const RECEIVER_COLUMN = "NGÆ¯á»œI NHáº¬N TIá»€N";
+const TIMESTAMP_COLUMN = "DẤU THỜI GIAN";
+const EMAIL_COLUMN = "Địa chỉ email";
+const AMOUNT_COLUMN = "SỐ TIỀN";
+const PURPOSE_COLUMN = "MỤC ĐÍCH";
+const DETAILS_COLUMN = "MỤC ĐÍCH - GHI RÕ";
+const PAYER_COLUMN = "NGƯỜI ĐÓNG TIỀN";
+const RECEIVER_COLUMN = "NGƯỜI NHẬN TIỀN";
 
 type PaymentEntry = {
   row: Record<string, string>;
@@ -26,7 +26,7 @@ type PaymentsLocalCache = {
 };
 
 const LOCAL_PAYMENTS_CACHE_KEY = "cozorohome-payments-cache-v2";
-const PACKAGE_EXPIRY_COLUMN = "NgÃ y háº¿t háº¡n gÃ³i Ä‘Ã£ thanh toÃ¡n";
+const PACKAGE_EXPIRY_COLUMN = "Ngày hết hạn gói đã thanh toán";
 
 function parseFlexibleDate(value: string | null | undefined) {
   const trimmed = value?.trim() ?? "";

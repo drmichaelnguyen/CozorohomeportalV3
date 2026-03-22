@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalSession } from "./portal-session";
-const ADMIN_EMAILS = new Set(["cozorohome@gmail.com", "dr.trongto@gmail.com"]);
+const REMEMBERED_LOGIN_EMAIL_KEY = "cozorohome-portal-remembered-email";
+const REMEMBERED_LOGIN_PASSWORD_KEY = "cozorohome-portal-remembered-password";
+const REMEMBERED_LOGIN_ENABLED_KEY = "cozorohome-portal-remembered-enabled";
 const HIDDEN_ADMIN_COLUMNS = new Set(["Địa chỉ email - Hidden"]);
 
 type ClientRecord = Record<string, string>;
@@ -37,6 +40,60 @@ type AdminLaundryCalendar = {
 
 type CalendarViewMode = "month" | "week" | "day";
 
+type PortalResolvedRole = "user" | "manager" | "owner" | "app_admin";
+
+type LoginResolution = {
+  allowed: boolean;
+  email: string;
+  role: PortalResolvedRole | null;
+  source: "client" | "staff" | null;
+  mustChangePassword?: boolean;
+  error?: string;
+};
+
+type StaffAccessEntry = {
+  email: string;
+  role: "manager" | "owner" | "app_admin";
+  addedAt: string;
+  addedBy: string;
+};
+
+type GoogleConfigResponse = {
+  enabled: boolean;
+  clientId: string | null;
+};
+
+type GoogleCredentialResponse = {
+  credential: string;
+};
+
+declare global {
+  interface Window {
+    google?: {
+      accounts: {
+        id: {
+          initialize: (options: {
+            client_id: string;
+            callback: (response: GoogleCredentialResponse) => void;
+          }) => void;
+          renderButton: (
+            parent: HTMLElement,
+            options: {
+              theme?: "outline" | "filled_blue" | "filled_black";
+              size?: "large" | "medium" | "small";
+              shape?: "rectangular" | "pill" | "circle" | "square";
+              text?: "signin_with" | "signup_with" | "continue_with" | "signin";
+              width?: number;
+              logo_alignment?: "left" | "center";
+            }
+          ) => void;
+          prompt: () => void;
+        };
+      };
+    };
+  }
+}
+
 const preferredFields = [
   "\u0110\u1ecba ch\u1ec9 email",
   "T\u00ean",
@@ -56,10 +113,58 @@ const preferredFields = [
   "Ch\u00fa th\u00edch"
 ];
 
+const SENSITIVE_FIELD_PATTERNS = [
+  "ngaysinh",
+  "birthday",
+  "birthdate",
+  "cccd",
+  "cmnd",
+  "cancuoc",
+  "passport",
+  "hochieu",
+  "idnumber",
+  "socccd",
+  "socmnd"
+];
+
 function renderFields(client: ClientRecord) {
   return preferredFields
     .filter((field) => client[field])
     .map((field) => [field, client[field]] as const);
+}
+
+function normalizeLookupKey(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function isSensitiveClientField(field: string) {
+  const normalized = normalizeLookupKey(field);
+  return SENSITIVE_FIELD_PATTERNS.some((pattern) => normalized.includes(pattern));
+}
+
+function getClientEmail(client: ClientRecord | null) {
+  if (!client) {
+    return "";
+  }
+
+  const directEmail = client["\u0110\u1ecba ch\u1ec9 email"];
+  if (directEmail) {
+    return String(directEmail).trim().toLowerCase();
+  }
+
+  const match = Object.entries(client).find(([key, value]) => {
+    if (!String(value ?? "").trim()) {
+      return false;
+    }
+
+    return normalizeLookupKey(key).includes("email");
+  });
+
+  return String(match?.[1] ?? "").trim().toLowerCase();
 }
 
 function startOfDay(date: Date) {
@@ -98,31 +203,209 @@ function formatRange(start: string, end: string) {
   return `${new Date(start).toLocaleString()} to ${new Date(end).toLocaleString()}`;
 }
 
+function PasswordVisibilityButton({
+  visible,
+  onToggle,
+  label
+}: {
+  visible: boolean;
+  onToggle: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={label}
+      title={label}
+      className="border-l border-slate-300 px-3 py-2 text-slate-600 hover:bg-slate-50"
+    >
+      <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5 fill-none stroke-current" strokeWidth="1.8">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d={
+            visible
+              ? "M3 5l16 16M10.58 10.58a2 2 0 102.83 2.83M9.88 4.24A10.94 10.94 0 0112 4c5 0 9.27 3.11 11 7.5a11.83 11.83 0 01-4.12 5.22M6.61 6.61A11.8 11.8 0 001 11.5C2.73 15.89 7 19 12 19a10.9 10.9 0 005.39-1.39"
+              : "M2 12s3.64-7 10-7 10 7 10 7-3.64 7-10 7S2 12 2 12zm10 3a3 3 0 100-6 3 3 0 000 6z"
+          }
+        />
+      </svg>
+    </button>
+  );
+}
+
+async function fetchWithTimeout(input: string, init?: RequestInit, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Request timed out. Please try again.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 export function ClientLoginClient() {
-  const { sessionEmail, isLoggedIn, login, logout, hasSavedPassword, savePassword, isPasswordMatch } =
-    usePortalSession();
+  const { sessionEmail, sessionRole, isLoggedIn, login, logout } = usePortalSession();
+  const googleButtonRef = useRef<HTMLDivElement | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [googleClientId, setGoogleClientId] = useState("");
   const [client, setClient] = useState<ClientRecord | null>(null);
   const [cacheRows, setCacheRows] = useState<ClientRecord[]>([]);
   const [selectedMaHd, setSelectedMaHd] = useState("");
+  const [quickNavigationMaHd, setQuickNavigationMaHd] = useState("");
   const [adminForm, setAdminForm] = useState<Record<string, string>>({});
   const [laundryCalendars, setLaundryCalendars] = useState<AdminLaundryCalendar[]>([]);
   const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>("week");
   const [calendarFocusDate, setCalendarFocusDate] = useState(() => startOfDay(new Date()));
+  const [resolvedRole, setResolvedRole] = useState<PortalResolvedRole | null>(null);
+  const [staffEntries, setStaffEntries] = useState<StaffAccessEntry[]>([]);
+  const [staffEmail, setStaffEmail] = useState("");
+  const [staffRole, setStaffRole] = useState<"manager" | "owner">("manager");
+  const [rememberLogin, setRememberLogin] = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
+  const [currentPasswordInput, setCurrentPasswordInput] = useState("");
+  const [newPasswordInput, setNewPasswordInput] = useState("");
+  const [managedPasswordEmail, setManagedPasswordEmail] = useState("");
+  const [managedPasswordInput, setManagedPasswordInput] = useState("");
+  const [showManagedPassword, setShowManagedPassword] = useState(false);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [passwordChangeRequired, setPasswordChangeRequired] = useState(false);
 
   const normalizedEmail = email.trim().toLowerCase();
-  const isAdmin = ADMIN_EMAILS.has(normalizedEmail);
-  const isAdminSession = isLoggedIn && ADMIN_EMAILS.has(sessionEmail.trim().toLowerCase());
-  const passwordAlreadySaved = hasSavedPassword(normalizedEmail);
+  const isAdminSession = isLoggedIn && !!sessionRole && sessionRole !== "user";
+  const isManagerSession = sessionRole === "manager";
+  const isOwnerSession = isLoggedIn && sessionRole === "owner";
+  const isAppAdminSession = isLoggedIn && sessionRole === "app_admin";
+  const canManagePasswords = isOwnerSession || isAppAdminSession;
+  const canManageStaffAccess = isOwnerSession || isAppAdminSession;
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const savedRememberSetting = window.localStorage.getItem(REMEMBERED_LOGIN_ENABLED_KEY);
+    const savedEmail = window.localStorage.getItem(REMEMBERED_LOGIN_EMAIL_KEY) ?? "";
+    const savedPassword = window.localStorage.getItem(REMEMBERED_LOGIN_PASSWORD_KEY) ?? "";
+    const shouldRemember = savedRememberSetting !== "false";
+
+    setRememberLogin(shouldRemember);
+
+    if (!sessionEmail && savedEmail) {
+      setEmail(savedEmail);
+    }
+
+    if (shouldRemember && savedPassword) {
+      setPassword(savedPassword);
+    }
+  }, [sessionEmail]);
 
   useEffect(() => {
     if (sessionEmail) {
       setEmail(sessionEmail);
     }
-  }, [sessionEmail]);
+    if (sessionRole) {
+      setResolvedRole(sessionRole);
+    }
+  }, [sessionEmail, sessionRole]);
+
+  useEffect(() => {
+    if (!isAppAdminSession && staffRole === "owner") {
+      setStaffRole("manager");
+    }
+  }, [isAppAdminSession, staffRole]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadGoogleConfig() {
+      try {
+        const response = await fetch(`${API_BASE_URL}/auth/google/config`);
+        const data = (await response.json()) as GoogleConfigResponse;
+
+        if (!response.ok || !data.enabled || !data.clientId || cancelled) {
+          return;
+        }
+
+        setGoogleClientId(data.clientId);
+      } catch {
+        // Google sign-in is optional. The email/password fallback stays available.
+      }
+    }
+
+    void loadGoogleConfig();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!googleClientId || !googleButtonRef.current) {
+      return;
+    }
+
+    let cancelled = false;
+    const existingScript = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
+    const script =
+      existingScript instanceof HTMLScriptElement
+        ? existingScript
+        : Object.assign(document.createElement("script"), {
+            src: "https://accounts.google.com/gsi/client",
+            async: true,
+            defer: true
+          });
+
+    const renderGoogleButton = () => {
+      if (cancelled || !window.google?.accounts.id || !googleButtonRef.current) {
+        return;
+      }
+
+      googleButtonRef.current.innerHTML = "";
+      window.google.accounts.id.initialize({
+        client_id: googleClientId,
+        callback: (response) => {
+          void handleGoogleCredential(response);
+        }
+      });
+      window.google.accounts.id.renderButton(googleButtonRef.current, {
+        theme: "outline",
+        size: "large",
+        shape: "pill",
+        text: "continue_with",
+        width: 280,
+        logo_alignment: "left"
+      });
+    };
+
+    if (window.google?.accounts.id) {
+      renderGoogleButton();
+      return;
+    }
+
+    script.addEventListener("load", renderGoogleButton);
+    if (!existingScript) {
+      document.head.appendChild(script);
+    }
+
+    return () => {
+      cancelled = true;
+      script.removeEventListener("load", renderGoogleButton);
+    };
+  }, [googleClientId]);
 
   const selectedClient = useMemo(
     () => cacheRows.find((row) => row["M\u00c3 HD"] === selectedMaHd) ?? null,
@@ -154,90 +437,197 @@ export function ClientLoginClient() {
     );
   }
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLoading(true);
+  async function loadOwnerStaffEntries(actorEmail: string) {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/staff-access?email=${encodeURIComponent(actorEmail)}`);
+    const data = (await response.json()) as { staff?: StaffAccessEntry[]; error?: string };
+
+    if (!response.ok) {
+      throw new Error(data.error ?? "Unable to load approved staff access.");
+    }
+
+    setStaffEntries(data.staff ?? []);
+  }
+
+  function resetLoginView() {
     setMessage("");
     setClient(null);
     setCacheRows([]);
     setSelectedMaHd("");
+    setQuickNavigationMaHd("");
     setAdminForm({});
     setLaundryCalendars([]);
+    setResolvedRole(null);
+    setStaffEntries([]);
+    setPasswordChangeRequired(false);
+  }
+
+  async function loadPortalData(resolution: LoginResolution, successMessage: string) {
+    setResolvedRole(resolution.role);
+
+    if (!resolution.role) {
+      throw new Error("No portal role was returned for this account.");
+    }
+
+    if (resolution.role === "app_admin" || resolution.role === "owner" || resolution.role === "manager") {
+      const [cacheResponse, laundryResponse] = await Promise.all([
+        fetchWithTimeout(`${API_BASE_URL}/clients/cache`),
+        fetchWithTimeout(`${API_BASE_URL}/admin/laundry-calendars`)
+      ]);
+      const data = (await cacheResponse.json()) as ClientCachePayload | { error?: string };
+      const laundryData = (await laundryResponse.json()) as
+        | { calendars?: AdminLaundryCalendar[]; error?: string }
+        | undefined;
+
+      if (!cacheResponse.ok) {
+        throw new Error(
+          typeof data === "object" && data !== null && "error" in data && typeof data.error === "string"
+            ? data.error
+            : "Unable to load admin client cache."
+        );
+      }
+
+      const rows = (data as ClientCachePayload).rows;
+      setCacheRows(rows);
+      const firstClient = rows[0] ?? null;
+      setSelectedMaHd(firstClient?.["M\u00c3 HD"] ?? "");
+      setQuickNavigationMaHd("");
+      fillAdminForm(firstClient);
+      if (laundryResponse.ok) {
+        setLaundryCalendars(laundryData?.calendars ?? []);
+      }
+      if (resolution.role === "owner" || resolution.role === "app_admin") {
+        await loadOwnerStaffEntries(resolution.email);
+      }
+
+      login(resolution.email, resolution.role);
+      setPassword("");
+      setCurrentPasswordInput("");
+      setMessage(successMessage);
+      return;
+    }
+
+    const clientResponse = await fetchWithTimeout(
+      `${API_BASE_URL}/clients?email=${encodeURIComponent(resolution.email)}`
+    );
+    const clientData = (await clientResponse.json()) as ClientRecord | { error?: string };
+
+    if (!clientResponse.ok) {
+      throw new Error(
+        typeof clientData === "object" &&
+          clientData !== null &&
+          "error" in clientData &&
+          typeof clientData.error === "string"
+          ? clientData.error
+          : "Unable to load client information."
+      );
+    }
+
+    login(resolution.email, "user");
+    setClient(clientData as ClientRecord);
+    setPassword("");
+    setCurrentPasswordInput("");
+    setMessage(successMessage);
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoading(true);
+    resetLoginView();
 
     try {
       if (!password.trim()) {
-        setMessage(
-          passwordAlreadySaved
-            ? "Enter your saved password to log in."
-            : "Create a password the first time you log in on this device."
-        );
+        setMessage("Enter your password. For clients, the default first password is your phone number.");
         return;
       }
 
-      const clientResponse = await fetch(
-        `${API_BASE_URL}/clients?email=${encodeURIComponent(normalizedEmail)}`
+      const loginResponse = await fetchWithTimeout(`${API_BASE_URL}/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          email: normalizedEmail,
+          password
+        })
+      });
+      const loginData = (await loginResponse.json()) as (LoginResolution & { createdPassword?: boolean; error?: string });
+
+      if (!loginResponse.ok || !loginData.allowed || !loginData.role) {
+        setMessage(loginData.error ?? "Only active users or pre-approved Cozoro team emails can log in.");
+        return;
+      }
+
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(REMEMBERED_LOGIN_ENABLED_KEY, rememberLogin ? "true" : "false");
+        if (rememberLogin) {
+          window.localStorage.setItem(REMEMBERED_LOGIN_EMAIL_KEY, normalizedEmail);
+          window.localStorage.setItem(REMEMBERED_LOGIN_PASSWORD_KEY, password);
+        } else {
+          window.localStorage.removeItem(REMEMBERED_LOGIN_EMAIL_KEY);
+          window.localStorage.removeItem(REMEMBERED_LOGIN_PASSWORD_KEY);
+        }
+      }
+
+      await loadPortalData(
+        loginData,
+        loginData.mustChangePassword
+          ? "Please change your password before continuing."
+          : loginData.createdPassword
+            ? loginData.role === "user"
+              ? "Default password accepted. Client information loaded."
+              : `Password created. ${loginData.role[0].toUpperCase() + loginData.role.slice(1)} view loaded.`
+            : loginData.role === "user"
+              ? "Client information loaded."
+              : `${loginData.role[0].toUpperCase() + loginData.role.slice(1)} view loaded.`
       );
-      const clientData = (await clientResponse.json()) as ClientRecord | { error?: string };
-
-      if (!clientResponse.ok) {
-        setMessage(
-          typeof clientData === "object" && clientData !== null && "error" in clientData && typeof clientData.error === "string"
-            ? clientData.error
-            : "Only emails from the user list can log in."
-        );
-        return;
+      setPasswordChangeRequired(Boolean(loginData.mustChangePassword));
+      if (loginData.mustChangePassword) {
+        setCurrentPasswordInput(password);
       }
-
-      if (passwordAlreadySaved) {
-        if (!isPasswordMatch(normalizedEmail, password)) {
-          setMessage("Incorrect password for this email on this device.");
-          return;
-        }
-      } else {
-        savePassword(normalizedEmail, password);
-      }
-
-      if (isAdmin) {
-        const [cacheResponse, laundryResponse] = await Promise.all([
-          fetch(`${API_BASE_URL}/clients/cache`),
-          fetch(`${API_BASE_URL}/admin/laundry-calendars`)
-        ]);
-        const data = (await cacheResponse.json()) as ClientCachePayload | { error?: string };
-        const laundryData = (await laundryResponse.json()) as
-          | { calendars?: AdminLaundryCalendar[]; error?: string }
-          | undefined;
-
-        if (!cacheResponse.ok) {
-          setMessage(
-            typeof data === "object" && data !== null && "error" in data && typeof data.error === "string"
-              ? data.error
-              : "Unable to load admin client cache."
-          );
-          return;
-        }
-
-        const rows = (data as ClientCachePayload).rows;
-        setCacheRows(rows);
-        const firstClient = rows[0] ?? null;
-        setSelectedMaHd(firstClient?.["M\u00c3 HD"] ?? "");
-        fillAdminForm(firstClient);
-        if (laundryResponse.ok) {
-          setLaundryCalendars(laundryData?.calendars ?? []);
-        }
-        login(normalizedEmail);
-        setPassword("");
-        setMessage(passwordAlreadySaved ? "Admin view loaded." : "Password created. Admin view loaded.");
-        return;
-      }
-
-      login(normalizedEmail);
-      setClient(clientData as ClientRecord);
-      setPassword("");
+    } catch (error) {
       setMessage(
-        passwordAlreadySaved ? "Client information loaded." : "Password created. Client information loaded."
+        error instanceof Error
+          ? error.message
+          : "API request failed. Make sure the API is running and Google Sheets has been connected."
       );
-    } catch {
-      setMessage("API request failed. Make sure the API is running and Google Sheets has been connected.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleGoogleCredential(googleResponse: GoogleCredentialResponse) {
+    setLoading(true);
+    resetLoginView();
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/google`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          credential: googleResponse.credential
+        })
+      });
+      const data = (await response.json()) as LoginResolution;
+
+      if (!response.ok || !data.allowed || !data.role) {
+        setMessage(data.error ?? "Only active users or pre-approved Cozoro team emails can log in.");
+        return;
+      }
+
+      setEmail(data.email);
+      await loadPortalData(
+        data,
+        data.mustChangePassword
+          ? "Please change your password before continuing."
+          : data.role === "user"
+            ? "Google sign-in successful. Client information loaded."
+            : "Google sign-in successful."
+      );
+      setPasswordChangeRequired(Boolean(data.mustChangePassword));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Google sign-in failed.");
     } finally {
       setLoading(false);
     }
@@ -270,9 +660,13 @@ export function ClientLoginClient() {
       setCacheRows(rows);
       const nextClient = rows.find((row) => row["M\u00c3 HD"] === selectedMaHd) ?? rows[0] ?? null;
       setSelectedMaHd(nextClient?.["M\u00c3 HD"] ?? "");
+      setQuickNavigationMaHd("");
       fillAdminForm(nextClient);
       if (laundryResponse.ok) {
         setLaundryCalendars(laundryData?.calendars ?? []);
+      }
+      if (canManageStaffAccess) {
+        await loadOwnerStaffEntries(sessionEmail);
       }
       setMessage("Admin cache refreshed from Google Sheets and Calendar.");
     } catch {
@@ -299,7 +693,10 @@ export function ClientLoginClient() {
           headers: {
             "Content-Type": "application/json"
           },
-          body: JSON.stringify(adminForm)
+          body: JSON.stringify({
+            actorEmail: sessionEmail,
+            values: adminForm
+          })
         }
       );
 
@@ -326,8 +723,157 @@ export function ClientLoginClient() {
     }
   }
 
+  async function saveStaffAccess() {
+    if (!canManageStaffAccess) {
+      setMessage("Only the app admin or owners can update app management roles.");
+      return;
+    }
+
+    if (!staffEmail.trim()) {
+      setMessage("Enter an email to approve.");
+      return;
+    }
+
+    setLoading(true);
+    setMessage("");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/staff-access`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          actorEmail: sessionEmail,
+          targetEmail: staffEmail.trim().toLowerCase(),
+          role: staffRole
+        })
+      });
+
+      const data = (await response.json()) as { staff?: StaffAccessEntry[]; error?: string };
+
+      if (!response.ok) {
+        setMessage(data.error ?? "Unable to save staff access.");
+        return;
+      }
+
+      setStaffEntries(data.staff ?? []);
+      setStaffEmail("");
+      setStaffRole("manager");
+      setMessage("Staff access updated.");
+    } catch {
+      setMessage("Unable to update staff access.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleManagedPasswordReset(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!canManagePasswords) {
+      setMessage("Only the app admin or owners can reset other users' passwords.");
+      return;
+    }
+
+    if (!managedPasswordEmail.trim() || !managedPasswordInput.trim()) {
+      setMessage("Enter the target email and a new password.");
+      return;
+    }
+
+    setLoading(true);
+    setMessage("");
+
+    try {
+      const response = await fetchWithTimeout(`${API_BASE_URL}/auth/admin-set-password`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          actorEmail: sessionEmail,
+          targetEmail: managedPasswordEmail.trim().toLowerCase(),
+          newPassword: managedPasswordInput
+        })
+      });
+      const data = (await response.json()) as { ok?: boolean; error?: string };
+
+      if (!response.ok) {
+        setMessage(data.error ?? "Unable to reset password.");
+        return;
+      }
+
+      setManagedPasswordInput("");
+      setShowManagedPassword(false);
+      setMessage("Password reset saved. The user will need to change it after their next login.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to reset password.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleChangePassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!sessionEmail) {
+      setMessage("Please log in before changing your password.");
+      return;
+    }
+
+    if (!currentPasswordInput.trim() || !newPasswordInput.trim()) {
+      setMessage("Enter both your current password and a new password.");
+      return;
+    }
+
+    setLoading(true);
+    setMessage("");
+
+    try {
+      const response = await fetchWithTimeout(`${API_BASE_URL}/auth/change-password`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          email: sessionEmail,
+          currentPassword: currentPasswordInput,
+          newPassword: newPasswordInput
+        })
+      });
+      const data = (await response.json()) as { ok?: boolean; error?: string };
+
+      if (!response.ok) {
+        setMessage(data.error ?? "Unable to change password.");
+        return;
+      }
+
+      if (typeof window !== "undefined" && rememberLogin) {
+        window.localStorage.setItem(REMEMBERED_LOGIN_PASSWORD_KEY, newPasswordInput);
+      }
+
+      setCurrentPasswordInput("");
+      setNewPasswordInput("");
+      setPasswordChangeRequired(false);
+      setMessage("Password changed successfully.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to change password.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const shownFields = client ? renderFields(client) : [];
-  const shownAdminFields = selectedClient ? renderFields(selectedClient) : [];
+  const shownAdminFields = selectedClient
+    ? renderFields(selectedClient).filter(([label]) => !isManagerSession || !isSensitiveClientField(label))
+    : [];
+  const editableAdminFields = Object.keys(adminForm).filter(
+    (field) => !isManagerSession || !isSensitiveClientField(field)
+  );
+  const selectedClientEmail = getClientEmail(selectedClient);
+  const filteredCacheRows = quickNavigationMaHd
+    ? cacheRows.filter((row) => row["M\u00c3 HD"] === quickNavigationMaHd)
+    : cacheRows;
   const monthDays = useMemo(() => {
     const gridStart = startOfMonthGrid(calendarFocusDate);
     return Array.from({ length: 42 }, (_, index) => addDays(gridStart, index));
@@ -357,51 +903,31 @@ export function ClientLoginClient() {
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-        <h1 className="text-2xl font-semibold text-slate-900">Client Login</h1>
-        <p className="mt-2 text-sm text-slate-600">
-          This is a local demo role check. Normal users see their own row. Admin can browse and edit the full client profile.
-        </p>
-        <p className="mt-2 text-sm text-slate-600">
-          Only emails that exist in the active user list can log in.
-        </p>
-        <p className="mt-2 text-sm text-slate-600">
-          First login on this browser creates a password for that email. Later logins must use the same password.
-        </p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900">
+              {isLoggedIn ? "Portal Session" : "Client Login"}
+            </h1>
+            <p className="mt-2 text-sm text-slate-600">
+              {isLoggedIn
+                ? `Signed in as ${sessionEmail}${sessionRole ? ` (${sessionRole})` : ""}.`
+                : "Active users can log in from the client list. Cozoro team members can also log in if an owner has pre-approved their email."}
+            </p>
+            {!isLoggedIn ? (
+              <p className="mt-2 text-sm text-slate-600">
+                Use Google to sign in with the account tied to your active client or approved app management email.
+              </p>
+            ) : (
+              <p className="mt-2 text-sm text-slate-600">Password tools are in the Account Security section below.</p>
+            )}
+          </div>
 
-        <form onSubmit={handleSubmit} className="mt-6 grid gap-4 md:grid-cols-2">
-          <label className="block text-sm font-medium text-slate-700">
-            Email
-            <input
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-              placeholder="Enter client email"
-            />
-          </label>
-
-          <label className="block text-sm font-medium text-slate-700">
-            Password
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-              placeholder={passwordAlreadySaved ? "Enter saved password" : "Create password"}
-            />
-          </label>
-
-          <div className="md:col-span-2 flex flex-wrap items-center gap-3">
-            <button
-              type="submit"
-              disabled={loading || !email.trim()}
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-            >
-              {loading ? "Checking..." : "Login"}
-            </button>
-            <div className="text-sm text-slate-600">
-              Role: {isAdmin ? "Admin" : "Normal user"}
-            </div>
+          <div className="flex flex-wrap gap-2">
+            {isLoggedIn ? (
+              <a href="#account-security" className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700">
+                Change password
+              </a>
+            ) : null}
             {isLoggedIn ? (
               <button
                 type="button"
@@ -412,10 +938,182 @@ export function ClientLoginClient() {
               </button>
             ) : null}
           </div>
-        </form>
+        </div>
+
+        {!isLoggedIn ? (
+          <>
+            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-medium text-slate-900">Continue with Google</div>
+              <p className="mt-1 text-sm text-slate-600">
+                Sign in with the Google account tied to your active client or approved Cozoro team email.
+              </p>
+              {googleClientId ? (
+                <div ref={googleButtonRef} className="mt-4 min-h-11" />
+              ) : (
+                <p className="mt-4 text-sm text-slate-500">Google sign-in is not configured yet on this environment.</p>
+              )}
+            </div>
+          </>
+        ) : null}
 
         {message ? <p className="mt-4 text-sm text-slate-700">{message}</p> : null}
       </section>
+
+      {isLoggedIn ? (
+        <section
+          id="account-security"
+          className={`rounded-2xl bg-white p-6 shadow-sm ring-1 ${passwordChangeRequired ? "ring-amber-300" : "ring-slate-200"}`}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Account Security</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                {passwordChangeRequired
+                  ? "First login detected. Please change your password before continuing to use the portal."
+                  : "You can change your password here at any time."}
+              </p>
+            </div>
+          </div>
+          <form onSubmit={handleChangePassword} className="mt-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="block text-sm font-medium text-slate-700">
+                Current password
+                <div className="mt-1 flex overflow-hidden rounded-lg border border-slate-300 bg-white">
+                  <input
+                    type={showCurrentPassword ? "text" : "password"}
+                    value={currentPasswordInput}
+                    onChange={(event) => setCurrentPasswordInput(event.target.value)}
+                    className="w-full px-3 py-2 outline-none"
+                    placeholder="Enter current password"
+                  />
+                  <PasswordVisibilityButton
+                    visible={showCurrentPassword}
+                    onToggle={() => setShowCurrentPassword((current) => !current)}
+                    label={showCurrentPassword ? "Hide current password" : "Show current password"}
+                  />
+                </div>
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                New password
+                <div className="mt-1 flex overflow-hidden rounded-lg border border-slate-300 bg-white">
+                  <input
+                    type={showNewPassword ? "text" : "password"}
+                    value={newPasswordInput}
+                    onChange={(event) => setNewPasswordInput(event.target.value)}
+                    className="w-full px-3 py-2 outline-none"
+                    placeholder="Choose a new password"
+                  />
+                  <PasswordVisibilityButton
+                    visible={showNewPassword}
+                    onToggle={() => setShowNewPassword((current) => !current)}
+                    label={showNewPassword ? "Hide new password" : "Show new password"}
+                  />
+                </div>
+              </label>
+            </div>
+            <div className="mt-4">
+              <button
+                type="submit"
+                disabled={loading}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+              >
+                Change password
+              </button>
+            </div>
+          </form>
+        </section>
+      ) : null}
+
+      {canManagePasswords ? (
+        <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Reset Another User Password</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                {isAppAdminSession
+                  ? "App admin can reset passwords for owners, managers, and users. Those users must change the password after logging in."
+                  : "Owners can reset passwords for managers and users, but not for app admin or owner accounts."}
+              </p>
+            </div>
+            {selectedClientEmail ? (
+              <button
+                type="button"
+                onClick={() => setManagedPasswordEmail(selectedClientEmail)}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
+              >
+                Use selected user
+              </button>
+            ) : null}
+          </div>
+
+          <form onSubmit={handleManagedPasswordReset} className="mt-4 grid gap-4 md:grid-cols-2">
+            <label className="block text-sm font-medium text-slate-700">
+              Target email
+              <input
+                type="email"
+                value={managedPasswordEmail}
+                onChange={(event) => setManagedPasswordEmail(event.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+                placeholder="user@example.com"
+              />
+            </label>
+
+            <label className="block text-sm font-medium text-slate-700">
+              New password
+              <div className="mt-1 flex overflow-hidden rounded-lg border border-slate-300 bg-white">
+                <input
+                  type={showManagedPassword ? "text" : "password"}
+                  value={managedPasswordInput}
+                  onChange={(event) => setManagedPasswordInput(event.target.value)}
+                  className="w-full px-3 py-2 outline-none"
+                  placeholder="Enter a temporary password"
+                />
+                <PasswordVisibilityButton
+                  visible={showManagedPassword}
+                  onToggle={() => setShowManagedPassword((current) => !current)}
+                  label={showManagedPassword ? "Hide reset password" : "Show reset password"}
+                />
+              </div>
+            </label>
+
+            <div className="md:col-span-2">
+              <button
+                type="submit"
+                disabled={loading}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+              >
+                Reset password
+              </button>
+            </div>
+          </form>
+        </section>
+      ) : null}
+
+      {isAdminSession ? (
+        <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+          <h2 className="text-lg font-semibold text-slate-900">Manager Workspace</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Open the full manager view here, including the Owners & employees tab and the Cleaning schedule assigning tab.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <Link href="/manager" className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700">
+              Open manager overview
+            </Link>
+            <Link
+              href="/manager?view=owners_employees"
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
+            >
+              Open Owners & employees
+            </Link>
+            <Link
+              href="/manager?view=admin_cleaning"
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
+            >
+              Open Cleaning schedule assigning
+            </Link>
+          </div>
+        </section>
+      ) : null}
 
       {isAdminSession ? (
         <section className="grid gap-6 lg:grid-cols-[1.1fr_1.4fr]">
@@ -435,11 +1133,46 @@ export function ClientLoginClient() {
             <div className="mt-4 space-y-2">
               {cacheRows.length === 0 ? (
                 <p className="text-sm text-slate-600">
-                  Login as admin after Google sync is connected to load active users.
+                  Log in as a manager, owner, or app admin after Google sync is connected to load active users.
                 </p>
               ) : null}
 
-              {cacheRows.map((row) => {
+              {cacheRows.length > 0 ? (
+                <label className="block text-sm font-medium text-slate-700">
+                  Quick Navigation
+                  <select
+                    value={quickNavigationMaHd}
+                    onChange={(event) => {
+                      const nextMaHd = event.target.value;
+                      setQuickNavigationMaHd(nextMaHd);
+
+                      if (!nextMaHd) {
+                        return;
+                      }
+
+                      const nextRow = cacheRows.find((row) => row["M\u00c3 HD"] === nextMaHd) ?? null;
+                      setSelectedMaHd(nextMaHd);
+                      fillAdminForm(nextRow);
+                    }}
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+                  >
+                    <option value="">All active users</option>
+                    {cacheRows.map((row) => {
+                      const maHd = row["M\u00c3 HD"];
+                      const label = row["T\u00ean"] || maHd || "Unnamed user";
+                      const emailLabel = row["\u0110\u1ecba ch\u1ec9 email"] || "No email";
+
+                      return (
+                        <option key={maHd} value={maHd}>
+                          {label} | {emailLabel}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </label>
+              ) : null}
+
+              {filteredCacheRows.map((row) => {
                 const maHd = row["M\u00c3 HD"];
                 const isSelected = maHd === selectedMaHd;
                 return (
@@ -486,7 +1219,14 @@ export function ClientLoginClient() {
 
             <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
               <div className="flex items-center justify-between gap-3">
-                <h2 className="text-lg font-semibold text-slate-900">Editable Fields</h2>
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">Editable Fields</h2>
+                  {isManagerSession ? (
+                    <p className="mt-1 text-sm text-slate-600">
+                      Sensitive identity and birthday fields are hidden for manager accounts.
+                    </p>
+                  ) : null}
+                </div>
                 <button
                   type="button"
                   onClick={() => void saveAdminChanges()}
@@ -501,7 +1241,7 @@ export function ClientLoginClient() {
                 <p className="mt-3 text-sm text-slate-600">Select a user to edit their client information.</p>
               ) : (
                 <div className="mt-4 grid gap-4 md:grid-cols-2">
-                  {Object.keys(adminForm).map((field) => (
+                  {editableAdminFields.map((field) => (
                     <label key={field} className="block text-sm font-medium text-slate-700">
                       {field}
                       <input
@@ -520,6 +1260,61 @@ export function ClientLoginClient() {
                 </div>
               )}
             </div>
+
+            {canManageStaffAccess ? (
+              <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="text-lg font-semibold text-slate-900">App Management Access</h2>
+                  <button
+                    type="button"
+                    onClick={() => void saveStaffAccess()}
+                    disabled={loading}
+                    className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+                  >
+                    Save Access
+                  </button>
+                </div>
+
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <label className="block text-sm font-medium text-slate-700">
+                    Approved email
+                    <input
+                      type="email"
+                      value={staffEmail}
+                      onChange={(event) => setStaffEmail(event.target.value)}
+                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+                      placeholder="manager@example.com"
+                    />
+                  </label>
+                  <label className="block text-sm font-medium text-slate-700">
+                    Role
+                    <select
+                      value={staffRole}
+                      onChange={(event) => setStaffRole(event.target.value as "manager" | "owner")}
+                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+                    >
+                      <option value="manager">Manager</option>
+                      {isAppAdminSession ? <option value="owner">Owner</option> : null}
+                    </select>
+                  </label>
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  {staffEntries.length === 0 ? (
+                    <p className="text-sm text-slate-600">No app management emails configured yet.</p>
+                  ) : (
+                    staffEntries.map((entry) => (
+                      <div key={entry.email} className="rounded-xl border border-slate-200 p-4">
+                        <div className="font-medium text-slate-900">{entry.email}</div>
+                        <div className="mt-1 text-sm text-slate-600">
+                          Role: {entry.role} | Added by: {entry.addedBy || "system"}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            ) : null}
 
             <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
               <h2 className="text-lg font-semibold text-slate-900">Laundry Calendars</h2>
@@ -767,6 +1562,7 @@ export function ClientLoginClient() {
               ))}
             </div>
           )}
+
         </section>
       )}
     </div>

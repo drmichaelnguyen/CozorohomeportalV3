@@ -197,10 +197,7 @@ export function LaundryFeeClient() {
         Calculate the user&apos;s monthly laundry usage and how much laundry cost is due.
       </p>
 
-      <form onSubmit={loadLaundryFeeData} className="mt-6 grid gap-4 md:grid-cols-[1fr_auto]">
-        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-          Signed in as <span className="font-medium">{sessionEmail}</span>
-        </div>
+      <form onSubmit={loadLaundryFeeData} className="mt-6 flex justify-end">
         <button
           type="submit"
           disabled={loading || !activeEmail}

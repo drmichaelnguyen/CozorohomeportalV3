@@ -259,7 +259,7 @@ export function BookingsClient() {
     }
 
     if (selectedMachine.id === "d7-washer-paid") {
-      return "Giáº·t D7 paid Whirlpool only accepts cash or coins.";
+      return "Giặt D7 paid Whirlpool only accepts cash or coins.";
     }
 
     if (selectedMachine.branchId === "D7") {
@@ -589,7 +589,7 @@ export function BookingsClient() {
         <h1 className="text-2xl font-semibold text-slate-900">{t("laundryBookingsTitle")}</h1>
         <p className="mt-2 text-sm text-slate-600">
           {language === "vi"
-            ? "Chá»n mÃ¡y theo chi nhÃ¡nh cá»§a báº¡n, rá»“i Ä‘áº·t má»™t khung giá» cÃ²n trá»‘ng trong 7 ngÃ y tá»›i. Sau khi Ä‘áº·t, khung giá» Ä‘Ã³ sáº½ bá»‹ khÃ³a trÃªn Google Calendar."
+            ? "Chọn máy theo chi nhánh của bạn, rồi đặt một khung giờ còn trống trong 7 ngày tới. Sau khi đặt, khung giờ đó sẽ bị khóa trên Google Calendar."
             : "Choose your branch machine, then book an open time in the next 7 days. Once booked, that slot is blocked in Google Calendar."}
         </p>
       </section>
@@ -597,7 +597,7 @@ export function BookingsClient() {
       <section className="grid gap-6 md:grid-cols-[1.2fr,0.8fr]">
         <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
           <h2 className="text-lg font-semibold text-slate-900">
-            {language === "vi" ? "Táº¡o lá»‹ch Ä‘áº·t" : "Create Booking"}
+            {language === "vi" ? "Tạo lịch đặt" : "Create Booking"}
           </h2>
 
           <div className="mt-4 grid gap-4">
@@ -608,7 +608,7 @@ export function BookingsClient() {
                 disabled={loading || !sessionEmail.trim()}
                 className="w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60 sm:w-auto"
               >
-                {loading ? (language === "vi" ? "Äang táº£i..." : "Loading...") : t("loadBookingOptions")}
+                {loading ? (language === "vi" ? "Đang tải..." : "Loading...") : t("loadBookingOptions")}
               </button>
               <button
                 type="button"
@@ -616,7 +616,7 @@ export function BookingsClient() {
                 disabled={refreshingAvailability || !selectedMachineId}
                 className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-60 sm:w-auto"
               >
-                {refreshingAvailability ? (language === "vi" ? "Äang lÃ m má»›i..." : "Refreshing...") : (language === "vi" ? "LÃ m má»›i lá»‹ch trá»‘ng" : "Refresh availability")}
+                {refreshingAvailability ? (language === "vi" ? "Đang làm mới..." : "Refreshing...") : (language === "vi" ? "Làm mới lịch trống" : "Refresh availability")}
               </button>
             </div>
 
@@ -686,7 +686,7 @@ export function BookingsClient() {
             ) : null}
 
             <label className="block text-sm font-medium text-slate-700">
-              {language === "vi" ? "MÃ¡y" : "Machine"}
+              {language === "vi" ? "Máy" : "Machine"}
               <select
                 value={selectedMachineId}
                 onChange={(event) => setSelectedMachineId(event.target.value)}
@@ -703,7 +703,7 @@ export function BookingsClient() {
             </label>
 
             <label className="block text-sm font-medium text-slate-700">
-              {language === "vi" ? "NgÃ y" : "Date"}
+              {language === "vi" ? "Ngày" : "Date"}
               <select
                 value={selectedDate}
                 onChange={(event) => setSelectedDate(event.target.value)}
@@ -721,7 +721,7 @@ export function BookingsClient() {
             </label>
 
             <label className="block text-sm font-medium text-slate-700">
-              {language === "vi" ? "Giá» cÃ²n trá»‘ng" : "Available Time"}
+              {language === "vi" ? "Giờ còn trống" : "Available Time"}
               <select
                 value={selectedStart}
                 onChange={(event) => setSelectedStart(event.target.value)}
@@ -771,7 +771,7 @@ export function BookingsClient() {
             </label>
 
             <label className="block text-sm font-medium text-slate-700">
-              {language === "vi" ? "MÃ£ Æ°u Ä‘Ã£i" : "Coupon"}
+              {language === "vi" ? "Mã ưu đãi" : "Coupon"}
               <input
                 type="text"
                 value={couponCode}
@@ -859,7 +859,7 @@ export function BookingsClient() {
                 <div key={machine.id} className="rounded-xl border border-slate-200 p-4">
                   <div className="font-medium text-slate-900">{machine.label}</div>
                   <div className="mt-1 text-sm text-slate-600">
-                    {machine.branchId} â€¢ {machine.type} â€¢ {formatDuration(machine.durationMinutes)}
+                      {machine.branchId} | {machine.type} | {formatDuration(machine.durationMinutes)}
                   </div>
                 </div>
               ))}

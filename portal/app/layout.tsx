@@ -20,7 +20,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="vi">
+      <head>
+        <meta charSet="utf-8" />
+      </head>
       <body className={beVietnamPro.className}>
         <SiteShell>{children}</SiteShell>
       </body>

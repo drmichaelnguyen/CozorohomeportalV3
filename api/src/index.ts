@@ -18,6 +18,16 @@ import {
   sendAcCommandToRoom
 } from "./ac-controller.js";
 import { getUserAirFryerContext, startAirFryerUse } from "./airfryer-controller.js";
+import {
+  getGooglePortalClientConfig,
+  listStaffAccess,
+  removeStaffAccess,
+  requirePortalRole,
+  resolveGooglePortalLogin,
+  resolvePortalLogin,
+  upsertStaffAccess
+} from "./staff-access.js";
+import { adminSetPortalPassword, changePortalPassword, loginWithPortalPassword, setPortalPassword } from "./portal-auth.js";
 
 import {
   adminAssignCleaningTask,
@@ -48,6 +58,7 @@ import {
   getManagerFines,
   disputeFine,
   managerAdjustCoins,
+  managerCreatePaymentReceipt,
   managerCreateFine,
   managerResolveFineDispute,
   payFineByCoins,
@@ -65,14 +76,48 @@ import {
   syncClientsFromSheet,
   syncFinesFromSheet,
   syncPaymentsFromSheet,
+  updateCoinSheetEntry,
   updateClientColumns
+  ,
+  uploadFineImageToDrive,
+  updateFineSheetEntry,
+  updateLaundryBookingEntry,
+  updatePaymentSheetEntry
 } from "./google-sheets.js";
 import { prisma } from "./prisma.js";
+import {
+  getResidentSupportConversation,
+  getSupportConversationById,
+  isPrivilegedSupportOperator,
+  listResidentSupportNotifications,
+  listStaffSupportNotifications,
+  listSupportConversationsForInbox,
+  markSupportConversationRead,
+  postOperatorSupportMessage,
+  postOperatorSupportMessageToResident,
+  postResidentSupportMessage,
+  updateSupportConversationStatus
+} from "./support.js";
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
 const cleaningSweepIntervalMs = Number(process.env.CLEANING_SWEEP_INTERVAL_MS ?? 15 * 60 * 1000);
+const backgroundCleaningSweepEnabled = process.env.ENABLE_CLEANING_SWEEP === "true";
+const cleaningSweepOnStartup = process.env.CLEANING_SWEEP_ON_STARTUP === "true";
 let overdueCleaningSweepRunning = false;
+const SENSITIVE_CLIENT_FIELD_PATTERNS = [
+  "ngaysinh",
+  "birthday",
+  "birthdate",
+  "cccd",
+  "cmnd",
+  "cancuoc",
+  "passport",
+  "hochieu",
+  "idnumber",
+  "socccd",
+  "socmnd"
+];
 const allowedOriginPatterns = [
   /^http:\/\/localhost:\d+$/i,
   /^http:\/\/127\.0\.0\.1:\d+$/i,
@@ -130,7 +175,27 @@ app.use(
     }
   })
 );
-app.use(express.json());
+app.use((request, response, next) => {
+  response.setHeader("Content-Language", "en, vi");
+  response.charset = "utf-8";
+
+  const originalJson = response.json.bind(response);
+  response.json = (body: unknown) => {
+    response.setHeader("Content-Type", "application/json; charset=utf-8");
+    return originalJson(body);
+  };
+
+  const originalSend = response.send.bind(response);
+  response.send = (body: unknown) => {
+    if (typeof body === "string" && !response.getHeader("Content-Type")) {
+      response.setHeader("Content-Type", "text/html; charset=utf-8");
+    }
+    return originalSend(body);
+  };
+
+  next();
+});
+app.use(express.json({ limit: "15mb" }));
 
 const bookingInputSchema = z
   .object({
@@ -161,6 +226,33 @@ const laundryBookingInputSchema = z.object({
 const clientLookupSchema = z.object({
   email: z.string().email()
 });
+const portalPasswordLoginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().trim().min(1)
+});
+const portalPasswordChangeSchema = z.object({
+  email: z.string().email(),
+  currentPassword: z.string().trim().min(1),
+  newPassword: z.string().trim().min(4)
+});
+const portalPasswordAdminSetSchema = z.object({
+  actorEmail: z.string().email(),
+  targetEmail: z.string().email(),
+  newPassword: z.string().trim().min(4)
+});
+const googlePortalLoginSchema = z.object({
+  credential: z.string().min(1)
+});
+const staffAccessMutationSchema = z.object({
+  actorEmail: z.string().email(),
+  targetEmail: z.string().email(),
+  role: z.enum(["manager", "owner"]),
+  password: z.string().trim().min(4).optional()
+});
+const staffAccessRemovalSchema = z.object({
+  actorEmail: z.string().email(),
+  targetEmail: z.string().email()
+});
 const acCommandSchema = z.object({
   email: z.string().email(),
   action: z.enum(["ON", "OFF"])
@@ -189,6 +281,15 @@ const managerCoinAdjustmentSchema = z.object({
   reason: z.string().trim().min(1),
   operator: z.string().trim().min(1)
 });
+const managerPaymentReceiptCreateSchema = z.object({
+  actorEmail: z.string().email(),
+  maHd: z.string().min(1),
+  amount: z.coerce.number().int().positive(),
+  purpose: z.string().trim().min(1),
+  details: z.string().trim().optional(),
+  payer: z.string().trim().optional(),
+  receiver: z.string().trim().min(1)
+});
 const cozoroMemberUpgradeSchema = z.object({
   email: z.string().email(),
   targetMember: z.string().trim().min(1)
@@ -200,7 +301,16 @@ const managerFineCreateSchema = z.object({
   description: z.string().trim().optional(),
   location: z.string().trim().optional(),
   dueDate: z.string().optional(),
+  image: z.string().trim().optional(),
   operator: z.string().trim().min(1)
+});
+const fineImageUploadSchema = z.object({
+  actorEmail: z.string().email(),
+  maHd: z.string().min(1),
+  clientName: z.string().trim().optional(),
+  fileName: z.string().trim().min(1),
+  mimeType: z.string().trim().min(1),
+  dataBase64: z.string().trim().min(1)
 });
 const managerFineResolveSchema = z.object({
   email: z.string().email(),
@@ -210,8 +320,61 @@ const managerFineResolveSchema = z.object({
   note: z.string().trim().optional(),
   operator: z.string().trim().min(1)
 });
+const staffClientQuerySchema = z.object({
+  actorEmail: z.string().email(),
+  maHd: z.string().min(1)
+});
+const staffClientChatQuerySchema = z.object({
+  actorEmail: z.string().email(),
+  residentEmail: z.string().email()
+});
+const staffClientUpdateSchema = z.object({
+  actorEmail: z.string().email(),
+  maHd: z.string().min(1),
+  values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+});
+const staffSupportDirectMessageSchema = z.object({
+  operatorEmail: z.string().email(),
+  residentEmail: z.string().email(),
+  body: z.string().trim().min(1)
+});
+const staffCoinUpdateSchema = z.object({
+  actorEmail: z.string().email(),
+  email: z.string().email(),
+  timestamp: z.string().min(1),
+  transactionCode: z.string().optional(),
+  values: z.record(z.string(), z.string())
+});
+const staffPaymentUpdateSchema = z.object({
+  actorEmail: z.string().email(),
+  email: z.string().email(),
+  timestamp: z.string().min(1),
+  amount: z.string().optional(),
+  purpose: z.string().optional(),
+  values: z.record(z.string(), z.string())
+});
+const staffFineUpdateSchema = z.object({
+  actorEmail: z.string().email(),
+  email: z.string().email(),
+  timestamp: z.string().min(1),
+  content: z.string().min(1),
+  values: z.record(z.string(), z.string())
+});
+const staffLaundryUpdateSchema = z.object({
+  actorEmail: z.string().email(),
+  calendarId: z.string().min(1),
+  eventId: z.string().min(1),
+  summary: z.string(),
+  description: z.string(),
+  location: z.string(),
+  start: z.string().datetime(),
+  end: z.string().datetime()
+});
 
-const clientUpdateSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]));
+const clientUpdateSchema = z.object({
+  actorEmail: z.string().email(),
+  values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+});
 const cleaningAvailabilitySchema = z.object({
   email: z.string().email(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -269,6 +432,29 @@ const adminBulkAutoAssignSchema = z.object({
   type: z.enum(["KITCHEN_D2", "KITCHEN_D7", "TRASH_D7"]),
   floor: z.number().int().positive().optional()
 });
+const supportResidentQuerySchema = z.object({
+  email: z.string().email()
+});
+const supportResidentMessageSchema = z.object({
+  email: z.string().email(),
+  body: z.string().trim().min(1),
+  pagePath: z.string().trim().optional()
+});
+const supportReadSchema = z.object({
+  email: z.string().email()
+});
+const supportInboxQuerySchema = z.object({
+  operatorEmail: z.string().email()
+});
+const supportOperatorMessageSchema = z.object({
+  conversationId: z.string().min(1),
+  operatorEmail: z.string().email(),
+  body: z.string().trim().min(1)
+});
+const supportConversationStatusSchema = z.object({
+  operatorEmail: z.string().email(),
+  status: z.enum(["OPEN", "CLOSED"])
+});
 
 function computePriceCoins(
   resourceType: ResourceType,
@@ -286,6 +472,25 @@ function computePriceCoins(
   }
 
   return Math.ceil(minutes / 30) * 5;
+}
+
+function normalizeSheetUpdateValues(values: Record<string, string | number | boolean | null>) {
+  return Object.fromEntries(
+    Object.entries(values).map(([key, value]) => [key, value == null ? "" : String(value)])
+  );
+}
+
+function normalizePortalFieldLookup(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function isSensitiveClientField(field: string) {
+  const normalized = normalizePortalFieldLookup(field);
+  return SENSITIVE_CLIENT_FIELD_PATTERNS.some((pattern) => normalized.includes(pattern));
 }
 
 async function getUserBalance(userId: string, tx: Prisma.TransactionClient | typeof prisma) {
@@ -469,6 +674,179 @@ app.get("/clients", async (request, response) => {
   return response.json(client);
 });
 
+app.get("/auth/resolve-login", async (request, response) => {
+  const parsed = clientLookupSchema.safeParse({
+    email: request.query.email
+  });
+
+  if (!parsed.success) {
+    return response.status(400).json({
+      error: "A valid email query parameter is required"
+    });
+  }
+
+  try {
+    const result = await resolvePortalLogin(parsed.data.email);
+    return response.json(result);
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to resolve portal login"
+    });
+  }
+});
+
+app.post("/auth/login", async (request, response) => {
+  const parsed = portalPasswordLoginSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({
+      error: "A valid email and password are required."
+    });
+  }
+
+  try {
+    const result = await loginWithPortalPassword(parsed.data);
+    return response.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to log in.";
+    const statusCode =
+      message === "Only active users or approved app management emails can log in."
+        ? 403
+        : message === "Incorrect password for this email."
+          ? 401
+          : 400;
+
+    return response.status(statusCode).json({ error: message });
+  }
+});
+
+app.post("/auth/change-password", async (request, response) => {
+  const parsed = portalPasswordChangeSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({
+      error: "A valid email, current password, and new password are required."
+    });
+  }
+
+  try {
+    const result = await changePortalPassword(parsed.data);
+    return response.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to change password.";
+    const statusCode =
+      message === "Only active users or approved app management emails can log in."
+        ? 403
+        : message === "Incorrect password for this email."
+          ? 401
+          : 400;
+
+    return response.status(statusCode).json({ error: message });
+  }
+});
+
+app.post("/auth/admin-set-password", async (request, response) => {
+  const parsed = portalPasswordAdminSetSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({
+      error: "A valid actor email, target email, and new password are required."
+    });
+  }
+
+  try {
+    const result = await adminSetPortalPassword(parsed.data);
+    return response.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to set password.";
+    const statusCode = message.includes("Only app admins or owners") ? 403 : 400;
+    return response.status(statusCode).json({ error: message });
+  }
+});
+
+app.get("/auth/google/config", (_request, response) => {
+  return response.json(getGooglePortalClientConfig());
+});
+
+app.post("/auth/google", async (request, response) => {
+  const parsed = googlePortalLoginSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "A Google credential is required" });
+  }
+
+  try {
+    const result = await resolveGooglePortalLogin(parsed.data.credential);
+    return response.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to verify Google sign-in";
+    const statusCode = message.includes("not configured") ? 503 : 401;
+    return response.status(statusCode).json({ error: message });
+  }
+});
+
+app.get("/staff-access", async (request, response) => {
+  const parsed = clientLookupSchema.safeParse({
+    email: request.query.email
+  });
+
+  if (!parsed.success) {
+    return response.status(400).json({
+      error: "A valid email query parameter is required"
+    });
+  }
+
+  try {
+    const staff = await listStaffAccess(parsed.data.email);
+    return response.json({ staff });
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to load staff access"
+    });
+  }
+});
+
+app.post("/staff-access", async (request, response) => {
+  const parsed = staffAccessMutationSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid staff access payload" });
+  }
+
+  try {
+    const result = await upsertStaffAccess(parsed.data);
+    if (parsed.data.password) {
+      await setPortalPassword({
+        email: parsed.data.targetEmail,
+        password: parsed.data.password,
+        mustChangePassword: true
+      });
+    }
+    return response.json(result);
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to save staff access"
+    });
+  }
+});
+
+app.delete("/staff-access", async (request, response) => {
+  const parsed = staffAccessRemovalSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid staff access removal payload" });
+  }
+
+  try {
+    const result = await removeStaffAccess(parsed.data);
+    return response.json(result);
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to remove staff access"
+    });
+  }
+});
+
 app.get("/controller/ac", async (request, response) => {
   const parsed = clientLookupSchema.safeParse({
     email: request.query.email
@@ -645,6 +1023,438 @@ app.get("/fines", async (request, response) => {
   }
 });
 
+app.get("/support/conversation", async (request, response) => {
+  const parsed = supportResidentQuerySchema.safeParse({
+    email: request.query.email
+  });
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "A valid email query parameter is required" });
+  }
+
+  try {
+    const result = await getResidentSupportConversation(parsed.data.email);
+    return response.json(result);
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to load support conversation"
+    });
+  }
+});
+
+app.post("/support/messages", async (request, response) => {
+  const parsed = supportResidentMessageSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid support message payload" });
+  }
+
+  try {
+    const result = await postResidentSupportMessage(parsed.data);
+    return response.status(201).json(result);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to send support message"
+    });
+  }
+});
+
+app.get("/support/notifications", async (request, response) => {
+  const parsed = supportResidentQuerySchema.safeParse({
+    email: request.query.email
+  });
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "A valid email query parameter is required" });
+  }
+
+  try {
+    const result = await listResidentSupportNotifications(parsed.data.email);
+    return response.json(result);
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to load support notifications"
+    });
+  }
+});
+
+app.post("/support/conversations/:id/read", async (request, response) => {
+  const parsed = supportReadSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid support read payload" });
+  }
+
+  try {
+    const readState = await markSupportConversationRead({
+      conversationId: request.params.id,
+      viewerEmail: parsed.data.email,
+      viewerRole: "RESIDENT"
+    });
+    return response.json({ readState });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to mark support conversation as read"
+    });
+  }
+});
+
+app.get("/manager/support/conversations", async (request, response) => {
+  const parsed = supportInboxQuerySchema.safeParse({
+    operatorEmail: request.query.operatorEmail
+  });
+
+  if (!parsed.success || !(await isPrivilegedSupportOperator(parsed.data.operatorEmail))) {
+    return response.status(403).json({ error: "Only Cozoro team accounts can open the support inbox." });
+  }
+
+  try {
+    const conversations = await listSupportConversationsForInbox();
+    return response.json({ conversations });
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to load support inbox"
+    });
+  }
+});
+
+app.get("/manager/support/notifications", async (request, response) => {
+  const parsed = supportInboxQuerySchema.safeParse({
+    operatorEmail: request.query.operatorEmail
+  });
+
+  if (!parsed.success || !(await isPrivilegedSupportOperator(parsed.data.operatorEmail))) {
+    return response.status(403).json({ error: "Only Cozoro team accounts can open staff notifications." });
+  }
+
+  try {
+    const result = await listStaffSupportNotifications(parsed.data.operatorEmail);
+    return response.json(result);
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to load staff notifications"
+    });
+  }
+});
+
+app.get("/manager/support/conversations/:id", async (request, response) => {
+  const parsed = supportInboxQuerySchema.safeParse({
+    operatorEmail: request.query.operatorEmail
+  });
+
+  if (!parsed.success || !(await isPrivilegedSupportOperator(parsed.data.operatorEmail))) {
+    return response.status(403).json({ error: "Only Cozoro team accounts can open this conversation." });
+  }
+
+  try {
+    const conversation = await getSupportConversationById(request.params.id);
+    return response.json(conversation);
+  } catch (error) {
+    return response.status(404).json({
+      error: error instanceof Error ? error.message : "Unable to load support conversation"
+    });
+  }
+});
+
+app.post("/manager/support/messages", async (request, response) => {
+  const parsed = supportOperatorMessageSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid manager support message payload" });
+  }
+
+  try {
+    const result = await postOperatorSupportMessage(parsed.data);
+    return response.status(201).json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to send manager reply";
+    const statusCode = message.includes("Only owner or manager") ? 403 : 400;
+    return response.status(statusCode).json({ error: message });
+  }
+});
+
+app.post("/manager/support/conversations/:id/status", async (request, response) => {
+  const parsed = supportConversationStatusSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid support status payload" });
+  }
+
+  try {
+    const conversation = await updateSupportConversationStatus({
+      conversationId: request.params.id,
+      operatorEmail: parsed.data.operatorEmail,
+      status: parsed.data.status
+    });
+    return response.json({ conversation });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to update support conversation";
+    const statusCode = message.includes("Only owner or manager") ? 403 : 400;
+    return response.status(statusCode).json({ error: message });
+  }
+});
+
+app.post("/manager/support/conversations/:id/read", async (request, response) => {
+  const parsed = supportInboxQuerySchema.safeParse({
+    operatorEmail: request.body?.operatorEmail
+  });
+
+  if (!parsed.success || !(await isPrivilegedSupportOperator(parsed.data.operatorEmail))) {
+    return response.status(403).json({ error: "Only Cozoro team accounts can mark staff notifications." });
+  }
+
+  try {
+    const readState = await markSupportConversationRead({
+      conversationId: request.params.id,
+      viewerEmail: parsed.data.operatorEmail,
+      viewerRole: "STAFF"
+    });
+    return response.json({ readState });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to mark staff support conversation as read"
+    });
+  }
+});
+
+app.get("/staff/clients", async (request, response) => {
+  const parsed = clientLookupSchema.safeParse({
+    email: request.query.actorEmail
+  });
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "A valid actorEmail query parameter is required" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.email,
+      ["manager", "owner", "app_admin"],
+      "Only Cozoro team members can open the client workspace."
+    );
+    const clients = await getManagerClients();
+    return response.json({ clients });
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to load staff clients"
+    });
+  }
+});
+
+app.get("/staff/client-workspace", async (request, response) => {
+  const parsed = staffClientQuerySchema.safeParse({
+    actorEmail: request.query.actorEmail,
+    maHd: request.query.maHd
+  });
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "A valid actorEmail and maHd are required" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only Cozoro team members can open the client workspace."
+    );
+
+    const clients = await getManagerClients();
+    const client = clients.find((entry) => entry.maHd === parsed.data.maHd);
+
+    if (!client) {
+      return response.status(404).json({ error: "Client not found." });
+    }
+
+    const [coins, payments, fines, laundry] = await Promise.all([
+      getCoinsForEmail(client.email),
+      getPaymentsForEmail(client.email),
+      getFinesForEmail(client.email),
+      getLaundryBookingsForEmail(client.email)
+    ]);
+
+    return response.json({
+      client,
+      stats: {
+        laundry: [...laundry].sort((left, right) => right.start.localeCompare(left.start)),
+        coins,
+        payments,
+        fines
+      }
+    });
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to load the client workspace"
+    });
+  }
+});
+
+app.post("/staff/client-sheet-update", async (request, response) => {
+  const parsed = staffClientUpdateSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid staff client update payload" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only Cozoro team members can update client records."
+    );
+    const cache = await updateClientColumns(parsed.data.maHd, normalizeSheetUpdateValues(parsed.data.values));
+    return response.json(cache);
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to update client data"
+    });
+  }
+});
+
+app.post("/staff/support/messages", async (request, response) => {
+  const parsed = staffSupportDirectMessageSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid staff support message payload" });
+  }
+
+  try {
+    const result = await postOperatorSupportMessageToResident(parsed.data);
+    return response.status(201).json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to send staff message";
+    return response.status(message.includes("Only") ? 403 : 400).json({ error: message });
+  }
+});
+
+app.get("/staff/support/conversation", async (request, response) => {
+  const parsed = staffClientChatQuerySchema.safeParse({
+    actorEmail: request.query.actorEmail,
+    residentEmail: request.query.residentEmail
+  });
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid staff support conversation query" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only Cozoro team members can open client chat."
+    );
+    const result = await getResidentSupportConversation(parsed.data.residentEmail);
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to load client chat"
+    });
+  }
+});
+
+app.post("/staff/coins/update", async (request, response) => {
+  const parsed = staffCoinUpdateSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid staff coin update payload" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only Cozoro team members can edit coin entries."
+    );
+    const result = await updateCoinSheetEntry({
+      email: parsed.data.email,
+      timestamp: parsed.data.timestamp,
+      transactionCode: parsed.data.transactionCode,
+      values: parsed.data.values
+    });
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to update coin entry"
+    });
+  }
+});
+
+app.post("/staff/payments/update", async (request, response) => {
+  const parsed = staffPaymentUpdateSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid staff payment update payload" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only Cozoro team members can edit payment entries."
+    );
+    const result = await updatePaymentSheetEntry({
+      email: parsed.data.email,
+      timestamp: parsed.data.timestamp,
+      amount: parsed.data.amount,
+      purpose: parsed.data.purpose,
+      values: parsed.data.values
+    });
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to update payment entry"
+    });
+  }
+});
+
+app.post("/staff/fines/update", async (request, response) => {
+  const parsed = staffFineUpdateSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid staff fine update payload" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only Cozoro team members can edit fine entries."
+    );
+    const result = await updateFineSheetEntry({
+      email: parsed.data.email,
+      timestamp: parsed.data.timestamp,
+      content: parsed.data.content,
+      values: parsed.data.values
+    });
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to update fine entry"
+    });
+  }
+});
+
+app.post("/staff/laundry/update", async (request, response) => {
+  const parsed = staffLaundryUpdateSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid staff laundry update payload" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only Cozoro team members can edit laundry entries."
+    );
+    const result = await updateLaundryBookingEntry(parsed.data);
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to update laundry entry"
+    });
+  }
+});
+
 app.get("/manager/clients", async (_request, response) => {
   try {
     const clients = await getManagerClients();
@@ -684,6 +1494,35 @@ app.post("/manager/coins/adjust", async (request, response) => {
   }
 });
 
+app.post("/manager/payments/create", async (request, response) => {
+  const parsed = managerPaymentReceiptCreateSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid payment receipt payload" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner"],
+      "Only managers and owners can create payment receipts."
+    );
+    const result = await managerCreatePaymentReceipt({
+      maHd: parsed.data.maHd,
+      amount: parsed.data.amount,
+      purpose: parsed.data.purpose,
+      details: parsed.data.details,
+      payer: parsed.data.payer,
+      receiver: parsed.data.receiver
+    });
+    return response.status(201).json(result);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to create payment receipt"
+    });
+  }
+});
+
 app.post("/cozoro-member/upgrade", async (request, response) => {
   const parsed = cozoroMemberUpgradeSchema.safeParse(request.body);
 
@@ -714,6 +1553,37 @@ app.post("/manager/fines", async (request, response) => {
   } catch (error) {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to create manager fine"
+    });
+  }
+});
+
+app.post("/staff/fines/upload-image", async (request, response) => {
+  const parsed = fineImageUploadSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid fine image upload payload" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only managers, owners, or the app admin can upload fine evidence."
+    );
+
+    const result = await uploadFineImageToDrive({
+      maHd: parsed.data.maHd,
+      clientName: parsed.data.clientName?.trim() || parsed.data.maHd,
+      uploadedBy: parsed.data.actorEmail,
+      fileName: parsed.data.fileName,
+      mimeType: parsed.data.mimeType,
+      base64Data: parsed.data.dataBase64
+    });
+
+    return response.status(201).json(result);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to upload fine image"
     });
   }
 });
@@ -1178,8 +2048,21 @@ app.post("/clients/:maHd/sheet-update", async (request, response) => {
   }
 
   try {
+    const actor = await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only managers, owners, or the app admin can update client data."
+    );
+    const sensitiveFields = Object.keys(parsed.data.values).filter((field) => isSensitiveClientField(field));
+
+    if (actor.role === "manager" && sensitiveFields.length > 0) {
+      return response.status(403).json({
+        error: "Managers cannot view or edit sensitive identity or birthday fields."
+      });
+    }
+
     const normalizedValues = Object.fromEntries(
-      Object.entries(parsed.data).map(([key, value]) => [key, value == null ? "" : String(value)])
+      Object.entries(parsed.data.values).map(([key, value]) => [key, value == null ? "" : String(value)])
     );
     const cache = await updateClientColumns(maHd, normalizedValues);
     return response.json(cache);
@@ -1380,12 +2263,20 @@ app.post("/bookings/:id/cancel", async (request, response) => {
 
 app.listen(port, () => {
   console.log(`cozorohome-api listening on http://localhost:${port}`);
-  void runOverdueCleaningSweep("startup").catch((error) => {
-    console.error("[cleaning-overdue-sweep] startup failed", error);
-  });
-  setInterval(() => {
-    void runOverdueCleaningSweep("interval").catch((error) => {
-      console.error("[cleaning-overdue-sweep] interval failed", error);
-    });
-  }, cleaningSweepIntervalMs);
+
+  if (backgroundCleaningSweepEnabled) {
+    if (cleaningSweepOnStartup) {
+      void runOverdueCleaningSweep("startup").catch((error) => {
+        console.error("[cleaning-overdue-sweep] startup failed", error);
+      });
+    }
+
+    const timer = setInterval(() => {
+      void runOverdueCleaningSweep("interval").catch((error) => {
+        console.error("[cleaning-overdue-sweep] interval failed", error);
+      });
+    }, cleaningSweepIntervalMs);
+
+    timer.unref();
+  }
 });

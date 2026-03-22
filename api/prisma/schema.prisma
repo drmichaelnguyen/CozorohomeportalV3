@@ -53,6 +53,22 @@ enum CleaningAuditDecision {
   REJECT
 }
 
+enum SupportConversationStatus {
+  OPEN
+  CLOSED
+}
+
+enum SupportMessageSenderRole {
+  RESIDENT
+  MANAGER
+  OWNER
+}
+
+enum SupportViewerRole {
+  RESIDENT
+  STAFF
+}
+
 model Branch {
   id        String     @id
   name      String
@@ -153,4 +169,47 @@ model CleaningAudit {
   createdAt   DateTime            @default(now())
 
   @@index([taskId, createdAt])
+}
+
+model SupportConversation {
+  id              String                    @id @default(cuid())
+  residentEmail   String                    @unique
+  residentName    String?
+  status          SupportConversationStatus @default(OPEN)
+  lastMessageAt   DateTime                  @default(now())
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  messages        SupportMessage[]
+  readStates      SupportReadState[]
+
+  @@index([status, lastMessageAt])
+}
+
+model SupportMessage {
+  id               String                   @id @default(cuid())
+  conversationId   String
+  conversation     SupportConversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderEmail      String
+  senderName       String?
+  senderRole       SupportMessageSenderRole
+  body             String                   @db.Text
+  pagePath         String?
+  createdAt        DateTime                 @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([senderEmail, createdAt])
+}
+
+model SupportReadState {
+  id               String            @id @default(cuid())
+  conversationId   String
+  conversation     SupportConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  viewerEmail      String
+  viewerRole       SupportViewerRole
+  lastReadAt       DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@unique([conversationId, viewerEmail, viewerRole])
+  @@index([viewerEmail, viewerRole, updatedAt])
 }

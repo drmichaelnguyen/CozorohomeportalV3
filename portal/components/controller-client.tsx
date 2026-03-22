@@ -92,7 +92,7 @@ async function fetchJson<T>(url: string, init?: RequestInit) {
 
 function formatTimestamp(value: string | null, language: "en" | "vi") {
   if (!value) {
-    return language === "vi" ? "Chua co" : "Not yet";
+    return language === "vi" ? "Chưa có" : "Not yet";
   }
 
   return new Intl.DateTimeFormat(language === "vi" ? "vi-VN" : "en-CA", {
@@ -126,7 +126,7 @@ export function ControllerClient({
   async function loadControllerContext() {
     const resolvedEmail = sessionEmail.trim().toLowerCase();
     if (!resolvedEmail) {
-      setMessage(language === "vi" ? "Vui long dang nhap truoc." : "Please sign in first.");
+      setMessage(language === "vi" ? "Vui lòng đăng nhập trước." : "Please sign in first.");
       return;
     }
 
@@ -162,7 +162,7 @@ export function ControllerClient({
 
       setActiveEmail(resolvedEmail);
       login(resolvedEmail);
-      setMessage(language === "vi" ? "Da tai bo dieu khien cho tai khoan cua ban." : "Loaded your controls.");
+      setMessage(language === "vi" ? "Đã tải bộ điều khiển cho tài khoản của bạn." : "Loaded your controls.");
     } catch (error) {
       setContext(null);
       setAirFryerContext(null);
@@ -219,10 +219,10 @@ export function ControllerClient({
       setMessage(
         action === "ON"
           ? language === "vi"
-            ? "Da gui lenh bat may lanh."
+            ? "Đã gửi lệnh bật máy lạnh."
             : "AC turn-on request sent."
           : language === "vi"
-            ? "Da gui lenh tat may lanh."
+            ? "Đã gửi lệnh tắt máy lạnh."
             : "AC turn-off request sent."
       );
     } catch (error) {
@@ -255,7 +255,7 @@ export function ControllerClient({
         `${API_BASE_URL}/controller/airfryer?email=${encodeURIComponent(activeEmail)}`
       );
       setAirFryerContext(nextAirFryerContext);
-      setMessage(language === "vi" ? "Da bat dau luot su dung noi chien khong dau." : "Air fryer use started.");
+      setMessage(language === "vi" ? "Đã bắt đầu lượt sử dụng nồi chiên không dầu." : "Air fryer use started.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to start air fryer use.");
     } finally {
@@ -273,10 +273,10 @@ export function ControllerClient({
         <div className="text-sm text-slate-700">
           {loading
             ? language === "vi"
-              ? "Dang tai bo dieu khien..."
+              ? "Đang tải bộ điều khiển..."
               : "Loading your controls..."
             : language === "vi"
-              ? "Bo dieu khien tu dong tai theo tai khoan dang nhap."
+              ? "Bộ điều khiển tự động tải theo tài khoản đang đăng nhập."
               : "Your controls load automatically from your signed-in account."}
         </div>
         {message ? <p className="mt-3 text-sm text-slate-600">{message}</p> : null}
@@ -286,22 +286,22 @@ export function ControllerClient({
         <div className="space-y-6">
           {showAcSection && context ? (
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-semibold text-slate-900">{language === "vi" ? "Phong duoc phep dieu khien" : "Allowed room"}</h2>
+              <h2 className="text-xl font-semibold text-slate-900">{language === "vi" ? "Phòng được phép điều khiển" : "Allowed room"}</h2>
               <div className="mt-4 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
                 <div>
-                  <span className="font-medium">{language === "vi" ? "Khach" : "Client"}:</span> {context.name || context.email}
+                  <span className="font-medium">{language === "vi" ? "Khách" : "Client"}:</span> {context.name || context.email}
                 </div>
                 <div>
-                  <span className="font-medium">{language === "vi" ? "Chi nhanh" : "Branch"}:</span> {context.branchId}
+                  <span className="font-medium">{language === "vi" ? "Chi nhánh" : "Branch"}:</span> {context.branchId}
                 </div>
                 <div>
-                  <span className="font-medium">{language === "vi" ? "Giuong" : "Bed"}:</span> {context.bed || "-"}
+                  <span className="font-medium">{language === "vi" ? "Giường" : "Bed"}:</span> {context.bed || "-"}
                 </div>
                 <div>
-                  <span className="font-medium">{language === "vi" ? "Phong" : "Room"}:</span> {context.roomCode || "-"}
+                  <span className="font-medium">{language === "vi" ? "Phòng" : "Room"}:</span> {context.roomCode || "-"}
                 </div>
                 <div>
-                  <span className="font-medium">{language === "vi" ? "Ma hop dong" : "Contract code"}:</span> {context.contractCode || "-"}
+                  <span className="font-medium">{language === "vi" ? "Mã hợp đồng" : "Contract code"}:</span> {context.contractCode || "-"}
                 </div>
               </div>
 
@@ -309,7 +309,7 @@ export function ControllerClient({
                 <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
                   <p className="text-sm font-semibold text-emerald-900">{context.room.label}</p>
                   <p className="mt-1 text-sm text-emerald-800">
-                    {language === "vi" ? "Lenh gan nhat" : "Last request"}:{" "}
+                    {language === "vi" ? "Lệnh gần nhất" : "Last request"}:{" "}
                     {context.room.lastRequestedAction
                       ? `${context.room.lastRequestedAction} · ${formatTimestamp(context.room.lastRequestedAt, language)}`
                       : formatTimestamp(context.room.lastRequestedAt, language)}
@@ -317,7 +317,7 @@ export function ControllerClient({
                   {!context.restrictions.canTurnOnNow ? (
                     <p className="mt-2 text-sm text-amber-700">
                       {language === "vi"
-                        ? "Nguoi dung khong duoc bat may lanh tu 7:00 sang den 10:00 sang moi ngay, tru Chu nhat."
+                        ? "Người dùng không được bật máy lạnh từ 7:00 sáng đến 10:00 sáng mỗi ngày, trừ Chủ nhật."
                         : context.restrictions.turnOnBlockedReason}
                     </p>
                   ) : null}
@@ -328,7 +328,7 @@ export function ControllerClient({
                       disabled={submittingAction !== null || !context.room.iftttConfigured || !context.restrictions.canTurnOnNow}
                       className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-300"
                     >
-                      {submittingAction === "ON" ? (language === "vi" ? "Dang gui..." : "Sending...") : language === "vi" ? "Bat may lanh" : "Turn AC on"}
+                      {submittingAction === "ON" ? (language === "vi" ? "Đang gửi..." : "Sending...") : language === "vi" ? "Bật máy lạnh" : "Turn AC on"}
                     </button>
                     <button
                       type="button"
@@ -336,7 +336,7 @@ export function ControllerClient({
                       disabled={submittingAction !== null || !context.room.iftttConfigured}
                       className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-300"
                     >
-                      {submittingAction === "OFF" ? (language === "vi" ? "Dang gui..." : "Sending...") : language === "vi" ? "Tat may lanh" : "Turn AC off"}
+                      {submittingAction === "OFF" ? (language === "vi" ? "Đang gửi..." : "Sending...") : language === "vi" ? "Tắt máy lạnh" : "Turn AC off"}
                     </button>
                   </div>
                 </div>
@@ -344,7 +344,7 @@ export function ControllerClient({
                 <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
                   <p className="font-semibold">
                     {language === "vi"
-                      ? "Chua co cau hinh phong may lanh cho khach nay."
+                      ? "Chưa có cấu hình phòng máy lạnh cho khách này."
                       : "No AC room mapping is configured for this user yet."}
                   </p>
                   <ul className="mt-2 space-y-1">
@@ -361,37 +361,37 @@ export function ControllerClient({
           {showAirFryerSection && airFryerContext ? (
             <section className="rounded-2xl border border-amber-200 bg-white p-6 shadow-sm">
               <h2 className="text-xl font-semibold text-slate-900">
-                {language === "vi" ? "Noi chien khong dau D7" : "D7 Air Fryer"}
+                {language === "vi" ? "Nồi chiên không dầu D7" : "D7 Air Fryer"}
               </h2>
               {airFryerContext.eligible ? (
                 <>
                   <p className="mt-2 text-sm text-slate-600">
                     {language === "vi"
-                      ? `Thiet bi dung chung voi thoi gian cho ${airFryerContext.cooldownMinutes} phut moi luot.`
+                      ? `Thiết bị dùng chung với thời gian chờ ${airFryerContext.cooldownMinutes} phút mỗi lượt.`
                       : `Shared appliance with a ${airFryerContext.cooldownMinutes}-minute cooldown per use.`}
                   </p>
 
                   <div className="mt-4 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
                     <div>
-                      <span className="font-medium">{language === "vi" ? "Trang thai" : "Status"}:</span>{" "}
+                      <span className="font-medium">{language === "vi" ? "Trạng thái" : "Status"}:</span>{" "}
                       {airFryerContext.status.availableNow
                         ? language === "vi"
-                          ? "San sang"
+                          ? "Sẵn sàng"
                           : "Available now"
                         : language === "vi"
-                          ? "Dang duoc su dung"
+                          ? "Đang được sử dụng"
                           : "Currently in use"}
                     </div>
                     <div>
-                      <span className="font-medium">{language === "vi" ? "Co the dung lai luc" : "Available again"}:</span>{" "}
+                      <span className="font-medium">{language === "vi" ? "Có thể dùng lại lúc" : "Available again"}:</span>{" "}
                       {formatTimestamp(airFryerContext.status.availableAt, language)}
                     </div>
                     <div>
-                      <span className="font-medium">{language === "vi" ? "Luot gan nhat" : "Last use"}:</span>{" "}
+                      <span className="font-medium">{language === "vi" ? "Lượt gần nhất" : "Last use"}:</span>{" "}
                       {formatTimestamp(airFryerContext.status.lastUse?.startedAt ?? null, language)}
                     </div>
                     <div>
-                      <span className="font-medium">{language === "vi" ? "Nguoi dung gan nhat" : "Last user"}:</span>{" "}
+                      <span className="font-medium">{language === "vi" ? "Người dùng gần nhất" : "Last user"}:</span>{" "}
                       {airFryerContext.status.lastUse?.startedByName || airFryerContext.status.lastUse?.startedByEmail || "-"}
                     </div>
                   </div>
@@ -400,15 +400,15 @@ export function ControllerClient({
                     <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
                       <p className="font-semibold">
                         {language === "vi"
-                          ? `${airFryerContext.status.currentUse.startedByName || airFryerContext.status.currentUse.startedByEmail} dang su dung noi chien khong dau.`
+                          ? `${airFryerContext.status.currentUse.startedByName || airFryerContext.status.currentUse.startedByEmail} đang sử dụng nồi chiên không dầu.`
                           : `${airFryerContext.status.currentUse.startedByName || airFryerContext.status.currentUse.startedByEmail} is currently using the air fryer.`}
                       </p>
                       <p className="mt-1">
-                        {language === "vi" ? "Bat dau" : "Started"}:{" "}
+                        {language === "vi" ? "Bắt đầu" : "Started"}:{" "}
                         {formatTimestamp(airFryerContext.status.currentUse.startedAt, language)}
                       </p>
                       <p className="mt-1">
-                        {language === "vi" ? "Co the dung lai sau" : "Available again after"}:{" "}
+                        {language === "vi" ? "Có thể dùng lại sau" : "Available again after"}:{" "}
                         {formatTimestamp(airFryerContext.status.currentUse.availableAt, language)}
                       </p>
                     </div>
@@ -423,10 +423,10 @@ export function ControllerClient({
                     >
                       {startingAirFryer
                         ? language === "vi"
-                          ? "Dang bat dau..."
+                          ? "Đang bắt đầu..."
                           : "Starting..."
                         : language === "vi"
-                          ? "Su dung noi chien khong dau"
+                          ? "Sử dụng nồi chiên không dầu"
                           : "Use air fryer now"}
                     </button>
                   </div>
@@ -434,7 +434,7 @@ export function ControllerClient({
               ) : (
                 <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
                   {language === "vi"
-                    ? "Tinh nang nay chi danh cho nguoi dung chi nhanh D7."
+                    ? "Tính năng này chỉ dành cho người dùng chi nhánh D7."
                     : "This feature is only available for D7 users."}
                 </div>
               )}

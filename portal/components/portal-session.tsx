@@ -1,20 +1,18 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { API_BASE_URL } from "../lib/api-base-url";
 
 const PORTAL_SESSION_STORAGE_KEY = "cozorohome-portal-session-email";
-const PORTAL_PASSWORD_STORAGE_KEY = "cozorohome-portal-passwords";
-
-type PortalPasswordMap = Record<string, string>;
+const PORTAL_SESSION_ROLE_STORAGE_KEY = "cozorohome-portal-session-role";
+export type PortalSessionRole = "user" | "manager" | "owner" | "app_admin";
 
 type PortalSessionContextValue = {
   sessionEmail: string;
+  sessionRole: PortalSessionRole | null;
   isLoggedIn: boolean;
-  login: (email: string) => void;
+  login: (email: string, role?: PortalSessionRole) => void;
   logout: () => void;
-  hasSavedPassword: (email: string) => boolean;
-  savePassword: (email: string, password: string) => void;
-  isPasswordMatch: (email: string, password: string) => boolean;
 };
 
 const PortalSessionContext = createContext<PortalSessionContextValue | null>(null);
@@ -23,27 +21,9 @@ function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
 }
 
-function loadSavedPasswords(): PortalPasswordMap {
-  if (typeof window === "undefined") {
-    return {};
-  }
-
-  const rawValue = window.localStorage.getItem(PORTAL_PASSWORD_STORAGE_KEY);
-  if (!rawValue) {
-    return {};
-  }
-
-  try {
-    const parsed = JSON.parse(rawValue) as PortalPasswordMap;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
 export function PortalSessionProvider({ children }: { children: React.ReactNode }) {
   const [sessionEmail, setSessionEmail] = useState("");
-  const [savedPasswords, setSavedPasswords] = useState<PortalPasswordMap>({});
+  const [sessionRole, setSessionRole] = useState<PortalSessionRole | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -51,51 +31,77 @@ export function PortalSessionProvider({ children }: { children: React.ReactNode 
     }
 
     const savedEmail = window.localStorage.getItem(PORTAL_SESSION_STORAGE_KEY) ?? "";
-    const storedPasswords = loadSavedPasswords();
+    const savedRole = window.localStorage.getItem(PORTAL_SESSION_ROLE_STORAGE_KEY);
 
     if (savedEmail) {
       setSessionEmail(savedEmail);
     }
 
-    setSavedPasswords(storedPasswords);
+    if (savedRole === "user" || savedRole === "manager" || savedRole === "owner" || savedRole === "app_admin") {
+      setSessionRole(savedRole);
+    }
   }, []);
+
+  useEffect(() => {
+    if (!sessionEmail) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function refreshSessionRole() {
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/auth/resolve-login?email=${encodeURIComponent(sessionEmail)}`
+        );
+        const data = (await response.json()) as { allowed?: boolean; role?: PortalSessionRole | null };
+
+        if (cancelled || !response.ok || !data.allowed || !data.role) {
+          return;
+        }
+
+        if (data.role !== sessionRole) {
+          setSessionRole(data.role);
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem(PORTAL_SESSION_ROLE_STORAGE_KEY, data.role);
+          }
+        }
+      } catch {
+        // Keep the saved session when the API is temporarily unavailable.
+      }
+    }
+
+    void refreshSessionRole();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionEmail, sessionRole]);
 
   const value = useMemo<PortalSessionContextValue>(
     () => ({
       sessionEmail,
+      sessionRole,
       isLoggedIn: Boolean(sessionEmail.trim()),
-      login: (email) => {
+      login: (email, role = "user") => {
         const normalizedEmail = normalizeEmail(email);
         setSessionEmail(normalizedEmail);
+        setSessionRole(role);
         if (typeof window !== "undefined") {
           window.localStorage.setItem(PORTAL_SESSION_STORAGE_KEY, normalizedEmail);
+          window.localStorage.setItem(PORTAL_SESSION_ROLE_STORAGE_KEY, role);
         }
       },
       logout: () => {
         setSessionEmail("");
+        setSessionRole(null);
         if (typeof window !== "undefined") {
           window.localStorage.removeItem(PORTAL_SESSION_STORAGE_KEY);
+          window.localStorage.removeItem(PORTAL_SESSION_ROLE_STORAGE_KEY);
         }
-      },
-      hasSavedPassword: (email) => Boolean(savedPasswords[normalizeEmail(email)]),
-      savePassword: (email, password) => {
-        const normalizedEmail = normalizeEmail(email);
-        const nextPasswords = {
-          ...savedPasswords,
-          [normalizedEmail]: password
-        };
-
-        setSavedPasswords(nextPasswords);
-        if (typeof window !== "undefined") {
-          window.localStorage.setItem(PORTAL_PASSWORD_STORAGE_KEY, JSON.stringify(nextPasswords));
-        }
-      },
-      isPasswordMatch: (email, password) => {
-        const normalizedEmail = normalizeEmail(email);
-        return savedPasswords[normalizedEmail] === password;
       }
     }),
-    [savedPasswords, sessionEmail]
+    [sessionEmail, sessionRole]
   );
 
   return <PortalSessionContext.Provider value={value}>{children}</PortalSessionContext.Provider>;

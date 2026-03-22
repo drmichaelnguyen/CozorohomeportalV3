@@ -580,7 +580,7 @@ export function AccountOverviewClient() {
         <h1 className="text-2xl font-semibold text-slate-900">{t("accountOverviewTitle")}</h1>
         <p className="mt-2 text-sm text-slate-600">
           {language === "vi"
-            ? "Người dùng thông thường có thể xem thông tin tài khoản đã đồng bộ tại đây. Trang này không cho phép chỉnh sửa."
+            ? "Người dùng thường có thể xem thông tin tài khoản đã đồng bộ tại đây. Trang này không cho chỉnh sửa."
             : "Regular users can view their synced account information here. Editing is not available on this page."}
         </p>
 

@@ -1,5 +1,5 @@
-import { AdminCleaningClient } from "../../components/admin-cleaning-client";
+import { ManagerClient } from "../../components/manager-client";
 
 export default function AdminCleaningPage() {
-  return <AdminCleaningClient />;
+  return <ManagerClient initialView="admin_cleaning" />;
 }

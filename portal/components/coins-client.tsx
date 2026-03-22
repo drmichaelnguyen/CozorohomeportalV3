@@ -382,8 +382,8 @@ export function CoinsClient() {
     () =>
       buildCozoroMemberProgram({
         rankValue: client?.["Cozoro Member"] ?? entries[0]?.row["Cozoro Member"] ?? "",
-        branchId: client?.["Chi nhÃ¡nh Cozoro dorm"] ?? "",
-        totalAccumulatedCoins: client?.["Tá»•ng Coins tÃ­ch luá»¹"] ?? coinStats.earnedTotal
+        branchId: client?.["Chi nhánh Cozoro dorm"] ?? "",
+        totalAccumulatedCoins: client?.["Tổng Coins tích luỹ"] ?? coinStats.earnedTotal
       }),
     [client, coinStats.earnedTotal, entries]
   );
@@ -396,12 +396,7 @@ export function CoinsClient() {
           View your Cozoro coin history. This page only loads rows where your email matches the sheet email column.
         </p>
 
-        <form onSubmit={handleSubmit} className="mt-6 grid gap-4 md:grid-cols-2">
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-            Signed in as <span className="font-medium">{sessionEmail}</span>
-          </div>
-
-          <div className="md:col-span-2 flex flex-wrap gap-3">
+        <form onSubmit={handleSubmit} className="mt-6 flex flex-wrap gap-3">
             <button
               type="submit"
               disabled={loading || !activeEmail}
@@ -417,7 +412,6 @@ export function CoinsClient() {
             >
               {refreshing ? (language === "vi" ? "Đang làm mới..." : "Refreshing...") : t("refreshCoins")}
             </button>
-          </div>
         </form>
 
         {message ? <p className="mt-4 text-sm text-slate-700">{message}</p> : null}
@@ -644,7 +638,7 @@ export function CoinsClient() {
                           >
                             {entry.row[COINS_COLUMN] || "-"}
                           </td>
-                          <td className="px-4 py-3">{entry.row["NgÆ°á»i thao tÃ¡c"] || "-"}</td>
+                          <td className="px-4 py-3">{entry.row["Người thao tác"] || "-"}</td>
                           <td className="px-4 py-3">{entry.row["Cozoro Member"] || "-"}</td>
                           <td className="px-4 py-3 break-all">{entry.row[EMAIL_COLUMN] || "-"}</td>
                         </tr>
@@ -788,10 +782,10 @@ export function CoinsClient() {
                       <thead className="text-xs uppercase tracking-wide text-slate-500">
                         <tr>
                           <th className="px-2 py-2">Tier</th>
-                          <th className="px-2 py-2">ThÄƒng háº¡ng</th>
-                          <th className="px-2 py-2">Tá»· giÃ¡</th>
-                          <th className="px-2 py-2">Giáº·t / sáº¥y</th>
-                          <th className="px-2 py-2">Duy trÃ¬ / thÃ¡ng</th>
+                          <th className="px-2 py-2">Thăng hạng</th>
+                          <th className="px-2 py-2">Tỷ giá</th>
+                          <th className="px-2 py-2">Giặt / sấy</th>
+                          <th className="px-2 py-2">Duy trì / tháng</th>
                         </tr>
                       </thead>
                       <tbody>

@@ -1,15 +1,18 @@
 ﻿import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { Readable } from "node:stream";
 
 import { calendar_v3, google } from "googleapis";
+import { repairMojibake, repairUnknownText } from "./text-encoding.js";
 
 const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID ?? "";
 const sheetName = process.env.GOOGLE_SHEET_NAME ?? "COZORODATABASE";
 const coinsSheetName = process.env.GOOGLE_COINS_SHEET_NAME ?? "COZORO COINS";
-const paymentsSheetName = process.env.GOOGLE_PAYMENTS_SHEET_NAME ?? "BIÃŠN NHáº¬N";
+const paymentsSheetName = process.env.GOOGLE_PAYMENTS_SHEET_NAME ?? "BIÊN NHẬN";
 const paymentsSheetId = Number.parseInt(process.env.GOOGLE_PAYMENTS_SHEET_ID ?? "899746382", 10);
-const finesSheetName = process.env.GOOGLE_FINES_SHEET_NAME ?? "PHÃ VI PHáº M";
+const finesSheetName = process.env.GOOGLE_FINES_SHEET_NAME ?? "PHÍ VI PHẠM";
 const finesSheetId = Number.parseInt(process.env.GOOGLE_FINES_SHEET_ID ?? "1635408871", 10);
+const finesDriveFolderId = process.env.GOOGLE_FINE_IMAGE_FOLDER_ID ?? "";
 const redirectUri =
   process.env.GOOGLE_REDIRECT_URI ?? "http://localhost:4000/integrations/google/oauth/callback";
 const SUPPORTED_COZORO_TIMEZONES = ["Asia/Ho_Chi_Minh", "America/Vancouver"] as const;
@@ -29,6 +32,18 @@ const finesCacheFilePath = path.join(cacheDirPath, "fines-cache.json");
 const cleaningCalendarCacheFilePath = path.join(cacheDirPath, "cleaning-calendars-cache.json");
 const laundryCouponsFilePath = path.join(cacheDirPath, "laundry-coupons.json");
 const laundryCouponRedemptionsFilePath = path.join(cacheDirPath, "laundry-coupon-redemptions.json");
+type MemoryCachedValue<T> = {
+  value: T;
+  loadedAt: number;
+};
+
+const CACHE_MEMORY_TTL_MS = Number(process.env.LOCAL_CACHE_MEMORY_TTL_MS ?? 5 * 60 * 1000);
+let clientsMemoryCache: MemoryCachedValue<ClientCache> | null = null;
+let coinsMemoryCache: MemoryCachedValue<CoinsCache> | null = null;
+let paymentsMemoryCache: MemoryCachedValue<PaymentsCache> | null = null;
+let finesMemoryCache: MemoryCachedValue<FinesCache> | null = null;
+let cleaningCalendarMemoryCache: MemoryCachedValue<CleaningCalendarCache> | null = null;
+
 const syncIntervalMs = 6 * 60 * 60 * 1000;
 const laundryHistoryMonthsBack = 12;
 const laundryMonthsForward = 12;
@@ -260,7 +275,7 @@ function getOAuthClient() {
 async function readSavedTokens() {
   try {
     const file = await readFile(tokenFilePath, "utf8");
-    return JSON.parse(file) as Record<string, unknown>;
+    return repairUnknownText(JSON.parse(file) as Record<string, unknown>);
   } catch {
     return null;
   }
@@ -270,7 +285,7 @@ async function ensureDataFile<T>(filePath: string, fallback: T) {
   await mkdir(path.dirname(filePath), { recursive: true });
   try {
     const file = await readFile(filePath, "utf8");
-    return JSON.parse(file) as T;
+    return repairUnknownText(JSON.parse(file) as T);
   } catch {
     await writeFile(filePath, JSON.stringify(fallback, null, 2), "utf8");
     return fallback;
@@ -289,9 +304,47 @@ async function writeLaundryCouponRedemptions(redemptions: LaundryCouponRedemptio
   await mkdir(path.dirname(laundryCouponRedemptionsFilePath), { recursive: true });
   await writeFile(
     laundryCouponRedemptionsFilePath,
-    JSON.stringify(redemptions, null, 2),
+    JSON.stringify(redemptions),
     "utf8"
   );
+}
+
+function readMemoryCache<T>(entry: MemoryCachedValue<T> | null) {
+  if (!entry) {
+    return null;
+  }
+
+  if (Date.now() - entry.loadedAt > CACHE_MEMORY_TTL_MS) {
+    return null;
+  }
+
+  return entry.value;
+}
+
+function setMemoryCache<T>(value: T): MemoryCachedValue<T> {
+  return {
+    value,
+    loadedAt: Date.now()
+  };
+}
+
+async function readCachedJsonFile<T>(filePath: string, memoryEntry: MemoryCachedValue<T> | null) {
+  const cachedValue = readMemoryCache(memoryEntry);
+  if (cachedValue) {
+    return cachedValue;
+  }
+
+  try {
+    const file = await readFile(filePath, "utf8");
+    return repairUnknownText(JSON.parse(file) as T);
+  } catch {
+    return null;
+  }
+}
+
+async function writeCachedJsonFile<T>(filePath: string, payload: T) {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, JSON.stringify(payload), "utf8");
 }
 
 function hasScope(
@@ -303,7 +356,7 @@ function hasScope(
 }
 
 async function saveTokens(tokens: Record<string, unknown>) {
-  await writeFile(tokenFilePath, JSON.stringify(tokens, null, 2), "utf8");
+  await writeFile(tokenFilePath, JSON.stringify(tokens), "utf8");
 }
 
 async function getAuthorizedSheetsClient() {
@@ -318,8 +371,22 @@ async function getAuthorizedSheetsClient() {
   return google.sheets({ version: "v4", auth: oauthClient });
 }
 
+async function getAuthorizedDriveClient() {
+  const tokens = await readSavedTokens();
+
+  if (
+    !hasScope(tokens, "https://www.googleapis.com/auth/drive.file") &&
+    !hasScope(tokens, "https://www.googleapis.com/auth/drive")
+  ) {
+    throw new Error("Google Drive access has not been granted yet. Reconnect Google OAuth to add Drive access.");
+  }
+
+  const auth = await getAuthorizedOAuthClient();
+  return google.drive({ version: "v3", auth });
+}
+
 function normalizeHeader(value: string) {
-  const trimmed = value.trim();
+  const trimmed = repairMojibake(value).trim();
   const normalized = trimmed.replace(/\s+/g, " ").toLowerCase();
   return normalizedHeaderAliases.get(normalized) ?? trimmed;
 }
@@ -341,10 +408,10 @@ function mapRow(headers: string[], row: string[]) {
   const mapped = {} as Record<string, string>;
 
   headers.forEach((header, index) => {
-    mapped[header] = String(row[index] ?? "").trim();
+    mapped[header] = repairMojibake(String(row[index] ?? "")).trim();
   });
 
-  return mapped as ClientRow;
+  return repairUnknownText(mapped) as ClientRow;
 }
 
 function isActiveClient(row: Record<string, string>) {
@@ -409,6 +476,46 @@ function normalizeClientBranch(value: string) {
   }
 
   return "D2" as const;
+}
+
+const CLIENT_BRANCH_COLUMN_ALIASES = [
+  "Chi nhánh Cozoro dorm",
+  "Chi nhÃ¡nh Cozoro dorm",
+  "Chi nh?nh Cozoro dorm",
+  "CHI NHÁNH DORM",
+  "CHI NHANH DORM"
+];
+
+function normalizeSheetLookupKey(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function getClientBranchValue(row: Record<string, string>) {
+  for (const key of CLIENT_BRANCH_COLUMN_ALIASES) {
+    const value = row[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  const branchEntry = Object.entries(row).find(([key, value]) => {
+    if (!String(value ?? "").trim()) {
+      return false;
+    }
+
+    const normalizedKey = normalizeSheetLookupKey(key);
+    return (
+      normalizedKey.includes("chinhanhcozorodorm") ||
+      (normalizedKey.includes("chinhanh") && normalizedKey.includes("dorm")) ||
+      normalizedKey.includes("branch")
+    );
+  });
+
+  return String(branchEntry?.[1] ?? "").trim();
 }
 
 function inferFloorFromBed(value: string) {
@@ -781,7 +888,8 @@ export function createAuthUrl() {
     prompt: "consent",
     scope: [
       "https://www.googleapis.com/auth/spreadsheets",
-      "https://www.googleapis.com/auth/calendar"
+      "https://www.googleapis.com/auth/calendar",
+      "https://www.googleapis.com/auth/drive.file"
     ]
   });
 }
@@ -1413,7 +1521,7 @@ export async function getLaundryBookingContextForEmail(email: string) {
     return null;
   }
 
-  const branchId = normalizeClientBranch(client["Chi nh?nh Cozoro dorm"] ?? "");
+  const branchId = normalizeClientBranch(getClientBranchValue(client));
   const allowance = await getLaundryAllowanceSummary(client, branchId);
   return {
     client,
@@ -1955,12 +2063,12 @@ export async function syncClientsFromSheet() {
 
   const values = response.data.values ?? [];
   if (values.length === 0) {
-    await mkdir(cacheDirPath, { recursive: true });
     const emptyPayload: ClientCache = {
       syncedAt: new Date().toISOString(),
       rows: []
     };
-    await writeFile(cacheFilePath, JSON.stringify(emptyPayload, null, 2), "utf8");
+    await writeCachedJsonFile(cacheFilePath, emptyPayload);
+    clientsMemoryCache = setMemoryCache(emptyPayload);
     return emptyPayload;
   }
 
@@ -1974,7 +2082,7 @@ export async function syncClientsFromSheet() {
   if (memberColumnIndex !== -1) {
     for (const [index, row] of rows.entries()) {
       const calculatedMember = calculateLiveCozoroMember({
-        branchId: row["Chi nhÃ¡nh Cozoro dorm"],
+        branchId: getClientBranchValue(row),
         totalAccumulatedCoins: row["Tá»•ng Coins tÃ­ch luá»¹"],
         recordedMember: row[COINS_MEMBER_COLUMN]
       });
@@ -1996,98 +2104,96 @@ export async function syncClientsFromSheet() {
 
   const activeRows = rows.filter(isActiveClient);
 
-  await mkdir(cacheDirPath, { recursive: true });
   const payload: ClientCache = {
     syncedAt: new Date().toISOString(),
     rows: activeRows
   };
 
-  await writeFile(cacheFilePath, JSON.stringify(payload, null, 2), "utf8");
+  await writeCachedJsonFile(cacheFilePath, payload);
+  clientsMemoryCache = setMemoryCache(payload);
   return payload;
 }
 
 export async function syncCoinsFromSheet() {
   const rows = await readCoinsSheetRows();
 
-  await mkdir(cacheDirPath, { recursive: true });
   const payload: CoinsCache = {
     syncedAt: new Date().toISOString(),
     rows
   };
 
-  await writeFile(coinsCacheFilePath, JSON.stringify(payload, null, 2), "utf8");
+  await writeCachedJsonFile(coinsCacheFilePath, payload);
+  coinsMemoryCache = setMemoryCache(payload);
   return payload;
 }
 
 export async function syncPaymentsFromSheet() {
   const rows = await readPaymentsSheetRows();
 
-  await mkdir(cacheDirPath, { recursive: true });
   const payload: PaymentsCache = {
     syncedAt: new Date().toISOString(),
     rows
   };
 
-  await writeFile(paymentsCacheFilePath, JSON.stringify(payload, null, 2), "utf8");
+  await writeCachedJsonFile(paymentsCacheFilePath, payload);
+  paymentsMemoryCache = setMemoryCache(payload);
   return payload;
 }
 
 export async function syncFinesFromSheet() {
   const rows = await readFinesSheetRows();
 
-  await mkdir(cacheDirPath, { recursive: true });
   const payload: FinesCache = {
     syncedAt: new Date().toISOString(),
     rows
   };
 
-  await writeFile(finesCacheFilePath, JSON.stringify(payload, null, 2), "utf8");
+  await writeCachedJsonFile(finesCacheFilePath, payload);
+  finesMemoryCache = setMemoryCache(payload);
   return payload;
 }
 
 export async function readCachedClients() {
-  try {
-    const file = await readFile(cacheFilePath, "utf8");
-    return JSON.parse(file) as ClientCache;
-  } catch {
-    return null;
+  const payload = await readCachedJsonFile<ClientCache>(cacheFilePath, clientsMemoryCache);
+  if (payload) {
+    clientsMemoryCache = setMemoryCache(payload);
   }
+  return payload;
 }
 
 export async function readCachedCoins() {
-  try {
-    const file = await readFile(coinsCacheFilePath, "utf8");
-    return JSON.parse(file) as CoinsCache;
-  } catch {
-    return null;
+  const payload = await readCachedJsonFile<CoinsCache>(coinsCacheFilePath, coinsMemoryCache);
+  if (payload) {
+    coinsMemoryCache = setMemoryCache(payload);
   }
+  return payload;
 }
 
 export async function readCachedPayments() {
-  try {
-    const file = await readFile(paymentsCacheFilePath, "utf8");
-    return JSON.parse(file) as PaymentsCache;
-  } catch {
-    return null;
+  const payload = await readCachedJsonFile<PaymentsCache>(paymentsCacheFilePath, paymentsMemoryCache);
+  if (payload) {
+    paymentsMemoryCache = setMemoryCache(payload);
   }
+  return payload;
 }
 
 export async function readCachedFines() {
-  try {
-    const file = await readFile(finesCacheFilePath, "utf8");
-    return JSON.parse(file) as FinesCache;
-  } catch {
-    return null;
+  const payload = await readCachedJsonFile<FinesCache>(finesCacheFilePath, finesMemoryCache);
+  if (payload) {
+    finesMemoryCache = setMemoryCache(payload);
   }
+  return payload;
 }
 
 async function readCleaningCalendarCache() {
-  try {
-    const file = await readFile(cleaningCalendarCacheFilePath, "utf8");
-    return JSON.parse(file) as CleaningCalendarCache;
-  } catch {
-    return null;
+  const payload = await readCachedJsonFile<CleaningCalendarCache>(
+    cleaningCalendarCacheFilePath,
+    cleaningCalendarMemoryCache
+  );
+  if (payload) {
+    cleaningCalendarMemoryCache = setMemoryCache(payload);
   }
+  return payload;
 }
 
 function sanitizeManagerClientRow(row: ClientRow): ManagerSafeClient {
@@ -2106,7 +2212,7 @@ function sanitizeManagerClientRow(row: ClientRow): ManagerSafeClient {
     maHd: row[CONTRACT_CODE_COLUMN] ?? "",
     email: row[EMAIL_COLUMN] ?? "",
     name: row[CLIENT_NAME_COLUMN] ?? "",
-    branch: row["Chi nhÃ¡nh Cozoro dorm"] ?? "",
+      branch: getClientBranchValue(row),
     bed: row[CLIENT_BED_COLUMN] ?? "",
     gender: row["Giá»›i tÃ­nh"] ?? "",
     activeStay: row[ACTIVE_STAYING_COLUMN] ?? "",
@@ -2126,13 +2232,13 @@ export async function getManagerClients() {
 }
 
 async function writeCleaningCalendarCache(events: CleaningCalendarEvent[]) {
-  await mkdir(cacheDirPath, { recursive: true });
   const payload: CleaningCalendarCache = {
     syncedAt: new Date().toISOString(),
     events
   };
 
-  await writeFile(cleaningCalendarCacheFilePath, JSON.stringify(payload, null, 2), "utf8");
+  await writeCachedJsonFile(cleaningCalendarCacheFilePath, payload);
+  cleaningCalendarMemoryCache = setMemoryCache(payload);
   return payload;
 }
 
@@ -2508,6 +2614,48 @@ export async function managerAdjustCoins(input: {
   };
 }
 
+export async function managerCreatePaymentReceipt(input: {
+  maHd: string;
+  amount: number;
+  purpose: string;
+  details?: string;
+  payer?: string;
+  receiver: string;
+}) {
+  if (!spreadsheetId) {
+    throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
+  }
+
+  const managerClients = await getManagerClients();
+  const client = managerClients.find((entry) => entry.maHd === input.maHd);
+
+  if (!client) {
+    throw new Error("Client could not be found for this payment receipt.");
+  }
+
+  const amount = Math.max(0, Math.trunc(input.amount));
+  if (!amount) {
+    throw new Error("Payment amount must be greater than 0.");
+  }
+
+  await appendPaymentSheetRow({
+    [PAYMENT_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(new Date()),
+    [CONTRACT_CODE_COLUMN]: client.maHd,
+    [EMAIL_COLUMN]: client.email,
+    [CLIENT_NAME_COLUMN]: client.name,
+    [CLIENT_BED_COLUMN]: client.bed,
+    [PAYMENT_AMOUNT_COLUMN]: String(amount),
+    [PAYMENT_PURPOSE_COLUMN]: input.purpose.trim(),
+    [PAYMENT_DETAILS_COLUMN]: input.details?.trim() ?? "",
+    [PAYMENT_PAYER_COLUMN]: input.payer?.trim() || client.name || client.email,
+    [PAYMENT_RECEIVER_COLUMN]: input.receiver.trim()
+  });
+
+  return {
+    ok: true
+  };
+}
+
 export async function upgradeCozoroMemberByCoins(input: {
   email: string;
   targetMember: string;
@@ -2584,6 +2732,7 @@ export async function managerCreateFine(input: {
   description?: string;
   location?: string;
   dueDate?: string;
+  image?: string;
   operator: string;
 }) {
   if (!spreadsheetId) {
@@ -2634,18 +2783,18 @@ export async function managerCreateFine(input: {
         return client.name;
       case FINE_BED_COLUMN:
         return client.bed;
-      case FINE_DUE_COLUMN:
-        return Number.isNaN(dueDate.getTime()) ? "" : dueDate.toISOString();
+        case FINE_DUE_COLUMN:
+          return Number.isNaN(dueDate.getTime()) ? "" : formatSheetDate(dueDate);
       case FINE_CREATOR_COLUMN:
         return input.operator.trim();
       case FINE_LOCATION_COLUMN:
         return input.location?.trim() ?? "";
       case FINE_CONTENT_COLUMN:
         return input.content.trim();
-      case FINE_DESCRIPTION_COLUMN:
-        return input.description?.trim() ?? "";
-      case FINE_IMAGE_COLUMN:
-        return "";
+        case FINE_DESCRIPTION_COLUMN:
+          return input.description?.trim() ?? "";
+        case FINE_IMAGE_COLUMN:
+          return input.image?.trim() ?? "";
       case FINE_AMOUNT_COLUMN:
         return String(amount);
       case FINE_STATUS_COLUMN:
@@ -2680,6 +2829,101 @@ export async function managerCreateFine(input: {
   await syncFinesFromSheet();
   return {
     ok: true
+  };
+}
+
+function sanitizeDriveFileNamePart(value: string) {
+  return value
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001F]+/g, "-")
+    .replace(/\s+/g, " ")
+    .slice(0, 80);
+}
+
+function getDriveFileExtension(mimeType: string, fileName: string) {
+  const existingExtensionMatch = fileName.trim().toLowerCase().match(/\.([a-z0-9]+)$/i);
+  if (existingExtensionMatch) {
+    return existingExtensionMatch[1];
+  }
+
+  switch (mimeType) {
+    case "image/jpeg":
+      return "jpg";
+    case "image/png":
+      return "png";
+    case "image/webp":
+      return "webp";
+    case "image/heic":
+      return "heic";
+    case "image/heif":
+      return "heif";
+    case "image/gif":
+      return "gif";
+    default:
+      return "jpg";
+  }
+}
+
+export async function uploadFineImageToDrive(input: {
+  maHd: string;
+  clientName: string;
+  uploadedBy: string;
+  fileName: string;
+  mimeType: string;
+  base64Data: string;
+}) {
+  const drive = await getAuthorizedDriveClient();
+  const buffer = Buffer.from(input.base64Data, "base64");
+
+  if (!buffer.length) {
+    throw new Error("The uploaded image is empty.");
+  }
+
+  const safeClientName = sanitizeDriveFileNamePart(input.clientName || input.maHd || "client");
+  const safeContract = sanitizeDriveFileNamePart(input.maHd || "unknown-contract");
+  const extension = getDriveFileExtension(input.mimeType, input.fileName);
+  const driveFileName = `fine-${safeContract}-${safeClientName}-${Date.now()}.${extension}`;
+
+  const createResponse = await drive.files.create({
+    requestBody: {
+      name: driveFileName,
+      mimeType: input.mimeType,
+      parents: finesDriveFolderId ? [finesDriveFolderId] : undefined,
+      description: `Fine evidence uploaded by ${input.uploadedBy.trim() || "staff"} for ${input.maHd}`
+    },
+    media: {
+      mimeType: input.mimeType,
+      body: Readable.from(buffer)
+    },
+    fields: "id,name,webViewLink,webContentLink"
+  });
+
+  const fileId = createResponse.data.id;
+  if (!fileId) {
+    throw new Error("Google Drive did not return a file id.");
+  }
+
+  await drive.permissions.create({
+    fileId,
+    requestBody: {
+      role: "reader",
+      type: "anyone"
+    }
+  });
+
+  const metadata = await drive.files.get({
+    fileId,
+    fields: "id,name,webViewLink,webContentLink"
+  });
+
+  return {
+    ok: true,
+    fileId,
+    fileName: metadata.data.name ?? driveFileName,
+    url:
+      metadata.data.webViewLink ??
+      metadata.data.webContentLink ??
+      `https://drive.google.com/file/d/${fileId}/view`
   };
 }
 
@@ -2771,6 +3015,13 @@ function formatCoinsSheetTimestamp(value: Date) {
   return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
 }
 
+function formatSheetDate(value: Date) {
+  const day = String(value.getDate()).padStart(2, "0");
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const year = String(value.getFullYear());
+  return `${day}/${month}/${year}`;
+}
+
 function getLaundryCoinEventLabel(machine: LaundryMachine) {
   if (machine.type === "DRYER") {
     return `Trá»« Coins sáº¥y`;
@@ -2815,6 +3066,231 @@ async function appendCoinsSheetRow(entry: Record<string, string>) {
   });
 
   await syncCoinsFromSheet();
+}
+
+async function appendPaymentSheetRow(entry: Record<string, string>) {
+  if (!spreadsheetId) {
+    throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
+  }
+
+  const sheets = await getAuthorizedSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${paymentsSheetName}!A:ZZ`
+  });
+  const values = response.data.values ?? [];
+  if (values.length === 0) {
+    throw new Error("The payments sheet is empty");
+  }
+
+  const headers = (values[0] ?? []).map((value) => normalizeHeader(String(value)));
+  const row = headers.map((header) => entry[header] ?? "");
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${paymentsSheetName}!A:ZZ`,
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: {
+      values: [row]
+    }
+  });
+
+  await syncPaymentsFromSheet();
+}
+
+async function updateSheetRowColumns(input: {
+  range: string;
+  rowLabel: string;
+  syncAfterUpdate: () => Promise<unknown>;
+  values: Record<string, string>;
+  findRow: (headers: string[], row: string[], index: number) => boolean;
+}) {
+  if (!spreadsheetId) {
+    throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
+  }
+
+  const updates = Object.entries(input.values);
+  if (updates.length === 0) {
+    throw new Error("No values were provided for update.");
+  }
+
+  const sheets = await getAuthorizedSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: input.range
+  });
+  const sheetValues = response.data.values ?? [];
+
+  if (sheetValues.length === 0) {
+    throw new Error(`The ${input.rowLabel} sheet is empty`);
+  }
+
+  const headers = (sheetValues[0] ?? []).map((value) => normalizeHeader(String(value)));
+  const rowIndex = sheetValues.findIndex((row, index) =>
+    index > 0 && input.findRow(headers, row.map((value) => String(value)), index)
+  );
+
+  if (rowIndex === -1) {
+    throw new Error(`The ${input.rowLabel} entry could not be found`);
+  }
+
+  for (const [column, value] of updates) {
+    const columnIndex = headers.findIndex((header) => header === column);
+
+    if (columnIndex === -1) {
+      throw new Error(`Column "${column}" was not found in the ${input.rowLabel} sheet`);
+    }
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${input.range.split("!")[0]}!${columnIndexToLetter(columnIndex)}${rowIndex + 1}`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [[value]]
+      }
+    });
+  }
+
+  await input.syncAfterUpdate();
+}
+
+export async function updateCoinSheetEntry(input: {
+  email: string;
+  timestamp: string;
+  transactionCode?: string;
+  values: Record<string, string>;
+}) {
+  const normalizedEmail = input.email.trim().toLowerCase();
+
+  await updateSheetRowColumns({
+    range: `${coinsSheetName}!A:ZZ`,
+    rowLabel: "coins",
+    values: input.values,
+    syncAfterUpdate: syncCoinsFromSheet,
+    findRow: (headers, row) => {
+      const mappedRow = mapRow(headers, row) as unknown as CoinRow;
+      const matchesEmail = mappedRow[EMAIL_COLUMN]?.trim().toLowerCase() === normalizedEmail;
+      const matchesTimestamp = (mappedRow[COINS_TIMESTAMP_COLUMN] ?? "").trim() === input.timestamp.trim();
+      const matchesTransactionCode = input.transactionCode?.trim()
+        ? (mappedRow[COINS_TRANSACTION_CODE_COLUMN] ?? "").trim() === input.transactionCode.trim()
+        : true;
+
+      return matchesEmail && matchesTimestamp && matchesTransactionCode;
+    }
+  });
+
+  return {
+    ok: true
+  };
+}
+
+export async function updatePaymentSheetEntry(input: {
+  email: string;
+  timestamp: string;
+  amount?: string;
+  purpose?: string;
+  values: Record<string, string>;
+}) {
+  const normalizedEmail = input.email.trim().toLowerCase();
+
+  await updateSheetRowColumns({
+    range: `${paymentsSheetName}!A:ZZ`,
+    rowLabel: "payments",
+    values: input.values,
+    syncAfterUpdate: syncPaymentsFromSheet,
+    findRow: (headers, row) => {
+      const mappedRow = mapRow(headers, row) as unknown as PaymentRow;
+      const matchesEmail = mappedRow[EMAIL_COLUMN]?.trim().toLowerCase() === normalizedEmail;
+      const matchesTimestamp = (mappedRow[PAYMENT_TIMESTAMP_COLUMN] ?? "").trim() === input.timestamp.trim();
+      const matchesAmount = input.amount?.trim() ? (mappedRow[PAYMENT_AMOUNT_COLUMN] ?? "").trim() === input.amount.trim() : true;
+      const matchesPurpose = input.purpose?.trim()
+        ? (mappedRow[PAYMENT_PURPOSE_COLUMN] ?? "").trim() === input.purpose.trim()
+        : true;
+
+      return matchesEmail && matchesTimestamp && matchesAmount && matchesPurpose;
+    }
+  });
+
+  return {
+    ok: true
+  };
+}
+
+export async function updateFineSheetEntry(input: {
+  email: string;
+  timestamp: string;
+  content: string;
+  values: Record<string, string>;
+}) {
+  const normalizedEmail = input.email.trim().toLowerCase();
+
+  await updateSheetRowColumns({
+    range: `${finesSheetName}!A:ZZ`,
+    rowLabel: "fines",
+    values: input.values,
+    syncAfterUpdate: syncFinesFromSheet,
+    findRow: (headers, row) => {
+      const mappedRow = mapRow(headers, row) as unknown as FineRow;
+      return (
+        mappedRow[FINE_EMAIL_COLUMN]?.trim().toLowerCase() === normalizedEmail &&
+        (mappedRow[FINE_TIMESTAMP_COLUMN] ?? "").trim() === input.timestamp.trim() &&
+        (mappedRow[FINE_CONTENT_COLUMN] ?? "").trim() === input.content.trim()
+      );
+    }
+  });
+
+  return {
+    ok: true
+  };
+}
+
+export async function updateLaundryBookingEntry(input: {
+  calendarId: string;
+  eventId: string;
+  summary: string;
+  description: string;
+  location: string;
+  start: string;
+  end: string;
+}) {
+  const start = new Date(input.start);
+  const end = new Date(input.end);
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end.getTime() <= start.getTime()) {
+    throw new Error("Laundry booking updates require valid start and end times.");
+  }
+
+  const calendar = await getAuthorizedCalendarClient();
+  const existing = await calendar.events.get({
+    calendarId: input.calendarId,
+    eventId: input.eventId
+  });
+
+  await calendar.events.update({
+    calendarId: input.calendarId,
+    eventId: input.eventId,
+    requestBody: {
+      ...existing.data,
+      summary: input.summary.trim(),
+      description: input.description,
+      location: input.location,
+      start: {
+        dateTime: start.toISOString(),
+        timeZone: COZORO_TIMEZONE
+      },
+      end: {
+        dateTime: end.toISOString(),
+        timeZone: COZORO_TIMEZONE
+      }
+    }
+  });
+
+  invalidateLaundryCalendar(input.calendarId);
+
+  return {
+    ok: true
+  };
 }
 
 async function updateFineSheetCell(input: {
@@ -2943,6 +3419,10 @@ function toSheetColumn(index: number) {
 }
 
 export function startClientSyncInterval() {
+  if (process.env.ENABLE_GOOGLE_SYNC_INTERVAL !== "true") {
+    return;
+  }
+
   const hasCredentials =
     Boolean(process.env.GOOGLE_CLIENT_ID) &&
     Boolean(process.env.GOOGLE_CLIENT_SECRET) &&
@@ -2960,7 +3440,7 @@ export function startClientSyncInterval() {
     console.warn("Initial Google Coins sync skipped:", error instanceof Error ? error.message : error);
   });
 
-  setInterval(() => {
+  const timer = setInterval(() => {
     void syncClientsFromSheet().catch((error) => {
       console.warn("Scheduled Google Sheets sync failed:", error instanceof Error ? error.message : error);
     });
@@ -2968,9 +3448,14 @@ export function startClientSyncInterval() {
       console.warn("Scheduled Google Coins sync failed:", error instanceof Error ? error.message : error);
     });
   }, syncIntervalMs);
+  timer.unref();
 }
 
 export function startLaundryCalendarCacheInterval() {
+  if (process.env.ENABLE_LAUNDRY_CACHE_WARMER !== "true") {
+    return;
+  }
+
   const hasCredentials =
     Boolean(process.env.GOOGLE_CLIENT_ID) &&
     Boolean(process.env.GOOGLE_CLIENT_SECRET) &&
@@ -2985,14 +3470,19 @@ export function startLaundryCalendarCacheInterval() {
     console.warn("Initial laundry calendar cache warm-up skipped:", error instanceof Error ? error.message : error);
   });
 
-  setInterval(() => {
+  const timer = setInterval(() => {
     void warmLaundryCalendarCache().catch((error) => {
       console.warn("Scheduled laundry calendar cache warm-up failed:", error instanceof Error ? error.message : error);
     });
   }, calendarCacheTtlMs);
+  timer.unref();
 }
 
 export function startCleaningCalendarCacheInterval() {
+  if (process.env.ENABLE_CLEANING_CALENDAR_WARMER !== "true") {
+    return;
+  }
+
   const hasCredentials =
     Boolean(process.env.GOOGLE_CLIENT_ID) &&
     Boolean(process.env.GOOGLE_CLIENT_SECRET) &&
@@ -3007,9 +3497,10 @@ export function startCleaningCalendarCacheInterval() {
     console.warn("Initial cleaning calendar cache warm-up skipped:", error instanceof Error ? error.message : error);
   });
 
-  setInterval(() => {
+  const timer = setInterval(() => {
     void syncCleaningCalendarsToLocalCache({ forceRefresh: true }).catch((error) => {
       console.warn("Scheduled cleaning calendar cache warm-up failed:", error instanceof Error ? error.message : error);
     });
   }, calendarCacheTtlMs);
+  timer.unref();
 }

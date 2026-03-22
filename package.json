@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.1",
   "scripts": {
-    "dev": "pnpm -r --parallel dev"
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm --filter cozorohome-api build && pnpm --filter cozorohome-portal build",
+    "start:api": "pnpm --filter cozorohome-api start",
+    "start:portal": "pnpm --filter cozorohome-portal start"
   }
 }
