@@ -1095,14 +1095,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
   return (
     <div className="space-y-6">
-      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold text-slate-900">Cozoro Side</h1>
-            <p className="mt-2 text-sm text-slate-600">
-              Search clients, edit their profile, send messages, create fine tickets and coin entries, then open laundry, coins, payments, or fines from latest to oldest.
-            </p>
-          </div>
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-semibold text-slate-900">Management Workspace</h1>
+              <p className="mt-2 text-sm text-slate-600">
+                Search clients, edit their profile, send messages, create fine tickets and coin entries, then open laundry, coins, payments, or fines from latest to oldest.
+              </p>
+            </div>
           <button
             type="button"
             onClick={() => void loadClients(true)}
@@ -2178,19 +2178,34 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     </div>
                   ))}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowAllStatsEntries((current) => !current)}
-                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
-                >
-                  {showAllStatsEntries ? "Hide all entries" : "Show all entries"}
-                </button>
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="text-sm text-slate-500">
+                    {activeTab === "laundry"
+                      ? `${workspace.stats.laundry.length} laundry entries`
+                      : activeTab === "coins"
+                        ? `${workspace.stats.coins.length} coin entries`
+                        : activeTab === "payments"
+                          ? `${workspace.stats.payments.length} payment entries`
+                          : `${workspace.stats.fines.length} fine entries`}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAllStatsEntries((current) => !current)}
+                    className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
+                  >
+                    {showAllStatsEntries ? "Hide entries panel" : "Open entries panel"}
+                  </button>
+                </div>
               </div>
             ) : null}
 
             {workspace && showAllStatsEntries && activeTab === "laundry" ? (
-              <div className="mt-4 space-y-4">
-                <div className="overflow-x-auto rounded-2xl border border-slate-200">
+              <div className="mt-4 space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-sm text-slate-600">
+                  Laundry entries are packed into a scroll panel so the manager page stays shorter.
+                </div>
+                <div className="max-h-[28rem] overflow-auto rounded-2xl border border-slate-200 bg-white">
+                  <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-slate-200 text-sm">
                     <thead className="bg-slate-50 text-left text-slate-600">
                       <tr>
@@ -2221,6 +2236,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       })}
                     </tbody>
                   </table>
+                  </div>
                 </div>
 
                 {workspace.stats.laundry.map((entry) => {
@@ -2246,8 +2262,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             ) : null}
 
             {workspace && showAllStatsEntries && activeTab !== "laundry" ? (
-              <div className="mt-4 space-y-4">
-                <div className="overflow-x-auto rounded-2xl border border-slate-200">
+              <div className="mt-4 space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-sm text-slate-600">
+                  Showing a compact entries panel with its own scroll area.
+                </div>
+                <div className="max-h-[28rem] overflow-auto rounded-2xl border border-slate-200 bg-white">
+                  <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-slate-200 text-sm">
                     <thead className="bg-slate-50 text-left text-slate-600">
                       <tr>
@@ -2276,6 +2296,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       })}
                     </tbody>
                   </table>
+                  </div>
                 </div>
                 {(activeTab === "coins" ? workspace.stats.coins : activeTab === "payments" ? workspace.stats.payments : workspace.stats.fines).map((entry) => {
                   const key = makeKey(Object.values(entry.row).slice(0, 4));

@@ -953,6 +953,62 @@ export function ClientLoginClient() {
                 <p className="mt-4 text-sm text-slate-500">Google sign-in is not configured yet on this environment.</p>
               )}
             </div>
+
+            <form onSubmit={handleSubmit} className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="text-sm font-medium text-slate-900">Sign in with email</div>
+              <p className="mt-1 text-sm text-slate-600">
+                If you signed out on this computer, the email and password fields will show again here.
+              </p>
+
+              <label className="mt-4 block text-sm font-medium text-slate-700">
+                Email
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  autoComplete="username"
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                  placeholder="name@example.com"
+                />
+              </label>
+
+              <label className="mt-4 block text-sm font-medium text-slate-700">
+                Password
+                <div className="relative mt-1">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    autoComplete="current-password"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-12 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                    placeholder="Enter your password"
+                  />
+                  <PasswordVisibilityButton
+                    visible={showPassword}
+                    onToggle={() => setShowPassword((current) => !current)}
+                    label={showPassword ? "Hide password" : "Show password"}
+                  />
+                </div>
+              </label>
+
+              <label className="mt-4 flex items-center gap-2 text-sm text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={rememberLogin}
+                  onChange={(event) => setRememberLogin(event.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+                />
+                Remember this login on this computer
+              </label>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="mt-4 inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+              >
+                {loading ? "Signing in..." : "Log in with email"}
+              </button>
+            </form>
           </>
         ) : null}
 
@@ -1093,7 +1149,7 @@ export function ClientLoginClient() {
         <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
           <h2 className="text-lg font-semibold text-slate-900">Manager Workspace</h2>
           <p className="mt-1 text-sm text-slate-600">
-            Open the full manager view here, including the Owners & employees tab and the Cleaning schedule assigning tab.
+            Open the full manager view here. Active users, cleaning tools, laundry calendars, and the Owners & employees area now live on the dedicated manager page so this login screen stays short.
           </p>
           <div className="mt-4 flex flex-wrap gap-3">
             <Link href="/manager" className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700">
@@ -1114,437 +1170,7 @@ export function ClientLoginClient() {
           </div>
         </section>
       ) : null}
-
-      {isAdminSession ? (
-        <section className="grid gap-6 lg:grid-cols-[1.1fr_1.4fr]">
-          <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold text-slate-900">Active Users</h2>
-              <button
-                type="button"
-                onClick={() => void refreshAdminCache()}
-                disabled={loading}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 disabled:opacity-60"
-              >
-                Refresh from Sheet
-              </button>
-            </div>
-
-            <div className="mt-4 space-y-2">
-              {cacheRows.length === 0 ? (
-                <p className="text-sm text-slate-600">
-                  Log in as a manager, owner, or app admin after Google sync is connected to load active users.
-                </p>
-              ) : null}
-
-              {cacheRows.length > 0 ? (
-                <label className="block text-sm font-medium text-slate-700">
-                  Quick Navigation
-                  <select
-                    value={quickNavigationMaHd}
-                    onChange={(event) => {
-                      const nextMaHd = event.target.value;
-                      setQuickNavigationMaHd(nextMaHd);
-
-                      if (!nextMaHd) {
-                        return;
-                      }
-
-                      const nextRow = cacheRows.find((row) => row["M\u00c3 HD"] === nextMaHd) ?? null;
-                      setSelectedMaHd(nextMaHd);
-                      fillAdminForm(nextRow);
-                    }}
-                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-                  >
-                    <option value="">All active users</option>
-                    {cacheRows.map((row) => {
-                      const maHd = row["M\u00c3 HD"];
-                      const label = row["T\u00ean"] || maHd || "Unnamed user";
-                      const emailLabel = row["\u0110\u1ecba ch\u1ec9 email"] || "No email";
-
-                      return (
-                        <option key={maHd} value={maHd}>
-                          {label} | {emailLabel}
-                        </option>
-                      );
-                    })}
-                  </select>
-                </label>
-              ) : null}
-
-              {filteredCacheRows.map((row) => {
-                const maHd = row["M\u00c3 HD"];
-                const isSelected = maHd === selectedMaHd;
-                return (
-                  <button
-                    key={maHd}
-                    type="button"
-                    onClick={() => {
-                      setSelectedMaHd(maHd);
-                      fillAdminForm(row);
-                    }}
-                    className={`w-full rounded-xl border px-4 py-3 text-left ${
-                      isSelected
-                        ? "border-emerald-600 bg-emerald-600 text-white"
-                        : "border-slate-200 bg-white text-slate-900"
-                    }`}
-                  >
-                    <div className="font-medium">{row["T\u00ean"] || maHd}</div>
-                    <div className={`text-sm ${isSelected ? "text-emerald-50" : "text-slate-600"}`}>
-                      {row["\u0110\u1ecba ch\u1ec9 email"] || "No email"} | {row["Chi nh\u00e1nh Cozoro dorm"] || "No branch"}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="space-y-6">
-            <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-              <h2 className="text-lg font-semibold text-slate-900">Selected User</h2>
-
-              {!selectedClient ? (
-                <p className="mt-3 text-sm text-slate-600">Choose an active user to inspect and edit.</p>
-              ) : (
-                <div className="mt-4 space-y-3">
-                  {shownAdminFields.map(([label, value]) => (
-                    <div key={label} className="rounded-xl border border-slate-200 p-4">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-                      <div className="mt-1 text-sm text-slate-900">{value}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-900">Editable Fields</h2>
-                  {isManagerSession ? (
-                    <p className="mt-1 text-sm text-slate-600">
-                      Sensitive identity and birthday fields are hidden for manager accounts.
-                    </p>
-                  ) : null}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void saveAdminChanges()}
-                  disabled={loading || !selectedClient}
-                  className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-                >
-                  Save to Sheet
-                </button>
-              </div>
-
-              {!selectedClient ? (
-                <p className="mt-3 text-sm text-slate-600">Select a user to edit their client information.</p>
-              ) : (
-                <div className="mt-4 grid gap-4 md:grid-cols-2">
-                  {editableAdminFields.map((field) => (
-                    <label key={field} className="block text-sm font-medium text-slate-700">
-                      {field}
-                      <input
-                        type="text"
-                        value={adminForm[field] ?? ""}
-                        onChange={(event) =>
-                          setAdminForm((current) => ({
-                            ...current,
-                            [field]: event.target.value
-                          }))
-                        }
-                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-                      />
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {canManageStaffAccess ? (
-              <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-                <div className="flex items-center justify-between gap-3">
-                  <h2 className="text-lg font-semibold text-slate-900">App Management Access</h2>
-                  <button
-                    type="button"
-                    onClick={() => void saveStaffAccess()}
-                    disabled={loading}
-                    className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-                  >
-                    Save Access
-                  </button>
-                </div>
-
-                <div className="mt-4 grid gap-4 md:grid-cols-2">
-                  <label className="block text-sm font-medium text-slate-700">
-                    Approved email
-                    <input
-                      type="email"
-                      value={staffEmail}
-                      onChange={(event) => setStaffEmail(event.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-                      placeholder="manager@example.com"
-                    />
-                  </label>
-                  <label className="block text-sm font-medium text-slate-700">
-                    Role
-                    <select
-                      value={staffRole}
-                      onChange={(event) => setStaffRole(event.target.value as "manager" | "owner")}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-                    >
-                      <option value="manager">Manager</option>
-                      {isAppAdminSession ? <option value="owner">Owner</option> : null}
-                    </select>
-                  </label>
-                </div>
-
-                <div className="mt-4 space-y-2">
-                  {staffEntries.length === 0 ? (
-                    <p className="text-sm text-slate-600">No app management emails configured yet.</p>
-                  ) : (
-                    staffEntries.map((entry) => (
-                      <div key={entry.email} className="rounded-xl border border-slate-200 p-4">
-                        <div className="font-medium text-slate-900">{entry.email}</div>
-                        <div className="mt-1 text-sm text-slate-600">
-                          Role: {entry.role} | Added by: {entry.addedBy || "system"}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            ) : null}
-
-            <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-              <h2 className="text-lg font-semibold text-slate-900">Laundry Calendars</h2>
-              {laundryCalendars.length === 0 ? (
-                <p className="mt-3 text-sm text-slate-600">
-                  No laundry calendars are visible yet. This usually means Calendar access has not been granted or the
-                  connected Google account cannot see the laundry calendars.
-                </p>
-              ) : (
-                <div className="mt-4 space-y-4">
-                  <div className="rounded-xl border border-slate-200 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-medium text-slate-900">Calendar View</div>
-                        <div className="text-sm text-slate-600">
-                          {calendarViewMode === "month"
-                            ? calendarFocusDate.toLocaleString(undefined, {
-                                month: "long",
-                                year: "numeric"
-                              })
-                            : calendarViewMode === "week"
-                              ? `Week of ${startOfWeek(calendarFocusDate).toLocaleDateString()}`
-                              : calendarFocusDate.toLocaleDateString()}
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => moveCalendar(-1)}
-                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
-                        >
-                          Prev
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setCalendarFocusDate(startOfDay(new Date()))}
-                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
-                        >
-                          Today
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => moveCalendar(1)}
-                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
-                        >
-                          Next
-                        </button>
-                        {(["month", "week", "day"] as const).map((mode) => (
-                          <button
-                            key={mode}
-                            type="button"
-                            onClick={() => setCalendarViewMode(mode)}
-                            className={`rounded-lg px-3 py-2 text-sm ${
-                              calendarViewMode === mode
-                                ? "bg-slate-900 text-white"
-                                : "border border-slate-300 text-slate-700"
-                            }`}
-                          >
-                            {mode[0].toUpperCase() + mode.slice(1)}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {calendarViewMode === "month" ? (
-                      <div className="mt-4">
-                        <div className="grid grid-cols-7 gap-2 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label) => (
-                            <div key={label}>{label}</div>
-                          ))}
-                        </div>
-                        <div className="mt-2 grid grid-cols-7 gap-2">
-                          {monthDays.map((day) => {
-                            const events = calendarEvents.filter((event) => sameDay(new Date(event.start), day));
-                            const isCurrentMonth = day.getMonth() === calendarFocusDate.getMonth();
-                            const isToday = sameDay(day, new Date());
-                            return (
-                              <div
-                                key={day.toISOString()}
-                                className={`min-h-28 rounded-xl border p-2 ${
-                                  isCurrentMonth ? "border-slate-200 bg-white" : "border-slate-100 bg-slate-50"
-                                } ${isToday ? "ring-2 ring-slate-900" : ""}`}
-                              >
-                                <div className="text-sm font-medium text-slate-900">{day.getDate()}</div>
-                                <div className="mt-2 space-y-1">
-                                  {events.slice(0, 3).map((event) => (
-                                    <button
-                                      key={event.id}
-                                      type="button"
-                                      onClick={() => {
-                                        setCalendarViewMode("day");
-                                        setCalendarFocusDate(startOfDay(new Date(event.start)));
-                                      }}
-                                      className="block w-full rounded-md bg-slate-900 px-2 py-1 text-left text-xs text-white"
-                                    >
-                                      {new Date(event.start).toLocaleTimeString([], {
-                                        hour: "numeric",
-                                        minute: "2-digit"
-                                      })}{" "}
-                                      {event.summary}
-                                    </button>
-                                  ))}
-                                  {events.length > 3 ? (
-                                    <div className="text-xs text-slate-500">+{events.length - 3} more</div>
-                                  ) : null}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {calendarViewMode === "week" ? (
-                      <div className="mt-4 grid gap-3 md:grid-cols-7">
-                        {weekDays.map((day) => {
-                          const events = calendarEvents.filter((event) => sameDay(new Date(event.start), day));
-                          return (
-                            <div key={day.toISOString()} className="rounded-xl border border-slate-200 p-3">
-                              <div className="text-sm font-semibold text-slate-900">
-                                {day.toLocaleDateString(undefined, {
-                                  weekday: "short",
-                                  month: "short",
-                                  day: "numeric"
-                                })}
-                              </div>
-                              <div className="mt-3 space-y-2">
-                                {events.length === 0 ? (
-                                  <div className="text-xs text-slate-500">No bookings</div>
-                                ) : (
-                                  events.map((event) => (
-                                    <div key={event.id} className="rounded-lg bg-slate-50 p-2">
-                                      <div className="text-xs font-medium text-slate-900">{event.summary}</div>
-                                      <div className="mt-1 text-xs text-slate-600">
-                                        {new Date(event.start).toLocaleTimeString([], {
-                                          hour: "numeric",
-                                          minute: "2-digit"
-                                        })}
-                                      </div>
-                                      <div className="mt-1 text-xs text-slate-500">{event.calendarSummary}</div>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-
-                    {calendarViewMode === "day" ? (
-                      <div className="mt-4 rounded-xl border border-slate-200 p-4">
-                        <div className="text-sm font-semibold text-slate-900">
-                          {calendarFocusDate.toLocaleDateString(undefined, {
-                            weekday: "long",
-                            month: "long",
-                            day: "numeric",
-                            year: "numeric"
-                          })}
-                        </div>
-                        <div className="mt-4 space-y-3">
-                          {dayEvents.length === 0 ? (
-                            <div className="text-sm text-slate-500">No bookings for this day.</div>
-                          ) : (
-                            dayEvents.map((event) => (
-                              <div key={event.id} className="rounded-xl bg-slate-50 p-4">
-                                <div className="font-medium text-slate-900">{event.summary}</div>
-                                <div className="mt-1 text-sm text-slate-600">{formatRange(event.start, event.end)}</div>
-                                <div className="mt-1 text-sm text-slate-600">Calendar: {event.calendarSummary}</div>
-                                {event.location ? (
-                                  <div className="mt-1 text-sm text-slate-600">Location: {event.location}</div>
-                                ) : null}
-                                {event.description ? (
-                                  <div className="mt-2 whitespace-pre-wrap text-sm text-slate-600">
-                                    {event.description}
-                                  </div>
-                                ) : null}
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  {laundryCalendars.map((calendar) => (
-                    <div key={calendar.id} className="rounded-xl border border-slate-200 p-4">
-                      <div className="font-medium text-slate-900">{calendar.summary}</div>
-                      <div className="mt-1 text-xs text-slate-500">{calendar.id}</div>
-                      <div className="mt-1 text-sm text-slate-600">
-                        Access: {calendar.accessRole || "unknown"} | Events: {calendar.events.length}
-                      </div>
-                      {calendar.error ? (
-                        <div className="mt-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
-                          Calendar load issue: {calendar.error}
-                        </div>
-                      ) : null}
-                      {calendar.description ? (
-                        <div className="mt-1 text-sm text-slate-600">{calendar.description}</div>
-                      ) : null}
-                      {calendar.events.length === 0 ? (
-                        <div className="mt-3 text-sm text-slate-600">No events found in the current time window.</div>
-                      ) : (
-                        <div className="mt-3 space-y-3">
-                          {calendar.events.map((event) => (
-                            <div key={event.id} className="rounded-lg bg-slate-50 p-3">
-                              <div className="font-medium text-slate-900">{event.summary}</div>
-                              <div className="mt-1 text-sm text-slate-600">
-                                {new Date(event.start).toLocaleString()} to {new Date(event.end).toLocaleString()}
-                              </div>
-                              {event.location ? (
-                                <div className="mt-1 text-sm text-slate-600">Location: {event.location}</div>
-                              ) : null}
-                              {event.description ? (
-                                <div className="mt-1 whitespace-pre-wrap text-sm text-slate-600">
-                                  {event.description}
-                                </div>
-                              ) : null}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-      ) : (
+      {!isAdminSession ? (
         <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
           <h2 className="text-lg font-semibold text-slate-900">My Information</h2>
 
@@ -1564,7 +1190,7 @@ export function ClientLoginClient() {
           )}
 
         </section>
-      )}
+      ) : null}
     </div>
   );
 }
