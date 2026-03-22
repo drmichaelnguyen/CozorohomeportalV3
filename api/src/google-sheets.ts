@@ -1,4 +1,4 @@
-﻿import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 
@@ -588,12 +588,12 @@ function formatVietnameseDuration(minutes: number) {
   const remainder = minutes % 60;
 
   if (hours > 0 && remainder > 0) {
-    return `${hours} giá» ${remainder} phÃºt`;
+    return `${hours} giá» ${remainder} phút`;
   }
   if (hours > 0) {
     return `${hours} giá»`;
   }
-  return `${remainder} phÃºt`;
+  return `${remainder} phút`;
 }
 
 function getLaundryCalendarMachineTitle(machine: LaundryMachine) {
@@ -747,7 +747,7 @@ function getLaundryMemberBonus(memberValue: string) {
 }
 
 function getLaundryBaseAllowanceSummary(client: ClientRow, branchId: "D2" | "D7") {
-  const gender = (client["Giá»›i tÃ­nh"] ?? "").trim();
+  const gender = (client["Giới tính"] ?? "").trim();
   const floor = branchId === "D7" ? inferFloorFromBed(client["sá»‘ giÆ°á»ng"] ?? "") : null;
   const recordedMember = (client["Cozoro Member"] ?? "").trim() || "Standard";
   const bonus = getLaundryMemberBonus(recordedMember);
@@ -1828,7 +1828,7 @@ export function getConfiguredCleaningCalendars() {
   if (kitchenD2) {
     definitions.push({
       calendarId: kitchenD2,
-      title: "Vá»‡ sinh báº¿p D2",
+      title: "Vệ sinh bếp D2",
       type: "KITCHEN_D2",
       branchId: "D2",
       floor: null
@@ -1839,7 +1839,7 @@ export function getConfiguredCleaningCalendars() {
   if (kitchenD7) {
     definitions.push({
       calendarId: kitchenD7,
-      title: "Vá»‡ sinh báº¿p D7",
+      title: "Vệ sinh bếp D7",
       type: "KITCHEN_D7",
       branchId: "D7",
       floor: null
@@ -2083,7 +2083,7 @@ export async function syncClientsFromSheet() {
     for (const [index, row] of rows.entries()) {
       const calculatedMember = calculateLiveCozoroMember({
         branchId: getClientBranchValue(row),
-        totalAccumulatedCoins: row["Tá»•ng Coins tÃ­ch luá»¹"],
+        totalAccumulatedCoins: row["Tổng Coins tích luỹ"],
         recordedMember: row[COINS_MEMBER_COLUMN]
       });
       const currentMember = (row[COINS_MEMBER_COLUMN] ?? "").trim() || "Standard";
@@ -2198,7 +2198,7 @@ async function readCleaningCalendarCache() {
 
 function sanitizeManagerClientRow(row: ClientRow): ManagerSafeClient {
   const hiddenFields = new Set([
-    "Sá»‘ Ä‘iá»‡n thoáº¡i liÃªn há»‡",
+    "Số điện thoại liên hệ",
     "Äá»‹a chá»‰ thÆ°á»ng trÃº",
     "Sá»‘ Ä‘iá»‡n thoáº¡i ngÆ°á»i thÃ¢n (liÃªn há»‡ khi cáº§n)",
     "Äá»‹a chá»‰ email - Hidden"
@@ -2214,10 +2214,10 @@ function sanitizeManagerClientRow(row: ClientRow): ManagerSafeClient {
     name: row[CLIENT_NAME_COLUMN] ?? "",
       branch: getClientBranchValue(row),
     bed: row[CLIENT_BED_COLUMN] ?? "",
-    gender: row["Giá»›i tÃ­nh"] ?? "",
+    gender: row["Giới tính"] ?? "",
     activeStay: row[ACTIVE_STAYING_COLUMN] ?? "",
     currentCoins: row[CLIENT_CURRENT_COINS_COLUMN] ?? "",
-    totalCoins: row["Tá»•ng Coins tÃ­ch luá»¹"] ?? "",
+    totalCoins: row["Tổng Coins tích luỹ"] ?? "",
     recordedMember: row["Cozoro Member"] ?? "",
     row: sanitizedRow
   };
@@ -2381,7 +2381,7 @@ export async function getFinesForEmail(email: string) {
   const rows = cache.rows ?? [];
   const client = await getActiveClientByEmail(normalizedEmail);
   const currentCoins =
-    Number.parseInt(String(client?.["Cozoro coins hiá»‡n cÃ³"] ?? "0").replace(/[^0-9-]/g, ""), 10) || 0;
+    Number.parseInt(String(client?.["Cozoro coins hiện có"] ?? "0").replace(/[^0-9-]/g, ""), 10) || 0;
   const recordedMember = (client?.["Cozoro Member"] ?? "").trim() || "Standard";
   const multiplier = getFineCoinMultiplier(recordedMember);
 
@@ -2423,7 +2423,7 @@ export async function getManagerFines() {
       const recordedMember = (row[COINS_MEMBER_COLUMN] ?? client?.["Cozoro Member"] ?? "").trim() || "Standard";
       const currentCoins =
         Number.parseInt(
-          String(row[COINS_CURRENT_BALANCE_COLUMN] ?? client?.["Cozoro coins hiá»‡n cÃ³"] ?? "0").replace(/[^0-9-]/g, ""),
+          String(row[COINS_CURRENT_BALANCE_COLUMN] ?? client?.["Cozoro coins hiện có"] ?? "0").replace(/[^0-9-]/g, ""),
           10
         ) || 0;
       const multiplier = getFineCoinMultiplier(recordedMember);
@@ -3024,9 +3024,9 @@ function formatSheetDate(value: Date) {
 
 function getLaundryCoinEventLabel(machine: LaundryMachine) {
   if (machine.type === "DRYER") {
-    return `Trá»« Coins sáº¥y`;
+    return `Trừ Coins sấy`;
   }
-  return `Trá»« Coins giáº·t`;
+  return `Trừ Coins giặt`;
 }
 
 function getLaundryCoinTransactionCode(machine: LaundryMachine, start: Date, email: string) {

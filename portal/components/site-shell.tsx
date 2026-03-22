@@ -21,9 +21,9 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
     ? []
     : [
         { href: "/" as Route, label: t("home"), match: ["/"] },
-        { href: "/service/laundry" as Route, label: "Service", match: ["/service", "/bookings", "/controller"] },
-        { href: "/billings/laundry-fee" as Route, label: "Billings", match: ["/billings", "/payments", "/fines"] },
-        { href: "/schedule" as Route, label: "Schedule", match: ["/schedule", "/cleaning-schedule"] },
+        { href: "/service/laundry" as Route, label: t("service", "Service"), match: ["/service", "/bookings", "/controller"] },
+        { href: "/billings/laundry-fee" as Route, label: t("billingCenter", "Billings"), match: ["/billings", "/payments", "/fines"] },
+        { href: "/schedule" as Route, label: t("schedule", "Schedule"), match: ["/schedule", "/cleaning-schedule"] },
         { href: "/coins" as Route, label: t("coins"), match: ["/coins"] }
       ];
 
@@ -60,7 +60,7 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
                         : "border border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50"
                     }`}
                   >
-                    User view
+                    {t("userView", "User view")}
                   </Link>
                   <Link
                     href="/manager"
@@ -70,13 +70,13 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
                         : "border border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50"
                     }`}
                   >
-                    Manager view
+                    {t("managerView", "Manager view")}
                   </Link>
                 </div>
               ) : null}
               {isLoggedIn ? (
                 <div className="max-w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 break-all sm:rounded-full sm:py-1">
-                  Signed in as {sessionEmail}
+                  {t("signedInAs", "Signed in as")} {sessionEmail}
                   {sessionRole ? ` (${sessionRole})` : ""}
                 </div>
               ) : null}
@@ -86,7 +86,7 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
                   onClick={logout}
                   className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm text-slate-700 hover:border-slate-300"
                 >
-                  Log out
+                  {t("logout", "Log out")}
                 </button>
               ) : null}
               <NotificationBell />
@@ -146,16 +146,16 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
           children
         ) : (
           <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
-            <h1 className="text-2xl font-semibold text-slate-900">Login Required</h1>
+            <h1 className="text-2xl font-semibold text-slate-900">{t("loginRequired", "Login Required")}</h1>
             <p className="mt-2 text-sm text-slate-600">
-              Please sign in with an active user email or a pre-approved Cozoro team email before using the portal.
+              {t("loginRequiredSub", "Please sign in with an active user email or a pre-approved Cozoro team email before using the portal.")}
             </p>
             <div className="mt-6">
               <Link
                 href="/client-login"
                 className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-5 py-3 text-sm font-medium text-sky-900"
               >
-                Go to login
+                {t("goToLogin", "Go to login")}
               </Link>
             </div>
           </section>

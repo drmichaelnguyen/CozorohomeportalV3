@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
+import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 const REMEMBERED_LOGIN_EMAIL_KEY = "cozorohome-portal-remembered-email";
 const REMEMBERED_LOGIN_PASSWORD_KEY = "cozorohome-portal-remembered-password";
@@ -255,7 +256,10 @@ async function fetchWithTimeout(input: string, init?: RequestInit, timeoutMs = 1
 }
 
 export function ClientLoginClient() {
+  console.log("[ClientLoginClient] Render executed. Typeof window:", typeof window);
+
   const { sessionEmail, sessionRole, isLoggedIn, login, logout } = usePortalSession();
+  const { t } = usePortalLanguage();
   const googleButtonRef = useRef<HTMLDivElement | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -530,13 +534,14 @@ export function ClientLoginClient() {
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    console.log("[ClientLoginClient] handleSubmit fired!");
     event.preventDefault();
     setLoading(true);
     resetLoginView();
 
     try {
       if (!password.trim()) {
-        setMessage("Enter your password. For clients, the default first password is your phone number.");
+        setMessage(t("enterPasswordClient", "Enter your password. For clients, the default first password is your phone number."));
         return;
       }
 
@@ -553,7 +558,7 @@ export function ClientLoginClient() {
       const loginData = (await loginResponse.json()) as (LoginResolution & { createdPassword?: boolean; error?: string });
 
       if (!loginResponse.ok || !loginData.allowed || !loginData.role) {
-        setMessage(loginData.error ?? "Only active users or pre-approved Cozoro team emails can log in.");
+        setMessage(loginData.error ?? t("onlyActiveUsersLogin", "Only active users or pre-approved Cozoro team emails can log in."));
         return;
       }
 
@@ -571,14 +576,14 @@ export function ClientLoginClient() {
       await loadPortalData(
         loginData,
         loginData.mustChangePassword
-          ? "Please change your password before continuing."
+          ? t("changePasswordToContinue", "Please change your password before continuing.")
           : loginData.createdPassword
             ? loginData.role === "user"
-              ? "Default password accepted. Client information loaded."
-              : `Password created. ${loginData.role[0].toUpperCase() + loginData.role.slice(1)} view loaded.`
+              ? t("defaultPasswordAccepted", "Default password accepted. Client information loaded.")
+              : `${t("passwordCreatedSuffix", "Password created.")} ${loginData.role[0].toUpperCase() + loginData.role.slice(1)} ${t("viewLoadedSuffix", "view loaded.")}`
             : loginData.role === "user"
-              ? "Client information loaded."
-              : `${loginData.role[0].toUpperCase() + loginData.role.slice(1)} view loaded.`
+              ? t("clientInfoLoaded", "Client information loaded.")
+              : `${loginData.role[0].toUpperCase() + loginData.role.slice(1)} ${t("viewLoadedSuffix", "view loaded.")}`
       );
       setPasswordChangeRequired(Boolean(loginData.mustChangePassword));
       if (loginData.mustChangePassword) {
@@ -588,7 +593,7 @@ export function ClientLoginClient() {
       setMessage(
         error instanceof Error
           ? error.message
-          : "API request failed. Make sure the API is running and Google Sheets has been connected."
+          : t("apiRequestFailed", "API request failed. Make sure the API is running and Google Sheets has been connected.")
       );
     } finally {
       setLoading(false);
@@ -612,7 +617,7 @@ export function ClientLoginClient() {
       const data = (await response.json()) as LoginResolution;
 
       if (!response.ok || !data.allowed || !data.role) {
-        setMessage(data.error ?? "Only active users or pre-approved Cozoro team emails can log in.");
+        setMessage(data.error ?? t("onlyActiveUsersLogin", "Only active users or pre-approved Cozoro team emails can log in."));
         return;
       }
 
@@ -620,14 +625,14 @@ export function ClientLoginClient() {
       await loadPortalData(
         data,
         data.mustChangePassword
-          ? "Please change your password before continuing."
+          ? t("changePasswordToContinue", "Please change your password before continuing.")
           : data.role === "user"
-            ? "Google sign-in successful. Client information loaded."
-            : "Google sign-in successful."
+            ? t("googleSignInSuccessClient", "Google sign-in successful. Client information loaded.")
+            : t("googleSignInSuccess", "Google sign-in successful.")
       );
       setPasswordChangeRequired(Boolean(data.mustChangePassword));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Google sign-in failed.");
+      setMessage(error instanceof Error ? error.message : t("googleSignInFailed", "Google sign-in failed."));
     } finally {
       setLoading(false);
     }
@@ -817,12 +822,12 @@ export function ClientLoginClient() {
     event.preventDefault();
 
     if (!sessionEmail) {
-      setMessage("Please log in before changing your password.");
+      setMessage(t("pleaseLoginBeforeChange", "Please log in before changing your password."));
       return;
     }
 
     if (!currentPasswordInput.trim() || !newPasswordInput.trim()) {
-      setMessage("Enter both your current password and a new password.");
+      setMessage(t("enterBothPasswords", "Enter both your current password and a new password."));
       return;
     }
 
@@ -844,7 +849,7 @@ export function ClientLoginClient() {
       const data = (await response.json()) as { ok?: boolean; error?: string };
 
       if (!response.ok) {
-        setMessage(data.error ?? "Unable to change password.");
+        setMessage(data.error ?? t("unableToChangePassword", "Unable to change password."));
         return;
       }
 
@@ -855,9 +860,9 @@ export function ClientLoginClient() {
       setCurrentPasswordInput("");
       setNewPasswordInput("");
       setPasswordChangeRequired(false);
-      setMessage("Password changed successfully.");
+      setMessage(t("passwordChangedSuccess", "Password changed successfully."));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to change password.");
+      setMessage(error instanceof Error ? error.message : t("unableToChangePassword", "Unable to change password."));
     } finally {
       setLoading(false);
     }
@@ -906,26 +911,26 @@ export function ClientLoginClient() {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">
-              {isLoggedIn ? "Portal Session" : "Client Login"}
+              {isLoggedIn ? t("portalSession", "Portal Session") : t("clientLoginHeader", "Client Login")}
             </h1>
             <p className="mt-2 text-sm text-slate-600">
               {isLoggedIn
-                ? `Signed in as ${sessionEmail}${sessionRole ? ` (${sessionRole})` : ""}.`
-                : "Active users can log in from the client list. Cozoro team members can also log in if an owner has pre-approved their email."}
+                ? `${t("signedInAs", "Signed in as")} ${sessionEmail}${sessionRole ? ` (${sessionRole})` : ""}.`
+                : t("activeUsersCanLogin", "Active users can log in from the client list. Cozoro team members can also log in if an owner has pre-approved their email.")}
             </p>
             {!isLoggedIn ? (
               <p className="mt-2 text-sm text-slate-600">
-                Use Google to sign in with the account tied to your active client or approved app management email.
+                {t("useGoogleToSignIn", "Use Google to sign in with the account tied to your active client or approved app management email.")}
               </p>
             ) : (
-              <p className="mt-2 text-sm text-slate-600">Password tools are in the Account Security section below.</p>
+              <p className="mt-2 text-sm text-slate-600">{t("passwordToolsBelow", "Password tools are in the Account Security section below.")}</p>
             )}
           </div>
 
           <div className="flex flex-wrap gap-2">
             {isLoggedIn ? (
               <a href="#account-security" className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700">
-                Change password
+                {t("changePassword", "Change password")}
               </a>
             ) : null}
             {isLoggedIn ? (
@@ -934,7 +939,7 @@ export function ClientLoginClient() {
                 onClick={logout}
                 className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
               >
-                Use another email
+                {t("useAnotherEmail", "Use another email")}
               </button>
             ) : null}
           </div>
@@ -943,37 +948,37 @@ export function ClientLoginClient() {
         {!isLoggedIn ? (
           <>
             <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <div className="text-sm font-medium text-slate-900">Continue with Google</div>
+              <div className="text-sm font-medium text-slate-900">{t("continueWithGoogle", "Continue with Google")}</div>
               <p className="mt-1 text-sm text-slate-600">
-                Sign in with the Google account tied to your active client or approved Cozoro team email.
+                {t("signInGoogleTied", "Sign in with the Google account tied to your active client or approved Cozoro team email.")}
               </p>
               {googleClientId ? (
                 <div ref={googleButtonRef} className="mt-4 min-h-11" />
               ) : (
-                <p className="mt-4 text-sm text-slate-500">Google sign-in is not configured yet on this environment.</p>
+                <p className="mt-4 text-sm text-slate-500">{t("googleNotConfigured", "Google sign-in is not configured yet on this environment.")}</p>
               )}
             </div>
 
             <form onSubmit={handleSubmit} className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
-              <div className="text-sm font-medium text-slate-900">Sign in with email</div>
+              <div className="text-sm font-medium text-slate-900">{t("signInWithEmail", "Sign in with email")}</div>
               <p className="mt-1 text-sm text-slate-600">
-                If you signed out on this computer, the email and password fields will show again here.
+                {t("ifYouSignedOut", "If you signed out on this computer, the email and password fields will show again here.")}
               </p>
 
               <label className="mt-4 block text-sm font-medium text-slate-700">
-                Email
+                {t("emailLabel", "Email")}
                 <input
                   type="email"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
                   autoComplete="username"
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-                  placeholder="name@example.com"
+                  placeholder="name[at]example.com"
                 />
               </label>
 
               <label className="mt-4 block text-sm font-medium text-slate-700">
-                Password
+                {t("password", "Password")}
                 <div className="relative mt-1">
                   <input
                     type={showPassword ? "text" : "password"}
@@ -981,12 +986,12 @@ export function ClientLoginClient() {
                     onChange={(event) => setPassword(event.target.value)}
                     autoComplete="current-password"
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-12 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-                    placeholder="Enter your password"
+                    placeholder={t("passwordPlaceholder", "Enter your password")}
                   />
                   <PasswordVisibilityButton
                     visible={showPassword}
                     onToggle={() => setShowPassword((current) => !current)}
-                    label={showPassword ? "Hide password" : "Show password"}
+                    label={showPassword ? t("hidePassword", "Hide password") : t("showPassword", "Show password")}
                   />
                 </div>
               </label>
@@ -998,15 +1003,20 @@ export function ClientLoginClient() {
                   onChange={(event) => setRememberLogin(event.target.checked)}
                   className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
                 />
-                Remember this login on this computer
+                {t("rememberLogin", "Remember this login on this computer")}
               </label>
 
               <button
-                type="submit"
+                type="button"
+                onClick={(e) => { 
+                  console.log("[ClientLoginClient] Login Button Clicked!");
+                  e.preventDefault(); 
+                  void handleSubmit(e as any); 
+                }}
                 disabled={loading}
                 className="mt-4 inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
               >
-                {loading ? "Signing in..." : "Log in with email"}
+                {loading ? t("signingIn", "Signing in...") : t("logInWithEmailBtn", "Log in with email")}
               </button>
             </form>
           </>
@@ -1022,47 +1032,47 @@ export function ClientLoginClient() {
         >
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold text-slate-900">Account Security</h2>
+              <h2 className="text-lg font-semibold text-slate-900">{t("accountSecurity", "Account Security")}</h2>
               <p className="mt-1 text-sm text-slate-600">
                 {passwordChangeRequired
-                  ? "First login detected. Please change your password before continuing to use the portal."
-                  : "You can change your password here at any time."}
+                  ? t("firstLoginDetected", "First login detected. Please change your password before continuing to use the portal.")
+                  : t("changePasswordAnytime", "You can change your password here at any time.")}
               </p>
             </div>
           </div>
           <form onSubmit={handleChangePassword} className="mt-4">
             <div className="grid gap-4 md:grid-cols-2">
               <label className="block text-sm font-medium text-slate-700">
-                Current password
+                {t("currentPassword", "Current password")}
                 <div className="mt-1 flex overflow-hidden rounded-lg border border-slate-300 bg-white">
                   <input
                     type={showCurrentPassword ? "text" : "password"}
                     value={currentPasswordInput}
                     onChange={(event) => setCurrentPasswordInput(event.target.value)}
                     className="w-full px-3 py-2 outline-none"
-                    placeholder="Enter current password"
+                    placeholder={t("enterCurrentPassword", "Enter current password")}
                   />
                   <PasswordVisibilityButton
                     visible={showCurrentPassword}
                     onToggle={() => setShowCurrentPassword((current) => !current)}
-                    label={showCurrentPassword ? "Hide current password" : "Show current password"}
+                    label={showCurrentPassword ? t("hidePassword", "Hide current password") : t("showPassword", "Show current password")}
                   />
                 </div>
               </label>
               <label className="block text-sm font-medium text-slate-700">
-                New password
+                {t("newPassword", "New password")}
                 <div className="mt-1 flex overflow-hidden rounded-lg border border-slate-300 bg-white">
                   <input
                     type={showNewPassword ? "text" : "password"}
                     value={newPasswordInput}
                     onChange={(event) => setNewPasswordInput(event.target.value)}
                     className="w-full px-3 py-2 outline-none"
-                    placeholder="Choose a new password"
+                    placeholder={t("chooseNewPassword", "Choose a new password")}
                   />
                   <PasswordVisibilityButton
                     visible={showNewPassword}
                     onToggle={() => setShowNewPassword((current) => !current)}
-                    label={showNewPassword ? "Hide new password" : "Show new password"}
+                    label={showNewPassword ? t("hidePassword", "Hide new password") : t("showPassword", "Show new password")}
                   />
                 </div>
               </label>
@@ -1073,7 +1083,7 @@ export function ClientLoginClient() {
                 disabled={loading}
                 className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
               >
-                Change password
+                {t("changePassword", "Change password")}
               </button>
             </div>
           </form>
@@ -1110,7 +1120,7 @@ export function ClientLoginClient() {
                 value={managedPasswordEmail}
                 onChange={(event) => setManagedPasswordEmail(event.target.value)}
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-                placeholder="user@example.com"
+                placeholder="user[at]example.com"
               />
             </label>
 
@@ -1147,36 +1157,36 @@ export function ClientLoginClient() {
 
       {isAdminSession ? (
         <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-          <h2 className="text-lg font-semibold text-slate-900">Manager Workspace</h2>
+          <h2 className="text-lg font-semibold text-slate-900">{t("managerWorkspace", "Manager Workspace")}</h2>
           <p className="mt-1 text-sm text-slate-600">
             Open the full manager view here. Active users, cleaning tools, laundry calendars, and the Owners & employees area now live on the dedicated manager page so this login screen stays short.
           </p>
           <div className="mt-4 flex flex-wrap gap-3">
             <Link href="/manager" className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700">
-              Open manager overview
+              {t("openManagerOverview", "Open manager overview")}
             </Link>
             <Link
               href="/manager?view=owners_employees"
               className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
             >
-              Open Owners & employees
+              {t("openOwnersEmployees", "Open Owners & employees")}
             </Link>
             <Link
               href="/manager?view=admin_cleaning"
               className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
             >
-              Open Cleaning schedule assigning
+              {t("openCleaningScheduleAssign", "Open Cleaning schedule assigning")}
             </Link>
           </div>
         </section>
       ) : null}
       {!isAdminSession ? (
         <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-          <h2 className="text-lg font-semibold text-slate-900">My Information</h2>
+          <h2 className="text-lg font-semibold text-slate-900">{t("myInformation", "My Information")}</h2>
 
           {!client ? (
             <p className="mt-3 text-sm text-slate-600">
-              Submit your email to load the active client row where <code>Hi\u1ec7n c\u00f2n \u1edf = 1</code>.
+              {t("submitEmailToLoad", "Submit your email to load the active client row.")}
             </p>
           ) : (
             <div className="mt-4 space-y-3">

@@ -118,6 +118,7 @@ const SENSITIVE_CLIENT_FIELD_PATTERNS = [
   "socccd",
   "socmnd"
 ];
+// AntiGravity: Support dynamic origins via environment variable
 const allowedOriginPatterns = [
   /^http:\/\/localhost:\d+$/i,
   /^http:\/\/127\.0\.0\.1:\d+$/i,
@@ -130,6 +131,11 @@ const allowedOriginPatterns = [
   /^https:\/\/[a-z0-9-]+\.ngrok\.app$/i,
   /^https:\/\/[a-z0-9-]+\.loca\.lt$/i
 ];
+
+const portalOrigins = process.env.PORTAL_ORIGINS?.split(",").map(o => o.trim()).filter(Boolean) || [];
+for (const origin of portalOrigins) {
+  allowedOriginPatterns.push(new RegExp(`^${origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'));
+}
 
 function isAllowedOrigin(origin: string) {
   return allowedOriginPatterns.some((pattern) => pattern.test(origin));

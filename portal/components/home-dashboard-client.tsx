@@ -5,6 +5,7 @@ import type { Route } from "next";
 import { useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalSession } from "./portal-session";
+import { usePortalLanguage } from "./portal-language";
 
 type ClientRecord = Record<string, string>;
 
@@ -45,13 +46,13 @@ type CoinEntry = {
 const COINS_COLUMN = "COINS";
 const COIN_EVENT_COLUMN = "S\u1ef1 ki\u1ec7n";
 
-const quickLinks: Array<{ href: Route; label: string; description: string }> = [
-  { href: "/service/laundry", label: "Laundry", description: "Book laundry and check machine availability" },
-  { href: "/service/controller", label: "Controller", description: "Control your room devices" },
-  { href: "/schedule", label: "Schedule", description: "See cleaning duties and next laundry" },
-  { href: "/billings/laundry-fee", label: "Billings", description: "Review laundry fees and fines" },
-  { href: "/coins", label: "Coins", description: "Check your current coins and member status" },
-  { href: "/billings/fine", label: "Fines", description: "Review unpaid fine tickets" }
+const quickLinks: Array<{ href: Route; label: string; description: string; labelKey: string; descriptionKey: string }> = [
+  { href: "/service/laundry", label: "Laundry", description: "Book laundry and check machine availability", labelKey: "laundryQuickLink", descriptionKey: "laundryDesc" },
+  { href: "/service/controller", label: "Controller", description: "Control your room devices", labelKey: "controller", descriptionKey: "controllerDesc" },
+  { href: "/schedule", label: "Schedule", description: "See cleaning duties and next laundry", labelKey: "schedule", descriptionKey: "scheduleDesc" },
+  { href: "/billings/laundry-fee", label: "Billings", description: "Review laundry fees and fines", labelKey: "billingCenter", descriptionKey: "billingsDesc" },
+  { href: "/coins", label: "Coins", description: "Check your current coins and member status", labelKey: "coins", descriptionKey: "coinsDesc" },
+  { href: "/billings/fine", label: "Fines", description: "Review unpaid fine tickets", labelKey: "fines", descriptionKey: "finesDesc" }
 ];
 
 function parseLooseInteger(value: string | undefined) {
@@ -159,6 +160,7 @@ function formatCoins(value: number) {
 
 export function HomeDashboardClient() {
   const { sessionEmail } = usePortalSession();
+  const { t } = usePortalLanguage();
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [client, setClient] = useState<ClientRecord | null>(null);
@@ -170,7 +172,7 @@ export function HomeDashboardClient() {
 
   async function loadDashboard() {
     if (!activeEmail) {
-      setMessage("Sign in first to view your dashboard.");
+      setMessage(t("signInToView", "Sign in first to view your dashboard."));
       return;
     }
 
@@ -196,7 +198,7 @@ export function HomeDashboardClient() {
         setMessage(
           typeof clientData === "object" && clientData !== null && "error" in clientData && typeof clientData.error === "string"
             ? clientData.error
-            : "Unable to load dashboard."
+            : t("unableToLoadDashboard", "Unable to load dashboard.")
         );
         return;
       }
@@ -214,10 +216,10 @@ export function HomeDashboardClient() {
       setCoinEntries(coinsResponse.ok ? coinsData.entries ?? [] : []);
 
       if (!laundryResponse.ok || !cleaningResponse.ok || !finesResponse.ok || !coinsResponse.ok) {
-        setMessage("Dashboard loaded with partial data.");
+        setMessage(t("dashboardPartialData", "Dashboard loaded with partial data."));
       }
     } catch {
-      setMessage("Unable to load dashboard right now.");
+      setMessage(t("unableToLoadRightNow", "Unable to load dashboard right now."));
     } finally {
       setLoading(false);
     }
@@ -343,12 +345,12 @@ export function HomeDashboardClient() {
       <section className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-700">Account Overview</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-700">{t("accountOverview", "Account Overview")}</p>
             <h1 className="text-2xl font-semibold text-slate-900 sm:text-3xl">
-              {client?.["Tên"] || "Your dashboard"}
+              {client?.["Tên"] || t("yourDashboard", "Your dashboard")}
             </h1>
             <p className="max-w-2xl text-sm text-slate-600">
-              A quick view of your account, bookings, cleaning schedule, and unpaid fine tickets.
+              {t("dashboardSubtext", "A quick view of your account, bookings, cleaning schedule, and unpaid fine tickets.")}
             </p>
             <p className="text-sm text-slate-500 break-all">{sessionEmail}</p>
           </div>
@@ -359,7 +361,7 @@ export function HomeDashboardClient() {
             disabled={loading}
             className="inline-flex w-full items-center justify-center rounded-full border border-sky-200 bg-sky-50 px-4 py-2.5 text-sm font-medium text-sky-900 disabled:opacity-60 sm:w-auto"
           >
-            {loading ? "Refreshing..." : "Refresh dashboard"}
+            {loading ? t("refreshing", "Refreshing...") : t("refreshDashboard", "Refresh dashboard")}
           </button>
         </div>
 
@@ -374,8 +376,8 @@ export function HomeDashboardClient() {
               href={link.href}
               className="w-48 shrink-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
             >
-              <div className="text-sm font-semibold text-slate-900">{link.label}</div>
-              <div className="mt-2 text-xs leading-5 text-slate-600">{link.description}</div>
+              <div className="text-sm font-semibold text-slate-900">{t(link.labelKey, link.label)}</div>
+              <div className="mt-2 text-xs leading-5 text-slate-600">{t(link.descriptionKey, link.description)}</div>
             </Link>
           ))}
         </div>
@@ -383,44 +385,44 @@ export function HomeDashboardClient() {
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
-          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Next Payment</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">{t("nextPayment", "Next Payment")}</div>
           <div className="mt-3 text-2xl font-semibold text-slate-900">
             {nextPaymentDate ? nextPaymentDate.toLocaleDateString() : "-"}
           </div>
         </div>
 
         <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5 shadow-sm">
-          <div className="text-xs font-semibold uppercase tracking-wide text-sky-700">Current Coins</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-sky-700">{t("currentCoins", "Current Coins")}</div>
           <div className="mt-3 text-2xl font-semibold text-slate-900">
             {client?.["Cozoro coins hiện có"] || "0"}
           </div>
         </div>
 
         <div className="rounded-2xl border border-cyan-200 bg-cyan-50 p-5 shadow-sm">
-          <div className="text-xs font-semibold uppercase tracking-wide text-cyan-700">Coins Earned Last Month</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-cyan-700">{t("coinsEarnedLastMonth", "Coins Earned Last Month")}</div>
           <div className="mt-3 text-2xl font-semibold text-slate-900">{formatCoins(coinSummary.earnedLastMonth)}</div>
         </div>
 
         <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-5 shadow-sm">
-          <div className="text-xs font-semibold uppercase tracking-wide text-indigo-700">Coins Earned This Month</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-indigo-700">{t("coinsEarnedThisMonth", "Coins Earned This Month")}</div>
           <div className="mt-3 text-2xl font-semibold text-slate-900">{formatCoins(coinSummary.earnedThisMonth)}</div>
         </div>
 
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
-          <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">Next Cleaning</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">{t("nextCleaning", "Next Cleaning")}</div>
           <div className="mt-3 text-lg font-semibold text-slate-900">
-            {nextCleaning ? new Date(nextCleaning.scheduledDate).toLocaleDateString() : "No upcoming task"}
+            {nextCleaning ? new Date(nextCleaning.scheduledDate).toLocaleDateString() : t("noUpcomingTask", "No upcoming task")}
           </div>
           <div className="mt-2 text-sm text-slate-600">
-            {nextCleaning ? `${prettyTaskType(nextCleaning.type)} · ${nextCleaning.status}` : "You are clear for now."}
+            {nextCleaning ? `${prettyTaskType(nextCleaning.type)} · ${nextCleaning.status}` : t("clearForNow", "You are clear for now.")}
           </div>
         </div>
 
         <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
-          <div className="text-xs font-semibold uppercase tracking-wide text-rose-700">Unpaid Fine Tickets</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-rose-700">{t("unpaidFineTickets", "Unpaid Fine Tickets")}</div>
           <div className="mt-3 text-2xl font-semibold text-slate-900">{unpaidFineSummary.count}</div>
           <div className="mt-2 text-sm text-slate-600">
-            Total unpaid amount: {unpaidFineSummary.amount.toLocaleString()} VND
+            {t("totalUnpaidAmount", "Total unpaid amount")}: {unpaidFineSummary.amount.toLocaleString()} VND
           </div>
         </div>
       </section>
@@ -428,21 +430,21 @@ export function HomeDashboardClient() {
       <section className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
         <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-slate-900">Brief User Info</h2>
+            <h2 className="text-lg font-semibold text-slate-900">{t("briefUserInfo", "Brief User Info")}</h2>
             <Link href="/account-overview" className="text-sm font-medium text-sky-800">
-              Open full account
+              {t("openFullAccount", "Open full account")}
             </Link>
           </div>
 
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
             {[
-              ["Name", client?.["Tên"] || "-"],
-              ["Branch", client?.["Chi nhánh Cozoro dorm"] || "-"],
-              ["Bed Number", bedLabel],
-              ["Floor", floorLabel],
-              ["Room", roomLabel || "-"],
-              ["Phone", client?.["Số điện thoại liên hệ"] || "-"],
-              ["Email", client?.["Địa chỉ email"] || sessionEmail || "-"]
+              [t("name", "Name"), client?.["Tên"] || "-"],
+              [t("branch", "Branch"), client?.["Chi nhánh Cozoro dorm"] || "-"],
+              [t("bedNumber", "Bed Number"), bedLabel],
+              [t("floorLabel", "Floor"), floorLabel],
+              [t("roomLabel", "Room"), roomLabel || "-"],
+              [t("phone", "Phone"), client?.["Số điện thoại liên hệ"] || "-"],
+              [t("emailLabel", "Email"), client?.["Địa chỉ email"] || sessionEmail || "-"]
             ].map(([label, value]) => (
               <div key={label} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
@@ -455,44 +457,44 @@ export function HomeDashboardClient() {
         <div className="space-y-6">
           <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold text-slate-900">Next Laundry</h2>
+              <h2 className="text-lg font-semibold text-slate-900">{t("nextLaundry", "Next Laundry")}</h2>
               <Link href="/service/laundry" className="text-sm font-medium text-sky-800">
-                Open laundry
+                {t("openLaundry", "Open laundry")}
               </Link>
             </div>
 
             {!nextLaundry ? (
-              <p className="mt-4 text-sm text-slate-600">No upcoming laundry booking is scheduled.</p>
+              <p className="mt-4 text-sm text-slate-600">{t("noUpcomingLaundry", "No upcoming laundry booking is scheduled.")}</p>
             ) : (
               <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-base font-semibold text-slate-900">{nextLaundry.summary || nextLaundry.calendarSummary}</div>
                 <div className="mt-2 text-sm text-slate-600">
                   {new Date(nextLaundry.start).toLocaleString()} to {new Date(nextLaundry.end).toLocaleString()}
                 </div>
-                <div className="mt-2 text-sm text-slate-500">Status: {nextLaundry.status}</div>
+                <div className="mt-2 text-sm text-slate-500">{t("status", "Status")}: {nextLaundry.status}</div>
               </div>
             )}
           </div>
 
           <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold text-slate-900">Account Snapshot</h2>
+              <h2 className="text-lg font-semibold text-slate-900">{t("accountSnapshot", "Account Snapshot")}</h2>
               <Link href="/billings/fine" className="text-sm font-medium text-sky-800">
-                Review fines
+                {t("reviewFines", "Review fines")}
               </Link>
             </div>
 
             <div className="mt-4 space-y-3">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Cozoro Member</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("cozoroMember", "Cozoro Member")}</div>
                 <div className="mt-2 text-sm font-medium text-slate-900">{client?.["Cozoro Member"] || "-"}</div>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Contract Code</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("contractCode", "Contract Code")}</div>
                 <div className="mt-2 text-sm font-medium text-slate-900">{client?.["MÃ HD"] || "-"}</div>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Paid Through</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("paidThrough", "Paid Through")}</div>
                 <div className="mt-2 text-sm font-medium text-slate-900">{client?.["Ngày hết hạn gói đã thanh toán"] || "-"}</div>
               </div>
             </div>
@@ -503,14 +505,14 @@ export function HomeDashboardClient() {
       <section className="grid gap-6 xl:grid-cols-2">
         <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-slate-900">Coins Used by Month</h2>
+            <h2 className="text-lg font-semibold text-slate-900">{t("coinsUsedByMonth", "Coins Used by Month")}</h2>
             <Link href="/coins" className="text-sm font-medium text-sky-800">
-              Open coins
+              {t("openCoins", "Open coins")}
             </Link>
           </div>
 
           {coinSummary.usedByMonth.length === 0 ? (
-            <p className="mt-4 text-sm text-slate-600">No monthly coin usage is available yet.</p>
+            <p className="mt-4 text-sm text-slate-600">{t("noMonthlyCoinUsage", "No monthly coin usage is available yet.")}</p>
           ) : (
             <div className="mt-4 space-y-3">
               {coinSummary.usedByMonth.map((entry) => (
@@ -533,14 +535,14 @@ export function HomeDashboardClient() {
 
         <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-slate-900">Coins Used by Category</h2>
+            <h2 className="text-lg font-semibold text-slate-900">{t("coinsUsedByCategory", "Coins Used by Category")}</h2>
             <Link href="/coins" className="text-sm font-medium text-sky-800">
-              Open coins
+              {t("openCoins", "Open coins")}
             </Link>
           </div>
 
           {coinSummary.usedByCategory.length === 0 ? (
-            <p className="mt-4 text-sm text-slate-600">No coin usage categories are available yet.</p>
+            <p className="mt-4 text-sm text-slate-600">{t("noCategoryCoinUsage", "No coin usage categories are available yet.")}</p>
           ) : (
             <div className="mt-4 space-y-3">
               {coinSummary.usedByCategory.map((entry) => (
