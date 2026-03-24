@@ -1845,13 +1845,28 @@ export function getLaundryMachinesForBranch(branchId: string) {
 }
 
 export async function getLaundryBookingContextForEmail(email: string) {
-  const client = await getActiveClientByEmail(email);
+  let client = await getActiveClientByEmail(email);
+  let branchId: "D2" | "D7";
+
   if (!client) {
-    return null;
+    const staff = await getStaffEntryByEmail(email);
+    if (staff) {
+      // For staff not in Client sheet, assume D2 as default for testing visibility
+      branchId = "D2";
+      client = {
+        [EMAIL_COLUMN]: email,
+        [CLIENT_NAME_COLUMN]: "Staff User",
+        [ACTIVE_STAYING_COLUMN]: "1",
+        "Chi nhánh": "D2"
+      } as any;
+    } else {
+      return null;
+    }
+  } else {
+    branchId = normalizeClientBranch(getClientBranchValue(client));
   }
 
-  const branchId = normalizeClientBranch(getClientBranchValue(client));
-  const allowance = await getLaundryAllowanceSummary(client, branchId);
+  const allowance = await getLaundryAllowanceSummary(client!, branchId);
   return {
     client,
     branchId,

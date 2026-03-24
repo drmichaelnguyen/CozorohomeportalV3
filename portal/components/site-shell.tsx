@@ -9,6 +9,7 @@ import { NotificationBell } from "./notification-bell";
 import { PortalLanguageProvider, usePortalLanguage } from "./portal-language";
 import { PortalSessionProvider, usePortalSession } from "./portal-session";
 import { MobileNav } from "./mobile-nav";
+import { VersionBadge } from "./version-badge";
 
 function SiteChrome({ children }: { children: React.ReactNode }) {
   const { language, setLanguage, t } = usePortalLanguage();
@@ -121,6 +122,7 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
       </main>
       {isLoggedIn ? <FeedbackFab /> : null}
       {isLoggedIn && !isLoginPage ? <MobileNav /> : null}
+      <VersionBadge />
     </div>
   );
 }

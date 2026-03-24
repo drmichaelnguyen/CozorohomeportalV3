@@ -393,6 +393,7 @@ export function BookingsClient() {
 
   async function loadContext() {
     const trimmedEmail = email.trim();
+    setActiveEmail(trimmedEmail);
     if (!trimmedEmail) {
       setMessage("Enter your email first.");
       return;
@@ -415,7 +416,6 @@ export function BookingsClient() {
       setTimeZone(machineResult.timeZone || "Asia/Ho_Chi_Minh");
       setAllowance(machineResult.allowance ?? null);
       setMachines(machineResult.machines ?? []);
-      setActiveEmail(trimmedEmail);
       login(trimmedEmail);
       const nextMachineId = machineResult.machines[0]?.id ?? "";
       setSelectedMachineId(nextMachineId);
@@ -467,10 +467,9 @@ export function BookingsClient() {
 
     const normalizedSessionEmail = sessionEmail.trim().toLowerCase();
     const normalizedActiveEmail = activeEmail.trim().toLowerCase();
-    const alreadyLoadedForSession =
-      normalizedActiveEmail === normalizedSessionEmail && (machines.length > 0 || allowance !== null || bookings.length > 0);
+    const alreadyAttemptedForSession = normalizedActiveEmail === normalizedSessionEmail;
 
-    if (alreadyLoadedForSession || loading) {
+    if (alreadyAttemptedForSession || loading) {
       return;
     }
 
