@@ -213,3 +213,26 @@ model SupportReadState {
   @@unique([conversationId, viewerEmail, viewerRole])
   @@index([viewerEmail, viewerRole, updatedAt])
 }
+model GroupMessage {
+  id               String                   @id @default(cuid())
+  groupId          String                   // e.g., "ROOM_D7_1.2", "FLOOR_D7_1", "BRANCH_D7"
+  senderEmail      String
+  senderName       String?
+  senderRole       SupportMessageSenderRole
+  isAnonymous      Boolean                  @default(false)
+  body             String                   @db.Text
+  createdAt        DateTime                 @default(now())
+
+  @@index([groupId, createdAt])
+}
+
+model GroupReadState {
+  id               String            @id @default(cuid())
+  groupId          String
+  viewerEmail      String
+  lastReadAt       DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@unique([groupId, viewerEmail])
+}

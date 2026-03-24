@@ -27,7 +27,7 @@ const translations: Record<string, { en: string; vi: string }> = {
   adminCleaning: { en: "Admin Cleaning", vi: "Ph\u00e2n c\u00f4ng l\u1ecbch v\u1ec7 sinh" },
   manager: { en: "Manager", vi: "Qu\u1ea3n l\u00fd" },
   notifications: { en: "Notifications", vi: "Th\u00f4ng b\u00e1o" },
-  support: { en: "Support", vi: "H\u1ed7 tr\u1ee3" },
+  support: { en: "Messages", vi: "Tin nhắn" },
   clientLogin: { en: "Client Login", vi: "\u0110\u0103ng nh\u1eadp kh\u00e1ch h\u00e0ng" },
   language: { en: "Language", vi: "Ng\u00f4n ng\u1eef" },
   english: { en: "English", vi: "Ti\u1ebfng Anh" },
@@ -157,10 +157,33 @@ const translations: Record<string, { en: string; vi: string }> = {
   passwordChangedSuccess: { en: "Password changed successfully.", vi: "Đã đổi mật khẩu thành công." },
   myInformation: { en: "My Information", vi: "Thông tin của tôi" },
   submitEmailToLoad: { en: "Submit your email to load the active client row.", vi: "Gửi email của bạn để tải về thông tin khách hàng đang hoạt động." },
+  userViewShort: { en: "User", vi: "Người dân" },
+  managerViewShort: { en: "Manager", vi: "Quản lý" },
   managerWorkspace: { en: "Manager Workspace", vi: "Không gian làm việc quản lý" },
   openManagerOverview: { en: "Open manager overview", vi: "Mở tổng quan quản lý" },
   openOwnersEmployees: { en: "Open Owners & employees", vi: "Mở mục Chủ sở hữu & Nhân viên" },
-  openCleaningScheduleAssign: { en: "Open Cleaning schedule assigning", vi: "Mở mục phân công lịch vệ sinh" }
+  openCleaningScheduleAssign: { en: "Open Cleaning schedule assigning", vi: "Mở mục phân công lịch vệ sinh" },
+  confirmPassword: { en: "Confirm new password", vi: "Xác nhận mật khẩu mới" },
+  passwordsDoNotMatch: { en: "Passwords do not match.", vi: "Mật khẩu không khớp." },
+  passwordTooShort: { en: "Password must be at least 4 characters.", vi: "Mật khẩu phải có ít nhất 4 ký tự." },
+  changingPassword: { en: "Changing password...", vi: "Đang đổi mật khẩu..." },
+  personalMessages: { en: "Personal", vi: "Cá nhân" },
+  roomGroup: { en: "Room", vi: "Phòng" },
+  floorGroup: { en: "Floor", vi: "Tầng" },
+  branchGroup: { en: "Branch", vi: "Cơ sở" },
+  sendAnonymously: { en: "Send anonymously (Hide my identity)", vi: "Gửi ẩn danh (Ẩn danh tính)" },
+  sendAsCozoro: { en: "Send as Cozoro (Hide my name)", vi: "Gửi dưới tên Cozoro (Ẩn tên tôi)" },
+  saySomethingToNeighbors: { en: "Say something to your neighbors...", vi: "Nói gì đó với hàng xóm của bạn..." },
+  publicGroupHistory: { en: "Public group message history", vi: "Lịch sử tin nhắn nhóm công khai" },
+  residentMessages: { en: "Messages & Community", vi: "Tin nhắn & Cộng đồng" },
+  messagesChatDesc: { en: "Communicate with Cozoro staff or connect with your neighbors in group chats.", vi: "Trao đổi với nhân viên Cozoro hoặc kết nối với hàng xóm trong các nhóm chat." },
+  room: { en: "Room", vi: "Phòng" },
+  floor: { en: "Floor", vi: "Tầng" },
+
+
+  booking: { en: "Booking", vi: "Đặt lịch" },
+  message: { en: "Message", vi: "Tin nhắn" },
+  account: { en: "Account", vi: "Tài khoản" }
 };
 
 const PortalLanguageContext = createContext<PortalLanguageContextValue | null>(null);

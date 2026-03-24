@@ -63,11 +63,15 @@ export function NotificationBell() {
   return (
     <Link
       href="/notifications"
-      className="relative inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-sm text-slate-700 hover:border-slate-300"
+      className="group relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm transition-all hover:border-sky-300 hover:bg-sky-50"
+      title="Notifications"
     >
-      Notifications
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 text-slate-600 transition-colors group-hover:text-sky-600">
+        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+        <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+      </svg>
       {unreadCount > 0 ? (
-        <span className="ml-2 inline-flex min-w-5 items-center justify-center rounded-full bg-amber-400 px-1.5 py-0.5 text-xs font-semibold text-slate-950">
+        <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white ring-2 ring-white">
           {unreadCount > 99 ? "99+" : unreadCount}
         </span>
       ) : null}

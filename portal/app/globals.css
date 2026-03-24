@@ -50,3 +50,7 @@ a {
     font-size: 16px;
   }
 }
+
+.h-safe-bottom {
+  height: env(safe-area-inset-bottom, 0px);
+}

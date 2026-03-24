@@ -178,6 +178,7 @@ export function CleaningScheduleClient() {
   const [pastYearFilter, setPastYearFilter] = useState("all");
   const [selfAssignSuggestions, setSelfAssignSuggestions] = useState<string[]>([]);
   const [pendingSelfAssignment, setPendingSelfAssignment] = useState<PendingSelfAssignment | null>(null);
+  const [activeMenuDate, setActiveMenuDate] = useState<Date | null>(null);
   const canSelfAssignSelectedDate = isFutureDate(selectedDate);
   const activeEmail = sessionEmail.trim().toLowerCase();
 
@@ -593,6 +594,99 @@ export function CleaningScheduleClient() {
 
       {overview ? (
         <>
+          {activeMenuDate && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+              <div 
+                className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl animate-in zoom-in-95 duration-200"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-bold text-slate-900">
+                    {activeMenuDate.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+                  </h3>
+                  <button 
+                    onClick={() => setActiveMenuDate(null)}
+                    className="rounded-full p-2 text-slate-400 hover:bg-slate-100 transition-colors"
+                  >
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div className="mt-6 space-y-3">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Task Actions</div>
+                  
+                  {allowedTaskTypes.map((type) => {
+                    const isAssigned = (overview.tasks ?? []).some(t => sameDay(new Date(t.scheduledDate), activeMenuDate) && t.type === type);
+                    if (isAssigned) return null;
+
+                    return (
+                      <button
+                        key={type}
+                        onClick={() => {
+                          void prepareSelfAssignment(type);
+                          setActiveMenuDate(null);
+                        }}
+                        className="flex w-full items-center gap-3 rounded-xl border border-slate-200 p-4 text-left transition-all hover:bg-slate-50 active:scale-[0.98]"
+                      >
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-600">
+                          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                          </svg>
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-slate-900">Assign Myself</p>
+                          <p className="text-xs text-slate-500">{prettyTaskType(type)}</p>
+                        </div>
+                      </button>
+                    );
+                  })}
+
+                  {(overview.tasks ?? []).filter(t => sameDay(new Date(t.scheduledDate), activeMenuDate)).map(task => (
+                    <button
+                      key={task.id}
+                      onClick={() => {
+                        void releaseTask(task.id);
+                        setActiveMenuDate(null);
+                      }}
+                      className="flex w-full items-center gap-3 rounded-xl border border-rose-100 bg-rose-50/50 p-4 text-left transition-all hover:bg-rose-50 active:scale-[0.98]"
+                    >
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-100 text-rose-600">
+                        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 12H4" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-rose-900">Remove Myself</p>
+                        <p className="text-xs text-rose-700">{prettyTaskType(task.type)}</p>
+                      </div>
+                    </button>
+                  ))}
+
+                  <div className="pt-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Availability</div>
+                  
+                  <button
+                    onClick={() => {
+                      void saveAvailability("UNAVAILABLE");
+                      setActiveMenuDate(null);
+                    }}
+                    className="flex w-full items-center gap-3 rounded-xl border border-slate-200 p-4 text-left transition-all hover:bg-slate-50 active:scale-[0.98]"
+                  >
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600">
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-slate-900">Mark Unavailable</p>
+                      <p className="text-xs text-slate-500">You won't be assigned on this day.</p>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
           <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
             <h2 className="text-lg font-semibold text-slate-900">My Cleaning Profile</h2>
             <div className="mt-4 grid gap-4 md:grid-cols-3">
@@ -650,13 +744,13 @@ export function CleaningScheduleClient() {
               </div>
 
               <div className="mt-4 overflow-x-auto pb-2 hide-scrollbar">
-                <div className="grid min-w-[42rem] grid-cols-7 gap-2 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">
-                {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label) => (
-                  <div key={label}>{label}</div>
+                <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                {["M", "T", "W", "T", "F", "S", "S"].map((label, idx) => (
+                  <div key={idx}>{label}</div>
                 ))}
                 </div>
 
-                <div className="mt-2 grid min-w-[42rem] grid-cols-7 gap-2">
+                <div className="mt-2 grid grid-cols-7 gap-1">
                 {monthDays.map((day) => {
                   const tasks = (overview.tasks ?? []).filter((task) => sameDay(new Date(task.scheduledDate), day));
                   const availability = (overview.availability ?? []).find((entry) =>
@@ -672,32 +766,30 @@ export function CleaningScheduleClient() {
                       type="button"
                       onClick={() => {
                         setSelectedDate(startOfDay(day));
+                        setActiveMenuDate(startOfDay(day));
                         setPendingSelfAssignment(null);
                         setSelfAssignSuggestions([]);
                         setDayNote(availability?.note ?? "");
                       }}
-                      className={`min-h-28 rounded-xl border p-2 text-left ${
+                      className={`min-h-[3.5rem] md:min-h-28 rounded-lg border p-1 md:p-2 text-left transition-all hover:border-slate-400 ${
                         isCurrentMonth ? "border-slate-200 bg-white" : "border-slate-100 bg-slate-50"
-                      } ${isSelected ? "ring-2 ring-slate-900" : ""} ${isToday ? "border-slate-900" : ""}`}
+                      } ${isSelected ? "ring-1 ring-slate-900 border-slate-900" : ""} ${isToday ? "bg-slate-50 border-slate-400" : ""}`}
                     >
                       <div className="flex items-center justify-between">
-                        <div className="text-sm font-medium text-slate-900">{day.getDate()}</div>
+                        <div className={`text-[10px] md:text-xs font-semibold ${isToday ? "text-blue-600" : "text-slate-900"}`}>{day.getDate()}</div>
                         {availability?.type === "UNAVAILABLE" ? (
-                          <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">
-                            Off
-                          </span>
+                          <div className="h-1.5 w-1.5 rounded-full bg-rose-500" title="Unavailable"></div>
                         ) : null}
                       </div>
-                      <div className="mt-2 space-y-1">
-                        {tasks.slice(0, 3).map((task) => (
-                          <div key={task.id} className="rounded-md bg-slate-900 px-2 py-1 text-[11px] text-white">
-                            {prettyTaskType(task.type)}
+                      <div className="mt-1 flex flex-wrap gap-0.5">
+                        {tasks.map((task) => (
+                          <div key={task.id} className="h-1.5 w-1.5 shrink-0 rounded-full bg-slate-800 md:h-auto md:w-full md:bg-slate-900 md:px-1.5 md:py-0.5 md:text-[10px] md:text-white md:truncate">
+                            <span className="hidden md:inline">{prettyTaskType(task.type)}</span>
                           </div>
                         ))}
-                        {availability && availability.type !== "UNAVAILABLE" ? (
-                          <div className="text-[11px] font-medium text-slate-600">{availability.type}</div>
-                        ) : null}
-                        {tasks.length > 3 ? <div className="text-[11px] text-slate-500">+{tasks.length - 3} more</div> : null}
+                        {availability && availability.type !== "AVAILABLE" && (
+                          <div className="text-[8px] font-medium text-slate-500 uppercase hidden md:block">{availability.type === "UNAVAILABLE" ? "Off" : "Pref"}</div>
+                        )}
                       </div>
                     </button>
                   );

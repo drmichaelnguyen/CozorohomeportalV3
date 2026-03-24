@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
@@ -639,37 +639,41 @@ export function BookingsClient() {
 
             {allowance ? (
               <div className="rounded-xl border border-slate-200 p-4 text-sm text-slate-700">
-                <div className="font-medium text-slate-900">Monthly Free Laundry</div>
+                <div className="font-medium text-slate-900">{language === "vi" ? "Ưu đãi giặt miễn phí hằng tháng" : "Monthly Free Laundry"}</div>
                 <div className="mt-2">
-                  Recorded member: <span className="font-medium">{allowance.recordedMember}</span>
+                  {language === "vi" ? "Hạng thành viên" : "Recorded member"}: <span className="font-medium">{allowance.recordedMember}</span>
                 </div>
                 <div className="mt-1">
-                  Base free uses: <span className="font-medium">{allowance.baseFreeUsesPerMonth}</span>
+                  {language === "vi" ? "Lượt miễn phí cơ bản" : "Base free uses"}: <span className="font-medium">{allowance.baseFreeUsesPerMonth}</span>
                 </div>
                 <div className="mt-1">
-                  Used free laundry this month: <span className="font-medium">{allowance.usedFreeLaundryThisMonth}</span>
+                  {language === "vi" ? "Đã dùng tháng này" : "Used free laundry this month"}: <span className="font-medium">{allowance.usedFreeLaundryThisMonth}</span>
                 </div>
                 <div className="mt-1">
-                  Remaining free laundry:{" "}
+                  {language === "vi" ? "Số lượt miễn phí còn lại" : "Remaining free laundry"}:{" "}
                   <span className="font-medium">
                     {allowance.branchId === "D2"
-                      ? `${allowance.remainingBaseFreeUses} base+coupon / ${allowance.remainingCouponFreeUses} coupon / ${allowance.remainingBonusWasherUses} washer bonus`
-                      : `${allowance.remainingBaseFreeUses} base+coupon / ${allowance.remainingCouponFreeUses} coupon / ${allowance.remainingBonusWasherUses} washer bonus / ${allowance.remainingBonusDryerUses} dryer bonus`}
+                      ? (language === "vi" 
+                        ? `${allowance.remainingBaseFreeUses} cơ bản+coupon / ${allowance.remainingCouponFreeUses} coupon / ${allowance.remainingBonusWasherUses} giặt thêm`
+                        : `${allowance.remainingBaseFreeUses} base+coupon / ${allowance.remainingCouponFreeUses} coupon / ${allowance.remainingBonusWasherUses} washer bonus`)
+                      : (language === "vi"
+                        ? `${allowance.remainingBaseFreeUses} cơ bản+coupon / ${allowance.remainingCouponFreeUses} coupon / ${allowance.remainingBonusWasherUses} giặt thêm / ${allowance.remainingBonusDryerUses} sấy thêm`
+                        : `${allowance.remainingBaseFreeUses} base+coupon / ${allowance.remainingCouponFreeUses} coupon / ${allowance.remainingBonusWasherUses} washer bonus / ${allowance.remainingBonusDryerUses} dryer bonus`)}
                   </span>
                 </div>
                 <div className="mt-1">
-                  Coupon free uses this month: <span className="font-medium">{allowance.couponFreeUsesPerMonth}</span>
+                  {language === "vi" ? "Số lượt coupon trong tháng" : "Coupon free uses this month"}: <span className="font-medium">{allowance.couponFreeUsesPerMonth}</span>
                 </div>
                 <div className="mt-1">
-                  Member bonus:{" "}
+                  {language === "vi" ? "Khuyến mãi thành viên" : "Member bonus"}:{" "}
                   <span className="font-medium">
                     {allowance.branchId === "D2"
-                      ? `${allowance.bonusWasherUsesPerMonth} washer`
-                      : `${allowance.bonusWasherUsesPerMonth} washer / ${allowance.bonusDryerUsesPerMonth} dryer`}
+                      ? (language === "vi" ? `${allowance.bonusWasherUsesPerMonth} giặt` : `${allowance.bonusWasherUsesPerMonth} washer`)
+                      : (language === "vi" ? `${allowance.bonusWasherUsesPerMonth} giặt / ${allowance.bonusDryerUsesPerMonth} sấy` : `${allowance.bonusWasherUsesPerMonth} washer / ${allowance.bonusDryerUsesPerMonth} dryer`)}
                   </span>
                 </div>
                 <div className="mt-1">
-                  Available coins after future bookings:{" "}
+                  {language === "vi" ? "Số dư coins sau đặt lệnh" : "Available coins after future bookings"}:{" "}
                   <span className="font-medium">{allowance.availableCoinBalance}</span>
                 </div>
                 {allowance.floor ? (

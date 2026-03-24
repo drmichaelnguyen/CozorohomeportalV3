@@ -6,27 +6,27 @@ import { API_BASE_URL } from "../lib/api-base-url";
 
 type SupportConversationListItem = {
   id: string;
-  residentEmail: string;
-  residentName: string | null;
+  type: "DIRECT" | "GROUP";
+  label: string;
+  subLabel: string;
   status: "OPEN" | "CLOSED";
   lastMessageAt: string;
-  createdAt: string;
-  messages: Array<{
-    id: string;
+  unreadCount: number;
+  latestMessage: {
     body: string;
-    senderEmail: string;
-    senderRole: "RESIDENT" | "MANAGER" | "OWNER";
+    senderName: string | null;
     createdAt: string;
-  }>;
+  } | null;
 };
 
 type SupportConversation = {
   id: string;
+  type: "DIRECT" | "GROUP";
   residentEmail: string;
   residentName: string | null;
   status: "OPEN" | "CLOSED";
   lastMessageAt: string;
-  createdAt: string;
+  createdAt?: string;
 };
 
 type SupportMessage = {
@@ -260,6 +260,38 @@ export function ManagerSupportInbox({
 
       {status ? <p className="mt-4 text-sm text-slate-700">{status}</p> : null}
 
+      {/* Quick Group Access */}
+      <div className="mt-6 flex flex-wrap gap-2">
+        {["BRANCH_D2", "BRANCH_D7"].map(groupId => {
+          const conv = conversations.find(c => c.id === groupId);
+          const unreadCount = conv?.unreadCount || 0;
+          const label = groupId.replace("BRANCH_", "Branch ");
+          const isSelected = selectedConversationId === groupId;
+
+          return (
+            <button
+              key={groupId}
+              type="button"
+              onClick={() => void loadInbox(groupId)}
+              className={`relative flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold transition-all ${
+                isSelected
+                  ? "bg-slate-900 text-white border-slate-900 shadow-md"
+                  : unreadCount > 0
+                    ? "bg-sky-50 border-sky-300 text-sky-700 ring-1 ring-sky-300"
+                    : "bg-white border-slate-200 text-slate-700 hover:border-slate-300"
+              }`}
+            >
+              {label}
+              {unreadCount > 0 && (
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-sky-500 text-[10px] font-bold text-white shadow-sm ring-1 ring-white">
+                  {unreadCount}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
       <div className="mt-6 grid gap-6 lg:grid-cols-[20rem_1fr]">
         <div className="space-y-3">
           {conversations.length === 0 ? (
@@ -269,22 +301,36 @@ export function ManagerSupportInbox({
           ) : (
             conversations.map((conversation) => {
               const isSelected = conversation.id === selectedConversationId;
-              const latestMessage = conversation.messages[0];
+              const hasUnread = conversation.unreadCount > 0;
               return (
                 <button
                   key={conversation.id}
                   type="button"
                   onClick={() => void loadInbox(conversation.id)}
-                  className={`w-full rounded-xl border p-4 text-left ${
-                    isSelected ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white"
+                  className={`relative w-full rounded-xl border p-4 text-left transition-all ${
+                    isSelected 
+                      ? "border-slate-900 bg-slate-900 text-white shadow-md" 
+                      : hasUnread
+                        ? "border-sky-300 bg-sky-50 text-slate-900 ring-1 ring-sky-300"
+                        : "border-slate-200 bg-white text-slate-900 hover:border-slate-300"
                   }`}
                 >
+                  {hasUnread && !isSelected && (
+                    <span className="absolute -right-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full bg-sky-500 text-[10px] font-bold text-white shadow-sm">
+                      {conversation.unreadCount}
+                    </span>
+                  )}
                   <div className="flex items-center justify-between gap-3">
-                    <div className="font-medium">
-                      {conversation.residentName || conversation.residentEmail}
+                    <div className="flex items-center gap-2 font-medium">
+                      {conversation.type === "GROUP" && (
+                        <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-500">
+                          Group
+                        </span>
+                      )}
+                      <span className="truncate">{conversation.label}</span>
                     </div>
                     <span
-                      className={`rounded-full px-2 py-1 text-xs ${
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wider uppercase ${
                         isSelected
                           ? "bg-white/10 text-white"
                           : conversation.status === "OPEN"
@@ -295,16 +341,17 @@ export function ManagerSupportInbox({
                       {conversation.status}
                     </span>
                   </div>
-                  <div className={`mt-1 text-sm ${isSelected ? "text-slate-200" : "text-slate-600"}`}>
-                    {conversation.residentEmail}
+                  <div className={`mt-1 truncate text-xs ${isSelected ? "text-slate-300" : "text-slate-500"}`}>
+                    {conversation.subLabel}
                   </div>
-                  {latestMessage ? (
-                    <div className={`mt-3 text-sm ${isSelected ? "text-slate-200" : "text-slate-600"}`}>
-                      {latestMessage.body}
+                  {conversation.latestMessage ? (
+                    <div className={`mt-3 line-clamp-2 text-sm ${isSelected ? "text-slate-200" : "text-slate-600"} ${!isSelected && hasUnread ? "font-medium text-slate-900" : ""}`}>
+                      {conversation.latestMessage.body}
                     </div>
                   ) : null}
-                  <div className={`mt-2 text-xs ${isSelected ? "text-slate-300" : "text-slate-500"}`}>
-                    Updated {formatDateTime(conversation.lastMessageAt)}
+                  <div className={`mt-3 flex items-center justify-between text-[10px] ${isSelected ? "text-slate-400" : "text-slate-400"}`}>
+                    <span>{conversation.latestMessage?.senderName || ""}</span>
+                    <span>{formatDateTime(conversation.lastMessageAt)}</span>
                   </div>
                 </button>
               );
@@ -320,10 +367,10 @@ export function ManagerSupportInbox({
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="text-base font-semibold text-slate-900">
-                    {selectedConversation?.residentName || selectedPreview?.residentName || "Resident"}
+                    {selectedConversation?.residentName || selectedPreview?.label || "Conversation"}
                   </h3>
                   <p className="mt-1 text-sm text-slate-600">
-                    {selectedConversation?.residentEmail || selectedPreview?.residentEmail}
+                    {selectedConversation?.residentEmail || selectedPreview?.subLabel}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">

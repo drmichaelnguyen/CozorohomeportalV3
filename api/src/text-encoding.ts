@@ -15,6 +15,9 @@ export function repairMojibake(value: string) {
 
   try {
     const repaired = Buffer.from(value, "latin1").toString("utf8").normalize("NFC");
+    if (repaired.includes("\uFFFD")) {
+      return value;
+    }
     return scoreVietnamese(repaired) >= scoreVietnamese(value) ? repaired : value;
   } catch {
     return value;

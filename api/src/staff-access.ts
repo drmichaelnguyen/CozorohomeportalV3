@@ -20,7 +20,7 @@ const DEFAULT_OWNER_EMAILS = (
 const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim() ?? "";
 const googlePortalAuthClient = googleClientId ? new google.auth.OAuth2(googleClientId) : null;
 
-export type StaffRole = "manager" | "owner" | "app_admin";
+export type StaffRole = "manager" | "owner" | "app_admin" | "mechanic";
 
 type StaffAccessEntry = {
   email: string;
@@ -58,7 +58,7 @@ function normalizeEmail(email: string) {
 }
 
 function normalizeStaffRole(role: string | undefined, email: string): StaffRole {
-  if (role === "app_admin" || role === "owner" || role === "manager") {
+  if (role === "app_admin" || role === "owner" || role === "manager" || role === "mechanic") {
     return role;
   }
 

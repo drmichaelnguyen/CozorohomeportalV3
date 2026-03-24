@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
+import { usePortalSession } from "./portal-session";
 const PRIVILEGED_EMAILS = new Set(["cozorohome@gmail.com", "dr.trongto@gmail.com"]);
 const DEFAULT_PRIVILEGED_EMAIL = "cozorohome@gmail.com";
 
@@ -102,8 +103,8 @@ function isFutureDate(date: Date) {
 }
 
 export function AdminCleaningClient() {
-  const [email, setEmail] = useState(DEFAULT_PRIVILEGED_EMAIL);
-  const [password, setPassword] = useState("");
+  const { sessionEmail } = usePortalSession();
+  const activeEmail = sessionEmail || DEFAULT_PRIVILEGED_EMAIL;
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [calendars, setCalendars] = useState<AdminCalendar[]>([]);
@@ -381,23 +382,14 @@ export function AdminCleaningClient() {
     }
   }
 
-  async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
+  async function handleLoad(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!PRIVILEGED_EMAILS.has(email.trim().toLowerCase())) {
-      setMessage("Only privileged admin or manager demo emails can use this page right now.");
-      return;
-    }
-
     setLoading(true);
     setMessage("");
 
     try {
       await loadCalendars();
-      setMessage(
-        password
-          ? "Privileged cleaning view loaded. Password is not validated in this demo."
-          : "Privileged cleaning view loaded."
-      );
+      setMessage("Privileged cleaning view loaded.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load admin cleaning view.");
     } finally {
@@ -449,26 +441,10 @@ export function AdminCleaningClient() {
           Admin and manager share this cleaning scheduler. View each cleaning calendar, inspect existing assignments, and assign future cleaning dates.
         </p>
 
-        <form onSubmit={handleLogin} className="mt-6 grid gap-4 md:grid-cols-2">
-          <label className="block text-sm font-medium text-slate-700">
-            Admin or Manager Email
-            <input
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-            />
-          </label>
-
-          <label className="block text-sm font-medium text-slate-700">
-            Password
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-            />
-          </label>
+        <form onSubmit={handleLoad} className="mt-6 grid gap-4 md:grid-cols-2">
+          <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+            Authenticated as <span className="font-medium">{activeEmail}</span>
+          </div>
 
           <label className="block text-sm font-medium text-slate-700">
             From

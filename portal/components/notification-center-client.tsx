@@ -27,6 +27,7 @@ type StaffNotification = {
   body: string;
   createdAt: string;
   unreadCount: number;
+  href?: string;
 };
 
 function formatDateTime(value: string) {
@@ -105,7 +106,7 @@ export function NotificationCenterClient() {
         {!loading && notifications.length > 0 ? (
           <div className="space-y-3">
             {notifications.map((notification) => {
-              const href = isAdminSession ? "/manager" : (notification as ResidentNotification).href || "/support";
+              const href = (notification as any).href || (isAdminSession ? "/manager?view=support_chat" : "/support");
               return (
                 <Link
                   key={notification.id}

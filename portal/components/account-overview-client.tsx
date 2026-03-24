@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { buildCozoroMemberProgram, parseUpgradeCoins } from "../lib/cozoro-member";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
+import { LaundryController } from "./laundry-controller";
 
 type ClientRecord = Record<string, string>;
 
@@ -35,6 +37,17 @@ type CleaningTask = {
 
 type CleaningOverview = {
   tasks: CleaningTask[];
+};
+
+type PaymentEntry = {
+  row: Record<string, string>;
+  parsedTimestamp: string | null;
+};
+
+type FineEntry = {
+  row: Record<string, string>;
+  parsedTimestamp: string | null;
+  parsedDueDate: string | null;
 };
 
 type BookingFilterMode = "future" | "past";
@@ -185,7 +198,7 @@ function deriveRoomLabel(branchId: "D2" | "D7", bedValue: string | undefined) {
 }
 
 export function AccountOverviewClient() {
-  const { t, language } = usePortalLanguage();
+  const { t, language, setLanguage } = usePortalLanguage();
   const { sessionEmail, isLoggedIn, login } = usePortalSession();
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
@@ -208,6 +221,16 @@ export function AccountOverviewClient() {
   const [showLaundryDetails, setShowLaundryDetails] = useState(false);
   const [selectedUpgradeMember, setSelectedUpgradeMember] = useState("");
   const [upgradingMember, setUpgradingMember] = useState(false);
+  const [payments, setPayments] = useState<PaymentEntry[]>([]);
+  const [fines, setFines] = useState<FineEntry[]>([]);
+  
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordSuccess, setPasswordSuccess] = useState("");
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+
   const activeEmail = sessionEmail.trim().toLowerCase();
 
   useEffect(() => {
@@ -234,6 +257,8 @@ export function AccountOverviewClient() {
     setClient(null);
     setLaundryBookings([]);
     setCoinEntries([]);
+    setPayments([]);
+    setFines([]);
     setCleaningOverview(null);
     setExpandedBookingIds([]);
     setCalendarFilter("all");
@@ -259,16 +284,20 @@ export function AccountOverviewClient() {
 
       setClient(data as ClientRecord);
       login(activeEmail);
-      const [laundryResponse, coinsResponse, cleaningResponse] = await Promise.all([
+      const [laundryResponse, coinsResponse, cleaningResponse, paymentsResponse, finesResponse] = await Promise.all([
         fetch(`${API_BASE_URL}/clients/laundry-bookings?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/coins?email=${encodeURIComponent(activeEmail)}`),
-        fetch(`${API_BASE_URL}/cleaning/me?email=${encodeURIComponent(activeEmail)}`)
+        fetch(`${API_BASE_URL}/cleaning/me?email=${encodeURIComponent(activeEmail)}`),
+        fetch(`${API_BASE_URL}/payments?email=${encodeURIComponent(activeEmail)}`),
+        fetch(`${API_BASE_URL}/fines?email=${encodeURIComponent(activeEmail)}`)
       ]);
       const laundryPayload = (await laundryResponse.json()) as
         | { bookings?: LaundryBooking[]; error?: string }
         | undefined;
       const coinsPayload = (await coinsResponse.json()) as { entries?: CoinEntry[]; error?: string } | undefined;
       const cleaningPayload = (await cleaningResponse.json()) as (CleaningOverview & { error?: string }) | undefined;
+      const paymentsPayload = (await paymentsResponse.json()) as { entries?: PaymentEntry[]; error?: string } | undefined;
+      const finesPayload = (await finesResponse.json()) as { entries?: FineEntry[]; error?: string } | undefined;
 
       if (laundryResponse.ok) {
         setLaundryBookings(laundryPayload?.bookings ?? []);
@@ -294,6 +323,14 @@ export function AccountOverviewClient() {
         });
       }
 
+      if (paymentsResponse.ok) {
+        setPayments(paymentsPayload?.entries ?? []);
+      }
+
+      if (finesResponse.ok) {
+        setFines(finesPayload?.entries ?? []);
+      }
+
       setMessage("Account information loaded.");
     } catch {
       setMessage("API request failed. Make sure the API is running and Google Sheets is connected.");
@@ -305,6 +342,54 @@ export function AccountOverviewClient() {
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await loadAccountData();
+  }
+
+  async function handlePasswordChange(e: React.FormEvent) {
+    e.preventDefault();
+    setPasswordError("");
+    setPasswordSuccess("");
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setPasswordError(t("enterBothPasswords", "Please enter all password fields."));
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordError(t("passwordsDoNotMatch", "Passwords do not match."));
+      return;
+    }
+
+    if (newPassword.length < 4) {
+      setPasswordError(t("passwordTooShort", "Password must be at least 4 characters."));
+      return;
+    }
+
+    setIsChangingPassword(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/change-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: activeEmail,
+          currentPassword,
+          newPassword
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to change password.");
+      }
+
+      setPasswordSuccess(t("passwordChangedSuccess", "Password changed successfully."));
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (err) {
+      setPasswordError(err instanceof Error ? err.message : "An error occurred.");
+    } finally {
+      setIsChangingPassword(false);
+    }
   }
 
   async function refreshCalendarNow() {
@@ -1221,6 +1306,155 @@ export function AccountOverviewClient() {
             </div>
           </div>
         )}
+      </section>
+
+      {/* Payments Section */}
+      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900">
+            {language === "vi" ? "Lịch sử thanh toán" : "Payment History"}
+          </h2>
+          <Link href="/payments" className="text-sm font-medium text-sky-600 hover:underline">
+            {language === "vi" ? "Xem tất cả" : "View all"}
+          </Link>
+        </div>
+
+        {!client ? (
+          <p className="mt-3 text-sm text-slate-600">Load account to see recent payments.</p>
+        ) : payments.length === 0 ? (
+          <p className="mt-3 text-sm text-slate-500 italic">No recent payments found.</p>
+        ) : (
+          <div className="mt-4 space-y-3">
+            {payments.slice(0, 3).map((payment, idx) => (
+              <div key={idx} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 p-3 text-sm">
+                <div>
+                  <div className="font-medium text-slate-900">{payment.row["MỤC ĐÍCH"] || "Payment"}</div>
+                  <div className="text-xs text-slate-500">{payment.parsedTimestamp ? new Date(payment.parsedTimestamp).toLocaleDateString() : ""}</div>
+                </div>
+                <div className="font-semibold text-slate-900">{payment.row["SỐ TIỀN"]}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Fines Section */}
+      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900">
+            {language === "vi" ? "Vi phạm & Tiền phạt" : "Fines & Violations"}
+          </h2>
+          <Link href="/fines" className="text-sm font-medium text-sky-600 hover:underline">
+            {language === "vi" ? "Xem tất cả" : "View all"}
+          </Link>
+        </div>
+
+        {!client ? (
+          <p className="mt-3 text-sm text-slate-600">Load account to see recent fines.</p>
+        ) : fines.length === 0 ? (
+          <p className="mt-3 text-sm text-green-600 italic">No violations found. Great job!</p>
+        ) : (
+          <div className="mt-4 space-y-3">
+            {fines.slice(0, 3).map((fine, idx) => (
+              <div key={idx} className="rounded-xl border border-red-100 bg-red-50/30 p-3 text-sm">
+                <div className="flex items-center justify-between font-medium text-slate-900">
+                  <span>{fine.row["NỘI DUNG VI PHẠM"]}</span>
+                  <span className="text-red-600">{fine.row["CHI PHÍ THANH TOÁN CHO VI PHẠM"]}</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+                  <span>{fine.parsedTimestamp ? new Date(fine.parsedTimestamp).toLocaleDateString() : ""}</span>
+                  <span className={fine.row["ĐÃ THANH TOÁN?"] === "1" ? "text-green-600 font-medium" : "text-amber-600 font-medium"}>
+                    {fine.row["ĐÃ THANH TOÁN?"] === "1" ? "Paid" : "Unpaid"}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Account Security Section */}
+      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">
+          {t("accountSecurity", "Account Security")}
+        </h2>
+        <p className="mt-1 text-sm text-slate-500">
+          {t("changePasswordAnytime", "You can change your portal password here.")}
+        </p>
+
+        <form onSubmit={handlePasswordChange} className="mt-6 space-y-4 max-w-md">
+          <div>
+            <label className="block text-sm font-medium text-slate-700">{t("currentPassword")}</label>
+            <input
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              placeholder={t("enterCurrentPassword")}
+              className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="block text-sm font-medium text-slate-700">{t("newPassword")}</label>
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder={t("chooseNewPassword")}
+                className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700">{t("confirmPassword")}</label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder={t("confirmPassword")}
+                className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+              />
+            </div>
+          </div>
+
+          {passwordError && (
+            <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700 font-medium">
+              {passwordError}
+            </div>
+          )}
+          {passwordSuccess && (
+            <div className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700 font-medium">
+              {passwordSuccess}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={isChangingPassword}
+            className="flex w-full items-center justify-center rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 disabled:opacity-50 transition-all sm:w-auto"
+          >
+            {isChangingPassword ? t("changingPassword") : t("changePassword")}
+          </button>
+        </form>
+      </section>
+
+      {/* Language Preference Section */}
+      <section className="mt-8 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">
+          {language === "vi" ? "Cài đặt ngôn ngữ" : "Language Preference"}
+        </h2>
+        <div className="mt-4 flex items-center justify-between">
+          <p className="text-sm text-slate-600">
+            {language === "vi" ? "Chọn ngôn ngữ hiển thị cho cổng thông tin." : "Choose the display language for the portal."}
+          </p>
+          <select
+            value={language}
+            onChange={(e) => setLanguage(e.target.value as "en" | "vi")}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+          >
+            <option value="en">{t("english", "English")}</option>
+            <option value="vi">{t("vietnamese", "Vietnamese")}</option>
+          </select>
+        </div>
       </section>
     </div>
   );

@@ -5,7 +5,7 @@ import { API_BASE_URL } from "../lib/api-base-url";
 
 const PORTAL_SESSION_STORAGE_KEY = "cozorohome-portal-session-email";
 const PORTAL_SESSION_ROLE_STORAGE_KEY = "cozorohome-portal-session-role";
-export type PortalSessionRole = "user" | "manager" | "owner" | "app_admin";
+export type PortalSessionRole = "user" | "manager" | "owner" | "app_admin" | "mechanic";
 
 type PortalSessionContextValue = {
   sessionEmail: string;
@@ -37,7 +37,7 @@ export function PortalSessionProvider({ children }: { children: React.ReactNode 
       setSessionEmail(savedEmail);
     }
 
-    if (savedRole === "user" || savedRole === "manager" || savedRole === "owner" || savedRole === "app_admin") {
+    if (savedRole === "user" || savedRole === "manager" || savedRole === "owner" || savedRole === "app_admin" || savedRole === "mechanic") {
       setSessionRole(savedRole);
     }
   }, []);

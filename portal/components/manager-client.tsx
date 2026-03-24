@@ -1,18 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
 import { AdminCleaningClient } from "./admin-cleaning-client";
 import { ManagerSupportInbox } from "./manager-support-inbox";
+import { LaundryScheduleManager } from "./laundry-schedule-manager";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
+import Link from "next/link";
 
-type StaffRole = "manager" | "owner" | "app_admin";
+
+type StaffRole = "manager" | "owner" | "app_admin" | "mechanic";
 type StatsTab = "laundry" | "coins" | "payments" | "fines";
 type ClientAction = "call" | "sms" | "email" | "message" | "fine" | "coins" | "payment" | "";
 type CoinEntryMode = "add" | "use";
-type ManagerView = "overview" | "client_list" | "owners_employees" | "support_chat" | "feedbacks" | "admin_cleaning";
+type ManagerView = "overview" | "client_list" | "owners_employees" | "support_chat" | "feedbacks" | "admin_cleaning" | "scheduling" | "controller";
 type StatSummaryItem = {
   label: string;
   value: string;
@@ -25,9 +28,16 @@ type ManagerClientRecord = {
   name: string;
   branch: string;
   bed: string;
-  currentCoins: string;
-  totalCoins: string;
-  row: Record<string, string>;
+  currentCoins: number;
+  totalCoins: number;
+  row: Record<string, any>;
+};
+
+type SmartDevice = {
+  id: string;
+  label: string;
+  branchId: string;
+  lastRequestedAction?: string;
 };
 
 type BranchLayoutRoom = {
@@ -47,6 +57,22 @@ type ClientChatMessage = {
   senderRole: "RESIDENT" | "MANAGER" | "OWNER";
   body: string;
   createdAt: string;
+};
+type MaintenanceTicket = {
+  id: string;
+  residentEmail: string;
+  residentName: string;
+  branch: string;
+  location: string;
+  device: string;
+  issue: string;
+  reportedAt: string;
+  status: "REPORTED" | "ASSIGNED" | "SOLVED" | "CLOSED";
+  mechanicEmail?: string | null;
+  solvedAt?: string | null;
+  repairTimeMinutes?: number | null;
+  satisfaction?: "SATISFIED" | "UNSATISFIED" | null;
+  feedback?: string | null;
 };
 type FineEntry = {
   row: Record<string, string>;
@@ -116,8 +142,8 @@ const BRANCH_LAYOUTS: Record<"D2" | "D7", BranchLayoutRoom[]> = {
     { room: "3", floor: "D2", startBed: 16, endBed: 21, bunkCount: 2 }
   ],
   D7: [
-    { room: "1.1", floor: "Floor 1", startBed: 1, endBed: 6, bunkCount: 2 },
-    { room: "1.2", floor: "Floor 1", startBed: 7, endBed: 15, bunkCount: 3 },
+    { room: "1.1", floor: "Floor 1", startBed: 1, endBed: 9, bunkCount: 3 },
+    { room: "1.2", floor: "Floor 1", startBed: 10, endBed: 15, bunkCount: 2 },
     { room: "1.3", floor: "Floor 1", startBed: 16, endBed: 24, bunkCount: 3 },
     { room: "2.1", floor: "Floor 2", startBed: 25, endBed: 33, bunkCount: 3 },
     { room: "2.2", floor: "Floor 2", startBed: 34, endBed: 39, bunkCount: 2 },
@@ -126,6 +152,11 @@ const BRANCH_LAYOUTS: Record<"D2" | "D7", BranchLayoutRoom[]> = {
     { room: "3.2", floor: "Floor 3", startBed: 58, endBed: 63, bunkCount: 2 }
   ]
 };
+
+function getLastName(fullName: string) {
+  const parts = fullName.trim().split(/\s+/);
+  return parts[parts.length - 1] || fullName;
+}
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) {
@@ -205,8 +236,8 @@ function summarizeCoins(entries: CoinEntry[], client: ManagerClientRecord | null
   const spent = Math.abs(deltas.filter((value) => value < 0).reduce((sum, value) => sum + value, 0));
 
   return [
-    { label: "Current balance", value: formatNumber(parseLooseNumber(client?.currentCoins)), tone: "positive" },
-    { label: "Lifetime coins", value: formatNumber(parseLooseNumber(client?.totalCoins)) },
+    { label: "Current balance", value: formatNumber(parseLooseNumber(client?.currentCoins != null ? String(client.currentCoins) : null)), tone: "positive" },
+    { label: "Lifetime coins", value: formatNumber(parseLooseNumber(client?.totalCoins != null ? String(client.totalCoins) : null)) },
     { label: "Coins added", value: formatNumber(earned) },
     { label: "Coins used", value: formatNumber(spent), tone: spent > 0 ? "warning" : "default" }
   ];
@@ -483,8 +514,10 @@ function chatRoleLabel(role: ClientChatMessage["senderRole"]) {
   return "Resident";
 }
 
+
 export function ManagerClient({ initialView = "overview" }: { initialView?: ManagerView }) {
-  const { language } = usePortalLanguage();
+
+  const { language, setLanguage, t } = usePortalLanguage();
   const { sessionEmail, sessionRole } = usePortalSession();
   const normalizedEmail = sessionEmail.trim().toLowerCase();
   const isStaffSession = Boolean(sessionRole && sessionRole !== "user" && normalizedEmail);
@@ -538,6 +571,68 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [activeManagerView, setActiveManagerView] = useState<ManagerView>(initialView);
   const [feedbackEntries, setFeedbackEntries] = useState<FeedbackEntry[]>([]);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
+  
+  // New subtab states
+  const [schedulingTab, setSchedulingTab] = useState<"cleaning" | "laundry">("cleaning");
+  const [clientListMode, setClientListMode] = useState<"diagram" | "table">("diagram");
+  const [supportFilterBranch, setSupportFilterBranch] = useState("");
+  const [supportSortBy, setSupportSortBy] = useState<"newest" | "oldest_unanswered">("newest");
+  const [acRooms, setAcRooms] = useState<any[]>([]);
+  const [laundryMachines, setLaundryMachines] = useState<any[]>([]);
+  const [airfryers, setAirfryers] = useState<SmartDevice[]>([]);
+  const [controllerLoading, setControllerLoading] = useState(false);
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+  const [supportSubTab, setSupportSubTab] = useState<"messages" | "feedbacks" | "maintenance">("messages");
+  const [maintenanceTickets, setMaintenanceTickets] = useState<MaintenanceTicket[]>([]);
+  const [maintenanceLoading, setMaintenanceLoading] = useState(false);
+  const [maintenanceSort, setMaintenanceSort] = useState<{ field: keyof MaintenanceTicket; direction: "asc" | "desc" }>({
+    field: "reportedAt",
+    direction: "desc"
+  });
+
+  const loadMaintenanceTickets = async () => {
+    setMaintenanceLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/staff/maintenance/tickets`);
+      if (!response.ok) throw new Error("Failed to load maintenance tickets");
+      const data = await response.json();
+      const activeOnly = (data.tickets || []).filter((t: any) => t.status === "REPORTED" || t.status === "ASSIGNED");
+      setMaintenanceTickets(activeOnly);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setMaintenanceLoading(false);
+    }
+  };
+
+  const resolveMaintenanceTicket = async (ticketId: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/staff/maintenance/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ticketId,
+          status: "SOLVED",
+          solvedAt: new Date().toISOString()
+        })
+      });
+      if (response.ok) {
+        await loadMaintenanceTickets();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const sortedMaintenanceTickets = useMemo(() => {
+    return [...maintenanceTickets].sort((a, b) => {
+      const aValue = (a[maintenanceSort.field] || "").toString();
+      const bValue = (b[maintenanceSort.field] || "").toString();
+      if (aValue < bValue) return maintenanceSort.direction === "asc" ? -1 : 1;
+      if (aValue > bValue) return maintenanceSort.direction === "asc" ? 1 : -1;
+      return 0;
+    });
+  }, [maintenanceTickets, maintenanceSort]);
 
   const filteredClients = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -778,6 +873,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const selectedClientTelHref = toPhoneHref(selectedClientPhone);
   const selectedClientSmsHref = toSmsHref(selectedClientPhone);
 
+
+
   useEffect(() => {
     if (filteredQuickNav.length === 0) {
       if (selectedBranch) {
@@ -858,9 +955,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       }
       const nextClients = data.clients ?? [];
       setClients(nextClients);
-      const nextSelected = nextClients.find((client) => client.maHd === selectedMaHd) ?? nextClients[0] ?? null;
-      setSelectedMaHd(nextSelected?.maHd ?? "");
-      fillClientForm(nextSelected);
+      // Only update selection state if there was a previously-selected client.
+      // Re-find it in the refreshed list to get updated data.
+      // If nothing was selected before, leave the panel blank.
+      if (selectedMaHd) {
+        const nextSelected = nextClients.find((client) => client.maHd === selectedMaHd) ?? null;
+        setSelectedMaHd(nextSelected?.maHd ?? "");
+        fillClientForm(nextSelected);
+      }
       setStatus(syncFirst ? "Client data refreshed." : "Client list loaded.");
     } catch {
       setStatus("Unable to load clients.");
@@ -953,6 +1055,73 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     setShowClientDetails(false);
   }, [selectedMaHd]);
 
+  const fetchDevices = useCallback(async () => {
+    setControllerLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/manager/controller/devices`);
+      if (response.ok) {
+        const data = await response.json();
+        setAcRooms(data.acRooms || []);
+        setLaundryMachines(data.laundry || []);
+        setAirfryers(data.airfryers || []);
+      }
+    } catch (err) {
+      console.error("Failed to fetch devices", err);
+    } finally {
+      setControllerLoading(false);
+    }
+  }, []);
+
+  const handleAcControl = async (roomId: string, action: "ON" | "OFF") => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/controller/ac/rooms/command`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roomId, action })
+      });
+      if (response.ok) {
+        void fetchDevices();
+      } else {
+        const data = await response.json();
+        alert(data.error || "Failed to control AC");
+      }
+    } catch (err) {
+      alert("Network error controlling AC");
+    }
+  };
+
+  const handleMachineTrigger = async (machineId: string, deviceType: "laundry" | "airfryer") => {
+    // AntiGravity: Manager manual override warning
+    if (!window.confirm(`WARNING: Manual override for ${machineId}. This will bypass resident booking schedules. Proceed?`)) {
+      return;
+    }
+    try {
+      const endpoint = deviceType === "laundry"
+        ? `${API_BASE_URL}/manager/controller/laundry/trigger`
+        : `${API_BASE_URL}/manager/controller/airfryer/trigger`;
+
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ machineId })
+      });
+      if (response.ok) {
+        alert(`${machineId} triggered successfully.`);
+      } else {
+        const data = await response.json();
+        alert(data.error || `Failed to trigger ${deviceType}`);
+      }
+    } catch (err) {
+      alert(`Network error triggering ${deviceType}`);
+    }
+  };
+
+  useEffect(() => {
+    if (activeManagerView === "controller") {
+      void fetchDevices();
+    }
+  }, [activeManagerView, fetchDevices]);
+
   async function postJson(url: string, body: Record<string, unknown>, successMessage: string, after?: () => Promise<void>) {
     setLoading(true);
     setStatus("");
@@ -1020,6 +1189,25 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       setFeedbackLoading(false);
     }
   }
+
+  const fetchUnreadCounts = useCallback(async () => {
+    if (!isStaffSession) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/manager/support/unread-counts?operatorEmail=${encodeURIComponent(normalizedEmail)}`);
+      if (response.ok) {
+        const data = await response.json();
+        setUnreadCounts(data.unreadCounts || {});
+      }
+    } catch (err) {
+      console.error("Failed to fetch unread counts", err);
+    }
+  }, [isStaffSession, normalizedEmail]);
+
+  useEffect(() => {
+    void fetchUnreadCounts();
+    const interval = setInterval(() => void fetchUnreadCounts(), 30000);
+    return () => clearInterval(interval);
+  }, [fetchUnreadCounts]);
 
   async function uploadFineImage(file: File) {
     if (!selectedClient || !normalizedEmail) {
@@ -1115,364 +1303,162 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         {status ? <p className="mt-4 text-sm text-slate-700">{status}</p> : null}
       </section>
 
-      <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-wrap gap-3">
-          {[
-            ["overview", "Overview"],
-            ["client_list", "Client list"],
-            ["owners_employees", "Owners & employees"],
-            ["support_chat", "Support chat"],
-            ["feedbacks", "Feedbacks"],
-            ["admin_cleaning", "Cleaning schedule assigning"]
-          ].map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setActiveManagerView(value as ManagerView)}
-              className={`rounded-full px-4 py-2 text-sm font-medium ${
-                activeManagerView === value
-                  ? "bg-slate-900 text-white"
-                  : "border border-slate-300 text-slate-700"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      {activeManagerView === "overview" ? (
+      {(activeManagerView === "client_list" || activeManagerView === "overview") ? (
         <section className="space-y-6">
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">Overview</h2>
-                <p className="mt-1 text-sm text-slate-600">
-                  Switch branches to explore rooms, floors, bed diagrams, and a quick summary of the property.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {quickNav.map((entry) => (
-                  <button
-                    key={entry.branch}
-                    type="button"
-                    onClick={() => {
-                      setSelectedBranch(entry.branch);
-                      setSelectedRoom(entry.rooms[0]?.room ?? "");
-                    }}
-                    className={`rounded-full px-4 py-2 text-sm font-medium ${
-                      selectedBranch === entry.branch
-                        ? "bg-slate-900 text-white"
-                        : "border border-slate-300 text-slate-700"
-                    }`}
-                  >
-                    {entry.branch}
-                  </button>
-                ))}
-              </div>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setSelectedBranch("D2")}
+                className={`rounded-full px-4 py-2 text-sm font-medium ${
+                  selectedBranch === "D2" ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700"
+                }`}
+              >
+                Branch D2
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedBranch("D7")}
+                className={`rounded-full px-4 py-2 text-sm font-medium ${
+                  selectedBranch === "D7" ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700"
+                }`}
+              >
+                Branch D7
+              </button>
+              <Link
+                href="/support?newGroup=true"
+                className="rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-medium text-sky-700 transition-all hover:bg-sky-100"
+              >
+                + New Group Message
+              </Link>
             </div>
+            <div className="flex rounded-xl bg-slate-100 p-1 shadow-inner">
+              <button
+                type="button"
+                onClick={() => setClientListMode("diagram")}
+                className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-all ${
+                  clientListMode === "diagram" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                Diagram
+              </button>
+              <button
+                type="button"
+                onClick={() => setClientListMode("table")}
+                className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-all ${
+                  clientListMode === "table" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                Table
+              </button>
+            </div>
+          </div>
 
-            <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              {overviewStats.map((item) => (
-                <div key={item.label} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{item.label}</div>
-                  <div className="mt-2 text-lg font-semibold text-slate-900">{item.value}</div>
+          {clientListMode === "diagram" ? (
+            <section className="space-y-8">
+              {branchOverviewGroups.map((group) => (
+                <div key={group.label} className="space-y-4">
+                  <div className="text-sm font-bold uppercase tracking-widest text-slate-400">{group.label}</div>
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                    {group.rooms.map((room) => {
+                      const roomGroupId = `ROOM_${selectedBranch}_${room.room}`;
+                      const roomUnread = unreadCounts[roomGroupId] || 0;
+                      return (
+                        <div key={room.room} className={`relative rounded-2xl border bg-white p-3 shadow-sm transition-all hover:shadow-md ${roomUnread > 0 ? "border-sky-300 ring-1 ring-sky-300" : "border-slate-200"}`}>
+                          {roomUnread > 0 && (
+                            <span className="absolute -right-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full bg-sky-500 text-[10px] font-bold text-white shadow-sm ring-2 ring-white">
+                              {roomUnread}
+                            </span>
+                          )}
+                          <div className="flex items-center justify-between border-b border-slate-50 pb-2">
+                            <span className="text-sm font-bold text-slate-900">Room {room.room}</span>
+                            <span className="text-[10px] font-medium text-slate-500">{room.clients.length} beds</span>
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-3">
+                            {room.diagram.bunks.map((bunk) => (
+                              <div key={bunk.bunkNumber} className="flex flex-col gap-1 w-14 p-1 rounded-lg border border-slate-100 bg-slate-50/20">
+                                {bunk.levels.map((slot) => {
+                                  const client = slot.client;
+                                  const isSelected = client?.maHd === selectedMaHd;
+                                  return (
+                                    <button
+                                      key={slot.bedNumber}
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedMaHd(client?.maHd ?? "");
+                                        if (client) fillClientForm(client);
+                                      }}
+                                      className={`relative flex h-8 items-center justify-center rounded-md border text-[10px] font-bold ${
+                                        isSelected
+                                          ? "border-sky-500 bg-sky-500 text-white z-10 scale-105"
+                                          : client
+                                            ? "border-emerald-100 bg-emerald-50 text-emerald-700"
+                                            : "border-dashed border-slate-200 bg-slate-25 text-slate-300"
+                                      }`}
+                                      title={client ? `${client.name} (Bed ${slot.bedNumber})` : `Bed ${slot.bedNumber} (Empty)`}
+                                    >
+                                      {client && (
+                                        <span className="absolute left-0.5 top-0.5 text-[7px] leading-none text-emerald-600/70">
+                                          {slot.bedNumber}
+                                        </span>
+                                      )}
+                                      {client ? getLastName(client.name) : slot.bedNumber}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               ))}
-            </div>
-          </section>
+            </section>
+          ) : (
 
-          {selectedBranch ? (
-            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-900">Branch Layout</h2>
-                  <p className="mt-1 text-sm text-slate-600">
-                    {selectedBranch === "D7"
-                      ? "D7 overview grouped by floor, room, and bunk bed."
-                      : `${selectedBranch} overview with all rooms and bunk beds.`}
-                  </p>
-                </div>
-                <div className="rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white">
-                  {selectedBranch}
-                </div>
-              </div>
-
-              <div className="mt-6 space-y-6">
-                {branchOverviewGroups.map((group) => (
-                  <div key={group.label} className="space-y-4">
-                    {selectedBranch === "D7" ? (
-                      <div className="text-sm font-semibold uppercase tracking-wide text-slate-500">{group.label}</div>
-                    ) : null}
-                    <div className={`grid gap-4 ${selectedBranch === "D7" ? "2xl:grid-cols-2" : "xl:grid-cols-2"}`}>
-                      {group.rooms.map((room) => (
-                        <div key={room.room} className="rounded-[2rem] border border-slate-200 bg-[linear-gradient(180deg,#f8fafc_0%,#eef2f7_100%)] p-4 shadow-sm">
-                          <div className="flex items-center justify-between gap-3">
-                            <div>
-                              <div className="text-sm font-semibold text-slate-900">Room {room.room}</div>
-                              <div className="mt-1 text-xs text-slate-500">
-                                Beds {room.startBed}-{room.endBed} | {room.clients.length} / {room.endBed - room.startBed + 1} occupied
-                              </div>
-                            </div>
-                            <div className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                              {room.bunkCount} bunks
-                            </div>
-                          </div>
-
-                          <div className="mt-4 rounded-[1.5rem] border border-white/80 bg-white/80 p-4">
-                            <div className="rounded-full bg-slate-200/70 px-4 py-2 text-center text-[11px] font-semibold uppercase tracking-[0.25em] text-slate-500">
-                              Walkway
-                            </div>
-                            <div className={`mt-4 grid gap-3 ${room.bunkCount === 3 ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-1 sm:grid-cols-2"}`}>
-                              {room.diagram.bunks.map((bunk) => (
-                                <div key={`${room.room}-${bunk.bunkNumber}`} className="min-w-0 rounded-[1.25rem] border border-slate-200 bg-white p-3 shadow-sm">
-                                  <div className="text-center text-xs font-semibold uppercase tracking-wide text-slate-500">
-                                    Bunk {bunk.bunkNumber}
-                                  </div>
-                                  <div className="mt-3 space-y-2">
-                                    {bunk.levels.map((slot) => {
-                                      const client = slot.client;
-                                      const isSelected = client?.maHd === selectedMaHd;
-                                      return client ? (
-                                        <button
-                                          key={`${room.room}-${bunk.bunkNumber}-${slot.level}`}
-                                          type="button"
-                                          onClick={() => {
-                                            setActiveManagerView("client_list");
-                                            setSelectedMaHd(client.maHd);
-                                            setSelectedBranch(selectedBranch);
-                                            setSelectedRoom(room.room);
-                                            fillClientForm(client);
-                                            setWorkspace(null);
-                                            setEditingId("");
-                                          }}
-                                          className={`block w-full min-w-0 rounded-xl border px-2.5 py-2.5 text-left ${
-                                            isSelected
-                                              ? "border-slate-900 bg-slate-900 text-white"
-                                              : "border-emerald-200 bg-emerald-50 text-slate-900"
-                                          }`}
-                                        >
-                                          <div className="text-[11px] font-semibold uppercase tracking-wide opacity-70">
-                                            Level {slot.level} | Bed {slot.bedNumber}
-                                          </div>
-                                          <div className="mt-1 text-[13px] font-medium leading-tight break-words whitespace-normal">
-                                            {client.name || client.email}
-                                          </div>
-                                        </button>
-                                      ) : (
-                                        <div
-                                          key={`${room.room}-${bunk.bunkNumber}-${slot.level}`}
-                                          className="min-w-0 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-2.5 py-2.5 text-left"
-                                        >
-                                          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                                            Level {slot.level} | Bed {slot.bedNumber}
-                                          </div>
-                                          <div className="mt-1 text-sm text-slate-400">Empty</div>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
+            <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-200">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      {["Name", "Branch", "Room", "Bed", "Contract", "Phone", "Coins", "Status"].map((header) => (
+                        <th key={header} className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          {header}
+                        </th>
                       ))}
-                    </div>
-                  </div>
-                ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {filteredClients
+                      .filter(c => !selectedBranch || normalizeBranchLabel(c.branch) === selectedBranch)
+                      .map((client) => (
+                        <tr
+                          key={client.maHd}
+                          onClick={() => {
+                            setSelectedMaHd(client.maHd);
+                            fillClientForm(client);
+                          }}
+                          className={`cursor-pointer transition-colors hover:bg-slate-50 ${selectedMaHd === client.maHd ? "bg-sky-50" : ""}`}
+                        >
+                          <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-slate-900">{client.name}</td>
+                          <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{client.branch}</td>
+                          <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{resolveClientRoom(client)}</td>
+                          <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{client.bed}</td>
+                          <td className="whitespace-nowrap px-6 py-4 text-xs font-mono text-slate-500">{client.maHd}</td>
+                          <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{getClientPhone(client)}</td>
+                          <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-emerald-600">{client.currentCoins}</td>
+                          <td className="whitespace-nowrap px-6 py-4 text-xs">
+                             <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700 font-medium">Active</span>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
               </div>
             </section>
-          ) : null}
-        </section>
-      ) : null}
-
-      {activeManagerView === "client_list" ? (
-      <section className="grid gap-6 lg:grid-cols-[23rem_1fr]">
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-slate-900">All Clients</h2>
-            <span className="text-sm text-slate-500">{filteredClients.length}</span>
-          </div>
-          <input
-            type="text"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search name, email, branch, bed, contract"
-            className="mt-4 w-full rounded-lg border border-slate-300 px-3 py-2"
-          />
-          <div className="mt-4 max-h-[44rem] space-y-2 overflow-y-auto pr-1">
-            <div className="rounded-2xl border border-slate-200 p-3">
-              <div className="text-sm font-semibold text-slate-900">Quick Navigation</div>
-              <div className="mt-3 grid gap-3">
-                <select
-                  value={selectedBranch}
-                  onChange={(event) => {
-                    const nextBranch = event.target.value;
-                    setSelectedBranch(nextBranch);
-                    setSelectedMaHd("");
-                    setSelectedRoom(
-                      filteredQuickNav.find((entry) => entry.branch === nextBranch)?.rooms[0]?.room ?? ""
-                    );
-                  }}
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                >
-                  <option value="">Select branch</option>
-                  {filteredQuickNav.map((entry) => (
-                    <option key={entry.branch} value={entry.branch}>
-                      {entry.branch}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="text"
-                  value={roomFilter}
-                  onChange={(event) => {
-                    setRoomFilter(event.target.value);
-                    setSelectedMaHd("");
-                  }}
-                  placeholder="Filter room"
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                />
-                <select
-                  value={selectedRoom}
-                  onChange={(event) => {
-                    setSelectedRoom(event.target.value);
-                    setSelectedMaHd("");
-                  }}
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  disabled={!selectedBranch}
-                >
-                  <option value="">Select room</option>
-                  {visibleRooms.map((entry) => (
-                    <option key={entry.room} value={entry.room}>
-                      {entry.room} ({entry.clients.length})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {false && selectedBranch && selectedRoom ? (
-                <div className="mt-3 space-y-3">
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Room Diagram
-                    </div>
-                    <div className="mt-1 text-xs text-slate-600">
-                      3-level bunk layout: bed 1 = level 1, bed 2 = level 2, bed 3 = level 3, then repeats for beds 4-6 and onward.
-                    </div>
-                    <div className="mt-4 flex gap-3 overflow-x-auto pb-2">
-                      {roomDiagram.stacks.map(([stackNumber, levels]) => (
-                        <div key={stackNumber} className="min-w-[10rem] rounded-2xl border border-slate-200 bg-white p-3">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Bunk {stackNumber}
-                          </div>
-                          <div className="mt-3 space-y-2">
-                            {[3, 2, 1].map((level) => {
-                              const client = levels[level as 1 | 2 | 3] ?? null;
-                              const isSelected = client?.maHd === selectedMaHd;
-                              return client ? (
-                                <button
-                                  key={`${stackNumber}-${level}`}
-                                  type="button"
-                                  onClick={() => {
-                                    setSelectedMaHd(client.maHd);
-                                    fillClientForm(client);
-                                    setWorkspace(null);
-                                    setEditingId("");
-                                  }}
-                                  className={`block w-full rounded-xl border px-3 py-3 text-left ${
-                                    isSelected
-                                      ? "border-slate-900 bg-slate-900 text-white"
-                                      : "border-slate-200 bg-slate-50 text-slate-900"
-                                  }`}
-                                >
-                                  <div className="text-xs font-semibold uppercase tracking-wide opacity-70">
-                                    Level {level} · Bed {client.bed}
-                                  </div>
-                                  <div className="mt-1 font-medium">{client.name || client.email}</div>
-                                  <div className={`mt-1 text-xs ${isSelected ? "text-slate-200" : "text-slate-600"}`}>
-                                    {client.email}
-                                  </div>
-                                </button>
-                              ) : (
-                                <div
-                                  key={`${stackNumber}-${level}`}
-                                  className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-left"
-                                >
-                                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                                    Level {level}
-                                  </div>
-                                  <div className="mt-1 text-sm text-slate-400">Empty</div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    {roomDiagram.unassigned.length ? (
-                      <div className="mt-3 border-t border-slate-200 pt-3">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          Unassigned Beds
-                        </div>
-                        <div className="mt-2 space-y-2">
-                          {roomDiagram.unassigned.map((client) => (
-                            <button
-                              key={client.maHd}
-                              type="button"
-                              onClick={() => {
-                                setSelectedMaHd(client.maHd);
-                                fillClientForm(client);
-                                setWorkspace(null);
-                                setEditingId("");
-                              }}
-                              className={`block w-full rounded-xl border px-3 py-2 text-left text-sm ${
-                                client.maHd === selectedMaHd
-                                  ? "border-slate-900 bg-slate-900 text-white"
-                                  : "border-slate-200 bg-white text-slate-900"
-                              }`}
-                            >
-                              <div className="font-medium">{client.name || client.email}</div>
-                              <div className={client.maHd === selectedMaHd ? "text-slate-200" : "text-slate-600"}>
-                                Bed {client.bed || "-"} | {client.email}
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-
-            {filteredClients.map((client) => {
-              const isSelected = client.maHd === selectedMaHd;
-              return (
-                <button
-                  key={client.maHd}
-                  type="button"
-                  onClick={() => {
-                    setSelectedMaHd(client.maHd);
-                    setSelectedBranch(normalizeBranchLabel(client.branch));
-                    setSelectedRoom(resolveClientRoom(client));
-                    fillClientForm(client);
-                    setWorkspace(null);
-                    setEditingId("");
-                  }}
-                  className={`w-full rounded-2xl border px-4 py-3 text-left ${
-                    isSelected ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900"
-                  }`}
-                >
-                  <div className="font-medium">{client.name || client.maHd}</div>
-                  <div className={`mt-1 text-sm ${isSelected ? "text-slate-200" : "text-slate-600"}`}>
-                    {client.email} | {client.branch || "-"} | Bed {client.bed || "-"}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+          )}
 
         <div className="space-y-6">
           {false ? <section /> : null}
@@ -1502,9 +1488,27 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 >
                   Edit profile
                 </button>
+                {selectedClient && (
+                  <>
+                    <Link
+                      href={`/support?tab=room&groupId=ROOM_${normalizeBranchLabel(selectedClient.branch)}_${resolveClientRoom(selectedClient)}`}
+                      className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-medium text-sky-700 hover:bg-sky-100"
+                    >
+                      Message Room
+                    </Link>
+                    <Link
+                      href={`/support?tab=branch&groupId=BRANCH_${normalizeBranchLabel(selectedClient.branch)}`}
+                      className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
+                    >
+                      Message Branch
+                    </Link>
+                  </>
+                )}
+
                 <button
                   type="button"
                   onClick={() =>
+
                     void postJson(
                       `${API_BASE_URL}/staff/client-sheet-update`,
                       { actorEmail: normalizedEmail, maHd: selectedClient?.maHd ?? "", values: clientForm },
@@ -2376,6 +2380,25 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             </button>
           </div>
 
+          <div className="mt-8 rounded-2xl border border-slate-200 bg-slate-50 p-6 shadow-sm">
+            <h3 className="text-lg font-semibold text-slate-900">
+              {language === "vi" ? "Cài đặt ngôn ngữ" : "Language Preference"}
+            </h3>
+            <div className="mt-4 flex items-center justify-between">
+              <p className="text-sm text-slate-600">
+                {language === "vi" ? "Chọn ngôn ngữ hiển thị cho cổng quản lý." : "Choose the display language for the management portal."}
+              </p>
+              <select
+                value={language}
+                onChange={(e) => setLanguage(e.target.value as "en" | "vi")}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+              >
+                <option value="en">{t("english", "English")}</option>
+                <option value="vi">{t("vietnamese", "Vietnamese")}</option>
+              </select>
+            </div>
+          </div>
+
           {canManageOwnersEmployees ? (
             <div className="mt-6 space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <div>
@@ -2422,6 +2445,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   className="rounded-lg border border-slate-300 px-3 py-2"
                 >
                   <option value="manager">Manager</option>
+                  <option value="mechanic">Mechanic</option>
                   {isAppAdminSession ? <option value="owner">Owner</option> : null}
                 </select>
                 <input
@@ -2497,6 +2521,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
                       >
                         <option value="manager">Manager</option>
+                        <option value="mechanic">Mechanic</option>
                         {isAppAdminSession ? <option value="owner">Owner</option> : null}
                         <option value="app_admin" disabled>
                           App admin
@@ -2532,53 +2557,356 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       ) : null}
 
       {activeManagerView === "support_chat" ? (
-        <ManagerSupportInbox operatorEmail={normalizedEmail} enabled={isStaffSession} />
-      ) : null}
-
-      {activeManagerView === "feedbacks" ? (
-        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-semibold text-slate-900">Feedbacks</h2>
-              <p className="mt-1 text-sm text-slate-600">
-                Review the feedback and support notes that residents submitted through the portal.
-              </p>
-            </div>
+        <section className="space-y-6">
+          <div className="flex flex-wrap gap-3 rounded-full border border-slate-100 bg-white p-1 shadow-sm w-fit">
             <button
               type="button"
-              onClick={() => void loadFeedbacks()}
-              disabled={feedbackLoading}
-              className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60"
+              onClick={() => setSupportSubTab("messages")}
+              className={`rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
+                supportSubTab === "messages"
+                  ? "bg-slate-900 text-white shadow-sm"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
             >
-              Refresh feedbacks
+              Messages
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSupportSubTab("feedbacks");
+                void loadFeedbacks();
+              }}
+              className={`rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
+                supportSubTab === "feedbacks"
+                  ? "bg-slate-900 text-white shadow-sm"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              Feedbacks
             </button>
           </div>
 
-          <div className="mt-6 space-y-3">
-            {feedbackEntries.length ? (
-              feedbackEntries.map((entry) => (
-                <div key={entry.fileName} className="rounded-2xl border border-slate-200 p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <div className="font-medium text-slate-900">{entry.email}</div>
-                      <div className="mt-1 text-sm text-slate-600">
-                        {entry.page} | {entry.createdAt ? formatDateTime(entry.createdAt) : "Unknown time"}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-3 whitespace-pre-wrap text-sm text-slate-700">{entry.message || "-"}</div>
+          {supportSubTab === "messages" ? (
+            <ManagerSupportInbox operatorEmail={normalizedEmail} enabled={isStaffSession} />
+          ) : supportSubTab === "feedbacks" ? (
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">Resident Feedbacks</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Review notes submitted by residents via the portal.
+                  </p>
                 </div>
-              ))
-            ) : (
-              <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
-                {feedbackLoading ? "Loading feedbacks..." : "No feedbacks yet."}
+                <button
+                  type="button"
+                  onClick={() => void loadFeedbacks()}
+                  disabled={feedbackLoading}
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60"
+                >
+                  Refresh
+                </button>
               </div>
-            )}
-          </div>
+
+              <div className="mt-6 space-y-3">
+                {feedbackEntries.length ? (
+                  feedbackEntries.map((entry) => (
+                    <div key={entry.fileName} className="rounded-2xl border border-slate-200 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="font-medium text-slate-900">{entry.email}</div>
+                          <div className="mt-1 text-sm text-slate-600">
+                            {entry.page} | {entry.createdAt ? formatDateTime(entry.createdAt) : "Unknown time"}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mt-3 whitespace-pre-wrap text-sm text-slate-700">{entry.message || "-"}</div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
+                    {feedbackLoading ? "Loading feedbacks..." : "No feedbacks yet."}
+                  </div>
+                )}
+              </div>
+            </section>
+          ) : (
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">Maintenance Tickets</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Manage active malfunction and maintenance reports.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void loadMaintenanceTickets()}
+                  disabled={maintenanceLoading}
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60"
+                >
+                  Refresh
+                </button>
+              </div>
+
+              <div className="mt-6 overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-100 text-slate-500 uppercase text-[10px] font-bold tracking-wider">
+                      <th className="pb-3 px-2 cursor-pointer hover:text-slate-900" onClick={() => setMaintenanceSort({ field: 'reportedAt', direction: maintenanceSort.direction === 'asc' ? 'desc' : 'asc' })}>
+                        Time {maintenanceSort.field === 'reportedAt' && (maintenanceSort.direction === 'asc' ? '↑' : '↓')}
+                      </th>
+                      <th className="pb-3 px-2 cursor-pointer hover:text-slate-900" onClick={() => setMaintenanceSort({ field: 'residentName', direction: maintenanceSort.direction === 'asc' ? 'desc' : 'asc' })}>
+                        Resident {maintenanceSort.field === 'residentName' && (maintenanceSort.direction === 'asc' ? '↑' : '↓')}
+                      </th>
+                      <th className="pb-3 px-2 cursor-pointer hover:text-slate-900" onClick={() => setMaintenanceSort({ field: 'location', direction: maintenanceSort.direction === 'asc' ? 'desc' : 'asc' })}>
+                        Location {maintenanceSort.field === 'location' && (maintenanceSort.direction === 'asc' ? '↑' : '↓')}
+                      </th>
+                      <th className="pb-3 px-2 cursor-pointer hover:text-slate-900" onClick={() => setMaintenanceSort({ field: 'device', direction: maintenanceSort.direction === 'asc' ? 'desc' : 'asc' })}>
+                        Machine {maintenanceSort.field === 'device' && (maintenanceSort.direction === 'asc' ? '↑' : '↓')}
+                      </th>
+                      <th className="pb-3 px-2">Issue</th>
+                      <th className="pb-3 px-2 cursor-pointer hover:text-slate-900" onClick={() => setMaintenanceSort({ field: 'status', direction: maintenanceSort.direction === 'asc' ? 'desc' : 'asc' })}>
+                        Status {maintenanceSort.field === 'status' && (maintenanceSort.direction === 'asc' ? '↑' : '↓')}
+                      </th>
+                      <th className="pb-3 px-2 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {sortedMaintenanceTickets.length ? (
+                      sortedMaintenanceTickets.map((ticket) => (
+                        <tr key={ticket.id} className="group hover:bg-slate-50 transition-colors">
+                          <td className="py-4 px-2 whitespace-nowrap text-slate-500">
+                            {formatDateTime(ticket.reportedAt)}
+                          </td>
+                          <td className="py-4 px-2">
+                            <div className="font-medium text-slate-900">{ticket.residentName}</div>
+                            <div className="text-[10px] text-slate-500">{ticket.residentEmail}</div>
+                          </td>
+                          <td className="py-4 px-2 font-medium text-slate-700">{ticket.location}</td>
+                          <td className="py-4 px-2 text-slate-600 font-medium">{ticket.device || "-"}</td>
+                          <td className="py-4 px-2 text-slate-600 max-w-xs truncate" title={ticket.issue}>{ticket.issue}</td>
+                          <td className="py-4 px-2">
+                            <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                              ticket.status === 'REPORTED' ? 'bg-rose-50 text-rose-600' : 'bg-amber-50 text-amber-600'
+                            }`}>
+                              {ticket.status}
+                            </span>
+                          </td>
+                          <td className="py-4 px-2 text-right">
+                            <button
+                                onClick={() => resolveMaintenanceTicket(ticket.id)}
+                                className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100 transition-all opacity-0 group-hover:opacity-100"
+                            >
+                                Resolve
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={7} className="py-12 text-center text-slate-500 italic">
+                          {maintenanceLoading ? "Loading tickets..." : "No active maintenance tickets."}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
         </section>
       ) : null}
 
-      {activeManagerView === "admin_cleaning" ? <AdminCleaningClient /> : null}
+
+      {activeManagerView === "scheduling" ? (
+        <section className="space-y-6">
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => setSchedulingTab("cleaning")}
+              className={`rounded-full px-4 py-2 text-sm font-medium ${
+                schedulingTab === "cleaning"
+                  ? "bg-slate-900 text-white"
+                  : "border border-slate-300 text-slate-700"
+              }`}
+            >
+              Cleaning schedule
+            </button>
+            <button
+              type="button"
+              onClick={() => setSchedulingTab("laundry")}
+              className={`rounded-full px-4 py-2 text-sm font-medium ${
+                schedulingTab === "laundry"
+                  ? "bg-slate-900 text-white"
+                  : "border border-slate-300 text-slate-700"
+              }`}
+            >
+              Laundry schedule
+            </button>
+          </div>
+
+          {schedulingTab === "cleaning" ? (
+            <AdminCleaningClient />
+          ) : (
+            <LaundryScheduleManager />
+          )}
+        </section>
+      ) : null}
+
+      {activeManagerView === "controller" ? (
+        <section className="space-y-6 pb-20">
+          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900 tracking-tight">Real-time Device Control</h2>
+                <p className="mt-1 text-sm text-slate-500">Centralized override for all IoT devices across branches.</p>
+              </div>
+              <button 
+                onClick={() => void fetchDevices()} 
+                className="p-2 rounded-full hover:bg-slate-100 text-slate-500 transition-colors"
+                title="Refresh Status"
+              >
+                <svg className={`h-5 w-5 ${controllerLoading ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="space-y-8">
+              {/* Branch D7 - AC Units */}
+              <div>
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                  <span className="h-px w-8 bg-slate-200"></span>
+                  Branch D7 - Air Conditioning
+                </h3>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {acRooms.filter(r => r.branchId === "D7").map(room => (
+                    <div key={room.id} className="group relative rounded-2xl border border-slate-100 bg-slate-50/50 p-4 transition-all hover:bg-white hover:shadow-md">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="font-bold text-slate-900">{room.label}</div>
+                          <div className="text-[10px] text-slate-400 font-medium">IoT ID: {room.id}</div>
+                        </div>
+                        <div className={`h-2.5 w-2.5 rounded-full ${room.lastRequestedAction === "ON" ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : "bg-slate-300"}`}></div>
+                      </div>
+                      
+                      <div className="mt-4 flex gap-2">
+                        <button 
+                          onClick={() => handleAcControl(room.id, "ON")}
+                          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all ${room.lastRequestedAction === "ON" ? "bg-emerald-600 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-emerald-500 hover:text-emerald-600"}`}
+                        >
+                          ON
+                        </button>
+                        <button 
+                          onClick={() => handleAcControl(room.id, "OFF")}
+                          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all ${room.lastRequestedAction === "OFF" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-slate-400"}`}
+                        >
+                          OFF
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Branch D2 - AC Units */}
+              <div>
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                  <span className="h-px w-8 bg-slate-200"></span>
+                  Branch D2 - Air Conditioning
+                </h3>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {acRooms.filter(r => r.branchId === "D2").map(room => (
+                    <div key={room.id} className="group relative rounded-2xl border border-slate-100 bg-slate-50/50 p-4 transition-all hover:bg-white hover:shadow-md">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="font-bold text-slate-900">{room.label}</div>
+                          <div className="text-[10px] text-slate-400 font-medium">IoT ID: {room.id}</div>
+                        </div>
+                        <div className={`h-2.5 w-2.5 rounded-full ${room.lastRequestedAction === "ON" ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : "bg-slate-300"}`}></div>
+                      </div>
+                      
+                      <div className="mt-4 flex gap-2">
+                        <button 
+                          onClick={() => handleAcControl(room.id, "ON")}
+                          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all ${room.lastRequestedAction === "ON" ? "bg-emerald-600 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-emerald-500 hover:text-emerald-600"}`}
+                        >
+                          ON
+                        </button>
+                        <button 
+                          onClick={() => handleAcControl(room.id, "OFF")}
+                          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all ${room.lastRequestedAction === "OFF" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-slate-400"}`}
+                        >
+                          OFF
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Other Smart Devices */}
+              <div>
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                  <span className="h-px w-8 bg-slate-200"></span>
+                  Smart Appliances & Laundry
+                </h3>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                   {/* Airfryers */}
+                   {airfryers.map(af => (
+                     <div key={af.id} className="rounded-2xl border border-amber-100 bg-amber-50/30 p-4">
+                        <div className="font-bold text-amber-900">{af.label}</div>
+                        <div className="text-[10px] text-amber-500 font-bold uppercase mt-0.5">Branch {af.branchId} Appliance</div>
+                        <button 
+                          onClick={() => handleMachineTrigger(af.id, "airfryer")}
+                          className="mt-4 w-full rounded-xl bg-amber-600 py-2.5 text-xs font-black text-white shadow-lg shadow-amber-200 hover:bg-amber-700 active:scale-95 transition-all"
+                        >
+                          TRIGGER {af.label.toUpperCase()}
+                        </button>
+                     </div>
+                   ))}
+
+                   {/* Laundry Machines */}
+                   {laundryMachines.map(machine => (
+                    <div key={machine.id} className="rounded-2xl border border-sky-100 bg-sky-50/30 p-4">
+                      <div className="font-bold text-sky-900">{machine.label}</div>
+                      <div className="text-[10px] text-sky-400 font-bold uppercase mt-0.5">Branch {machine.branchId} Unit</div>
+                      <button 
+                        onClick={() => handleMachineTrigger(machine.id, "laundry")}
+                        className="mt-4 w-full rounded-xl bg-sky-600 py-2.5 text-xs font-black text-white shadow-lg shadow-sky-200 hover:bg-sky-700 active:scale-95 transition-all"
+                      >
+                        TRIGGER {machine.label.toUpperCase()}
+                      </button>
+                    </div>
+                   ))}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-slate-900">Usage History</h2>
+              <button type="button" className="text-sm font-medium text-sky-600 hover:underline">View All History</button>
+            </div>
+            <div className="mt-6 space-y-3">
+              {[
+                { time: "2 hours ago", device: "Washer 1 (D7)", user: "John Doe", duration: "45 mins" },
+                { time: "4 hours ago", device: "AC Unit 1 (D7)", user: "Jane Smith", duration: "2 hours" },
+                { time: "Yesterday", device: "Airfryer (D2)", user: "Bob Wilson", duration: "20 mins" }
+              ].map((entry, idx) => (
+                <div key={idx} className="flex items-center justify-between rounded-xl border border-slate-100 p-3 text-sm">
+                  <div>
+                    <div className="font-medium text-slate-900">{entry.device}</div>
+                    <div className="text-xs text-slate-500">{entry.user} · {entry.time}</div>
+                  </div>
+                  <div className="font-semibold text-slate-900">{entry.duration}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </section>
+      ) : null}
     </div>
   );
 }

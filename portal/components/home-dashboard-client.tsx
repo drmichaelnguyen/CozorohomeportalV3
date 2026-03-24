@@ -46,6 +46,22 @@ type CoinEntry = {
 const COINS_COLUMN = "COINS";
 const COIN_EVENT_COLUMN = "S\u1ef1 ki\u1ec7n";
 
+type MaintenanceTicket = {
+  id: string;
+  reportedAt: string;
+  reporterEmail: string;
+  branch: string;
+  location: string;
+  category: string;
+  description: string;
+  urgency: string;
+  status: "REPORTED" | "ASSIGNED" | "SOLVED" | "CLOSED";
+  mechanicEmail: string;
+  reportMinutes?: number;
+  satisfaction?: string;
+  feedback?: string;
+};
+
 const quickLinks: Array<{ href: Route; label: string; description: string; labelKey: string; descriptionKey: string }> = [
   { href: "/service/laundry", label: "Laundry", description: "Book laundry and check machine availability", labelKey: "laundryQuickLink", descriptionKey: "laundryDesc" },
   { href: "/service/controller", label: "Controller", description: "Control your room devices", labelKey: "controller", descriptionKey: "controllerDesc" },
@@ -168,6 +184,14 @@ export function HomeDashboardClient() {
   const [cleaningOverview, setCleaningOverview] = useState<CleaningOverview | null>(null);
   const [fineEntries, setFineEntries] = useState<FineEntry[]>([]);
   const [coinEntries, setCoinEntries] = useState<CoinEntry[]>([]);
+  const [maintenanceTickets, setMaintenanceTickets] = useState<MaintenanceTicket[]>([]);
+  const [showReportForm, setShowReportForm] = useState(false);
+  const [reportLocation, setReportLocation] = useState("");
+  const [reportIssue, setReportIssue] = useState("");
+  const [feedbackTicketId, setFeedbackTicketId] = useState("");
+  const [feedbackSatisfaction, setFeedbackSatisfaction] = useState("satisfied");
+  const [feedbackComment, setFeedbackComment] = useState("");
+  const [showCoinDetail, setShowCoinDetail] = useState(false);
   const activeEmail = sessionEmail.trim().toLowerCase();
 
   async function loadDashboard() {
@@ -180,12 +204,13 @@ export function HomeDashboardClient() {
     setMessage("");
 
     try {
-      const [clientResponse, laundryResponse, cleaningResponse, finesResponse, coinsResponse] = await Promise.all([
+      const [clientResponse, laundryResponse, cleaningResponse, finesResponse, coinsResponse, maintenanceResponse] = await Promise.all([
         fetch(`${API_BASE_URL}/clients?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/clients/laundry-bookings?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/cleaning/me?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/fines?email=${encodeURIComponent(activeEmail)}`),
-        fetch(`${API_BASE_URL}/coins?email=${encodeURIComponent(activeEmail)}`)
+        fetch(`${API_BASE_URL}/coins?email=${encodeURIComponent(activeEmail)}`),
+        fetch(`${API_BASE_URL}/client/maintenance/tickets?email=${encodeURIComponent(activeEmail)}`)
       ]);
 
       const clientData = (await clientResponse.json()) as ClientRecord | { error?: string };
@@ -193,6 +218,7 @@ export function HomeDashboardClient() {
       const cleaningData = (await cleaningResponse.json()) as (CleaningOverview & { error?: string }) | { error?: string };
       const finesData = (await finesResponse.json()) as { entries?: FineEntry[]; error?: string };
       const coinsData = (await coinsResponse.json()) as { entries?: CoinEntry[]; error?: string };
+      const maintenanceData = (await maintenanceResponse.json()) as { tickets?: MaintenanceTicket[]; error?: string };
 
       if (!clientResponse.ok) {
         setMessage(
@@ -214,8 +240,9 @@ export function HomeDashboardClient() {
       );
       setFineEntries(finesResponse.ok ? finesData.entries ?? [] : []);
       setCoinEntries(coinsResponse.ok ? coinsData.entries ?? [] : []);
+      setMaintenanceTickets(maintenanceResponse.ok ? maintenanceData.tickets ?? [] : []);
 
-      if (!laundryResponse.ok || !cleaningResponse.ok || !finesResponse.ok || !coinsResponse.ok) {
+      if (!laundryResponse.ok || !cleaningResponse.ok || !finesResponse.ok || !coinsResponse.ok || !maintenanceResponse.ok) {
         setMessage(t("dashboardPartialData", "Dashboard loaded with partial data."));
       }
     } catch {
@@ -283,6 +310,8 @@ export function HomeDashboardClient() {
 
     let earnedLastMonth = 0;
     let earnedThisMonth = 0;
+    let usedLastMonth = 0;
+    let usedThisMonth = 0;
 
     for (const entry of coinEntries) {
       const amount = parseCoinAmount(entry.row[COINS_COLUMN]);
@@ -299,6 +328,19 @@ export function HomeDashboardClient() {
 
         if (month === lastMonth && year === lastMonthYear) {
           earnedLastMonth += amount;
+        }
+      }
+
+      if (amount < 0 && timestamp) {
+        const usedAmount = Math.abs(amount);
+        const month = timestamp.getMonth();
+        const year = timestamp.getFullYear();
+
+        if (month === thisMonth && year === thisYear) {
+          usedThisMonth += usedAmount;
+        }
+        if (month === lastMonth && year === lastMonthYear) {
+          usedLastMonth += usedAmount;
         }
       }
 
@@ -330,13 +372,20 @@ export function HomeDashboardClient() {
       .slice(0, 6)
       .map(([key, value]) => ({ key, label: key, value }));
 
+    const recentEntries = [...coinEntries]
+      .sort((a, b) => (b.parsedTimestamp || "").localeCompare(a.parsedTimestamp || ""))
+      .slice(0, 5);
+
     return {
       earnedLastMonth,
       earnedThisMonth,
+      usedLastMonth,
+      usedThisMonth,
       usedByMonth: monthlyUsage,
       usedByCategory: categoryUsage,
       maxUsedByMonth: Math.max(1, ...monthlyUsage.map((entry) => entry.value)),
-      maxUsedByCategory: Math.max(1, ...categoryUsage.map((entry) => entry.value))
+      maxUsedByCategory: Math.max(1, ...categoryUsage.map((entry) => entry.value)),
+      recentEntries
     };
   }, [coinEntries]);
 
@@ -479,9 +528,17 @@ export function HomeDashboardClient() {
           <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-lg font-semibold text-slate-900">{t("accountSnapshot", "Account Snapshot")}</h2>
-              <Link href="/billings/fine" className="text-sm font-medium text-sky-800">
-                {t("reviewFines", "Review fines")}
-              </Link>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setShowCoinDetail(true)}
+                  className="rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700 hover:bg-sky-100 transition-colors"
+                >
+                  More detail
+                </button>
+                <Link href="/billings/fine" className="text-sm font-medium text-sky-800">
+                  {t("reviewFines", "Review fines")}
+                </Link>
+              </div>
             </div>
 
             <div className="mt-4 space-y-3">
@@ -563,6 +620,193 @@ export function HomeDashboardClient() {
           )}
         </div>
       </section>
+
+      <section className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-slate-900">{t("maintenance", "Maintenance & Malfunctions")}</h2>
+          <Link
+            href="/support"
+            className="text-sm font-medium text-sky-800 hover:underline flex items-center gap-1"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+            {t("reportNewIssue", "Report in Messages")}
+          </Link>
+        </div>
+
+        <div className="mt-5 space-y-4">
+          {maintenanceTickets.length === 0 ? (
+            <p className="text-sm text-slate-500 italic">{t("noActiveTickets", "No active maintenance tickets.")}</p>
+          ) : (
+            maintenanceTickets.map((ticket) => (
+              <div key={ticket.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className={`h-2 w-2 rounded-full ${
+                      ticket.status === "REPORTED" ? "bg-amber-500" :
+                      ticket.status === "ASSIGNED" ? "bg-sky-500 shadow-[0_0_8px_rgba(14,165,233,0.5)] animate-pulse" :
+                      ticket.status === "SOLVED" ? "bg-emerald-500" :
+                      "bg-slate-300"
+                    }`} />
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">{ticket.status}</span>
+                  </div>
+                  <div className="font-semibold text-slate-900">{ticket.category || t("maintenanceIssue", "Maintenance Issue")}</div>
+                  <div className="text-sm text-slate-600">{ticket.location} · <span className="italic">"{ticket.description}"</span></div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  {ticket.status === "SOLVED" && !ticket.satisfaction && feedbackTicketId !== ticket.id && (
+                    <button
+                      onClick={() => setFeedbackTicketId(ticket.id)}
+                      className="rounded-full bg-emerald-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700"
+                    >
+                      {t("leaveFeedback", "Leave Feedback")}
+                    </button>
+                  )}
+
+                  {feedbackTicketId === ticket.id && (
+                    <div className="flex flex-col gap-2 w-full sm:w-64 animate-in fade-in zoom-in-95 duration-200">
+                      <select
+                        value={feedbackSatisfaction}
+                        onChange={(e) => setFeedbackSatisfaction(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs"
+                      >
+                        <option value="satisfied">Satisfied</option>
+                        <option value="neutral">Neutral</option>
+                        <option value="unsatisfied">Unsatisfied</option>
+                      </select>
+                      <input
+                        type="text"
+                        placeholder="Optional comment"
+                        value={feedbackComment}
+                        onChange={(e) => setFeedbackComment(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={async () => {
+                            setLoading(true);
+                            try {
+                              await fetch(`${API_BASE_URL}/client/maintenance/feedback`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                  ticketId: ticket.id,
+                                  satisfaction: feedbackSatisfaction,
+                                  feedback: feedbackComment
+                                })
+                              });
+                              setFeedbackTicketId("");
+                              await loadDashboard();
+                            } finally {
+                              setLoading(false);
+                            }
+                          }}
+                          className="flex-1 rounded-lg bg-emerald-600 py-1 text-xs font-bold text-white"
+                        >
+                          Send
+                        </button>
+                        <button onClick={() => setFeedbackTicketId("")} className="text-xs text-slate-500">Cancel</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {ticket.satisfaction && (
+                    <div className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="h-3 w-3">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                      {ticket.satisfaction}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+
+      {showCoinDetail && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-[2rem] bg-white shadow-2xl animate-in zoom-in-95 slide-in-from-bottom-4 duration-300">
+            <div className="flex items-center justify-between border-b border-slate-100 p-6">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">Coin Portfolio</h2>
+                <p className="text-sm text-slate-500">Member: {client?.["Tên"] || "-"}</p>
+              </div>
+              <button
+                onClick={() => setShowCoinDetail(false)}
+                className="rounded-full bg-slate-50 p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+                aria-label="Close"
+              >
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-6 space-y-8 h-[calc(90vh-100px)]">
+              {/* Mini Summary Cards */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-sky-50/50 rounded-2xl p-4 border border-sky-100">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-sky-600">This Month Earned</div>
+                  <div className="text-2xl font-bold text-sky-900 mt-1">+{formatCoins(coinSummary.earnedThisMonth)}</div>
+                </div>
+                <div className="bg-rose-50/50 rounded-2xl p-4 border border-rose-100">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-rose-600">This Month Used</div>
+                  <div className="text-2xl font-bold text-rose-900 mt-1">-{formatCoins(coinSummary.usedThisMonth)}</div>
+                </div>
+                <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Last Month Earned</div>
+                  <div className="text-xl font-semibold text-slate-700 mt-1">+{formatCoins(coinSummary.earnedLastMonth)}</div>
+                </div>
+                <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Last Month Used</div>
+                  <div className="text-xl font-semibold text-slate-700 mt-1">-{formatCoins(coinSummary.usedLastMonth)}</div>
+                </div>
+              </div>
+
+              {/* Recent Entries */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-bold uppercase tracking-widest text-slate-400">Recent Transactions</h3>
+                <div className="space-y-3">
+                  {coinSummary.recentEntries?.length ? (
+                    coinSummary.recentEntries.map((entry, idx) => (
+                      <div key={idx} className="flex items-center justify-between p-4 rounded-2xl border border-slate-100 bg-white hover:border-slate-200 transition-colors">
+                        <div className="space-y-0.5">
+                          <div className="text-xs font-bold text-slate-900">{entry.row[COIN_EVENT_COLUMN]}</div>
+                          <div className="text-[10px] text-slate-500">
+                            {entry.parsedTimestamp ? new Date(entry.parsedTimestamp).toLocaleDateString() : "-"}
+                          </div>
+                        </div>
+                        <div className={`text-sm font-bold ${parseCoinAmount(entry.row[COINS_COLUMN]) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {parseCoinAmount(entry.row[COINS_COLUMN]) >= 0 ? '+' : ''}{entry.row[COINS_COLUMN]}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center py-8 text-sm text-slate-400 italic">No recent transactions.</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-4 text-center">
+                <Link
+                  href="/coins"
+                  onClick={() => setShowCoinDetail(false)}
+                  className="inline-flex items-center gap-2 text-xs font-bold text-sky-700 hover:text-sky-800 bg-sky-50 px-6 py-3 rounded-full transition-all hover:shadow-sm"
+                >
+                  View Full History
+                  <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

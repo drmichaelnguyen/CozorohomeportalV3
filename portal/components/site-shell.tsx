@@ -8,16 +8,19 @@ import { FeedbackFab } from "./feedback-fab";
 import { NotificationBell } from "./notification-bell";
 import { PortalLanguageProvider, usePortalLanguage } from "./portal-language";
 import { PortalSessionProvider, usePortalSession } from "./portal-session";
+import { MobileNav } from "./mobile-nav";
 
 function SiteChrome({ children }: { children: React.ReactNode }) {
   const { language, setLanguage, t } = usePortalLanguage();
   const { sessionEmail, sessionRole, isLoggedIn, logout } = usePortalSession();
   const pathname = usePathname();
   const isLoginPage = pathname === "/client-login";
-  const isAdminSession = isLoggedIn && !!sessionRole && sessionRole !== "user";
+  const isStaffSession = isLoggedIn && !!sessionRole && ["manager", "owner", "app_admin", "mechanic"].includes(sessionRole);
   const isManagerWorkspace = pathname.startsWith("/manager") || pathname.startsWith("/admin-cleaning");
+  const isMechanicWorkspace = pathname.startsWith("/mechanic");
+  const isStaffWorkspace = isManagerWorkspace || isMechanicWorkspace;
 
-  const primaryLinks = isManagerWorkspace
+  const primaryLinks = isStaffWorkspace
     ? []
     : [
         { href: "/" as Route, label: t("home"), match: ["/"] },
@@ -27,9 +30,9 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
         { href: "/coins" as Route, label: t("coins"), match: ["/coins"] }
       ];
 
-  const utilityLinks = isAdminSession
-    ? isManagerWorkspace
-      ? [{ href: "/manager" as Route, label: t("manager") }]
+  const utilityLinks = isStaffSession
+    ? isStaffWorkspace
+      ? [{ href: (sessionRole === "mechanic" ? "/mechanic" : "/manager") as Route, label: (sessionRole === "mechanic" ? t("staff") : t("manager")) }]
       : [
           { href: "/notifications" as Route, label: t("notifications") },
           { href: "/support" as Route, label: t("support") }
@@ -50,12 +53,12 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
               {t("portalTitle")}
             </Link>
             <div className="flex flex-col items-start gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
-              {isAdminSession ? (
+              {isStaffSession ? (
                 <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white p-1 shadow-sm">
                   <Link
                     href="/"
                     className={`rounded-full px-3 py-1 text-sm font-medium ${
-                      !isManagerWorkspace
+                      !isStaffWorkspace
                         ? "border border-sky-200 bg-sky-50 text-sky-900 shadow-sm"
                         : "border border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50"
                     }`}
@@ -63,14 +66,14 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
                     {t("userView", "User view")}
                   </Link>
                   <Link
-                    href="/manager"
+                    href={sessionRole === "mechanic" ? "/mechanic" : "/manager"}
                     className={`rounded-full px-3 py-1 text-sm font-medium ${
-                      isManagerWorkspace
+                      isStaffWorkspace
                         ? "border border-sky-200 bg-sky-50 text-sky-900 shadow-sm"
                         : "border border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50"
                     }`}
                   >
-                    {t("managerView", "Manager view")}
+                    {sessionRole === "mechanic" ? t("staffView", "Staff view") : t("managerView", "Manager view")}
                   </Link>
                 </div>
               ) : null}
@@ -90,58 +93,13 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
                 </button>
               ) : null}
               <NotificationBell />
-              <label className="flex items-center gap-2 text-sm text-slate-600">
-                <span>{t("language")}</span>
-                <select
-                  value={language}
-                  onChange={(event) => setLanguage(event.target.value as "en" | "vi")}
-                  className="rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-700"
-                >
-                  <option value="en">{t("english")}</option>
-                  <option value="vi">{t("vietnamese")}</option>
-                </select>
-              </label>
             </div>
           </div>
 
-          {primaryLinks.length > 0 ? (
-            <div className="-mx-4 mt-4 overflow-x-auto px-4 pb-1 hide-scrollbar sm:mx-0 sm:px-0">
-              <div className="flex min-w-max items-center gap-3">
-                {primaryLinks.map((link) => {
-                  const isActive = link.match.some((segment) =>
-                    segment === "/" ? pathname === "/" : pathname.startsWith(segment)
-                  );
-
-                  return (
-                    <Link
-                      key={link.href}
-                      href={link.href}
-                      className={`shrink-0 whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition ${
-                        isActive
-                          ? "border border-sky-200 bg-sky-50 text-sky-900 shadow-sm"
-                          : "border border-slate-200 bg-white text-slate-700 hover:border-sky-200 hover:bg-slate-50"
-                      }`}
-                    >
-                      {link.label}
-                    </Link>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-
-          {utilityLinks.length > 0 ? (
-            <nav className="-mx-4 mt-4 flex overflow-x-auto px-4 pb-1 text-sm text-slate-600 hide-scrollbar sm:mx-0 sm:flex-wrap sm:px-0">
-              {utilityLinks.map((link) => (
-                <Link key={link.href} href={link.href} className="mr-4 shrink-0 whitespace-nowrap last:mr-0">
-                  {link.label}
-                </Link>
-              ))}
-            </nav>
-          ) : null}
+          {/* Primary and Utility links are now replaced by the Unified Bottom/Floating Nav */}
         </div>
       </header>
-      <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-10">
+      <main className="mx-auto max-w-5xl px-4 py-6 pb-32 sm:px-6 sm:pt-10 sm:pb-40">
         {isLoggedIn || isLoginPage ? (
           children
         ) : (
@@ -162,6 +120,7 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
         )}
       </main>
       {isLoggedIn ? <FeedbackFab /> : null}
+      {isLoggedIn && !isLoginPage ? <MobileNav /> : null}
     </div>
   );
 }

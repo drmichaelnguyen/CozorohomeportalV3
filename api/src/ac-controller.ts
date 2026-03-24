@@ -4,11 +4,13 @@ import path from "node:path";
 import { COZORO_TIMEZONE, getActiveClientByEmail } from "./google-sheets.js";
 
 const cacheDirPath = path.join(process.cwd(), "data");
-const acRoomMapFilePath = path.join(cacheDirPath, "ac-room-map.json");
+const devicesMapFilePath = path.join(cacheDirPath, "devices-map.json");
 const acStateFilePath = path.join(cacheDirPath, "ac-state.json");
 
-type AcRoomMapFile = {
-  rooms: AcRoomConfig[];
+type DevicesMapFile = {
+  acRooms: AcRoomConfig[];
+  laundry: any[];
+  airfryers: any[];
 };
 
 export type AcRoomConfig = {
@@ -84,8 +86,8 @@ async function ensureJsonFile<T>(filePath: string, fallback: T) {
   }
 }
 
-async function readRoomMap() {
-  return ensureJsonFile<AcRoomMapFile>(acRoomMapFilePath, { rooms: [] });
+async function readDevicesMap() {
+  return ensureJsonFile<DevicesMapFile>(devicesMapFilePath, { acRooms: [], laundry: [], airfryers: [] });
 }
 
 async function readStateFile() {
@@ -207,20 +209,20 @@ function findRoomForClient(rooms: AcRoomConfig[], client: Record<string, string>
       }
 
       const matchesContract =
-        room.contractCodes?.some((value) => normalizeLookupValue(value) === contractCode) ?? false;
+        (room.contractCodes ?? []).some((value) => normalizeLookupValue(value) === contractCode);
 
       if (matchesContract) {
         return true;
       }
 
       const matchesRoomCode =
-        room.roomCodes?.some((value) => normalizeLookupValue(value) === normalizeLookupValue(roomCode ?? "")) ?? false;
+        (room.roomCodes ?? []).some((value) => normalizeLookupValue(value) === normalizeLookupValue(roomCode ?? ""));
 
       if (matchesRoomCode) {
         return true;
       }
 
-      return room.beds.some((value) => normalizeLookupValue(value) === bed);
+      return (room.beds ?? []).some((value) => normalizeLookupValue(value) === bed);
     }) ?? null
   );
 }
@@ -272,9 +274,9 @@ export async function getUserAcControllerContext(email: string): Promise<UserAcC
     throw new Error("No active client found for that email");
   }
 
-  const roomMap = await readRoomMap();
+  const devicesMap = await readDevicesMap();
   const state = await readStateFile();
-  const room = findRoomForClient(roomMap.rooms, client);
+  const room = findRoomForClient(devicesMap.acRooms, client);
   const roomState = room ? getRoomState(state, room.id) : null;
   const branchId = normalizeBranch(client["Chi nhánh Cozoro dorm"] ?? "");
   const roomCode = deriveRoomCode(branchId, client["số giường"] ?? "");
@@ -320,8 +322,8 @@ export async function sendAcCommand(input: { email: string; action: "ON" | "OFF"
     throw new Error("No active client found for that email");
   }
 
-  const roomMap = await readRoomMap();
-  const room = findRoomForClient(roomMap.rooms, client);
+  const devicesMap = await readDevicesMap();
+  const room = findRoomForClient(devicesMap.acRooms, client);
 
   if (!room) {
     throw new Error("No AC room mapping is configured for this user");
@@ -359,10 +361,10 @@ async function saveRoomStateAndReturn(room: AcRoomConfig, action: "ON" | "OFF") 
 }
 
 export async function listPrivilegedAcRooms(): Promise<PrivilegedAcRoom[]> {
-  const roomMap = await readRoomMap();
+  const devicesMap = await readDevicesMap();
   const state = await readStateFile();
 
-  return roomMap.rooms
+  return devicesMap.acRooms
     .map((room) => {
       const roomState = getRoomState(state, room.id);
       return {
@@ -380,8 +382,8 @@ export async function listPrivilegedAcRooms(): Promise<PrivilegedAcRoom[]> {
 }
 
 export async function sendAcCommandToRoom(input: { roomId: string; action: "ON" | "OFF" }) {
-  const roomMap = await readRoomMap();
-  const room = roomMap.rooms.find((entry) => entry.id === input.roomId) ?? null;
+  const devicesMap = await readDevicesMap();
+  const room = devicesMap.acRooms.find((entry) => entry.id === input.roomId) ?? null;
 
   if (!room) {
     throw new Error("Room mapping not found");
@@ -390,4 +392,8 @@ export async function sendAcCommandToRoom(input: { roomId: string; action: "ON" 
   await triggerIftttEvent(room, input.action);
 
   return saveRoomStateAndReturn(room, input.action);
+}
+
+export async function listAllDevices() {
+  return readDevicesMap();
 }

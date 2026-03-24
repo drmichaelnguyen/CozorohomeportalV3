@@ -13,6 +13,8 @@ export default async function ManagerPage({
     view === "support_chat" ||
     view === "feedbacks" ||
     view === "admin_cleaning" ||
+    view === "scheduling" ||
+    view === "controller" ||
     view === "overview"
       ? view
       : "overview";

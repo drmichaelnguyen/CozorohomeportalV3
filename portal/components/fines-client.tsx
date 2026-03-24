@@ -332,12 +332,12 @@ export function FinesClient() {
           matches the fine sheet email column.
         </p>
 
-        <form onSubmit={handleSubmit} className="mt-6 grid gap-4 md:grid-cols-2">
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+        <form onSubmit={handleSubmit} className="mt-6">
+          <div className="hidden">
             Signed in as <span className="font-medium">{sessionEmail}</span>
           </div>
 
-          <div className="md:col-span-2 flex flex-wrap gap-3">
+          <div className="flex flex-wrap gap-3">
             <button
               type="submit"
               disabled={loading || !activeEmail}

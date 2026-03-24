@@ -13,6 +13,7 @@ type AirFryerUsageRecord = {
   availableAt: string;
   startedByEmail: string;
   startedByName: string;
+  inspection?: string;
 };
 
 type AirFryerStateFile = {
@@ -120,7 +121,7 @@ async function triggerIftttEvent(record: AirFryerUsageRecord) {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      value1: process.env.AIRFRYER_D7_IFTTT_VALUE1?.trim() || record.startedByName,
+      value1: process.env.AIRFRYER_D7_IFTTT_VALUE1?.trim() || `${record.startedByName} (${record.inspection || "No inspection"})`,
       value2: process.env.AIRFRYER_D7_IFTTT_VALUE2?.trim() || AIRFRYER_BRANCH,
       value3: process.env.AIRFRYER_D7_IFTTT_VALUE3?.trim() || record.startedByEmail
     })
@@ -172,7 +173,7 @@ export async function getUserAirFryerContext(email: string): Promise<UserAirFrye
   };
 }
 
-export async function startAirFryerUse(input: { email: string }) {
+export async function startAirFryerUse(input: { email: string; inspection: string }) {
   const context = await getUserAirFryerContext(input.email);
 
   if (!context.eligible) {
@@ -191,11 +192,12 @@ export async function startAirFryerUse(input: { email: string }) {
 
   const startedAt = new Date();
   const availableAt = new Date(startedAt.getTime() + AIRFRYER_COOLDOWN_MINUTES * 60 * 1000);
-  const nextUse: AirFryerUsageRecord = {
+  const nextUse: AirFryerUsageRecord & { inspection?: string } = {
     startedAt: startedAt.toISOString(),
     availableAt: availableAt.toISOString(),
     startedByEmail: context.email,
-    startedByName: context.name || context.email
+    startedByName: context.name || context.email,
+    inspection: input.inspection
   };
 
   await triggerIftttEvent(nextUse);

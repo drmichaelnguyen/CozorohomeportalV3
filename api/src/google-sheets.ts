@@ -13,6 +13,23 @@ const paymentsSheetId = Number.parseInt(process.env.GOOGLE_PAYMENTS_SHEET_ID ?? 
 const finesSheetName = process.env.GOOGLE_FINES_SHEET_NAME ?? "PHÍ VI PHẠM";
 const finesSheetId = Number.parseInt(process.env.GOOGLE_FINES_SHEET_ID ?? "1635408871", 10);
 const finesDriveFolderId = process.env.GOOGLE_FINE_IMAGE_FOLDER_ID ?? "";
+const maintenanceSheetName = process.env.GOOGLE_MAINTENANCE_SHEET_NAME ?? "MAINTENANCE";
+const maintenanceSheetId = Number.parseInt(process.env.GOOGLE_MAINTENANCE_SHEET_ID ?? "0", 10);
+
+export const MAINTENANCE_TICKET_ID_COLUMN = "TICKET ID";
+export const MAINTENANCE_RESIDENT_EMAIL_COLUMN = "RESIDENT EMAIL";
+export const MAINTENANCE_RESIDENT_NAME_COLUMN = "RESIDENT NAME";
+export const MAINTENANCE_BRANCH_COLUMN = "BRANCH";
+export const MAINTENANCE_LOCATION_COLUMN = "LOCATION";
+export const MAINTENANCE_DEVICE_COLUMN = "DEVICE";
+export const MAINTENANCE_ISSUE_COLUMN = "ISSUE DESCRIPTION";
+export const MAINTENANCE_REPORTED_AT_COLUMN = "REPORTED AT";
+export const MAINTENANCE_STATUS_COLUMN = "STATUS";
+export const MAINTENANCE_MECHANIC_EMAIL_COLUMN = "MECHANIC EMAIL";
+export const MAINTENANCE_SOLVED_AT_COLUMN = "SOLVED AT";
+export const MAINTENANCE_REPAIR_TIME_COLUMN = "REPAIR TIME MINUTES";
+export const MAINTENANCE_SATISFACTION_COLUMN = "RESIDENT SATISFACTION";
+export const MAINTENANCE_FEEDBACK_COLUMN = "RESIDENT FEEDBACK";
 const redirectUri =
   process.env.GOOGLE_REDIRECT_URI ?? "http://localhost:4000/integrations/google/oauth/callback";
 const SUPPORTED_COZORO_TIMEZONES = ["Asia/Ho_Chi_Minh", "America/Vancouver"] as const;
@@ -32,6 +49,7 @@ const finesCacheFilePath = path.join(cacheDirPath, "fines-cache.json");
 const cleaningCalendarCacheFilePath = path.join(cacheDirPath, "cleaning-calendars-cache.json");
 const laundryCouponsFilePath = path.join(cacheDirPath, "laundry-coupons.json");
 const laundryCouponRedemptionsFilePath = path.join(cacheDirPath, "laundry-coupon-redemptions.json");
+const maintenanceCacheFilePath = path.join(cacheDirPath, "maintenance-cache.json");
 type MemoryCachedValue<T> = {
   value: T;
   loadedAt: number;
@@ -43,6 +61,30 @@ let coinsMemoryCache: MemoryCachedValue<CoinsCache> | null = null;
 let paymentsMemoryCache: MemoryCachedValue<PaymentsCache> | null = null;
 let finesMemoryCache: MemoryCachedValue<FinesCache> | null = null;
 let cleaningCalendarMemoryCache: MemoryCachedValue<CleaningCalendarCache> | null = null;
+export type MaintenanceTicket = {
+  id: string;
+  residentEmail: string;
+  residentName: string;
+  branch: string;
+  location: string;
+  device: string;
+  issue: string;
+  reportedAt: string;
+  status: "REPORTED" | "ASSIGNED" | "SOLVED" | "CLOSED";
+  mechanicEmail?: string | null;
+  solvedAt?: string | null;
+  repairTimeMinutes?: number | null;
+  satisfaction?: "SATISFIED" | "UNSATISFIED" | null;
+  feedback?: string | null;
+  row: Record<string, string>;
+};
+
+export type MaintenanceCache = {
+  syncedAt: string;
+  tickets: MaintenanceTicket[];
+};
+
+let maintenanceMemoryCache: MemoryCachedValue<MaintenanceCache> | null = null;
 
 const syncIntervalMs = 6 * 60 * 60 * 1000;
 const laundryHistoryMonthsBack = 12;
@@ -137,11 +179,10 @@ const blockedClientUpdateColumns = new Set([
 ]);
 
 const cozoroMemberTiers = [
-  { name: "Silver", threshold: 100000, upgradeCoins: 5000 },
-  { name: "Gold", threshold: 150000, upgradeCoins: 10000 },
-  { name: "Platinum", threshold: 300000, upgradeCoins: 20000 },
-  { name: "Diamond", threshold: 800000, upgradeCoins: 40000 },
-  { name: "Elite", threshold: null, upgradeCoins: 80000 }
+  { name: "Gold", threshold: 100000, maintainCoins: 5000, upgradeCoins: 5000 },
+  { name: "Platinum", threshold: 150000, maintainCoins: 10000, upgradeCoins: 10000 },
+  { name: "Diamond", threshold: 300000, maintainCoins: 20000, upgradeCoins: 20000 },
+  { name: "Elite", threshold: 800000, maintainCoins: 40000, upgradeCoins: 40000 }
 ] as const;
 
 const normalizedHeaderAliases = new Map<string, string>([
@@ -552,10 +593,39 @@ function getCozoroMemberTier(value: string | undefined) {
   return cozoroMemberTiers.find((tier) => tier.name.toLowerCase() === normalized) ?? null;
 }
 
+function calculatePreviousMonthEarnings(coinsHistory: CoinRow[], email: string) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const now = new Date();
+  let targetMonth = now.getMonth() - 1;
+  let targetYear = now.getFullYear();
+  if (targetMonth < 0) {
+    targetMonth = 11;
+    targetYear--;
+  }
+
+  let earned = 0;
+  for (const row of coinsHistory) {
+    if (row[EMAIL_COLUMN]?.trim().toLowerCase() !== normalizedEmail) continue;
+    const balance = parseLooseInteger(row[COINS_BALANCE_COLUMN]);
+    if (balance <= 0) continue;
+
+    const ts = row[COINS_TIMESTAMP_COLUMN];
+    const parsed = parseSheetTimestamp(ts);
+    if (!parsed) continue;
+
+    const d = new Date(parsed);
+    if (d.getMonth() === targetMonth && d.getFullYear() === targetYear) {
+      earned += balance;
+    }
+  }
+  return earned;
+}
+
 function calculateLiveCozoroMember(input: {
   branchId: string | undefined;
   totalAccumulatedCoins: string | undefined;
   recordedMember: string | undefined;
+  previousMonthEarnings?: number;
 }) {
   const branchId = normalizeClientBranch(input.branchId ?? "");
   const recordedMember = (input.recordedMember ?? "").trim() || "Standard";
@@ -565,12 +635,27 @@ function calculateLiveCozoroMember(input: {
   }
 
   const totalAccumulatedCoins = parseLooseInteger(input.totalAccumulatedCoins);
-  const matchedTier =
-    [...cozoroMemberTiers]
-      .filter((tier) => tier.threshold != null && totalAccumulatedCoins >= tier.threshold)
-      .sort((left, right) => (right.threshold ?? 0) - (left.threshold ?? 0))[0] ?? null;
+  const previousMonthEarnings = input.previousMonthEarnings ?? 0;
+
+  // Find all tiers that the user QUALIFIES for based on thresholds
+  // THEN filter out those they don't MAINTAIN based on last month's coins
+  const potentialTiers = [...cozoroMemberTiers]
+    .filter((tier) => tier.threshold != null && totalAccumulatedCoins >= tier.threshold)
+    .filter((tier) => previousMonthEarnings >= tier.maintainCoins)
+    .sort((left, right) => (right.threshold ?? 0) - (left.threshold ?? 0));
+
+  const matchedTier = potentialTiers[0] ?? null;
   const recordedTier = getCozoroMemberTier(recordedMember);
 
+  // If the recorded tier exists, check if it's maintained
+  if (recordedTier) {
+    if (previousMonthEarnings < recordedTier.maintainCoins) {
+      // User lost their recorded tier! Return the next best matched tier (that they maintain) or Standard.
+      return matchedTier?.name ?? "Standard";
+    }
+  }
+
+  // If no recorded tier or recorded tier is maintained, use the higher of recorded vs matched
   if (!recordedTier) {
     return matchedTier?.name ?? "Standard";
   }
@@ -588,10 +673,10 @@ function formatVietnameseDuration(minutes: number) {
   const remainder = minutes % 60;
 
   if (hours > 0 && remainder > 0) {
-    return `${hours} giá» ${remainder} phút`;
+    return `${hours} giờ ${remainder} phút`;
   }
   if (hours > 0) {
-    return `${hours} giá»`;
+    return `${hours} giờ`;
   }
   return `${remainder} phút`;
 }
@@ -599,13 +684,13 @@ function formatVietnameseDuration(minutes: number) {
 function getLaundryCalendarMachineTitle(machine: LaundryMachine) {
   switch (machine.id) {
     case "d7-washer-horizontal":
-      return "GIáº¶T D7 TOSHIBA 7KG";
+      return "GIẶT D7 TOSHIBA 7KG";
     case "d7-washer-paid":
-      return "GIáº¶T D7 WHIRLPOOL 9KG";
+      return "GIẶT D7 WHIRLPOOL 9KG";
     case "d7-dryer":
-      return "Sáº¤Y D7";
+      return "SẤY D7";
     case "d2-washer":
-      return "GIáº¶T D2";
+      return "GIẶT D2";
     default:
       return "LAUNDRY";
   }
@@ -762,24 +847,24 @@ function getLaundryBaseAllowanceSummary(client: ClientRow, branchId: "D2" | "D7"
   const notes: string[] = [];
 
   if (branchId === "D2") {
-    notes.push("D2 members receive 8 free laundry uses each month.");
+    notes.push("D2 members receive 8 free laundry uses each month. / Thành viên D2 được miễn phí 8 lượt giặt mỗi tháng.");
   } else if (floor === 2) {
-    notes.push("D7 floor 2 members receive 6 free laundry uses each month.");
+    notes.push("D7 floor 2 members receive 6 free laundry uses each month. / Thành viên D7 tầng 2 được miễn phí 6 lượt giặt mỗi tháng.");
   } else {
-    notes.push("D7 floor 1 and floor 3 members receive 8 free laundry uses each month.");
+    notes.push("D7 floor 1 and floor 3 members receive 8 free laundry uses each month. / Thành viên D7 tầng 1 và tầng 3 được miễn phí 8 lượt giặt mỗi tháng.");
   }
 
   if (normalizedBonus.washer > 0 || normalizedBonus.dryer > 0) {
     notes.push(
       branchId === "D2"
-        ? `Recorded Cozoro Member adds ${normalizedBonus.washer} free washer use${normalizedBonus.washer === 1 ? "" : "s"} per month.`
-        : `Recorded Cozoro Member adds ${normalizedBonus.washer} free washer use${normalizedBonus.washer === 1 ? "" : "s"} and ${normalizedBonus.dryer} free dryer use${normalizedBonus.dryer === 1 ? "" : "s"} per month.`
+        ? `Recorded Cozoro Member adds ${normalizedBonus.washer} free washer use${normalizedBonus.washer === 1 ? "" : "s"} per month. / Hạng thành viên hiện tại được cộng thêm ${normalizedBonus.washer} lượt giặt miễn phí mỗi tháng.`
+        : `Recorded Cozoro Member adds ${normalizedBonus.washer} free washer use${normalizedBonus.washer === 1 ? "" : "s"} and ${normalizedBonus.dryer} free dryer use${normalizedBonus.dryer === 1 ? "" : "s"} per month. / Hạng thành viên hiện tại được cộng thêm ${normalizedBonus.washer} lượt giặt và ${normalizedBonus.dryer} lượt sấy miễn phí mỗi tháng.`
     );
   } else {
     notes.push(
       branchId === "D2"
-        ? "Current recorded Cozoro Member does not add extra washer uses yet."
-        : "Current recorded Cozoro Member does not add extra washer or dryer uses yet."
+        ? "Current recorded Cozoro Member does not add extra washer uses yet. / Hạng thành viên hiện tại chưa được cộng thêm lượt giặt miễn phí."
+        : "Current recorded Cozoro Member does not add extra washer or dryer uses yet. / Hạng thành viên hiện tại chưa được cộng thêm lượt giặt/sấy miễn phí."
     );
   }
 
@@ -794,6 +879,7 @@ function getLaundryBaseAllowanceSummary(client: ClientRow, branchId: "D2" | "D7"
     notes
   };
 }
+
 
 async function getLaundryAllowanceSummary(client: ClientRow, branchId: "D2" | "D7") {
   const base = getLaundryBaseAllowanceSummary(client, branchId);
@@ -820,8 +906,15 @@ async function getLaundryAllowanceSummary(client: ClientRow, branchId: "D2" | "D
   for (const booking of monthlyBookings) {
     const rawEvent = {
       description: booking.description,
-      summary: booking.summary
+      summary: booking.summary,
+      status: booking.status
     } as GoogleCalendarEvent;
+    
+    // Skip cancelled bookings in allowance calculation
+    if (rawEvent.status === "cancelled") {
+      continue;
+    }
+
     const paymentMethod = getLaundryPaymentMethodFromEvent(rawEvent);
     const machine = laundryMachines.find((entry) => entry.calendarId === booking.calendarId) ?? null;
 
@@ -872,12 +965,12 @@ async function getLaundryAllowanceSummary(client: ClientRow, branchId: "D2" | "D
     notes: [
       ...base.notes,
       ...(couponSummary.couponFreeUsesPerMonth > 0
-        ? [`Coupons added ${couponSummary.couponFreeUsesPerMonth} extra free laundry use(s) this month.`]
+        ? [`Coupons added ${couponSummary.couponFreeUsesPerMonth} extra free laundry use(s) this month. / Coupon đã cộng thêm ${couponSummary.couponFreeUsesPerMonth} lượt giặt miễn phí.`]
         : []),
-      `Remaining this month: ${remainingBaseFreeUses} base/coupon, ${remainingCouponFreeUses} coupon, ${remainingBonusWasherUses} washer bonus, ${remainingBonusDryerUses} dryer bonus.`,
-      `Available coins after future coin-paid bookings: ${availableCoinBalance}.`
+      `Remaining this month: ${remainingBaseFreeUses} base/coupon, ${remainingCouponFreeUses} coupon, ${remainingBonusWasherUses} washer bonus, ${remainingBonusDryerUses} dryer bonus. / Còn lại tháng này: ${remainingBaseFreeUses} lượt cơ bản/coupon, ${remainingCouponFreeUses} lượt coupon, ${remainingBonusWasherUses} lượt giặt thêm, ${remainingBonusDryerUses} lượt sấy thêm.`,
+      `Available coins after future coin-paid bookings: ${availableCoinBalance}. / Số dư coins sau khi trừ các lịch đã đặt: ${availableCoinBalance}.`
     ]
-  } satisfies LaundryAllowanceSummary;
+  } as LaundryAllowanceSummary;
 }
 
 export function createAuthUrl() {
@@ -921,7 +1014,7 @@ export async function readSheetRows() {
   const sheets = await getAuthorizedSheetsClient();
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${sheetName}!A:ZZ`
+    range: `${sheetName}!A:AMJ`
   });
 
   const values = response.data.values ?? [];
@@ -943,7 +1036,7 @@ export async function readCoinsSheetRows() {
   const sheets = await getAuthorizedSheetsClient();
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${coinsSheetName}!A:ZZ`
+    range: `${coinsSheetName}!A:AMJ`
   });
 
   const values = response.data.values ?? [];
@@ -987,7 +1080,7 @@ export async function readPaymentsSheetRows() {
   } else {
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${paymentsSheetName}!A:ZZ`
+      range: `${paymentsSheetName}!A:AMJ`
     });
     values = (response.data.values as string[][] | undefined) ?? [];
   }
@@ -1032,7 +1125,7 @@ export async function readFinesSheetRows() {
   } else {
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${finesSheetName}!A:ZZ`
+      range: `${finesSheetName}!A:AMJ`
     });
     values = (response.data.values as string[][] | undefined) ?? [];
   }
@@ -1412,7 +1505,7 @@ export async function listLaundryCalendarsWithEvents(options?: { forceRefresh?: 
           selected: Boolean(calendarMetadata.selected),
           accessRole: calendarMetadata.accessRole ?? "",
           events: events.filter((event: LaundryCalendarEvent) => event.id && event.start)
-        } satisfies LaundryCalendarDebug;
+        } as LaundryCalendarDebug;
       } catch (error) {
         return {
           id: calendarId,
@@ -1423,7 +1516,7 @@ export async function listLaundryCalendarsWithEvents(options?: { forceRefresh?: 
           accessRole: "",
           events: [],
           error: error instanceof Error ? error.message : "Unable to load this calendar"
-        } satisfies LaundryCalendarDebug;
+        } as LaundryCalendarDebug;
       }
     })
   );
@@ -1484,10 +1577,251 @@ export async function getLaundryBookingsForEmailWithOptions(
         listCalendarEvents(calendarId, options),
         getCalendarMetadata(calendarId, options)
       ]);
+
+      return rawEvents
+        .filter((event: GoogleCalendarEvent) => {
+          if (event.status === "cancelled") {
+            return false;
+          }
+          return eventMatchesEmail(event, normalizedEmail);
+        })
+        .map((event: GoogleCalendarEvent) => {
+          const start = event.start?.dateTime ?? event.start?.date ?? "";
+          const end = event.end?.dateTime ?? event.end?.date ?? "";
+
+          return {
+            id: event.id ?? "",
+            calendarId,
+            calendarSummary: calendarMetadata.summary ?? "Laundry",
+            summary: event.summary ?? "Laundry Booking",
+            description: event.description ?? "",
+            location: event.location ?? "",
+            status: event.status ?? "confirmed",
+            start,
+            end,
+            htmlLink: event.htmlLink ?? ""
+          } as LaundryCalendarEvent;
+        });
+    })
+  );
+
+  return results.flat().sort((left, right) => left.start.localeCompare(right.start));
+}
+
+export async function createLaundryBooking(input: {
+  email: string;
+  machineId: string;
+  start: string;
+  paymentMethod?: LaundryPaymentMethod;
+  couponCode?: string;
+}) {
+  const context = await getLaundryBookingContextForEmail(input.email);
+  if (!context) {
+    throw new Error("No active client found for that email");
+  }
+
+  const machine = getLaundryMachineById(input.machineId);
+  if (!machine || machine.branchId !== context.branchId) {
+    throw new Error("This machine is not available for your branch");
+  }
+
+  const start = new Date(input.start);
+  if (Number.isNaN(start.getTime())) {
+    throw new Error("Invalid booking start time");
+  }
+
+  const now = new Date();
+  const latest = new Date(now);
+  latest.setDate(latest.getDate() + 7);
+
+  if (start.getTime() < now.getTime() || start.getTime() > latest.getTime()) {
+    throw new Error("Bookings are only available for the next 7 days");
+  }
+
+  const end = new Date(start.getTime() + machine.durationMinutes * 60 * 1000);
+  const availability = await getLaundryAvailabilityForMachine({
+    email: input.email,
+    machineId: input.machineId,
+    days: 7,
+    forceRefresh: true
+  });
+  const requestedDay = getDateKeyInTimeZone(start, COZORO_TIMEZONE);
+  const matchingDay = availability.availability.find((day) => day.date === requestedDay);
+  const isSlotOpen = matchingDay?.slots.includes(start.toISOString()) ?? false;
+
+  if (!isSlotOpen) {
+    throw new Error("Selected time is no longer available");
+  }
+
+  const validatedCoupon = input.couponCode?.trim()
+    ? await validateLaundryCoupon({
+        code: input.couponCode,
+        email: input.email,
+        branchId: context.branchId,
+        now
+      })
+    : null;
+
+  const isWasher = machine.type === "WASHER";
+  const hasSpecificBonus = isWasher 
+    ? context.allowance.remainingBonusWasherUses > 0 
+    : context.allowance.remainingBonusDryerUses > 0;
+  
+  const hasEffectiveFreeUsage = isWasher
+    ? (context.allowance.remainingBaseFreeUses > 0 || hasSpecificBonus)
+    : hasSpecificBonus;
+
+  const automaticPaymentMethod: LaundryPaymentMethod =
+    machine.allowsFreeLaundry && hasEffectiveFreeUsage
+      ? "FREE_LAUNDRY"
+      : context.allowance.availableCoinBalance >= machine.coinPrice
+        ? "COINS"
+        : "CASH";
+
+  const requestedPaymentMethod = input.paymentMethod?.trim() as LaundryPaymentMethod | undefined;
+  const resolvedPaymentMethod = requestedPaymentMethod ?? automaticPaymentMethod;
+
+  if (resolvedPaymentMethod === "FREE_LAUNDRY") {
+    if (!machine.allowsFreeLaundry) {
+      throw new Error("This machine does not accept free laundry.");
+    }
+    if (!hasEffectiveFreeUsage) {
+      const errorMsg = isWasher 
+        ? "No free laundry uses available (Base or Bonus)." 
+        : "You do not have the privilege for free dryer use (Dryer Bonus required).";
+      throw new Error(errorMsg);
+    }
+  }
+
+  if (resolvedPaymentMethod === "COINS" && context.allowance.availableCoinBalance < machine.coinPrice) {
+    throw new Error("Not enough available coins for this booking.");
+  }
+
+  const calendar = await getAuthorizedCalendarClient();
+  const bookingLabel = getLaundryCalendarBookingLabel(machine);
+  const summary = `${bookingLabel} - ${input.email}`;
+  const clientName = (context.client[CLIENT_NAME_COLUMN] ?? "").trim();
+  const bedValue = (context.client[CLIENT_BED_COLUMN] ?? "").trim();
+  const eventDescription = [
+    "--- Đặt lịch ---",
+    bookingLabel,
+    "",
+    "--- Member ---",
+    bookingLabel,
+    "",
+    "--- Customer Information ---",
+    `Email: ${input.email}`,
+    `Họ & Tên đầy đủ: ${clientName}`,
+    "Code giảm giá: ",
+    `Giường ${context.branchId}: ${bedValue}`,
+    `Chi nhánh: ${context.branchId}`,
+    `Máy: ${machine.label}`,
+    `Thời lượng: ${machine.durationMinutes} phút`,
+    `Coupon: ${validatedCoupon?.code ?? ""}`,
+    `Payment method: ${resolvedPaymentMethod}`,
+    `Coin cost: ${machine.coinPrice}`
+  ].join("\n");
+
+  const response = await calendar.events.insert({
+    calendarId: machine.calendarId,
+    requestBody: {
+      summary,
+      description: eventDescription,
+      attendees: [{ email: input.email }],
+      start: {
+        dateTime: start.toISOString(),
+        timeZone: COZORO_TIMEZONE
+      },
+      end: {
+        dateTime: end.toISOString(),
+        timeZone: COZORO_TIMEZONE
+      }
+    }
+  });
+
+  invalidateLaundryCalendar(machine.calendarId);
+  const metadata = await getCalendarMetadata(machine.calendarId, { forceRefresh: true });
+  const syncWarnings: string[] = [];
+
+  try {
+    if (validatedCoupon) {
+      await redeemLaundryCoupon({
+        code: validatedCoupon.code,
+        email: input.email,
+        branchId: context.branchId,
+        extraFreeUses: validatedCoupon.extraFreeUses,
+        now
+      });
+    }
+
+    if (resolvedPaymentMethod === "COINS") {
+      const nextCoinsBalance = Math.max(0, context.allowance.currentCoinsBalance - machine.coinPrice);
+      await appendCoinsSheetRow({
+        [COINS_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(new Date()),
+        [CONTRACT_CODE_COLUMN]: context.client[CONTRACT_CODE_COLUMN] ?? "",
+        ["Chi nhánh Cozoro dorm"]: context.branchId.replace("D", ""),
+        [EMAIL_COLUMN]: input.email.trim().toLowerCase(),
+        [CLIENT_NAME_COLUMN]: context.client[CLIENT_NAME_COLUMN] ?? "",
+        [CLIENT_BED_COLUMN]: context.client[CLIENT_BED_COLUMN] ?? "",
+        [COINS_BALANCE_COLUMN]: String(-machine.coinPrice),
+        [COINS_EVENT_COLUMN]: getLaundryCoinEventLabel(machine),
+        [COINS_OPERATOR_COLUMN]: "",
+        [COINS_MEMBER_COLUMN]: context.allowance.recordedMember,
+        [COINS_CURRENT_BALANCE_COLUMN]: String(nextCoinsBalance),
+        [COINS_TRANSACTION_CODE_COLUMN]: getLaundryCoinTransactionCode(machine, start, input.email)
+      });
+
+      if (context.client[CONTRACT_CODE_COLUMN]) {
+        await updateClientColumns(context.client[CONTRACT_CODE_COLUMN], {
+          [CLIENT_CURRENT_COINS_COLUMN]: String(nextCoinsBalance)
+        });
+      }
+    } else if (resolvedPaymentMethod === "CASH" && context.client[CONTRACT_CODE_COLUMN]) {
+      const currentLaundryCost = parseLooseInteger(context.client["Chi phí giặt sấy"]);
+      await updateClientColumns(context.client[CONTRACT_CODE_COLUMN], {
+        "Chi phí giặt sấy": String(currentLaundryCost + machine.coinPrice)
+      });
+    }
+  } catch (error) {
+    syncWarnings.push(
+      error instanceof Error
+        ? `Google Calendar booking succeeded, but some sheet updates did not: ${error.message}`
+        : "Google Calendar booking succeeded, but some sheet updates did not."
+    );
+  }
+
+  return {
+    id: response.data.id ?? "",
+    calendarId: machine.calendarId,
+    calendarSummary: metadata.summary ?? machine.label,
+    summary: response.data.summary ?? summary,
+    description: response.data.description ?? eventDescription,
+    location: response.data.location ?? "",
+    status: response.data.status ?? "confirmed",
+    start: response.data.start?.dateTime ?? start.toISOString(),
+    end: response.data.end?.dateTime ?? end.toISOString(),
+    htmlLink: response.data.htmlLink ?? "",
+    syncWarnings
+  } as LaundryCalendarEvent;
+}
+
+export async function warmLaundryCalendarCache() {
+  const calendarIds = await getLaundryCalendarIds();
+  const results = await Promise.all(
+    calendarIds.map(async (calendarId) => {
+      const [rawEvents, calendarMetadata] = await Promise.all([
+        listCalendarEvents(calendarId, { forceRefresh: true }),
+        getCalendarMetadata(calendarId, { forceRefresh: true })
+      ]);
       const calendarSummary = calendarMetadata.summary ?? calendarId;
 
       return rawEvents
-        .filter((event: GoogleCalendarEvent) => eventMatchesEmail(event, normalizedEmail))
+        .filter((event: GoogleCalendarEvent) => {
+          if (event.status === "cancelled") {
+            return false;
+          }
+          return true; // Warm cache for all events in the calendar
+        })
         .map((event: GoogleCalendarEvent) => ({
           id: event.id ?? "",
           calendarId,
@@ -1503,12 +1837,7 @@ export async function getLaundryBookingsForEmailWithOptions(
     })
   );
 
-  return results
-    .flat()
-    .filter((event: LaundryCalendarEvent) => event.id && event.start)
-    .sort((left: LaundryCalendarEvent, right: LaundryCalendarEvent) =>
-      left.start.localeCompare(right.start)
-    );
+  return results.flat().filter((event: LaundryCalendarEvent) => event.id && event.start);
 }
 
 export function getLaundryMachinesForBranch(branchId: string) {
@@ -1592,7 +1921,7 @@ export async function getLaundryAvailabilityForMachine(input: {
       COZORO_TIMEZONE
     );
 
-    const firstSlot = new Date(dayStart);
+    const firstSlot = roundUpToNextTenMinutes(new Date(Math.max(now.getTime(), dayStart.getTime())));
     const slots: string[] = [];
 
     for (
@@ -1616,209 +1945,7 @@ export async function getLaundryAvailabilityForMachine(input: {
     });
   }
 
-  return {
-    machine,
-    availability
-  };
-}
-export async function createLaundryBooking(input: {
-  email: string;
-  machineId: string;
-  start: string;
-  paymentMethod?: LaundryPaymentMethod;
-  couponCode?: string;
-}) {
-  const context = await getLaundryBookingContextForEmail(input.email);
-  if (!context) {
-    throw new Error("No active client found for that email");
-  }
-
-  const machine = getLaundryMachineById(input.machineId);
-  if (!machine || machine.branchId !== context.branchId) {
-    throw new Error("This machine is not available for your branch");
-  }
-
-  const start = new Date(input.start);
-  if (Number.isNaN(start.getTime())) {
-    throw new Error("Invalid booking start time");
-  }
-
-  const now = new Date();
-  const latest = new Date(now);
-  latest.setDate(latest.getDate() + 7);
-
-  if (start.getTime() < now.getTime() || start.getTime() > latest.getTime()) {
-    throw new Error("Bookings are only available for the next 7 days");
-  }
-
-  const end = new Date(start.getTime() + machine.durationMinutes * 60 * 1000);
-  const availability = await getLaundryAvailabilityForMachine({
-    email: input.email,
-    machineId: input.machineId,
-    days: 7,
-    forceRefresh: true
-  });
-  const requestedDay = getDateKeyInTimeZone(start, COZORO_TIMEZONE);
-  const matchingDay = availability.availability.find((day) => day.date === requestedDay);
-  const isSlotOpen = matchingDay?.slots.includes(start.toISOString()) ?? false;
-
-  if (!isSlotOpen) {
-    throw new Error("Selected time is no longer available");
-  }
-
-  const remainingFreeUses =
-    context.allowance.remainingBaseFreeUses +
-    (machine.type === "WASHER"
-      ? context.allowance.remainingBonusWasherUses
-      : context.allowance.remainingBonusDryerUses);
-  const validatedCoupon = input.couponCode?.trim()
-    ? await validateLaundryCoupon({
-        code: input.couponCode,
-        email: input.email,
-        branchId: context.branchId,
-        now
-      })
-    : null;
-  const effectiveRemainingFreeUses = remainingFreeUses + (validatedCoupon?.extraFreeUses ?? 0);
-  const automaticPaymentMethod: LaundryPaymentMethod =
-    machine.allowsFreeLaundry && effectiveRemainingFreeUses > 0
-      ? "FREE_LAUNDRY"
-      : context.allowance.availableCoinBalance >= machine.coinPrice
-        ? "COINS"
-        : "CASH";
-  const requestedPaymentMethod = input.paymentMethod?.trim() as LaundryPaymentMethod | undefined;
-  const resolvedPaymentMethod = requestedPaymentMethod ?? automaticPaymentMethod;
-
-  if (resolvedPaymentMethod === "FREE_LAUNDRY") {
-    if (!machine.allowsFreeLaundry) {
-      throw new Error("This machine does not accept free laundry.");
-    }
-    if (effectiveRemainingFreeUses <= 0) {
-      throw new Error("No free laundry uses are available for this booking.");
-    }
-  }
-
-  if (resolvedPaymentMethod === "COINS" && context.allowance.availableCoinBalance < machine.coinPrice) {
-    throw new Error("Not enough available coins for this booking.");
-  }
-
-  const calendar = await getAuthorizedCalendarClient();
-  const bookingLabel = getLaundryCalendarBookingLabel(machine);
-  const summary = `${bookingLabel} - ${input.email}`;
-  const clientName = (context.client[CLIENT_NAME_COLUMN] ?? "").trim();
-  const bedValue = (context.client[CLIENT_BED_COLUMN] ?? "").trim();
-  const eventDescription = [
-    "--- ??t l?ch ---",
-    bookingLabel,
-    "",
-    "--- Member ---",
-    bookingLabel,
-    "",
-    "--- Customer Information ---",
-    `Email: ${input.email}`,
-    `H? & T?n ??y ??: ${clientName}`,
-    "Code gi?m gi?: ",
-    `Gi??ng ${context.branchId}: ${bedValue}`,
-    `Chi nh?nh: ${context.branchId}`,
-    `M?y: ${machine.label}`,
-    `Th?i l??ng: ${machine.durationMinutes} ph?t`,
-    `Coupon: ${validatedCoupon?.code ?? ""}`,
-    `Payment method: ${resolvedPaymentMethod}`,
-    `Coin cost: ${machine.coinPrice}`
-  ].join("\n");
-  const response = await calendar.events.insert({
-    calendarId: machine.calendarId,
-    requestBody: {
-      summary,
-      description: eventDescription,
-      attendees: [{ email: input.email }],
-      start: {
-        dateTime: start.toISOString(),
-        timeZone: COZORO_TIMEZONE
-      },
-      end: {
-        dateTime: end.toISOString(),
-        timeZone: COZORO_TIMEZONE
-      }
-    }
-  });
-
-  invalidateLaundryCalendar(machine.calendarId);
-  const metadata = await getCalendarMetadata(machine.calendarId, { forceRefresh: true });
-  const syncWarnings: string[] = [];
-
-  try {
-    if (validatedCoupon) {
-      await redeemLaundryCoupon({
-        code: validatedCoupon.code,
-        email: input.email,
-        branchId: context.branchId,
-        extraFreeUses: validatedCoupon.extraFreeUses,
-        now
-      });
-    }
-
-    if (resolvedPaymentMethod === "COINS") {
-      const nextCoinsBalance = Math.max(0, context.allowance.currentCoinsBalance - machine.coinPrice);
-      await appendCoinsSheetRow({
-        [COINS_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(new Date()),
-        [CONTRACT_CODE_COLUMN]: context.client[CONTRACT_CODE_COLUMN] ?? "",
-        ["Chi nh?nh Cozoro dorm"]: context.branchId.replace("D", ""),
-        [EMAIL_COLUMN]: input.email.trim().toLowerCase(),
-        [CLIENT_NAME_COLUMN]: context.client[CLIENT_NAME_COLUMN] ?? "",
-        [CLIENT_BED_COLUMN]: context.client[CLIENT_BED_COLUMN] ?? "",
-        [COINS_BALANCE_COLUMN]: String(-machine.coinPrice),
-        [COINS_EVENT_COLUMN]: getLaundryCoinEventLabel(machine),
-        [COINS_OPERATOR_COLUMN]: "",
-        [COINS_MEMBER_COLUMN]: context.allowance.recordedMember,
-        [COINS_CURRENT_BALANCE_COLUMN]: String(nextCoinsBalance),
-        [COINS_TRANSACTION_CODE_COLUMN]: getLaundryCoinTransactionCode(machine, start, input.email)
-      });
-
-      if (context.client[CONTRACT_CODE_COLUMN]) {
-        await updateClientColumns(context.client[CONTRACT_CODE_COLUMN], {
-          [CLIENT_CURRENT_COINS_COLUMN]: String(nextCoinsBalance)
-        });
-      }
-    } else if (resolvedPaymentMethod === "CASH" && context.client[CONTRACT_CODE_COLUMN]) {
-      const currentLaundryCost = parseLooseInteger(context.client["Chi ph? gi?t s?y"]);
-      await updateClientColumns(context.client[CONTRACT_CODE_COLUMN], {
-        "Chi ph? gi?t s?y": String(currentLaundryCost + machine.coinPrice)
-      });
-    }
-  } catch (error) {
-    syncWarnings.push(
-      error instanceof Error
-        ? `Google Calendar booking succeeded, but some sheet updates did not: ${error.message}`
-        : "Google Calendar booking succeeded, but some sheet updates did not."
-    );
-  }
-
-  return {
-    id: response.data.id ?? "",
-    calendarId: machine.calendarId,
-    calendarSummary: metadata.summary ?? machine.label,
-    summary: response.data.summary ?? summary,
-    description: response.data.description ?? eventDescription,
-    location: response.data.location ?? "",
-    status: response.data.status ?? "confirmed",
-    start: response.data.start?.dateTime ?? start.toISOString(),
-    end: response.data.end?.dateTime ?? end.toISOString(),
-    htmlLink: response.data.htmlLink ?? "",
-    syncWarnings
-  } satisfies LaundryCalendarEvent;
-}
-
-export async function warmLaundryCalendarCache() {
-  const calendarIds = await getLaundryCalendarIds();
-  await Promise.all(
-    calendarIds.map(async (calendarId) => {
-      await Promise.all([
-        getCalendarMetadata(calendarId, { forceRefresh: true }),
-        listCalendarEvents(calendarId, { forceRefresh: true })
-      ]);
-    })
-  );
+  return { availability };
 }
 
 export function getConfiguredCleaningCalendars() {
@@ -1908,7 +2035,7 @@ export function getCleaningCalendarTarget(
     return definition.floor === (options?.floor ?? null);
   });
 
-  return match ? ({ calendarId: match.calendarId, title: match.title } satisfies CleaningCalendarTarget) : null;
+  return match ? ({ calendarId: match.calendarId, title: match.title } as CleaningCalendarTarget) : null;
 }
 
 export async function createCleaningCalendarEvent(input: {
@@ -2050,6 +2177,167 @@ export async function updateCleaningCalendarEvent(input: {
   });
 }
 
+export async function syncMaintenanceFromSheet() {
+  if (!spreadsheetId) {
+    throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
+  }
+
+  const sheets = await getAuthorizedSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${maintenanceSheetName}!A:AMJ`
+  });
+
+  const values = response.data.values ?? [];
+  if (values.length === 0) {
+    maintenanceMemoryCache = {
+      value: { syncedAt: new Date().toISOString(), tickets: [] },
+      loadedAt: Date.now()
+    };
+    return maintenanceMemoryCache.value;
+  }
+
+  const headers = (values[0] ?? []).map((value) => normalizeHeader(String(value)));
+  const tickets: MaintenanceTicket[] = values
+    .slice(1)
+    .map((row) => {
+      const mapped = mapRow(headers, row.map((v) => String(v)));
+      return {
+        id: (mapped[MAINTENANCE_TICKET_ID_COLUMN] ?? "").trim(),
+        residentEmail: (mapped[MAINTENANCE_RESIDENT_EMAIL_COLUMN] ?? "").trim().toLowerCase(),
+        residentName: (mapped[MAINTENANCE_RESIDENT_NAME_COLUMN] ?? "").trim(),
+        branch: (mapped[MAINTENANCE_BRANCH_COLUMN] ?? "").trim(),
+        location: (mapped[MAINTENANCE_LOCATION_COLUMN] ?? "").trim(),
+        device: (mapped[MAINTENANCE_DEVICE_COLUMN] ?? "").trim(),
+        issue: (mapped[MAINTENANCE_ISSUE_COLUMN] ?? "").trim(),
+        reportedAt: (mapped[MAINTENANCE_REPORTED_AT_COLUMN] ?? "").trim(),
+        status: (mapped[MAINTENANCE_STATUS_COLUMN] ?? "REPORTED").trim().toUpperCase() as MaintenanceTicket["status"],
+        mechanicEmail: (mapped[MAINTENANCE_MECHANIC_EMAIL_COLUMN] ?? "").trim().toLowerCase() || null,
+        solvedAt: (mapped[MAINTENANCE_SOLVED_AT_COLUMN] ?? "").trim() || null,
+        repairTimeMinutes: Number.parseInt(mapped[MAINTENANCE_REPAIR_TIME_COLUMN] ?? "0", 10) || null,
+        satisfaction: (mapped[MAINTENANCE_SATISFACTION_COLUMN] ?? "").trim().toUpperCase() as MaintenanceTicket["satisfaction"],
+        feedback: (mapped[MAINTENANCE_FEEDBACK_COLUMN] ?? "").trim() || null,
+        row: mapped
+      };
+    })
+    .filter((ticket) => Boolean(ticket.id));
+
+  const cacheValue: MaintenanceCache = {
+    syncedAt: new Date().toISOString(),
+    tickets
+  };
+
+  maintenanceMemoryCache = {
+    value: cacheValue,
+    loadedAt: Date.now()
+  };
+
+  await mkdir(cacheDirPath, { recursive: true });
+  await writeFile(maintenanceCacheFilePath, JSON.stringify(cacheValue, null, 2), "utf8");
+
+  return cacheValue;
+}
+
+export async function readCachedMaintenance() {
+  if (maintenanceMemoryCache && Date.now() - maintenanceMemoryCache.loadedAt < CACHE_MEMORY_TTL_MS) {
+    return maintenanceMemoryCache.value;
+  }
+
+  try {
+    const file = await readFile(maintenanceCacheFilePath, "utf8");
+    const parsed = JSON.parse(file) as MaintenanceCache;
+    maintenanceMemoryCache = {
+      value: parsed,
+      loadedAt: Date.now()
+    };
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function reportMaintenanceTicket(input: {
+  residentEmail: string;
+  residentName: string;
+  branch: string;
+  location: string;
+  issue: string;
+  machineDevice?: string;
+}) {
+  const ticketId = `TKT${Date.now()}`;
+  const now = new Date();
+  
+  const entry: Record<string, string> = {
+    [MAINTENANCE_TICKET_ID_COLUMN]: ticketId,
+    [MAINTENANCE_RESIDENT_EMAIL_COLUMN]: input.residentEmail.trim().toLowerCase(),
+    [MAINTENANCE_RESIDENT_NAME_COLUMN]: input.residentName.trim(),
+    [MAINTENANCE_BRANCH_COLUMN]: input.branch,
+    [MAINTENANCE_LOCATION_COLUMN]: input.location.trim(),
+    [MAINTENANCE_DEVICE_COLUMN]: input.machineDevice?.trim() || "",
+    [MAINTENANCE_ISSUE_COLUMN]: input.issue.trim(),
+    [MAINTENANCE_REPORTED_AT_COLUMN]: now.toISOString(),
+    [MAINTENANCE_STATUS_COLUMN]: "REPORTED"
+  };
+
+  const sheets = await getAuthorizedSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${maintenanceSheetName}!A:AMJ`
+  });
+  const values = response.data.values ?? [];
+  if (values.length === 0) {
+    throw new Error("The maintenance sheet is empty");
+  }
+
+  const headers = (values[0] ?? []).map((value) => normalizeHeader(String(value)));
+  const row = headers.map((header) => entry[header] ?? "");
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${maintenanceSheetName}!A:AMJ`,
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: {
+      values: [row]
+    }
+  });
+
+  await syncMaintenanceFromSheet();
+
+  // Award 5000 coins for reporting
+  try {
+    const clients = await getManagerClients();
+    const client = clients.find(c => c.email.toLowerCase() === input.residentEmail.toLowerCase());
+    if (client) {
+      await managerAdjustCoins({
+        maHd: client.maHd,
+        delta: 5000,
+        reason: `Maintenance Reward (TKT: ${ticketId})`,
+        operator: "SYSTEM"
+      });
+    }
+  } catch (error) {
+    console.error("[reportMaintenanceTicket] Failed to award coins", error);
+  }
+
+  return { ok: true, ticketId };
+}
+
+export async function updateMaintenanceTicket(ticketId: string, values: Record<string, string>) {
+  await updateSheetRowColumns({
+    range: `${maintenanceSheetName}!A:AMJ`,
+    rowLabel: "maintenance",
+    values,
+    syncAfterUpdate: syncMaintenanceFromSheet,
+    findRow: (headers, row) => {
+      const mapped = mapRow(headers, row);
+      return (mapped[MAINTENANCE_TICKET_ID_COLUMN] ?? "").trim() === ticketId.trim();
+    }
+  });
+
+  return { ok: true };
+}
+
 export async function syncClientsFromSheet() {
   if (!spreadsheetId) {
     throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
@@ -2058,7 +2346,7 @@ export async function syncClientsFromSheet() {
   const sheets = await getAuthorizedSheetsClient();
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${sheetName}!A:ZZ`
+    range: `${sheetName}!A:AMJ`
   });
 
   const values = response.data.values ?? [];
@@ -2080,25 +2368,37 @@ export async function syncClientsFromSheet() {
 
   const memberColumnIndex = headers.findIndex((header) => header === COINS_MEMBER_COLUMN);
   if (memberColumnIndex !== -1) {
+    const coinsHistory = (await readCoinsSheetRows()) || [];
+    const updateData = [];
     for (const [index, row] of rows.entries()) {
+      const email = row[EMAIL_COLUMN];
+      const previousMonthEarnings = calculatePreviousMonthEarnings(coinsHistory, email);
+
       const calculatedMember = calculateLiveCozoroMember({
         branchId: getClientBranchValue(row),
         totalAccumulatedCoins: row["Tổng Coins tích luỹ"],
-        recordedMember: row[COINS_MEMBER_COLUMN]
+        recordedMember: row[COINS_MEMBER_COLUMN],
+        previousMonthEarnings
       });
       const currentMember = (row[COINS_MEMBER_COLUMN] ?? "").trim() || "Standard";
 
       if (currentMember !== calculatedMember) {
-        await sheets.spreadsheets.values.update({
-          spreadsheetId,
+        updateData.push({
           range: `${sheetName}!${toSheetColumn(memberColumnIndex + 1)}${index + 2}`,
-          valueInputOption: "USER_ENTERED",
-          requestBody: {
-            values: [[calculatedMember]]
-          }
+          values: [[calculatedMember]]
         });
         row[COINS_MEMBER_COLUMN] = calculatedMember;
       }
+    }
+
+    if (updateData.length > 0) {
+      await sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          valueInputOption: "USER_ENTERED",
+          data: updateData
+        }
+      });
     }
   }
 
@@ -2296,7 +2596,7 @@ async function fetchCleaningCalendarEventsFromGoogle(options?: { forceRefresh?: 
             floor: definition.floor,
             userEmail: extractedEmail ?? null,
             userName: extractFieldFromDescription(description, "User")
-          } satisfies CleaningCalendarEvent;
+          } as CleaningCalendarEvent;
         })
         .filter((event) => event.id && event.start);
     })
@@ -2440,7 +2740,7 @@ export async function getManagerFines() {
           multiplier,
           isPaid: isFineMarkedPaid(row[FINE_STATUS_COLUMN] ?? "")
         }
-      } satisfies FineEntry;
+      } as FineEntry;
     })
     .sort((left, right) => {
       const leftTimestamp = left.parsedTimestamp ?? "";
@@ -2572,10 +2872,15 @@ export async function managerAdjustCoins(input: {
   const coinsUsedThisMonth = parseLooseInteger(client.row["Cozoro coins sử dụng tháng này"]);
   const nextCoins = currentCoins + delta;
   const nextTotalCoins = delta > 0 ? totalCoins + delta : totalCoins;
+
+  const coinsHistory = (await readCoinsSheetRows()) || [];
+  const previousMonthEarnings = calculatePreviousMonthEarnings(coinsHistory, client.email);
+
   const nextCozoroMember = calculateLiveCozoroMember({
     branchId: client.branch,
     totalAccumulatedCoins: String(nextTotalCoins),
-    recordedMember: client.recordedMember
+    recordedMember: client.recordedMember,
+    previousMonthEarnings
   });
 
   if (nextCoins < 0) {
@@ -2674,10 +2979,14 @@ export async function upgradeCozoroMemberByCoins(input: {
     throw new Error("Client could not be found for this Cozoro Member upgrade.");
   }
 
+  const coinsHistory = (await readCoinsSheetRows()) || [];
+  const previousMonthEarnings = calculatePreviousMonthEarnings(coinsHistory, client.email);
+
   const currentMember = calculateLiveCozoroMember({
     branchId: client.branch,
     totalAccumulatedCoins: client.totalCoins,
-    recordedMember: client.recordedMember
+    recordedMember: client.recordedMember,
+    previousMonthEarnings
   });
   const currentTierIndex = getCozoroMemberTierIndex(currentMember);
   const targetTierIndex = getCozoroMemberTierIndex(targetTier.name);
@@ -2754,7 +3063,7 @@ export async function managerCreateFine(input: {
   const sheets = await getAuthorizedSheetsClient();
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${finesSheetName}!A:ZZ`
+    range: `${finesSheetName}!A:AMJ`
   });
   const values = response.data.values ?? [];
 
@@ -2818,7 +3127,7 @@ export async function managerCreateFine(input: {
 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `${finesSheetName}!A:ZZ`,
+    range: `${finesSheetName}!A:AMJ`,
     valueInputOption: "USER_ENTERED",
     insertDataOption: "INSERT_ROWS",
     requestBody: {
@@ -3045,7 +3354,7 @@ async function appendCoinsSheetRow(entry: Record<string, string>) {
   const sheets = await getAuthorizedSheetsClient();
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${coinsSheetName}!A:ZZ`
+    range: `${coinsSheetName}!A:AMJ`
   });
   const values = response.data.values ?? [];
   if (values.length === 0) {
@@ -3057,7 +3366,7 @@ async function appendCoinsSheetRow(entry: Record<string, string>) {
 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `${coinsSheetName}!A:ZZ`,
+    range: `${coinsSheetName}!A:AMJ`,
     valueInputOption: "USER_ENTERED",
     insertDataOption: "INSERT_ROWS",
     requestBody: {
@@ -3076,7 +3385,7 @@ async function appendPaymentSheetRow(entry: Record<string, string>) {
   const sheets = await getAuthorizedSheetsClient();
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${paymentsSheetName}!A:ZZ`
+    range: `${paymentsSheetName}!A:AMJ`
   });
   const values = response.data.values ?? [];
   if (values.length === 0) {
@@ -3088,7 +3397,7 @@ async function appendPaymentSheetRow(entry: Record<string, string>) {
 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `${paymentsSheetName}!A:ZZ`,
+    range: `${paymentsSheetName}!A:AMJ`,
     valueInputOption: "USER_ENTERED",
     insertDataOption: "INSERT_ROWS",
     requestBody: {
@@ -3164,7 +3473,7 @@ export async function updateCoinSheetEntry(input: {
   const normalizedEmail = input.email.trim().toLowerCase();
 
   await updateSheetRowColumns({
-    range: `${coinsSheetName}!A:ZZ`,
+    range: `${coinsSheetName}!A:AMJ`,
     rowLabel: "coins",
     values: input.values,
     syncAfterUpdate: syncCoinsFromSheet,
@@ -3195,7 +3504,7 @@ export async function updatePaymentSheetEntry(input: {
   const normalizedEmail = input.email.trim().toLowerCase();
 
   await updateSheetRowColumns({
-    range: `${paymentsSheetName}!A:ZZ`,
+    range: `${paymentsSheetName}!A:AMJ`,
     rowLabel: "payments",
     values: input.values,
     syncAfterUpdate: syncPaymentsFromSheet,
@@ -3226,7 +3535,7 @@ export async function updateFineSheetEntry(input: {
   const normalizedEmail = input.email.trim().toLowerCase();
 
   await updateSheetRowColumns({
-    range: `${finesSheetName}!A:ZZ`,
+    range: `${finesSheetName}!A:AMJ`,
     rowLabel: "fines",
     values: input.values,
     syncAfterUpdate: syncFinesFromSheet,
@@ -3307,7 +3616,7 @@ async function updateFineSheetCell(input: {
   const sheets = await getAuthorizedSheetsClient();
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${finesSheetName}!A:ZZ`
+    range: `${finesSheetName}!A:AMJ`
   });
 
   const sheetValues = response.data.values ?? [];
@@ -3363,7 +3672,7 @@ export async function updateClientColumns(maHd: string, values: Record<string, s
   const sheets = await getAuthorizedSheetsClient();
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${sheetName}!A:ZZ`
+    range: `${sheetName}!A:AMJ`
   });
 
   const sheetValues = response.data.values ?? [];
@@ -3451,6 +3760,33 @@ export function startClientSyncInterval() {
   timer.unref();
 }
 
+export function startMaintenanceSyncInterval() {
+  if (process.env.ENABLE_MAINTENANCE_SYNC !== "true") {
+    return;
+  }
+
+  const hasCredentials =
+    Boolean(process.env.GOOGLE_CLIENT_ID) &&
+    Boolean(process.env.GOOGLE_CLIENT_SECRET) &&
+    process.env.GOOGLE_CLIENT_SECRET !== "REPLACE_WITH_YOUR_CLIENT_SECRET";
+
+  if (!hasCredentials) {
+    console.warn("Maintenance sync skipped because OAuth credentials are not configured.");
+    return;
+  }
+
+  void syncMaintenanceFromSheet().catch((error) => {
+    console.warn("Initial Maintenance sync failed:", error instanceof Error ? error.message : error);
+  });
+
+  const timer = setInterval(() => {
+    void syncMaintenanceFromSheet().catch((error) => {
+      console.warn("Scheduled Maintenance sync failed:", error instanceof Error ? error.message : error);
+    });
+  }, syncIntervalMs);
+  timer.unref();
+}
+
 export function startLaundryCalendarCacheInterval() {
   if (process.env.ENABLE_LAUNDRY_CACHE_WARMER !== "true") {
     return;
@@ -3503,4 +3839,24 @@ export function startCleaningCalendarCacheInterval() {
     });
   }, calendarCacheTtlMs);
   timer.unref();
+}
+
+export async function getActiveLaundryBooking(email: string) {
+  const now = new Date();
+  const bookings = await getLaundryBookingsForEmail(email);
+  const sorted = [...bookings].sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+
+  const active = sorted.find((b) => {
+    const start = new Date(b.start);
+    const graceStart = new Date(start.getTime() - 10 * 60000); // 10 mins early
+    const graceEnd = new Date(start.getTime() + 20 * 60000);   // 20 mins after start
+    return now >= graceStart && now <= graceEnd;
+  });
+
+  const next = sorted.find((b) => new Date(b.start) > now && b.id !== active?.id);
+
+  return {
+    active: active ?? null,
+    next: next ?? null
+  };
 }

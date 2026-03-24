@@ -8,6 +8,8 @@ import {
   getActiveClientByEmail,
   getFinesForEmail,
   getLaundryBookingsForEmailWithOptions,
+  readCachedClients,
+  ClientRow,
 } from "./google-sheets.js";
 import { prisma } from "./prisma.js";
 import { requirePortalRole, resolvePortalLogin } from "./staff-access.js";
@@ -104,12 +106,28 @@ export async function getResidentSupportConversation(email: string) {
   return { conversation, messages };
 }
 
-export async function listSupportConversationsForInbox() {
-  return prisma.supportConversation.findMany({
+export type StaffInboxItem = {
+  id: string; // For DIRECT this is conversationId, for GROUP this is groupId
+  type: "DIRECT" | "GROUP";
+  label: string; // Name of resident or Group Name (e.g. Branch D7)
+  subLabel: string; // Email or Group ID
+  status: SupportConversationStatus;
+  lastMessageAt: Date;
+  unreadCount: number;
+  latestMessage: {
+    body: string;
+    senderName: string | null;
+    createdAt: Date;
+  } | null;
+};
+
+export async function listManagerInbox(operatorEmail: string): Promise<StaffInboxItem[]> {
+  const normalizedOperatorEmail = normalizeEmail(operatorEmail);
+
+  // 1. Fetch Direct Support Conversations
+  const directConversations = await prisma.supportConversation.findMany({
     where: {
-      messages: {
-        some: {}
-      }
+      messages: { some: {} }
     },
     include: {
       messages: {
@@ -117,9 +135,147 @@ export async function listSupportConversationsForInbox() {
         take: 1
       }
     },
-    orderBy: [{ lastMessageAt: "desc" }, { createdAt: "desc" }]
+    orderBy: { lastMessageAt: "desc" }
   });
+
+  const directConversationIds = directConversations.map(c => c.id);
+  const directReadStates = await getReadStatesMap(directConversationIds, normalizedOperatorEmail, "STAFF");
+
+  const directItems: StaffInboxItem[] = directConversations.map(c => {
+    const lastRead = directReadStates.get(c.id) || null;
+    const unreadMessages = c.messages.filter(m => 
+      m.senderRole === SupportMessageSenderRole.RESIDENT && (!lastRead || m.createdAt > lastRead)
+    );
+    const latest = c.messages[0];
+
+    return {
+      id: c.id,
+      type: "DIRECT",
+      label: c.residentName || c.residentEmail,
+      subLabel: c.residentEmail,
+      status: c.status,
+      lastMessageAt: c.lastMessageAt,
+      unreadCount: unreadMessages.length,
+      latestMessage: latest ? {
+        body: latest.body,
+        senderName: latest.senderName,
+        createdAt: latest.createdAt
+      } : null
+    };
+  });
+
+  // 2. Derive all potential groups from clients
+  const clientCache = await readCachedClients();
+  const rows = clientCache?.rows || [];
+  
+  const potentialGroupIds = new Set<string>();
+  rows.forEach((row: ClientRow) => {
+    const branch = (row["Chi nhánh Cozoro dorm"] || row["BRANCH"] || "").trim();
+    if (!branch) return;
+    
+    potentialGroupIds.add(`BRANCH_${branch}`);
+    
+    const floor = (row["Tầng"] || row["TẦNG"] || "").trim();
+    if (floor) {
+      potentialGroupIds.add(`FLOOR_${branch}_${floor}`);
+    }
+    
+    const room = (row["Số phòng"] || row["SỐ PHÒNG"] || row["Phòng"] || row["PHÒNG"] || "").trim();
+    if (room) {
+      potentialGroupIds.add(`ROOM_${branch}_${room}`);
+    }
+  });
+
+  // 3. Fetch Existing Group Conversations
+  const groupsWithMessages = await prisma.groupMessage.groupBy({
+    by: ['groupId'],
+    _max: { createdAt: true }
+  });
+
+  const existingGroupIds = new Set(groupsWithMessages.map(g => g.groupId));
+  
+  // Combine potential groups with those that have messages but might not have active clients (archived)
+  const allGroupIds = new Set([...potentialGroupIds, ...existingGroupIds]);
+
+  const groupItems: StaffInboxItem[] = await Promise.all(Array.from(allGroupIds).map(async (groupId) => {
+    const latestMessage = await prisma.groupMessage.findFirst({
+      where: { groupId },
+      orderBy: { createdAt: "desc" }
+    });
+
+    const readState = await prisma.groupReadState.findUnique({
+      where: { groupId_viewerEmail: { groupId, viewerEmail: normalizedOperatorEmail } }
+    });
+
+    const lastRead = readState?.lastReadAt || null;
+    const unreadCount = await prisma.groupMessage.count({
+      where: {
+        groupId,
+        senderRole: SupportMessageSenderRole.RESIDENT,
+        createdAt: { gt: lastRead || new Date(0) }
+      }
+    });
+
+    let label = groupId;
+    if (groupId.startsWith("BRANCH_")) label = "Branch " + groupId.replace("BRANCH_", "");
+    else if (groupId.startsWith("FLOOR_")) {
+      const parts = groupId.split("_");
+      label = `Floor ${parts[1]}-${parts[2]}`;
+    } else if (groupId.startsWith("ROOM_")) {
+      const parts = groupId.split("_");
+      label = `Room ${parts[2]} (${parts[1]})`;
+    }
+
+    return {
+      id: groupId,
+      type: "GROUP",
+      label,
+      subLabel: groupId,
+      status: SupportConversationStatus.OPEN,
+      lastMessageAt: latestMessage?.createdAt || new Date(0),
+      unreadCount,
+      latestMessage: latestMessage ? {
+        body: latestMessage.body,
+        senderName: latestMessage.senderName,
+        createdAt: latestMessage.createdAt
+      } : null
+    };
+  }));
+
+  // 4. Merge and Sort
+  return [...directItems, ...groupItems].sort((a, b) => 
+    b.lastMessageAt.getTime() - a.lastMessageAt.getTime() || a.label.localeCompare(b.label)
+  );
 }
+
+export async function getGroupUnreadCounts(operatorEmail: string): Promise<Record<string, number>> {
+  const normalizedOperatorEmail = normalizeEmail(operatorEmail);
+  const groupsWithMessages = await prisma.groupMessage.groupBy({
+    by: ['groupId']
+  });
+
+  const counts: Record<string, number> = {};
+  await Promise.all(groupsWithMessages.map(async (g) => {
+    const groupId = g.groupId;
+    const readState = await prisma.groupReadState.findUnique({
+      where: { groupId_viewerEmail: { groupId, viewerEmail: normalizedOperatorEmail } }
+    });
+    const lastRead = readState?.lastReadAt || null;
+    const unreadCount = await prisma.groupMessage.count({
+      where: {
+        groupId,
+        senderRole: SupportMessageSenderRole.RESIDENT,
+        createdAt: { gt: lastRead || new Date(0) }
+      }
+    });
+    if (unreadCount > 0) {
+      counts[groupId] = unreadCount;
+    }
+  }));
+  return counts;
+}
+
+
 
 async function getReadState(conversationId: string, viewerEmail: string, viewerRole: SupportViewerRoleValue) {
   return prisma.supportReadState.findUnique({
@@ -438,17 +594,17 @@ async function buildResidentReminderNotifications(email: string) {
       continue;
     }
     const minutes = minutesUntil(start, now);
-    if (minutes > 0 && minutes <= 15) {
+    if (minutes > 0 && minutes <= 10) {
       notifications.push({
-        id: `laundry-15-${booking.id}`,
+        id: `laundry-10-${booking.id}`,
         type: "LAUNDRY_REMINDER",
-        title: "Laundry starts in 15 minutes",
+        title: "Laundry starts in 10 minutes",
         body: `${booking.summary} starts at ${start.toLocaleTimeString()}.`,
         createdAt: booking.start,
         unreadCount: 1,
         href: "/bookings"
       });
-    } else if (minutes > 15 && minutes <= 60) {
+    } else if (minutes > 10 && minutes <= 60) {
       notifications.push({
         id: `laundry-60-${booking.id}`,
         type: "LAUNDRY_REMINDER",
@@ -463,13 +619,23 @@ async function buildResidentReminderNotifications(email: string) {
 
   for (const task of cleaningTasks) {
     const hours = hoursUntil(task.scheduledDate, now);
-    if (hours > 0 && hours <= 12) {
+    if (hours > 0 && hours <= 1) {
       notifications.push({
-        id: `cleaning-${task.id}`,
+        id: `cleaning-1h-${task.id}`,
+        type: "CLEANING_REMINDER",
+        title: "Cleaning task in 1 hour",
+        body: `Your cleaning task is scheduled for ${task.scheduledDate.toLocaleString()}. Please prepare to start.`,
+        createdAt: task.scheduledDate.toISOString(),
+        unreadCount: 1,
+        href: "/schedule"
+      });
+    } else if (hours > 1 && hours <= 12) {
+      notifications.push({
+        id: `cleaning-12h-${task.id}`,
         type: "CLEANING_REMINDER",
         title: "Cleaning task is coming up",
         body: `Your cleaning task is scheduled for ${task.scheduledDate.toLocaleString()}.`,
-        createdAt: task.scheduledDate,
+        createdAt: task.scheduledDate.toISOString(),
         unreadCount: 1,
         href: "/schedule"
       });
@@ -517,7 +683,7 @@ export async function listResidentSupportNotifications(email: string) {
         body: summary.latestUnreadMessage.body,
         createdAt: summary.latestUnreadMessage.createdAt,
         unreadCount: summary.unreadCount,
-        href: "/support"
+        href: `/support?chat=${encodeURIComponent(conversation.id)}`
       });
     }
   }
@@ -584,15 +750,66 @@ export async function listStaffSupportNotifications(operatorEmail: string) {
       title: `${conversation.residentName || conversation.residentEmail} sent a new message`,
       body: summary.latestUnreadMessage.body,
       createdAt: summary.latestUnreadMessage.createdAt,
-      unreadCount: summary.unreadCount
+      unreadCount: summary.unreadCount,
+      href: `/manager?chat=${encodeURIComponent(conversation.id)}`
     });
   }
 
+  // Add Group Notifications
+  const groupsWithMessages = await prisma.groupMessage.groupBy({
+    by: ['groupId'],
+    _max: { createdAt: true }
+  });
+
+  for (const g of groupsWithMessages) {
+    const groupId = g.groupId;
+    const readState = await prisma.groupReadState.findUnique({
+      where: { groupId_viewerEmail: { groupId, viewerEmail: normalizedOperatorEmail } }
+    });
+    const lastRead = readState?.lastReadAt || null;
+
+    const unreadMessages = await prisma.groupMessage.findMany({
+      where: {
+        groupId,
+        senderRole: SupportMessageSenderRole.RESIDENT,
+        createdAt: { gt: lastRead || new Date(0) }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+
+    if (unreadMessages.length > 0) {
+      const latest = unreadMessages[0]!;
+      let label = groupId;
+      if (groupId.startsWith("BRANCH_")) label = "Branch " + groupId.replace("BRANCH_", "");
+      else if (groupId.startsWith("FLOOR_")) {
+        const parts = groupId.split("_");
+        label = `Floor ${parts[1]}-${parts[2]}`;
+      } else if (groupId.startsWith("ROOM_")) {
+        const parts = groupId.split("_");
+        label = `Room ${parts[2]} (${parts[1]})`;
+      }
+
+      notifications.push({
+        id: `group-support-${groupId}-${latest.id}`,
+        type: "SUPPORT_REQUEST",
+        conversationId: groupId,
+        residentEmail: "group@cozorohome.com",
+        residentName: label,
+        title: `New message in ${label}`,
+        body: latest.body,
+        createdAt: latest.createdAt,
+        unreadCount: unreadMessages.length,
+        href: `/manager?chat=${encodeURIComponent(groupId)}`
+      });
+    }
+  }
+
   return writeNotificationCache(staffNotificationCache, normalizedOperatorEmail, {
-    notifications,
+    notifications: notifications.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
     unreadCount: notifications.reduce((sum, item) => sum + item.unreadCount, 0)
   });
 }
+
 
 export async function postResidentSupportMessage(input: {
   email: string;

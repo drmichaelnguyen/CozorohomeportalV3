@@ -13,6 +13,7 @@ import {
 import { z } from "zod";
 import {
   getUserAcControllerContext,
+  listAllDevices,
   listPrivilegedAcRooms,
   sendAcCommand,
   sendAcCommandToRoom
@@ -28,6 +29,8 @@ import {
   upsertStaffAccess
 } from "./staff-access.js";
 import { adminSetPortalPassword, changePortalPassword, loginWithPortalPassword, setPortalPassword } from "./portal-auth.js";
+import { getClientGroupContext, getGroupMessages, markGroupRead, postGroupMessage } from "./group-support.js";
+
 
 import {
   adminAssignCleaningTask,
@@ -65,6 +68,7 @@ import {
   getPaymentsForEmail,
   getLaundryBookingsForEmail,
   getLaundryBookingsForEmailWithOptions,
+  getActiveLaundryBooking,
   listLaundryCalendarsWithEvents,
   upgradeCozoroMemberByCoins,
   readCachedCoins,
@@ -82,25 +86,44 @@ import {
   uploadFineImageToDrive,
   updateFineSheetEntry,
   updateLaundryBookingEntry,
-  updatePaymentSheetEntry
+  updatePaymentSheetEntry,
+  readCachedMaintenance,
+  reportMaintenanceTicket,
+  startMaintenanceSyncInterval,
+  syncMaintenanceFromSheet,
+  updateMaintenanceTicket,
+  MAINTENANCE_STATUS_COLUMN,
+  MAINTENANCE_MECHANIC_EMAIL_COLUMN,
+  MAINTENANCE_SOLVED_AT_COLUMN,
+  MAINTENANCE_REPAIR_TIME_COLUMN,
+  MAINTENANCE_SATISFACTION_COLUMN,
+  MAINTENANCE_FEEDBACK_COLUMN
 } from "./google-sheets.js";
 import { prisma } from "./prisma.js";
 import {
+  getGroupUnreadCounts,
   getResidentSupportConversation,
   getSupportConversationById,
   isPrivilegedSupportOperator,
+  listManagerInbox,
   listResidentSupportNotifications,
   listStaffSupportNotifications,
-  listSupportConversationsForInbox,
   markSupportConversationRead,
   postOperatorSupportMessage,
   postOperatorSupportMessageToResident,
   postResidentSupportMessage,
   updateSupportConversationStatus
 } from "./support.js";
+import { 
+  getGroupMessages, 
+  postGroupMessage, 
+  markGroupRead 
+} from "./group-support.js";
+
 
 const app = express();
-const port = Number(process.env.PORT ?? 4000);
+const port = Number(process.env.PORT) || 4000; // AntiGravity: Use env PORT if available, default to 4000
+
 const cleaningSweepIntervalMs = Number(process.env.CLEANING_SWEEP_INTERVAL_MS ?? 15 * 60 * 1000);
 const backgroundCleaningSweepEnabled = process.env.ENABLE_CLEANING_SWEEP === "true";
 const cleaningSweepOnStartup = process.env.CLEANING_SWEEP_ON_STARTUP === "true";
@@ -264,7 +287,12 @@ const acCommandSchema = z.object({
   action: z.enum(["ON", "OFF"])
 });
 const airFryerStartSchema = z.object({
-  email: z.string().email()
+  email: z.string().email(),
+  inspection: z.string().min(1)
+});
+const laundryTriggerSchema = z.object({
+  email: z.string().email().optional(),
+  machineId: z.string().min(1)
 });
 const privilegedAcCommandSchema = z.object({
   roomId: z.string().min(1),
@@ -461,6 +489,17 @@ const supportConversationStatusSchema = z.object({
   operatorEmail: z.string().email(),
   status: z.enum(["OPEN", "CLOSED"])
 });
+const groupMessageInputSchema = z.object({
+  email: z.string().email(),
+  groupId: z.string().min(1),
+  body: z.string().trim().min(1),
+  isAnonymous: z.boolean().optional()
+});
+const groupReadInputSchema = z.object({
+  email: z.string().email(),
+  groupId: z.string().min(1)
+});
+
 
 function computePriceCoins(
   resourceType: ResourceType,
@@ -770,6 +809,80 @@ app.post("/auth/admin-set-password", async (request, response) => {
   }
 });
 
+app.get("/support/group-context", async (request, response) => {
+  const email = typeof request.query.email === "string" ? request.query.email : "";
+  if (!email) {
+    return response.status(400).json({ error: "Email is required" });
+  }
+
+  try {
+    const context = await getClientGroupContext(email);
+    return response.json(context);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to get group context"
+    });
+  }
+});
+
+app.get("/support/group-messages", async (request, response) => {
+  const groupId = typeof request.query.groupId === "string" ? request.query.groupId : "";
+  const email = typeof request.query.email === "string" ? request.query.email : "";
+
+  if (!groupId || !email) {
+    return response.status(400).json({ error: "groupId and email are required" });
+  }
+
+  try {
+    const messages = await getGroupMessages({ groupId, viewerEmail: email });
+    return response.json({ messages });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to load group messages"
+    });
+  }
+});
+
+app.post("/support/group-messages", async (request, response) => {
+  const parsed = groupMessageInputSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid group message payload" });
+  }
+
+  try {
+    const result = await postGroupMessage({
+      groupId: parsed.data.groupId,
+      senderEmail: parsed.data.email,
+      body: parsed.data.body,
+      isAnonymous: parsed.data.isAnonymous ?? false
+    });
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to post group message"
+    });
+  }
+});
+
+app.post("/support/group-read", async (request, response) => {
+  const parsed = groupReadInputSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid group read payload" });
+  }
+
+  try {
+    const result = await markGroupRead({
+      groupId: parsed.data.groupId,
+      viewerEmail: parsed.data.email
+    });
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to mark group as read"
+    });
+  }
+});
+
 app.get("/auth/google/config", (_request, response) => {
   return response.json(getGooglePortalClientConfig());
 });
@@ -902,6 +1015,52 @@ app.get("/controller/ac/rooms", async (_request, response) => {
   }
 });
 
+app.get("/manager/controller/devices", async (_request, response) => {
+  try {
+    const devices = await listAllDevices();
+    return response.json(devices);
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to list devices"
+    });
+  }
+});
+
+app.get("/manager/laundry/schedule", async (_request, response) => {
+  try {
+    const calendars = await listLaundryCalendarsWithEvents();
+    const now = new Date();
+    
+    const schedule = calendars.map(cal => {
+      // Sort events by start date
+      const sortedEvents = [...cal.events].sort((a, b) => 
+        new Date(a.start).getTime() - new Date(b.start).getTime()
+      );
+      
+      const previous = sortedEvents
+        .filter(e => new Date(e.end) < now)
+        .slice(-5);
+        
+      const upcoming = sortedEvents
+        .filter(e => new Date(e.end) >= now)
+        .slice(0, 2);
+        
+      return {
+        id: cal.id,
+        summary: cal.summary,
+        previous,
+        upcoming
+      };
+    });
+    
+    return response.json(schedule);
+  } catch (error) {
+    return response.status(500).json({ 
+      error: error instanceof Error ? error.message : "Unable to load laundry schedule" 
+    });
+  }
+});
+
 app.post("/controller/ac/rooms/command", async (request, response) => {
   const parsed = privilegedAcCommandSchema.safeParse(request.body);
 
@@ -940,6 +1099,19 @@ app.get("/controller/airfryer", async (request, response) => {
   }
 });
 
+app.get("/controller/laundry", async (request, response) => {
+  const parsed = clientLookupSchema.safeParse({ email: request.query.email });
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Email is required" });
+  }
+  try {
+    const data = await getActiveLaundryBooking(parsed.data.email);
+    return response.json(data);
+  } catch (error) {
+    return response.status(500).json({ error: "Unable to check laundry booking" });
+  }
+});
+
 app.post("/controller/airfryer/start", async (request, response) => {
   const parsed = airFryerStartSchema.safeParse(request.body);
 
@@ -953,6 +1125,75 @@ app.post("/controller/airfryer/start", async (request, response) => {
   } catch (error) {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to start air fryer use"
+    });
+  }
+});
+
+app.post("/laundry/manual-trigger", async (request, response) => {
+  const parsed = laundryTriggerSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid laundry trigger payload" });
+  }
+
+  const { email, machineId } = parsed.data;
+
+  try {
+    // 1. Verify active booking window
+    const bookings = await getLaundryBookingsForEmail(email);
+    const now = new Date();
+    const currentBooking = bookings.find((b) => {
+      const start = new Date(b.start);
+      // const end = new Date(b.end); // No longer strictly needed for the window check
+      const graceStart = new Date(start.getTime() - 10 * 60000);   // 10 mins early buffer
+      const graceEnd = new Date(start.getTime() + 20 * 60000);     // 20 mins after the START buffer
+      return now >= graceStart && now <= graceEnd;
+    });
+
+    if (!currentBooking) {
+      return response.status(403).json({
+        error: "No active booking found for this time slot (within the 10m early/20m late buffer window)."
+      });
+    }
+
+    // 2. Map machineId to IFTTT Maker Event names provided by user
+    let eventName = "";
+    const mid = machineId.toLowerCase();
+    
+    // Check for D2
+    if (mid === "d2_laundry" || mid.includes("p5cvikf3pn8292denaig3gmed0")) {
+      eventName = "wehbhookd2laundry"; // User provided this specific typo
+    } 
+    // Check for any D7 machine
+    else if (mid.includes("d7") || mid.includes("iqido2c1") || mid.includes("vmtcgatm") || mid.includes("029mijq7")) {
+      eventName = "webhookgiatd7";
+    }
+
+    if (!eventName) {
+      return response.status(400).json({ error: `Unsupported machine ID: ${machineId}` });
+    }
+
+    // 3. Trigger IFTTT Webhook
+    const key = process.env.IFTTT_WEBHOOK_KEY;
+    if (!key) {
+      throw new Error("IFTTT_WEBHOOK_KEY is not configured in environment.");
+    }
+
+    const iftttUrl = `https://maker.ifttt.com/trigger/${eventName}/with/key/${key}`;
+    const result = await fetch(iftttUrl, { method: "POST" });
+
+    if (!result.ok) {
+      throw new Error(`IFTTT trigger failed with status ${result.status}`);
+    }
+
+    return response.json({
+      ok: true,
+      message: `Triggered ${eventName} for ${machineId}`,
+      booking: currentBooking.id
+    });
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to trigger laundry machine"
     });
   }
 });
@@ -1025,6 +1266,74 @@ app.get("/fines", async (request, response) => {
   } catch (error) {
     return response.status(500).json({
       error: error instanceof Error ? error.message : "Unable to load fine entries"
+    });
+  }
+});
+
+app.post("/manager/controller/laundry/trigger", async (request, response) => {
+  const parsed = laundryTriggerSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid laundry trigger payload" });
+  }
+
+  const { machineId } = parsed.data;
+
+  try {
+    // 1. Map machineId to IFTTT Maker Event names
+    let eventName = "";
+    const mid = machineId.toLowerCase();
+    
+    if (mid === "d2_laundry") {
+      eventName = "wehbhookd2laundry";
+    } else if (mid.includes("d7")) {
+      eventName = "webhookgiatd7";
+    }
+
+    if (!eventName) {
+      return response.status(400).json({ error: `Unsupported machine ID: ${machineId}` });
+    }
+
+    // 2. Trigger IFTTT Webhook (Manager bypasses booking check)
+    const key = process.env.IFTTT_WEBHOOK_KEY;
+    if (!key) {
+      throw new Error("IFTTT_WEBHOOK_KEY is not configured.");
+    }
+
+    const iftttUrl = `https://maker.ifttt.com/trigger/${eventName}/with/key/${key}`;
+    const result = await fetch(iftttUrl, { method: "POST" });
+
+    if (!result.ok) {
+      throw new Error(`IFTTT trigger failed with status ${result.status}`);
+    }
+
+    return response.json({
+      ok: true,
+      message: `Manager triggered ${eventName} for ${machineId}`
+    });
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to trigger laundry machine"
+    });
+  }
+});
+
+app.post("/manager/controller/airfryer/trigger", async (request, response) => {
+  try {
+    const eventName = process.env.AIRFRYER_D7_IFTTT_EVENT || "webhookairfryer";
+    const key = process.env.IFTTT_WEBHOOK_KEY;
+    
+    const iftttUrl = `https://maker.ifttt.com/trigger/${eventName}/with/key/${key}`;
+    const result = await fetch(iftttUrl, { method: "POST" });
+
+    if (!result.ok) {
+       throw new Error(`IFTTT trigger failed with status ${result.status}`);
+    }
+
+    return response.json({ ok: true, message: "Airfryer triggered" });
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to trigger airfryer"
     });
   }
 });
@@ -1115,12 +1424,29 @@ app.get("/manager/support/conversations", async (request, response) => {
   }
 
   try {
-    const conversations = await listSupportConversationsForInbox();
+    const conversations = await listManagerInbox(parsed.data.operatorEmail);
     return response.json({ conversations });
   } catch (error) {
     return response.status(500).json({
       error: error instanceof Error ? error.message : "Unable to load support inbox"
     });
+  }
+});
+
+app.get("/manager/support/unread-counts", async (request, response) => {
+  const parsed = supportInboxQuerySchema.safeParse({
+    operatorEmail: request.query.operatorEmail
+  });
+
+  if (!parsed.success || !(await isPrivilegedSupportOperator(parsed.data.operatorEmail))) {
+    return response.status(403).json({ error: "Forbidden" });
+  }
+
+  try {
+    const unreadCounts = await getGroupUnreadCounts(parsed.data.operatorEmail);
+    return response.json({ unreadCounts });
+  } catch (error) {
+    return response.status(500).json({ error: "Unable to load unread counts" });
   }
 });
 
@@ -1152,12 +1478,29 @@ app.get("/manager/support/conversations/:id", async (request, response) => {
     return response.status(403).json({ error: "Only Cozoro team accounts can open this conversation." });
   }
 
+  const id = request.params.id;
+  const isGroup = id.startsWith("BRANCH_") || id.startsWith("FLOOR_") || id.startsWith("ROOM_");
+
   try {
-    const conversation = await getSupportConversationById(request.params.id);
-    return response.json(conversation);
+    if (isGroup) {
+      const messages = await getGroupMessages({ groupId: id, viewerEmail: parsed.data.operatorEmail });
+      return response.json({
+        conversation: {
+          id,
+          residentEmail: "group@cozorohome.com",
+          residentName: id, // Frontend will handle formatting
+          status: "OPEN",
+          type: "GROUP"
+        },
+        messages
+      });
+    } else {
+      const conversation = await getSupportConversationById(id);
+      return response.json(conversation);
+    }
   } catch (error) {
     return response.status(404).json({
-      error: error instanceof Error ? error.message : "Unable to load support conversation"
+      error: error instanceof Error ? error.message : "Unable to load conversation"
     });
   }
 });
@@ -1169,9 +1512,22 @@ app.post("/manager/support/messages", async (request, response) => {
     return response.status(400).json({ error: "Invalid manager support message payload" });
   }
 
+  const id = parsed.data.conversationId;
+  const isGroup = id.startsWith("BRANCH_") || id.startsWith("FLOOR_") || id.startsWith("ROOM_");
+
   try {
-    const result = await postOperatorSupportMessage(parsed.data);
-    return response.status(201).json(result);
+    if (isGroup) {
+      const message = await postGroupMessage({
+        groupId: id,
+        senderEmail: parsed.data.operatorEmail,
+        body: parsed.data.body,
+        isAnonymous: false
+      });
+      return response.status(201).json({ message });
+    } else {
+      const result = await postOperatorSupportMessage(parsed.data);
+      return response.status(201).json(result);
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to send manager reply";
     const statusCode = message.includes("Only owner or manager") ? 403 : 400;
@@ -1209,16 +1565,27 @@ app.post("/manager/support/conversations/:id/read", async (request, response) =>
     return response.status(403).json({ error: "Only Cozoro team accounts can mark staff notifications." });
   }
 
+  const id = request.params.id;
+  const isGroup = id.startsWith("BRANCH_") || id.startsWith("FLOOR_") || id.startsWith("ROOM_");
+
   try {
-    const readState = await markSupportConversationRead({
-      conversationId: request.params.id,
-      viewerEmail: parsed.data.operatorEmail,
-      viewerRole: "STAFF"
-    });
-    return response.json({ readState });
+    if (isGroup) {
+      await markGroupRead({
+        groupId: id,
+        viewerEmail: parsed.data.operatorEmail
+      });
+      return response.json({ ok: true });
+    } else {
+      const readState = await markSupportConversationRead({
+        conversationId: id,
+        viewerEmail: parsed.data.operatorEmail,
+        viewerRole: "STAFF"
+      });
+      return response.json({ readState });
+    }
   } catch (error) {
     return response.status(400).json({
-      error: error instanceof Error ? error.message : "Unable to mark staff support conversation as read"
+      error: error instanceof Error ? error.message : "Unable to mark staff conversation as read"
     });
   }
 });
@@ -2267,8 +2634,102 @@ app.post("/bookings/:id/cancel", async (request, response) => {
   return response.json(updatedBooking);
 });
 
+// Maintenance Endpoints
+app.post("/client/maintenance/report", async (req, res) => {
+  const { email, name, branch, location, issue, machineDevice } = req.body;
+  if (!email || !location || !issue) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
+
+  try {
+    const result = await reportMaintenanceTicket({
+      residentEmail: email,
+      residentName: name || email,
+      branch: branch || "D7",
+      location,
+      issue,
+      machineDevice
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : "Reporting failed" });
+  }
+});
+
+app.get("/client/maintenance/tickets", async (req, res) => {
+  const { email } = req.query;
+  if (!email) return res.status(400).json({ error: "Email is required" });
+
+  try {
+    const cache = (await readCachedMaintenance()) || (await syncMaintenanceFromSheet());
+    const tickets = cache.tickets.filter(t => t.residentEmail === String(email).trim().toLowerCase());
+    res.json({ tickets });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load tickets" });
+  }
+});
+
+app.get("/staff/maintenance/tickets", async (req, res) => {
+  try {
+    const cache = (await readCachedMaintenance()) || (await syncMaintenanceFromSheet());
+    let tickets = cache.tickets;
+
+    const { status, branch } = req.query;
+    if (status) {
+      tickets = tickets.filter(t => t.status === String(status).toUpperCase());
+    }
+    if (branch) {
+      tickets = tickets.filter(t => t.branch === String(branch));
+    }
+
+    res.json({ tickets });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load tickets" });
+  }
+});
+
+app.post("/staff/maintenance/update", async (req, res) => {
+  const { ticketId, status, mechanicEmail, solvedAt, repairTimeMinutes } = req.body;
+  if (!ticketId || !status) {
+    return res.status(400).json({ error: "ticketId and status are required" });
+  }
+
+  try {
+    const values: Record<string, string> = {
+      [MAINTENANCE_STATUS_COLUMN]: String(status).toUpperCase()
+    };
+    if (mechanicEmail) values[MAINTENANCE_MECHANIC_EMAIL_COLUMN] = mechanicEmail;
+    if (solvedAt) values[MAINTENANCE_SOLVED_AT_COLUMN] = solvedAt;
+    if (repairTimeMinutes !== undefined) values[MAINTENANCE_REPAIR_TIME_COLUMN] = String(repairTimeMinutes);
+
+    const result = await updateMaintenanceTicket(ticketId, values);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : "Update failed" });
+  }
+});
+
+app.post("/client/maintenance/feedback", async (req, res) => {
+  const { ticketId, satisfaction, feedback } = req.body;
+  if (!ticketId || !satisfaction) {
+    return res.status(400).json({ error: "ticketId and satisfaction are required" });
+  }
+
+  try {
+    const result = await updateMaintenanceTicket(ticketId, {
+      [MAINTENANCE_SATISFACTION_COLUMN]: String(satisfaction).toUpperCase(),
+      [MAINTENANCE_FEEDBACK_COLUMN]: feedback || ""
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : "Feedback failed" });
+  }
+});
+
 app.listen(port, () => {
-  console.log(`cozorohome-api listening on http://localhost:${port}`);
+  console.log(`[AntiGravity v2] cozorohome-api listening on http://localhost:${port}`);
+
+  startMaintenanceSyncInterval();
 
   if (backgroundCleaningSweepEnabled) {
     if (cleaningSweepOnStartup) {

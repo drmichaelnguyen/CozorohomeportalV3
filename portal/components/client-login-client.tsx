@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
@@ -41,7 +42,7 @@ type AdminLaundryCalendar = {
 
 type CalendarViewMode = "month" | "week" | "day";
 
-type PortalResolvedRole = "user" | "manager" | "owner" | "app_admin";
+type PortalResolvedRole = "user" | "manager" | "owner" | "app_admin" | "mechanic";
 
 type LoginResolution = {
   allowed: boolean;
@@ -54,7 +55,7 @@ type LoginResolution = {
 
 type StaffAccessEntry = {
   email: string;
-  role: "manager" | "owner" | "app_admin";
+  role: "manager" | "owner" | "app_admin" | "mechanic";
   addedAt: string;
   addedBy: string;
 };
@@ -256,10 +257,11 @@ async function fetchWithTimeout(input: string, init?: RequestInit, timeoutMs = 1
 }
 
 export function ClientLoginClient() {
+  const router = useRouter();
   console.log("[ClientLoginClient] Render executed. Typeof window:", typeof window);
 
   const { sessionEmail, sessionRole, isLoggedIn, login, logout } = usePortalSession();
-  const { t } = usePortalLanguage();
+  const { language, t } = usePortalLanguage();
   const googleButtonRef = useRef<HTMLDivElement | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -472,7 +474,7 @@ export function ClientLoginClient() {
       throw new Error("No portal role was returned for this account.");
     }
 
-    if (resolution.role === "app_admin" || resolution.role === "owner" || resolution.role === "manager") {
+    if (resolution.role === "app_admin" || resolution.role === "owner" || resolution.role === "manager" || resolution.role === "mechanic") {
       const [cacheResponse, laundryResponse] = await Promise.all([
         fetchWithTimeout(`${API_BASE_URL}/clients/cache`),
         fetchWithTimeout(`${API_BASE_URL}/admin/laundry-calendars`)
@@ -504,6 +506,9 @@ export function ClientLoginClient() {
       }
 
       login(resolution.email, resolution.role);
+      
+      const isManager = resolution.role === "manager" || resolution.role === "owner" || resolution.role === "app_admin";
+      router.push(isManager ? "/manager?view=scheduling" : resolution.role === "mechanic" ? "/mechanic" : "/schedule");
       setPassword("");
       setCurrentPasswordInput("");
       setMessage(successMessage);
@@ -531,6 +536,7 @@ export function ClientLoginClient() {
     setPassword("");
     setCurrentPasswordInput("");
     setMessage(successMessage);
+    router.push("/schedule");
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {

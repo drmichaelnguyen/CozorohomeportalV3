@@ -59,6 +59,15 @@ type AirFryerContext = {
   };
 };
 
+type LaundryBooking = {
+  id: string;
+  calendarId: string;
+  calendarSummary: string;
+  summary: string;
+  start: string;
+  end: string;
+};
+
 async function fetchJson<T>(url: string, init?: RequestInit) {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
@@ -121,6 +130,10 @@ export function ControllerClient({
   const [loading, setLoading] = useState(false);
   const [submittingAction, setSubmittingAction] = useState<"ON" | "OFF" | null>(null);
   const [startingAirFryer, setStartingAirFryer] = useState(false);
+  const [activeLaundryBooking, setActiveLaundryBooking] = useState<LaundryBooking | null>(null);
+  const [nextLaundryBooking, setNextLaundryBooking] = useState<LaundryBooking | null>(null);
+  const [triggeringLaundry, setTriggeringLaundry] = useState(false);
+  const [selectedInspection, setSelectedInspection] = useState<string>("");
   const [message, setMessage] = useState("");
 
   async function loadControllerContext() {
@@ -156,9 +169,14 @@ export function ControllerClient({
 
       if (showAirFryerSection) {
         setAirFryerContext(results[offset] as AirFryerContext);
+        offset += 1;
       } else {
         setAirFryerContext(null);
       }
+
+      const laundryData = await fetchJson<{ active: LaundryBooking | null; next: LaundryBooking | null }>(`${API_BASE_URL}/controller/laundry?email=${encodeURIComponent(resolvedEmail)}`);
+      setActiveLaundryBooking(laundryData.active);
+      setNextLaundryBooking(laundryData.next);
 
       setActiveEmail(resolvedEmail);
       login(resolvedEmail);
@@ -166,6 +184,8 @@ export function ControllerClient({
     } catch (error) {
       setContext(null);
       setAirFryerContext(null);
+      setActiveLaundryBooking(null);
+      setNextLaundryBooking(null);
       setMessage(error instanceof Error ? error.message : "Unable to load controls.");
     } finally {
       setLoading(false);
@@ -233,7 +253,7 @@ export function ControllerClient({
   }
 
   async function startAirFryer() {
-    if (!activeEmail) {
+    if (!activeEmail || !selectedInspection) {
       return;
     }
 
@@ -247,7 +267,8 @@ export function ControllerClient({
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          email: activeEmail
+          email: activeEmail,
+          inspection: selectedInspection
         })
       });
 
@@ -255,11 +276,40 @@ export function ControllerClient({
         `${API_BASE_URL}/controller/airfryer?email=${encodeURIComponent(activeEmail)}`
       );
       setAirFryerContext(nextAirFryerContext);
+      setSelectedInspection("");
       setMessage(language === "vi" ? "Đã bắt đầu lượt sử dụng nồi chiên không dầu." : "Air fryer use started.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to start air fryer use.");
     } finally {
       setStartingAirFryer(false);
+    }
+  }
+
+  async function triggerLaundry() {
+    if (!activeEmail || !activeLaundryBooking) {
+      return;
+    }
+
+    setTriggeringLaundry(true);
+    setMessage("");
+
+    try {
+      await fetchJson<{ ok: true }>(`${API_BASE_URL}/laundry/manual-trigger`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          email: activeEmail,
+          machineId: activeLaundryBooking.calendarId
+        })
+      });
+
+      setMessage(language === "vi" ? "Đã kích hoạt máy giặt/sấy thành công." : "Laundry machine triggered successfully.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to trigger laundry machine.");
+    } finally {
+      setTriggeringLaundry(false);
     }
   }
 
@@ -414,20 +464,55 @@ export function ControllerClient({
                     </div>
                   ) : null}
 
-                  <div className="mt-5">
+                  <div className="mt-5 space-y-5">
+                    {!airFryerContext.status.currentUse && airFryerContext.status.availableNow && (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                        <p className="text-xs font-bold text-amber-900 uppercase tracking-tight">Inspection *</p>
+                        <div className="mt-3 grid grid-cols-1 gap-2 text-sm">
+                          {[
+                            { vi: "Dơ / Chưa rửa / Dirty", value: "Dirty" },
+                            { vi: "Sạch / Clean", value: "Clean" },
+                            { vi: "Hư hỏng móp méo / Broken", value: "Broken" },
+                            { vi: "Chưa rút điện / Unplugged", value: "Unplugged" }
+                          ].map((opt) => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() => setSelectedInspection(opt.vi)}
+                              className={`flex items-center justify-between rounded-lg border p-3 text-left transition-all ${
+                                selectedInspection === opt.vi
+                                  ? "border-amber-500 bg-white ring-2 ring-amber-200"
+                                  : "border-amber-100 bg-white/50 hover:bg-white"
+                              }`}
+                            >
+                              <span className={selectedInspection === opt.vi ? "font-bold text-amber-900" : "text-slate-600"}>
+                                {opt.vi}
+                              </span>
+                              {selectedInspection === opt.vi && (
+                                <svg className="h-4 w-4 text-amber-600" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                </svg>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="mt-4 text-[11px] leading-relaxed text-amber-800 font-medium">
+                          {language === "vi"
+                            ? "Vui lòng nêu tình trạng nồi chiên không dầu trước khi bạn sử dụng. Cozoro sẽ dựa vào lịch sử sử dụng để tính toán hao phí để tăng tuổi thọ cho nồi chiên. Nếu bạn phát hiện nồi dơ hoặc có dấu hiệu hư hỏng xin báo NGAY cho Cozoro biết. Việc không thông báo hoặc thông báo trễ có thể sẽ dẫn đến phí hư hại dành cho bạn."
+                            : "Please state the condition of the airfryer before you use it. Cozoro will rely on use history to calculate wear and tear to increase the life of the fryer. If you find the pot dirty or showing signs of damage, please report it IMMEDIATELY to Cozoro. Failure to notify or late notification may result in a damage fee for you."}
+                        </p>
+                      </div>
+                    )}
+
                     <button
                       type="button"
                       onClick={() => void startAirFryer()}
-                      disabled={startingAirFryer || !airFryerContext.status.availableNow}
-                      className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-slate-950 disabled:cursor-not-allowed disabled:bg-slate-300"
+                      disabled={startingAirFryer || !airFryerContext.status.availableNow || !selectedInspection}
+                      className="w-full rounded-xl bg-amber-600 py-3 text-sm font-bold text-white shadow-lg shadow-amber-100 hover:bg-amber-700 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {startingAirFryer
-                        ? language === "vi"
-                          ? "Đang bắt đầu..."
-                          : "Starting..."
-                        : language === "vi"
-                          ? "Sử dụng nồi chiên không dầu"
-                          : "Use air fryer now"}
+                      {startingAirFryer 
+                        ? (language === "vi" ? "Đang xử lý..." : "Processing...") 
+                        : (language === "vi" ? "BẮT ĐẦU SỬ DỤNG" : "START USING NOW")}
                     </button>
                   </div>
                 </>
@@ -440,6 +525,79 @@ export function ControllerClient({
               )}
             </section>
           ) : null}
+
+          <section className="rounded-2xl border border-sky-200 bg-white p-6 shadow-sm">
+            <h2 className="text-xl font-semibold text-slate-900">
+              {language === "vi" ? "Máy giặt & sấy tự phục vụ" : "Self-service Laundry"}
+            </h2>
+            <p className="mt-2 text-sm text-slate-600">
+              {language === "vi" 
+                ? "Nút kích hoạt chỉ hiển thị khi bạn có lịch đặt đang diễn ra."
+                : "The trigger button is only available during your active booking window."}
+            </p>
+
+            {activeLaundryBooking ? (
+              <div className="mt-5 rounded-xl border border-sky-200 bg-sky-50 p-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-sky-900">{activeLaundryBooking.calendarSummary}</p>
+                    <p className="mt-1 text-xs text-sky-800">
+                      {language === "vi" ? "Lịch đặt" : "Booking"}: {activeLaundryBooking.summary}
+                    </p>
+                    <p className="text-[10px] text-sky-600 mt-0.5">
+                      {formatTimestamp(activeLaundryBooking.start, language)} - {formatTimestamp(activeLaundryBooking.end, language)}
+                    </p>
+                  </div>
+                  <div className="h-2 w-2 rounded-full bg-sky-500 animate-pulse"></div>
+                </div>
+
+                <div className="mt-5">
+                  <button
+                    type="button"
+                    onClick={() => void triggerLaundry()}
+                    disabled={triggeringLaundry}
+                    className="w-full rounded-xl bg-sky-600 py-3 text-sm font-bold text-white shadow-lg shadow-sky-100 hover:bg-sky-700 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {triggeringLaundry
+                      ? (language === "vi" ? "Đang kích hoạt..." : "Triggering...")
+                      : (language === "vi" ? "BẮT ĐẦU GIẶT/SẤY" : "START MACHINE NOW")}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50/50 p-8 text-center">
+                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <p className="mt-4 text-sm font-medium text-slate-600">
+                  {language === "vi" ? "Không có lịch giặt nào đang diễn ra." : "No active laundry booking found."}
+                </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  {language === "vi" 
+                    ? "Bạn có thể kích hoạt máy khi đến giờ hẹn trong lịch đặt của mình." 
+                    : "You can trigger the machine when your scheduled time slot starts."}
+                </p>
+              </div>
+            )}
+
+            {nextLaundryBooking && (
+              <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  {language === "vi" ? "Lịch đặt tiếp theo" : "Next Booking"}
+                </p>
+                <div className="mt-2 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-slate-900">{nextLaundryBooking.calendarSummary}</p>
+                    <p className="text-[10px] text-slate-500">
+                      {formatTimestamp(nextLaundryBooking.start, language)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
         </div>
       ) : null}
     </div>

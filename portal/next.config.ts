@@ -17,7 +17,6 @@ if (!process.env.API_SERVER_ORIGIN && !publicApiOrigin) {
 }
 
 const nextConfig: NextConfig = {
-  output: "standalone",
   turbopack: {
     root: configDir
   },

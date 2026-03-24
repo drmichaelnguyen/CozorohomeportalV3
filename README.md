@@ -63,12 +63,12 @@ If Prisma client is missing:
 pnpm --filter cozorohome-api prisma:generate
 ```
 
-## Local Development
+## Local Development (Local/Testing)
 
-Expected local services:
+The local folder is configured for safe testing on non-conflicting ports:
 
-- portal: `http://localhost:3000`
-- API: `http://127.0.0.1:4000`
+- Portal: `http://localhost:3001`
+- API: `http://127.0.0.1:4001`
 
 Run both from repo root:
 
@@ -135,25 +135,29 @@ Important tabs:
 
 The login page should stay short and only link into the manager workspace rather than duplicating long management sections.
 
-## Environment Notes
+## Environment Separation & Deployment
 
-Frontend:
+The project supports a dual-environment setup to separate testing from production.
 
-- `NEXT_PUBLIC_API_BASE_URL`
-- `API_SERVER_ORIGIN`
+### Environments
+- **Local (Testing)**: Located in `C:\Users\User\Desktop\cozorohome webapp`. Runs on ports **3001** (Portal) and **4001** (API).
+- **Public (Production)**: Located in `C:\Users\User\Desktop\cozorohome-public`. Runs on ports **3000** (Portal) and **4000** (API).
 
-Backend:
+### Deployment (Staging to Public)
+To push stable changes from the local folder to the public folder, use the synchronization script in the root:
 
-- `DATABASE_URL`
-- `PORT`
-- `GOOGLE_CLIENT_ID`
-- `GOOGLE_CLIENT_SECRET`
-- `GOOGLE_REDIRECT_URI`
-- Sheets and Calendar env values
+```batch
+sync-to-public.cmd
+```
 
-Production note:
+This script uses `robocopy` to mirror the codebase while **preserving** environment-specific configurations (it excludes `.env` and `.env.local` files).
 
-If the public site cannot log in while localhost works, check the portal deployment env first. The portal proxy must point at the real production API, not `127.0.0.1`.
+### Environment Configuration
+The API and Portal now support dynamic ports via the `PORT` environment variable:
+- **API**: Uses `PORT` in `api/.env`.
+- **Portal**: Uses `PORT` in `portal/.env.local`.
+
+If the public site cannot log in while localhost works, check that `API_SERVER_ORIGIN` in the public portal's `.env.local` points to the correct production API address.
 
 ## Typecheck
 
