@@ -583,6 +583,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [controllerLoading, setControllerLoading] = useState(false);
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [supportSubTab, setSupportSubTab] = useState<"messages" | "feedbacks" | "maintenance">("messages");
+  const [clientSubTab, setClientSubTab] = useState<"list" | "details">("list");
   const [maintenanceTickets, setMaintenanceTickets] = useState<MaintenanceTicket[]>([]);
   const [maintenanceLoading, setMaintenanceLoading] = useState(false);
   const [maintenanceSort, setMaintenanceSort] = useState<{ field: keyof MaintenanceTicket; direction: "asc" | "desc" }>({
@@ -1305,6 +1306,36 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
       {(activeManagerView === "client_list" || activeManagerView === "overview") ? (
         <section className="space-y-6">
+          {/* Sub-tab Switcher */}
+          <div className="flex border-b border-slate-200 overflow-x-auto no-scrollbar">
+            <button
+              type="button"
+              onClick={() => setClientSubTab("list")}
+              className={`whitespace-nowrap px-6 py-3 text-sm font-bold uppercase tracking-wider transition-all border-b-2 ${
+                clientSubTab === "list"
+                  ? "border-sky-500 text-sky-600"
+                  : "border-transparent text-slate-400 hover:text-slate-600"
+              }`}
+            >
+              1. Browse List
+            </button>
+            {selectedMaHd && (
+              <button
+                type="button"
+                onClick={() => setClientSubTab("details")}
+                className={`whitespace-nowrap px-6 py-3 text-sm font-bold uppercase tracking-wider transition-all border-b-2 ${
+                  clientSubTab === "details"
+                    ? "border-sky-500 text-sky-600"
+                    : "border-transparent text-slate-400 hover:text-slate-600"
+                }`}
+              >
+                2. Client Details
+              </button>
+            )}
+          </div>
+
+          {clientSubTab === "list" ? (
+            <div className="space-y-6 animate-in fade-in slide-in-from-left-4 duration-300">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap gap-2">
               <button
@@ -1386,7 +1417,10 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                       type="button"
                                       onClick={() => {
                                         setSelectedMaHd(client?.maHd ?? "");
-                                        if (client) fillClientForm(client);
+                                        if (client) {
+                                          fillClientForm(client);
+                                          setClientSubTab("details");
+                                        }
                                       }}
                                       className={`relative flex h-8 items-center justify-center rounded-md border text-[10px] font-bold ${
                                         isSelected
@@ -1439,6 +1473,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           onClick={() => {
                             setSelectedMaHd(client.maHd);
                             fillClientForm(client);
+                            setClientSubTab("details");
                           }}
                           className={`cursor-pointer transition-colors hover:bg-slate-50 ${selectedMaHd === client.maHd ? "bg-sky-50" : ""}`}
                         >
@@ -1459,11 +1494,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               </div>
             </section>
           )}
-
-        <div className="space-y-6">
-          {false ? <section /> : null}
-
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          </div>
+        ) : (
+          <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+            {false ? <section /> : null}
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Selected Client</h2>
@@ -2359,7 +2394,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           </section>
 
         </div>
-      </section>
+      )}
+    </section>
       ) : null}
 
       {activeManagerView === "owners_employees" ? (
