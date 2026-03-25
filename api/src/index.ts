@@ -2808,8 +2808,16 @@ Cảm ơn bạn đã đồng hành cùng Cozoro Home!
   }
 });
 
-app.listen(port, () => {
-  console.log(`[AntiGravity v2] cozorohome-api listening on http://localhost:${port}`);
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error("[Global Error Handler]", err);
+  res.status(500).json({
+    error: err instanceof Error ? err.message : "Internal Server Error",
+    stack: process.env.NODE_ENV === "development" ? err.stack : undefined
+  });
+});
+
+app.listen(port, "127.0.0.1", () => {
+  console.log(`[AntiGravity v2] cozorohome-api listening on http://127.0.0.1:${port}`);
 
   startMaintenanceSyncInterval();
 

@@ -1,8 +1,8 @@
 "use client";
 
 export function VersionBadge() {
-  const version = "3.0.2";
-  const buildTime = "2026-03-24 19:57"; // Manual build timestamp
+  const version = "3.1.1"; // v3.1.1 Rent States
+  const buildTime = "2026-03-25 10:42"; // Manual build timestamp
   
   return (
     <div className="fixed bottom-2 right-4 z-[60] select-none pointer-events-none opacity-40 hover:opacity-100 transition-opacity">
