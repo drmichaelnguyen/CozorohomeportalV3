@@ -592,6 +592,28 @@ export function CleaningScheduleClient() {
         {message ? <p className="mt-4 text-sm text-slate-700">{message}</p> : null}
       </section>
 
+      {overview && futureTasks.length > 0 && (
+        <section className="rounded-2xl border border-amber-200 bg-amber-50/50 p-6 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-200 text-amber-700 shadow-sm">
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-amber-900 uppercase tracking-tight">{t("nextCleaning", "Your Next Cleaning")}</h2>
+              <p className="text-xl font-black text-slate-900">
+                {new Date(futureTasks[0].scheduledDate).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
+              </p>
+              <div className="mt-1 flex items-center gap-2">
+                <span className="rounded-md bg-white/60 px-2 py-0.5 text-[10px] font-bold text-slate-700 ring-1 ring-amber-200 uppercase">{prettyTaskType(futureTasks[0].type)}</span>
+                <span className="text-[10px] font-bold text-amber-700">+{futureTasks[0].rewardCoins} Coins</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
       {overview ? (
         <>
           {activeMenuDate && (
@@ -615,7 +637,12 @@ export function CleaningScheduleClient() {
                 </div>
 
                 <div className="mt-6 space-y-3">
-                  <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Task Actions</div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Task Actions</div>
+                    <div className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 uppercase ring-1 ring-amber-200">
+                      +20% Coins Bonus
+                    </div>
+                  </div>
                   
                   {allowedTaskTypes.map((type) => {
                     const isAssigned = (overview.tasks ?? []).some(t => sameDay(new Date(t.scheduledDate), activeMenuDate) && t.type === type);
@@ -639,6 +666,7 @@ export function CleaningScheduleClient() {
                           <p className="text-sm font-bold text-slate-900">Assign Myself</p>
                           <p className="text-xs text-slate-500">{prettyTaskType(type)}</p>
                         </div>
+                        <div className="ml-auto text-[10px] font-bold text-amber-600">+20%</div>
                       </button>
                     );
                   })}

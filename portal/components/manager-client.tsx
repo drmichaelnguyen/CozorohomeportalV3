@@ -98,9 +98,37 @@ type FeedbackEntry = {
   fileName: string;
   email: string;
   page: string;
-  message: string;
-  createdAt: string;
+  timestamp: string;
 };
+
+type RentBreakdown = {
+  email: string;
+  month: string;
+  baseRent: number;
+  tenureSurchargeVnd: number;
+  tenureSurchargeRate: number;
+  professionalDiscountVnd: number;
+  planDiscountVnd: number;
+  managerDiscountVnd: number;
+  parkingFeeVnd: number;
+  laundryFeeVnd: number;
+  finesVnd: number;
+  totalBeforeCoinsVnd: number;
+  maxCoinUsageVnd: number;
+  recommendedCoinUsage: number;
+  recommendedCoinValueVnd: number;
+  finalTotalVnd: number;
+  details: {
+    durationMonths: number;
+    professionalStatus: string;
+    workplace: string;
+    memberTier: string;
+    parkingCount: { motorbikes: number; bicycles: number };
+    laundryCount: { free: number; coins: number; cash: number };
+    unpaidFinesCount: number;
+  };
+};
+
 type WorkspacePayload = {
   client: ManagerClientRecord;
   stats: {
@@ -571,6 +599,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [activeManagerView, setActiveManagerView] = useState<ManagerView>(initialView);
   const [feedbackEntries, setFeedbackEntries] = useState<FeedbackEntry[]>([]);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
+
+  // v3.1.0 Rent States
+  const [rentPaymentMode, setRentPaymentMode] = useState<"simple" | "rent">("rent");
+  const [rentBreakdown, setRentBreakdown] = useState<RentBreakdown | null>(null);
+  const [calculatingRent, setCalculatingRent] = useState(false);
+  const [managerDiscountInput, setManagerDiscountInput] = useState("0");
+  const [targetMonthInput, setTargetMonthInput] = useState(new Date().toISOString().slice(0, 7));
   
   // New subtab states
   const [schedulingTab, setSchedulingTab] = useState<"cleaning" | "laundry">("cleaning");
@@ -1850,105 +1885,279 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 ) : null}
 
                 {activeAction === "payment" ? (
-                  <div className="mt-4 space-y-3">
-                    <label className="block text-sm font-medium text-slate-700">
-                      Amount
-                      <input type="number" min="1" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2" />
-                    </label>
-                    <label className="block text-sm font-medium text-slate-700">
-                      Purpose
-                      <input
-                        type="text"
-                        list="payment-purpose-options"
-                        value={paymentPurposeInput}
-                        onChange={(event) => setPaymentPurposeInput(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === ",") {
-                            event.preventDefault();
-                            addPaymentPurposeOption(paymentPurposeInput);
-                          }
-                        }}
-                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
-                        placeholder="Search previous purposes or add your own"
-                      />
-                      <datalist id="payment-purpose-options">
-                        {paymentPurposeSuggestions.map((option) => (
-                          <option key={option} value={option} />
-                        ))}
-                      </datalist>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {paymentPurposeSelections.map((purpose) => (
-                          <button
-                            key={purpose}
-                            type="button"
-                            onClick={() =>
-                              syncPaymentPurposeSelection(
-                                paymentPurposeSelections.filter((entry) => entry !== purpose)
-                              )
-                            }
-                            className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-medium text-sky-900"
-                          >
-                            {purpose} x
-                          </button>
-                        ))}
-                      </div>
-                      {filteredPaymentPurposeSuggestions.length ? (
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {filteredPaymentPurposeSuggestions.slice(0, 10).map((option) => (
-                            <button
-                              key={option}
-                              type="button"
-                              onClick={() => addPaymentPurposeOption(option)}
-                              className="rounded-full border border-slate-300 px-3 py-1 text-xs text-slate-700"
-                            >
-                              {option}
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
+                  <div className="mt-4 space-y-4">
+                    <div className="flex gap-2 rounded-2xl bg-slate-200/50 p-1">
                       <button
                         type="button"
-                        onClick={() => addPaymentPurposeOption(paymentPurposeInput)}
-                        className="mt-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
+                        onClick={() => setRentPaymentMode("rent")}
+                        className={`flex-1 rounded-xl px-3 py-2 text-xs font-semibold transition-all ${
+                          rentPaymentMode === "rent" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                        }`}
                       >
-                        Add purpose
+                        Rent Calculation
                       </button>
-                    </label>
-                    <label className="block text-sm font-medium text-slate-700">
-                      Details
-                      <textarea value={paymentDetails} onChange={(event) => setPaymentDetails(event.target.value)} rows={3} className="mt-1 w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm" />
-                    </label>
-                    <label className="block text-sm font-medium text-slate-700">
-                      Payer
-                      <input type="text" value={paymentPayer} onChange={(event) => setPaymentPayer(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2" placeholder={selectedClient?.name || selectedClient?.email || ""} />
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void postJson(
-                          `${API_BASE_URL}/manager/payments/create`,
-                          {
-                            actorEmail: normalizedEmail,
-                            maHd: selectedClient?.maHd ?? "",
-                            amount: Number(paymentAmount),
-                            purpose: paymentPurposeSelections.join(", "),
-                            details: paymentDetails,
-                            payer: paymentPayer,
-                            receiver: normalizedEmail
-                          },
-                          "Payment receipt created.",
-                          async () => {
-                            if (selectedClient) await loadWorkspace("payments", selectedClient.maHd);
-                            setPaymentPurposeInput("");
-                            syncPaymentPurposeSelection(["Monthly rent"]);
+                      <button
+                        type="button"
+                        onClick={() => setRentPaymentMode("simple")}
+                        className={`flex-1 rounded-xl px-3 py-2 text-xs font-semibold transition-all ${
+                          rentPaymentMode === "simple" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                        }`}
+                      >
+                        Simple Receipt
+                      </button>
+                    </div>
+
+                    {rentPaymentMode === "rent" ? (
+                      <div className="space-y-4">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <label className="block text-sm font-medium text-slate-700">
+                            Target Month
+                            <input
+                              type="month"
+                              value={targetMonthInput}
+                              onChange={(e) => setTargetMonthInput(e.target.value)}
+                              className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                            />
+                          </label>
+                          <label className="block text-sm font-medium text-slate-700">
+                            Manager Discount (VND)
+                            <input
+                              type="number"
+                              value={managerDiscountInput}
+                              onChange={(e) => setManagerDiscountInput(e.target.value)}
+                              className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                            />
+                          </label>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            setCalculatingRent(true);
+                            try {
+                              const response = await fetch(`${API_BASE_URL}/calculate-rent`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                  email: selectedClient?.email,
+                                  targetMonth: targetMonthInput,
+                                  managerDiscountVnd: Number(managerDiscountInput)
+                                })
+                              });
+                              if (!response.ok) throw new Error("Calculation failed");
+                              const data = await response.json();
+                              setRentBreakdown(data);
+                            } catch (err) {
+                              alert(err instanceof Error ? err.message : "Error");
+                            } finally {
+                              setCalculatingRent(false);
+                            }
+                          }}
+                          disabled={calculatingRent || !selectedClient}
+                          className="w-full rounded-xl bg-slate-900 py-3 text-sm font-semibold text-white transition-all hover:bg-slate-800 disabled:opacity-50"
+                        >
+                          {calculatingRent ? "Calculating..." : "Calculate Rent Breakdown"}
+                        </button>
+
+                        {rentBreakdown ? (
+                          <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                            <h4 className="text-sm font-bold text-slate-900">Breakdown for {rentBreakdown.month}</h4>
+                            
+                            <div className="space-y-2 text-sm">
+                              <div className="flex justify-between">
+                                <span className="text-slate-600">Base Rent</span>
+                                <span className="font-medium">{rentBreakdown.baseRent.toLocaleString()} VND</span>
+                              </div>
+                              
+                              {rentBreakdown.tenureSurchargeVnd > 0 && (
+                                <div className="flex justify-between text-amber-600">
+                                  <span>Tenure Surcharge ({rentBreakdown.tenureSurchargeRate * 100}%)</span>
+                                  <span>+{rentBreakdown.tenureSurchargeVnd.toLocaleString()} VND</span>
+                                </div>
+                              )}
+
+                              {rentBreakdown.professionalDiscountVnd > 0 && (
+                                <div className="flex justify-between text-emerald-600">
+                                  <span>Professional Discount (10%)</span>
+                                  <span>-{rentBreakdown.professionalDiscountVnd.toLocaleString()} VND</span>
+                                </div>
+                              )}
+
+                              {rentBreakdown.planDiscountVnd > 0 && (
+                                <div className="flex justify-between text-emerald-600">
+                                  <span>Plan Discount</span>
+                                  <span>-{rentBreakdown.planDiscountVnd.toLocaleString()} VND</span>
+                                </div>
+                              )}
+
+                              {rentBreakdown.managerDiscountVnd > 0 && (
+                                <div className="flex justify-between text-emerald-600">
+                                  <span>Manager Discount</span>
+                                  <span>-{rentBreakdown.managerDiscountVnd.toLocaleString()} VND</span>
+                                </div>
+                              )}
+
+                              <div className="flex justify-between">
+                                <span className="text-slate-600">Parking Fee</span>
+                                <span className="font-medium">{rentBreakdown.parkingFeeVnd.toLocaleString()} VND</span>
+                              </div>
+
+                              <div className="flex justify-between">
+                                <span className="text-slate-600">Laundry Fee ({rentBreakdown.details.laundryCount.cash} paid uses)</span>
+                                <span className="font-medium">{rentBreakdown.laundryFeeVnd.toLocaleString()} VND</span>
+                              </div>
+
+                              <div className="flex justify-between">
+                                <span className="text-slate-600">Unpaid Fines</span>
+                                <span className="font-medium">{rentBreakdown.finesVnd.toLocaleString()} VND</span>
+                              </div>
+
+                              <div className="my-2 border-t border-slate-100 pt-2 font-bold flex justify-between">
+                                <span>Subtotal</span>
+                                <span>{rentBreakdown.totalBeforeCoinsVnd.toLocaleString()} VND</span>
+                              </div>
+
+                              <div className="flex justify-between text-sky-600">
+                                <span>Coin Usage ({rentBreakdown.recommendedCoinUsage} coins)</span>
+                                <span>-{rentBreakdown.recommendedCoinValueVnd.toLocaleString()} VND</span>
+                              </div>
+
+                              <div className="my-2 rounded-xl bg-slate-900 p-4 text-white flex justify-between items-center">
+                                <span className="text-xs uppercase tracking-wider opacity-70 font-bold">Total Due</span>
+                                <span className="text-xl font-bold">{rentBreakdown.finalTotalVnd.toLocaleString()} VND</span>
+                              </div>
+                            </div>
+
+                            <div className="space-y-3 pt-3">
+                              <label className="block text-sm font-medium text-slate-700">
+                                Payer Name
+                                <input
+                                  type="text"
+                                  value={paymentPayer}
+                                  onChange={(e) => setPaymentPayer(e.target.value)}
+                                  placeholder={selectedClient?.name || ""}
+                                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                                />
+                              </label>
+
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  setLoading(true);
+                                  try {
+                                    const response = await fetch(`${API_BASE_URL}/pay-rent`, {
+                                      method: "POST",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({
+                                        email: selectedClient?.email,
+                                        targetMonth: targetMonthInput,
+                                        managerDiscountVnd: Number(managerDiscountInput),
+                                        coinUsage: rentBreakdown.recommendedCoinUsage,
+                                        payerName: paymentPayer || selectedClient?.name,
+                                        receiverName: normalizedEmail
+                                      })
+                                    });
+                                    if (!response.ok) throw new Error("Payment recording failed");
+                                    alert("Payment recorded and receipt sent via Gmail!");
+                                    setActiveAction("");
+                                    setRentBreakdown(null);
+                                    if (selectedClient) await loadWorkspace("payments", selectedClient.maHd);
+                                  } catch (err) {
+                                    alert(err instanceof Error ? err.message : "Error");
+                                  } finally {
+                                    setLoading(false);
+                                  }
+                                }}
+                                disabled={loading}
+                                className="w-full rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white transition-all hover:bg-emerald-700 shadow-lg shadow-emerald-200"
+                              >
+                                {loading ? "Processing..." : "Confirm & Send Receipt"}
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <label className="block text-sm font-medium text-slate-700">
+                          Amount
+                          <input type="number" min="1" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2" />
+                        </label>
+                        <label className="block text-sm font-medium text-slate-700">
+                          Purpose
+                          <input
+                            type="text"
+                            list="payment-purpose-options"
+                            value={paymentPurposeInput}
+                            onChange={(event) => setPaymentPurposeInput(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === ",") {
+                                event.preventDefault();
+                                addPaymentPurposeOption(paymentPurposeInput);
+                              }
+                            }}
+                            className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+                            placeholder="Search previous purposes or add your own"
+                          />
+                          <datalist id="payment-purpose-options">
+                            {paymentPurposeSuggestions.map((option) => (
+                              <option key={option} value={option} />
+                            ))}
+                          </datalist>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {paymentPurposeSelections.map((purpose) => (
+                              <button
+                                key={purpose}
+                                type="button"
+                                onClick={() =>
+                                  syncPaymentPurposeSelection(
+                                    paymentPurposeSelections.filter((entry) => entry !== purpose)
+                                  )
+                                }
+                                className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-medium text-sky-900"
+                              >
+                                {purpose} x
+                              </button>
+                            ))}
+                          </div>
+                        </label>
+                        <label className="block text-sm font-medium text-slate-700">
+                          Details
+                          <textarea value={paymentDetails} onChange={(event) => setPaymentDetails(event.target.value)} rows={3} className="mt-1 w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm" />
+                        </label>
+                        <label className="block text-sm font-medium text-slate-700">
+                          Payer
+                          <input type="text" value={paymentPayer} onChange={(event) => setPaymentPayer(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2" placeholder={selectedClient?.name || selectedClient?.email || ""} />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void postJson(
+                              `${API_BASE_URL}/manager/payments/create`,
+                              {
+                                actorEmail: normalizedEmail,
+                                maHd: selectedClient?.maHd ?? "",
+                                amount: Number(paymentAmount),
+                                purpose: paymentPurposeSelections.join(", "),
+                                details: paymentDetails,
+                                payer: paymentPayer,
+                                receiver: normalizedEmail
+                              },
+                              "Payment receipt created.",
+                              async () => {
+                                if (selectedClient) await loadWorkspace("payments", selectedClient.maHd);
+                                setPaymentPurposeInput("");
+                                syncPaymentPurposeSelection(["Monthly rent"]);
+                              }
+                            )
                           }
-                        )
-                      }
-                      disabled={loading || !selectedClient || !canCreatePaymentReceipt || !Number(paymentAmount) || !paymentPurposeSelections.length}
-                      className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-                    >
-                      Create payment receipt
-                    </button>
+                          disabled={loading || !selectedClient || !canCreatePaymentReceipt || !Number(paymentAmount) || !paymentPurposeSelections.length}
+                          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+                        >
+                          Create payment receipt
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ) : null}
 

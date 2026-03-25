@@ -339,8 +339,27 @@ export function ClientLoginClient() {
 
     async function loadGoogleConfig() {
       try {
-        const response = await fetch(`${API_BASE_URL}/auth/google/config`);
-        const data = (await response.json()) as GoogleConfigResponse;
+        let response;
+        try {
+          response = await fetch(`${API_BASE_URL}/auth/google/config`);
+        } catch (fetchError) {
+          console.error("[Login Debug] Google config fetch failed:", fetchError);
+          throw fetchError;
+        }
+
+        let data;
+        try {
+          data = (await response.json()) as GoogleConfigResponse;
+        } catch (jsonError) {
+          console.error("[Login Debug] Google config JSON parse failed. Status:", response.status);
+          try {
+            const text = await response.text();
+            console.error("[Login Debug] Response body start:", text.substring(0, 200));
+          } catch {
+            console.error("[Login Debug] Could not read response text");
+          }
+          throw jsonError;
+        }
 
         if (!response.ok || !data.enabled || !data.clientId || cancelled) {
           return;
@@ -596,6 +615,12 @@ export function ClientLoginClient() {
         setCurrentPasswordInput(password);
       }
     } catch (error) {
+      console.error("[Login Debug] Login caught error:", error);
+      if (error instanceof Error) {
+        console.error("[Login Debug] Error message:", error.message);
+        console.error("[Login Debug] Error stack:", error.stack);
+      }
+      
       setMessage(
         error instanceof Error
           ? error.message

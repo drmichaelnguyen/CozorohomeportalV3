@@ -1,5 +1,15 @@
 # Changelog
 
+## [3.1.1] - 2026-03-25
+### Added
+- **iMessage-Style Messaging**: Full-screen mobile layout with sticky bottom input and auto-scroll for a better chat experience.
+- **Cleaning Self-Assignment Bonus**: Residents now earn a 20% coin bonus when self-assigning cleaning tasks.
+- **Next Cleaning Preview**: Added a prominent "Your Next Cleaning" card to the schedule view for easier tracking.
+
+### Fixed
+- **Login Diagnostics**: Added detailed logging to help capture "string did not match expected pattern" errors reported by some clients.
+- **API CORS/Origin**: Fixed local development origin mismatch between port 3001 and 4001.
+
 All notable changes to the CozoroHome Portal project will be documented in this file.
 
 ## [3.0.2] - 2026-03-24

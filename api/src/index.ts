@@ -30,6 +30,15 @@ import {
 } from "./staff-access.js";
 import { adminSetPortalPassword, changePortalPassword, loginWithPortalPassword, setPortalPassword } from "./portal-auth.js";
 import { getClientGroupContext, getGroupMessages, markGroupRead, postGroupMessage } from "./group-support.js";
+import { 
+  calculateRentBreakdown 
+} from "./calculation-engine.js";
+import { 
+  recordPaymentReceipt, 
+  sendGmailReceipt,
+  syncClientsFromSheet,
+  readCachedClients
+} from "./google-sheets.js";
 
 
 import {
@@ -2723,6 +2732,87 @@ app.post("/client/maintenance/feedback", async (req, res) => {
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : "Feedback failed" });
+  }
+});
+
+app.post("/calculate-rent", async (req, res) => {
+  const { email, targetMonth, managerDiscountVnd } = req.body;
+  if (!email || !targetMonth) {
+    return res.status(400).json({ error: "email and targetMonth are required" });
+  }
+
+  try {
+    const cache = (await readCachedClients()) ?? (await syncClientsFromSheet());
+    const client = cache.rows.find((r) => r["Địa chỉ email"] === email);
+    if (!client) {
+      return res.status(404).json({ error: "Client not found" });
+    }
+
+    const breakdown = await calculateRentBreakdown(client, targetMonth, managerDiscountVnd || 0);
+    res.json(breakdown);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : "Calculation failed" });
+  }
+});
+
+app.post("/pay-rent", async (req, res) => {
+  const { email, targetMonth, managerDiscountVnd, coinUsage, payerName, receiverName } = req.body;
+  if (!email || !targetMonth || !payerName) {
+    return res.status(400).json({ error: "email, targetMonth, and payerName are required" });
+  }
+
+  try {
+    const cache = (await readCachedClients()) ?? (await syncClientsFromSheet());
+    const client = cache.rows.find((r) => r["Địa chỉ email"] === email);
+    if (!client) {
+      return res.status(404).json({ error: "Client not found" });
+    }
+
+    const breakdown = await calculateRentBreakdown(client, targetMonth, managerDiscountVnd || 0);
+    
+    // Record to Google Sheet
+    await recordPaymentReceipt({
+      email,
+      name: client["Tên"] || "",
+      amountVnd: breakdown.finalTotalVnd,
+      purpose: `Rent Payment - ${targetMonth}`,
+      details: JSON.stringify({
+        baseRent: breakdown.baseRent,
+        surcharges: breakdown.tenureSurchargeVnd,
+        discounts: breakdown.professionalDiscountVnd + breakdown.planDiscountVnd + (managerDiscountVnd || 0),
+        coinUsage: coinUsage || breakdown.recommendedCoinUsage,
+        coinValue: Math.round((coinUsage || breakdown.recommendedCoinUsage) * (breakdown.finalTotalVnd / breakdown.totalBeforeCoinsVnd)) // Simple estimation
+      }),
+      payer: payerName,
+      receiver: receiverName || "Cozoro System"
+    });
+
+    // Send Gmail Receipt
+    const subject = `[Cozoro Home] Biên nhận thanh toán tháng ${targetMonth}`;
+    const body = `
+Xin chào ${client["Tên"]},
+
+Cozoro Home đã nhận được thanh toán của bạn cho tháng ${targetMonth}.
+
+Chi tiết biên nhận:
+- Email: ${email}
+- Số tiền: ${breakdown.finalTotalVnd.toLocaleString("vi-VN")} VND
+- Hình thức: Thanh toán qua Manager Portal
+- Người nộp: ${payerName}
+- Ngày: ${new Date().toLocaleDateString("vi-VN")}
+
+Cảm ơn bạn đã đồng hành cùng Cozoro Home!
+    `.trim();
+
+    await sendGmailReceipt({
+      to: email,
+      subject,
+      body
+    });
+
+    res.json({ success: true, message: "Payment recorded and receipt sent" });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : "Payment failed" });
   }
 });
 

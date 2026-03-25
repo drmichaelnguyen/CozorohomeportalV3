@@ -628,6 +628,7 @@ async function assignTaskToUser(input: {
   floor?: number | null;
   allowSameDayOverride?: boolean;
   allowExistingSlotReassign?: boolean;
+  isSelfAssigned?: boolean;
 }) {
   const normalizedTaskDate = normalizeCalendarDate(input.date);
   const normalizedEmail = input.user.email.trim().toLowerCase();
@@ -744,7 +745,8 @@ async function assignTaskToUser(input: {
     type: input.type,
     title: config.title,
     scheduledDate: normalizedTaskDate,
-    floor: slotFloor
+    floor: slotFloor,
+    isSelfAssigned: input.isSelfAssigned
   });
 
   await invalidateCleaningOverviewCache(normalizedEmail);
@@ -757,9 +759,14 @@ async function createCleaningTaskRecord(input: {
   title: string;
   scheduledDate: Date;
   floor?: number | null;
+  isSelfAssigned?: boolean;
 }) {
   const normalizedScheduledDate = normalizeCalendarDate(input.scheduledDate);
-  const rewardCoins = cleaningRewardMap[input.type];
+  let rewardCoins = cleaningRewardMap[input.type];
+  
+  if (input.isSelfAssigned) {
+    rewardCoins = Math.round(rewardCoins * 1.2); // 20% bonus
+  }
   const target = getCleaningCalendarTarget(input.type, { floor: input.floor ?? input.user.floor });
   let calendarEventId: string | null = null;
   let calendarId: string | null = target?.calendarId ?? null;
@@ -1068,7 +1075,8 @@ export async function selfAssignCleaningTask(input: {
     date: normalizedTaskDate,
     type: input.type,
     floor: slotFloor,
-    allowExistingSlotReassign: false
+    allowExistingSlotReassign: false,
+    isSelfAssigned: true
   });
 }
 

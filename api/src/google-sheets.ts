@@ -48,6 +48,17 @@ const paymentsCacheFilePath = path.join(cacheDirPath, "payments-cache.json");
 const finesCacheFilePath = path.join(cacheDirPath, "fines-cache.json");
 const cleaningCalendarCacheFilePath = path.join(cacheDirPath, "cleaning-calendars-cache.json");
 const laundryCouponsFilePath = path.join(cacheDirPath, "laundry-coupons.json");
+const staffAccessFilePath = path.join(cacheDirPath, "portal-staff-access.json");
+
+async function getStaffEntryByEmail(email: string) {
+  try {
+    const content = await readFile(staffAccessFilePath, "utf8");
+    const data = JSON.parse(content);
+    return (data.staff || []).find((entry: any) => String(entry.email).toLowerCase() === String(email).toLowerCase()) ?? null;
+  } catch (err) {
+    return null;
+  }
+}
 const laundryCouponRedemptionsFilePath = path.join(cacheDirPath, "laundry-coupon-redemptions.json");
 const maintenanceCacheFilePath = path.join(cacheDirPath, "maintenance-cache.json");
 type MemoryCachedValue<T> = {
@@ -94,7 +105,7 @@ const configuredLaundryCalendarIds = (process.env.GOOGLE_LAUNDRY_CALENDAR_IDS ??
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
-const laundryMachines = [
+export const laundryMachines = [
   {
     id: "d2-washer",
     calendarId: "p5cvikf3pn8292denaig3gmed0@group.calendar.google.com",
@@ -155,7 +166,7 @@ const PAYMENT_AMOUNT_COLUMN = "S\u1ed0 TI\u1ec0N";
 const PAYMENT_PURPOSE_COLUMN = "M\u1ee4C \u0110\u00cdCH";
 const PAYMENT_DETAILS_COLUMN = "M\u1ee4C \u0110\u00cdCH - GHI R\u00d5";
 const PAYMENT_PAYER_COLUMN = "NG\u01af\u1edcI \u0110\u00d3NG TI\u1ec0N";
-const PAYMENT_RECEIVER_COLUMN = "NG\u01af\u1edcI NH\u1eacN TI\u1ec0N";
+const PAYMENT_RECEIVER_COLUMN = "NG\u01af\u1edCI NH\u1eacN TI\u1ec0N";
 const FINE_EMAIL_COLUMN = "EMAIL";
 const FINE_TIMESTAMP_COLUMN = COINS_TIMESTAMP_COLUMN;
 const FINE_AMOUNT_COLUMN = "CHI PH\u00cd THANH TO\u00c1N CHO VI PH\u1ea0M";
@@ -164,13 +175,13 @@ const FINE_CONTENT_COLUMN = "N\u1ed8I DUNG VI PH\u1ea0M";
 const FINE_DESCRIPTION_COLUMN = "M\u00d4 T\u1ea2 VI PH\u1ea0M";
 const FINE_DUE_COLUMN = "H\u1ea0N THANH TO\u00c1N";
 const FINE_DISPUTE_COLUMN = "Khieu nai tu khach hang";
-const FINE_CREATED_AT_COLUMN = "TH\u1edcI \u0110I\u1ec2M L\u1eacP PHI\u1ebeU";
-const FINE_CREATED_YEAR_COLUMN = "N\u0102M L\u1eacP PHI\u1ebeU";
-const FINE_CREATED_MONTH_COLUMN = "TH\u00c1NG L\u1eacP PHI\u1ebeU";
+const FINE_CREATED_AT_COLUMN = "TH\u1edcI \u0110I\u1ec2M L\u1eACP PHI\u1ebeU";
+const FINE_CREATED_YEAR_COLUMN = "N\u0102M L\u1eACP PHI\u1ebeU";
+const FINE_CREATED_MONTH_COLUMN = "TH\u00c1NG L\u1eACP PHI\u1ebeU";
 const FINE_BRANCH_COLUMN = "CHI NH\u00c1NH DORM";
 const FINE_NAME_COLUMN = "T\u00caN";
 const FINE_BED_COLUMN = "S\u1ed0 GI\u01af\u1edcNG";
-const FINE_CREATOR_COLUMN = "NG\u01af\u1edcI L\u1eacP PHI\u1ebeU";
+const FINE_CREATOR_COLUMN = "NG\u01af\u1edCI L\u1eACP PHI\u1ebeU";
 const FINE_LOCATION_COLUMN = "V\u1eca TR\u00cd PH\u00c1T HI\u1ec6N VI PH\u1ea0M";
 const FINE_IMAGE_COLUMN = "H\u00ccNH \u1ea2NH";
 
@@ -831,7 +842,7 @@ function getLaundryMemberBonus(memberValue: string) {
   return { washer: 0, dryer: 0 };
 }
 
-function getLaundryBaseAllowanceSummary(client: ClientRow, branchId: "D2" | "D7") {
+function getLaundryBaseAllowance(client: ClientRow, branchId: "D2" | "D7") {
   const gender = (client["Giới tính"] ?? "").trim();
   const floor = branchId === "D7" ? inferFloorFromBed(client["sá»‘ giÆ°á»ng"] ?? "") : null;
   const recordedMember = (client["Cozoro Member"] ?? "").trim() || "Standard";
@@ -881,8 +892,8 @@ function getLaundryBaseAllowanceSummary(client: ClientRow, branchId: "D2" | "D7"
 }
 
 
-async function getLaundryAllowanceSummary(client: ClientRow, branchId: "D2" | "D7") {
-  const base = getLaundryBaseAllowanceSummary(client, branchId);
+export async function getLaundryAllowance(client: ClientRow, branchId: "D2" | "D7") {
+  const base = getLaundryBaseAllowance(client, branchId);
   const normalizedEmail = (client[EMAIL_COLUMN] ?? "").trim().toLowerCase();
   const now = new Date();
   const couponSummary = await getLaundryCouponSummary(normalizedEmail, now);
@@ -982,7 +993,8 @@ export function createAuthUrl() {
     scope: [
       "https://www.googleapis.com/auth/spreadsheets",
       "https://www.googleapis.com/auth/calendar",
-      "https://www.googleapis.com/auth/drive.file"
+      "https://www.googleapis.com/auth/drive.file",
+      "https://www.googleapis.com/auth/gmail.send"
     ]
   });
 }
@@ -1143,7 +1155,76 @@ export async function readFinesSheetRows() {
   return rows.filter((row) => row[FINE_EMAIL_COLUMN]?.trim());
 }
 
-type LaundryCalendarEvent = {
+export async function recordPaymentReceipt(data: {
+  email: string;
+  name: string;
+  amountVnd: number;
+  purpose: string;
+  details: string;
+  payer: string;
+  receiver: string;
+}) {
+  if (!spreadsheetId) {
+    throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
+  }
+
+  const sheets = await getAuthorizedSheetsClient();
+  const timestamp = new Date().toLocaleString("vi-VN", { timeZone: COZORO_TIMEZONE });
+  
+  const values = [
+    [
+      timestamp,
+      data.email,
+      data.amountVnd,
+      data.purpose,
+      data.details,
+      data.payer,
+      data.receiver
+    ]
+  ];
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${paymentsSheetName}!A:G`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values }
+  });
+}
+
+export async function sendGmailReceipt(data: {
+  to: string;
+  subject: string;
+  body: string;
+}) {
+  const auth = await getAuthorizedOAuthClient();
+  const gmail = google.gmail({ version: "v1", auth });
+
+  const utf8Subject = `=?utf-8?B?${Buffer.from(data.subject).toString("base64")}?=`;
+  const messageParts = [
+    `To: ${data.to}`,
+    "Content-Type: text/plain; charset=utf-8",
+    "MIME-Version: 1.0",
+    `Subject: ${utf8Subject}`,
+    "",
+    data.body
+  ];
+  const message = messageParts.join("\n");
+
+  const encodedMessage = Buffer.from(message)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+
+  await gmail.users.messages.send({
+    userId: "me",
+    requestBody: {
+      raw: encodedMessage
+    }
+  });
+}
+
+export type LaundryCalendarEvent = {
   id: string;
   calendarId: string;
   calendarSummary: string;
@@ -1700,6 +1781,9 @@ export async function createLaundryBooking(input: {
   const calendar = await getAuthorizedCalendarClient();
   const bookingLabel = getLaundryCalendarBookingLabel(machine);
   const summary = `${bookingLabel} - ${input.email}`;
+  if (!context.client) {
+    throw new Error("Client record not found for this laundry booking.");
+  }
   const clientName = (context.client[CLIENT_NAME_COLUMN] ?? "").trim();
   const bedValue = (context.client[CLIENT_BED_COLUMN] ?? "").trim();
   const eventDescription = [
@@ -1866,7 +1950,7 @@ export async function getLaundryBookingContextForEmail(email: string) {
     branchId = normalizeClientBranch(getClientBranchValue(client));
   }
 
-  const allowance = await getLaundryAllowanceSummary(client!, branchId);
+  const allowance = await getLaundryAllowance(client!, branchId);
   return {
     client,
     branchId,

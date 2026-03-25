@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
-
+import { useEffect, useRef, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalSession } from "./portal-session";
 import { usePortalLanguage } from "./portal-language";
@@ -79,6 +78,13 @@ export function SupportClient() {
   const [reportMachine, setReportMachine] = useState("");
   const [customLocation, setCustomLocation] = useState("");
   const [isReporting, setIsReporting] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages, loading]);
 
   // Deep linking support
   useEffect(() => {
@@ -305,44 +311,57 @@ export function SupportClient() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 pb-20">
-      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h1 className="text-2xl font-semibold text-slate-900">{t("residentMessages", "Messages & Community")}</h1>
-        <p className="mt-2 text-sm text-slate-600">
-          {t("messagesChatDesc", "Communicate with Cozoro staff or connect with your neighbors in group chats.")}
-        </p>
-        
-        <div className="mt-6 flex flex-wrap gap-2 border-b border-slate-100 pb-4">
+    <div className="flex h-[calc(100vh-140px)] flex-col bg-white md:h-[700px] md:rounded-3xl md:border md:border-slate-200 md:shadow-lg overflow-hidden">
+      {/* Header */}
+      <header className="shrink-0 border-b border-slate-100 bg-white/80 p-4 backdrop-blur-md">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-bold text-slate-900">{t("residentMessages", "Messages")}</h1>
+            <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{activeTab === "personal" ? t("cozoroSupport", "Cozoro Support") : `${activeTab} ${t("community", "Community")}`}</p>
+          </div>
+          <button
+            onClick={() => setShowReportModal(true)}
+            className="inline-flex items-center gap-1.5 rounded-full bg-sky-50 px-3 py-1.5 text-[11px] font-bold text-sky-700 transition-all hover:bg-sky-100"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="h-3 w-3">
+              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+            </svg>
+            {t("report", "Report")}
+          </button>
+        </div>
+
+        <div className="mt-4 flex gap-1 overflow-x-auto pb-1 no-scrollbar">
           <button
             onClick={() => setActiveTab("personal")}
-            className={`rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
-              activeTab === "personal" ? "bg-slate-900 text-white shadow-sm" : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+            className={`whitespace-nowrap rounded-full px-3 py-1 text-xs font-bold transition-all ${
+              activeTab === "personal" ? "bg-slate-900 text-white shadow-sm" : "bg-slate-50 text-slate-500 hover:bg-slate-100"
             }`}
           >
-            {t("personalMessages", "Personal")}
+            {t("personal", "Personal")}
           </button>
+          
           {groupContext && (
             <>
               <button
                 onClick={() => setActiveTab("room")}
-                className={`rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
-                  activeTab === "room" ? "bg-sky-600 text-white shadow-sm" : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+                className={`whitespace-nowrap rounded-full px-3 py-1 text-xs font-bold transition-all ${
+                  activeTab === "room" ? "bg-sky-600 text-white shadow-sm" : "bg-slate-50 text-slate-500 hover:bg-slate-100"
                 }`}
               >
                 {t("room", "Room")} {groupContext.roomLabel}
               </button>
               <button
                 onClick={() => setActiveTab("floor")}
-                className={`rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
-                  activeTab === "floor" ? "bg-indigo-600 text-white shadow-sm" : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+                className={`whitespace-nowrap rounded-full px-3 py-1 text-xs font-bold transition-all ${
+                  activeTab === "floor" ? "bg-indigo-600 text-white shadow-sm" : "bg-slate-50 text-slate-500 hover:bg-slate-100"
                 }`}
               >
                 {t("floor", "Floor")} {groupContext.floor}
               </button>
               <button
                 onClick={() => setActiveTab("branch")}
-                className={`rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
-                  activeTab === "branch" ? "bg-emerald-600 text-white shadow-sm" : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+                className={`whitespace-nowrap rounded-full px-3 py-1 text-xs font-bold transition-all ${
+                  activeTab === "branch" ? "bg-emerald-600 text-white shadow-sm" : "bg-slate-50 text-slate-500 hover:bg-slate-100"
                 }`}
               >
                 {t("branch", "Branch")} {groupContext.branchId}
@@ -350,34 +369,127 @@ export function SupportClient() {
             </>
           )}
         </div>
+      </header>
 
-        {activeTab !== "personal" && (
-          <div className="mt-4 text-xs font-medium uppercase tracking-wider text-slate-400">
-            {t("publicGroupHistory", "Public group message history")}
+      {/* Messages Area */}
+      <main 
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto bg-slate-50/30 p-4 space-y-4 scroll-smooth"
+      >
+        {loading ? (
+          <div className="flex h-full items-center justify-center p-12 text-center text-slate-400">
+            <div className="space-y-3">
+              <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-slate-800" />
+              <p className="text-xs font-medium">{t("loadingMessages", "Loading messages...")}</p>
+            </div>
           </div>
+        ) : messages.length === 0 ? (
+          <div className="flex h-full items-center justify-center p-12 text-center text-slate-400">
+             <p className="text-xs font-medium max-w-[200px]">{t("startChatDesc", "No messages yet. Start the conversation here.")}</p>
+          </div>
+        ) : (
+          messages.map((message, idx) => {
+            const isResident = message.senderRole === "RESIDENT";
+            const isMe = message.senderEmail === sessionEmail.trim().toLowerCase();
+            const isCozoro = !isResident;
+            const prevMsg = idx > 0 ? messages[idx - 1] : null;
+            const sameSender = prevMsg?.senderEmail === message.senderEmail;
+
+            return (
+              <div
+                key={message.id}
+                className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}
+              >
+                {!sameSender && (
+                  <span className="mb-1 px-2 text-[10px] font-bold text-slate-400">
+                    {isMe ? t("you", "You") : isCozoro ? "Cozoro" : message.senderName || t("neighbor", "Neighbor")}
+                  </span>
+                )}
+                
+                <div
+                  className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm shadow-sm ${
+                    isMe 
+                      ? "bg-slate-900 text-white rounded-tr-none" 
+                      : isCozoro 
+                        ? "bg-amber-100 text-amber-900 border border-amber-200 rounded-tl-none" 
+                        : "bg-white text-slate-700 border border-slate-200 rounded-tl-none"
+                  }`}
+                >
+                  <p className="whitespace-pre-wrap leading-relaxed">{message.body}</p>
+                  <div className={`mt-1 text-[9px] ${isMe ? "text-slate-400" : "text-slate-500"}`}>
+                    {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                </div>
+              </div>
+            );
+          })
         )}
+      </main>
 
-        <div className="mt-6">
+      {/* Footer / Input */}
+      <footer className="shrink-0 border-t border-slate-100 bg-white p-4">
+        {status && !submitting && (
+          <p className="mb-2 text-center text-[10px] font-bold text-slate-400 animate-pulse">{status}</p>
+        )}
+        
+        <form 
+          onSubmit={handleSubmit}
+          className="relative flex items-end gap-2"
+        >
+          <div className="relative flex-1">
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder={activeTab === "personal" ? t("askAnything", "Ask anything...") : t("saySomething", "Say something...")}
+              rows={1}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  void handleSubmit(e as any);
+                }
+              }}
+              className="w-full max-h-32 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 pr-10 text-sm focus:border-slate-400 focus:bg-white focus:outline-none transition-all"
+            />
+            {activeTab !== "personal" && (
+              <div className="absolute right-3 top-2.5">
+                <button
+                  type="button"
+                  onClick={() => setIsAnonymous(!isAnonymous)}
+                  className={`rounded-full p-1 transition-colors ${isAnonymous ? "text-slate-900" : "text-slate-300"}`}
+                  title={isAnonymous ? t("anonymousOn", "Anonymous On") : t("anonymousOff", "Anonymous Off")}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="h-4 w-4">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                  </svg>
+                </button>
+              </div>
+            )}
+          </div>
           <button
-            onClick={() => setShowReportModal(true)}
-            className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-700 transition-all hover:bg-sky-100"
+            type="submit"
+            disabled={submitting || !draft.trim() || !sessionEmail.trim()}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="h-4 w-4">
-              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-            </svg>
-            {t("reportMalfunction", "Report Malfunction")}
-            <span className="ml-1 rounded-md bg-sky-200 px-1.5 py-0.5 text-[10px] uppercase">+5000 Coins</span>
+            {submitting ? (
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="h-5 w-5 rotate-90">
+                <path d="M12 19V5M5 12l7-7 7 7" />
+              </svg>
+            )}
           </button>
-        </div>
-      </section>
+        </form>
+      </footer>
 
+      {/* Modals moved outside flex box for better layering */}
       {showReportModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm animate-in fade-in duration-300">
           <div className="w-full max-w-lg overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl animate-in zoom-in-95 duration-300">
+            {/* Modal content stays mostly the same but styled better */}
             <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">{t("maintenanceReport", "Maintenance Report")}</h2>
-                <p className="text-xs text-slate-500">{t("reportSubtext", "Submit a ticket to get it fixed & earn 5000 coins.")}</p>
+                <p className="text-xs text-slate-500">{t("reportSubtext", "Submit a ticket to earn 5000 coins.")}</p>
               </div>
               <button onClick={() => setShowReportModal(false)} className="rounded-full p-1 hover:bg-slate-200">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="h-5 w-5 text-slate-400">
@@ -388,52 +500,50 @@ export function SupportClient() {
             
             <div className="p-6 space-y-4">
               <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-400">{t("location", "Location")}</label>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t("location", "Location")}</label>
                 <select
                   value={reportLocation}
                   onChange={(e) => setReportLocation(e.target.value)}
-                  className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                  className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm focus:border-slate-500 focus:outline-none"
                 >
                   <option value="">{t("selectLocation", "Select location...")}</option>
                   <option value={`Room ${groupContext?.roomLabel || "N/A"}`}>{t("myRoom", "My Room")} ({groupContext?.roomLabel || "..."})</option>
                   <option value={`Kitchen Branch ${groupContext?.branchId || "N/A"}`}>{t("kitchen", "Kitchen")}</option>
                   <option value={`Laundry Branch ${groupContext?.branchId || "N/A"}`}>{t("laundryArea", "Laundry Area")}</option>
                   <option value={`Bathroom Floor ${groupContext?.floor || "N/A"}`}>{t("bathroom", "Bathroom")}</option>
-                  <option value="OTHER">{t("otherLocation", "Other (Type below)...")}</option>
+                  <option value="OTHER">{t("otherLocation", "Other...")}</option>
                 </select>
               </div>
 
               {reportLocation === "OTHER" && (
-                <div className="space-y-2 animate-in slide-in-from-top-2 duration-200">
-                  <input
-                    type="text"
-                    placeholder={t("specificLocationPlaceholder", "e.g. Balcony 3rd floor, Main entrance...")}
-                    value={customLocation}
-                    onChange={(e) => setCustomLocation(e.target.value)}
-                    className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                  />
-                </div>
+                <input
+                  type="text"
+                  placeholder={t("specificLocationPlaceholder", "e.g. Balcony 3rd floor...")}
+                  value={customLocation}
+                  onChange={(e) => setCustomLocation(e.target.value)}
+                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-slate-500 focus:outline-none"
+                />
               )}
 
               <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-400">{t("machineDevice", "Machine / Device (Optional)")}</label>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t("machineDevice", "Device (Optional)")}</label>
                 <input
                   type="text"
-                  placeholder={t("machinePlaceholder", "e.g. Washer D7, AC LG, Microwave...")}
+                  placeholder={t("machinePlaceholder", "e.g. Washer D7, AC...")}
                   value={reportMachine}
                   onChange={(e) => setReportMachine(e.target.value)}
-                  className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-slate-500 focus:outline-none"
                 />
               </div>
 
               <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-400">{t("issueDescription", "Issue Description")}</label>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t("issueDescription", "Issue Description")}</label>
                 <textarea
-                  placeholder={t("issuePlaceholder", "What's wrong? (e.g. Not turning on, leaking, loud noise)")}
+                  placeholder={t("issuePlaceholder", "What's wrong?")}
                   value={reportIssue}
                   onChange={(e) => setReportIssue(e.target.value)}
                   rows={3}
-                  className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-slate-500 focus:outline-none"
                 />
               </div>
 
@@ -441,7 +551,7 @@ export function SupportClient() {
                 <button
                   onClick={() => void handleReportSubmit()}
                   disabled={isReporting || (!reportLocation && !customLocation) || !reportIssue}
-                  className="w-full rounded-2xl bg-slate-900 py-4 text-sm font-bold text-white shadow-lg transition-all hover:bg-slate-800 disabled:opacity-50 active:scale-[0.98]"
+                  className="w-full rounded-2xl bg-slate-900 py-3 text-sm font-bold text-white shadow-lg transition-all hover:bg-slate-800 disabled:opacity-50"
                 >
                   {isReporting ? t("submitting", "Submitting...") : t("submitReport", "Submit Maintenance Ticket")}
                 </button>
@@ -450,97 +560,6 @@ export function SupportClient() {
           </div>
         </div>
       )}
-
-
-
-      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        {loading ? <p className="text-sm text-slate-600">Loading your conversation...</p> : null}
-
-        {!loading ? (
-          <div className="space-y-3">
-            {messages.length === 0 ? (
-              <div className="rounded-2xl bg-slate-50 p-5 text-sm text-slate-600">
-                No messages yet. Start the conversation and your owner or managers will see it in their shared inbox.
-              </div>
-            ) : (
-              messages.map((message) => {
-                const isResident = message.senderRole === "RESIDENT";
-                const isCozoroReply = message.senderRole === "OWNER" || message.senderRole === "MANAGER";
-                return (
-                  <div
-                    key={message.id}
-                    className={`rounded-2xl border p-4 ${
-                      isResident ? "border-sky-200 bg-sky-50" : "border-emerald-200 bg-emerald-50"
-                    }`}
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                        {isCozoroReply ? (
-                          <span
-                            aria-hidden="true"
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-amber-200 text-lg shadow-sm"
-                            title="Cozoro Bee"
-                          >
-                            🐝
-                          </span>
-                        ) : null}
-                        <span>{senderLabel(message, sessionEmail.trim().toLowerCase())}</span>
-                      </div>
-                      <div className="text-xs text-slate-500">{formatDateTime(message.createdAt)}</div>
-                    </div>
-                    <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{message.body}</p>
-                    {message.pagePath ? (
-                      <div className="mt-2 text-xs text-slate-500">Sent from: {message.pagePath}</div>
-                    ) : null}
-                  </div>
-                );
-              })
-            )}
-          </div>
-        ) : null}
-
-        <form onSubmit={handleSubmit} className="mt-6">
-          <label className="block text-sm font-medium text-slate-700">
-            {activeTab === "personal" ? t("message", "Message") : `${t(activeTab + "Group", activeTab.charAt(0).toUpperCase() + activeTab.slice(1))} Group`}
-            <textarea
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              rows={5}
-              className="mt-2 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-900 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-              placeholder={activeTab === "personal" ? t("messagesChatDesc", "Ask a question...") : t("saySomethingToNeighbors", "Say something...")}
-            />
-          </label>
-
-          {activeTab !== "personal" && (
-            <div className="mt-3 flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="anonymous"
-                checked={isAnonymous}
-                onChange={(e) => setIsAnonymous(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900 cursor-pointer"
-              />
-              <label htmlFor="anonymous" className="text-sm font-medium text-slate-600 cursor-pointer">
-                {isStaff ? t("sendAsCozoro", "Send as Cozoro") : t("sendAnonymously", "Send anonymously")}
-              </label>
-            </div>
-          )}
-
-
-
-          {status ? <p className="mt-3 text-sm text-slate-700">{status}</p> : null}
-
-          <div className="mt-4 flex justify-end">
-            <button
-              type="submit"
-              disabled={submitting || !sessionEmail.trim()}
-              className="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white disabled:opacity-60"
-            >
-              {submitting ? "Sending..." : "Send message"}
-            </button>
-          </div>
-        </form>
-      </section>
     </div>
   );
 }
