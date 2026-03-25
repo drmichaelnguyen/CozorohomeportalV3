@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { usePortalSession } from "./portal-session";
+import { usePortalLanguage } from "./portal-language";
 import { API_BASE_URL } from "../lib/api-base-url";
 
 type CleaningTask = {
@@ -164,6 +165,7 @@ function getReleasePenalty(task: { scheduledDate: string }) {
 
 export function CleaningScheduleClient() {
   const { sessionEmail, isLoggedIn, login } = usePortalSession();
+  const { t } = usePortalLanguage();
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);

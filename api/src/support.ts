@@ -37,6 +37,7 @@ const staffNotificationCache = new Map<string, CachedNotificationEntry<{
   body: string;
   createdAt: Date;
   unreadCount: number;
+  href: string;
 }>>();
 
 function normalizeEmail(email: string) {
@@ -728,7 +729,20 @@ export async function listStaffSupportNotifications(operatorEmail: string) {
     normalizedOperatorEmail,
     "STAFF"
   );
-  const notifications = [];
+  type ManagerInboxNotification = {
+    id: string;
+    type: "SUPPORT_REQUEST";
+    conversationId: string;
+    residentEmail: string;
+    residentName: string | null;
+    title: string;
+    body: string;
+    createdAt: Date;
+    unreadCount: number;
+    href: string;
+  };
+
+  const notifications: ManagerInboxNotification[] = [];
 
   for (const conversation of conversations) {
     const summary = buildUnreadSummary({
@@ -805,7 +819,7 @@ export async function listStaffSupportNotifications(operatorEmail: string) {
   }
 
   return writeNotificationCache(staffNotificationCache, normalizedOperatorEmail, {
-    notifications: notifications.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+    notifications: notifications.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
     unreadCount: notifications.reduce((sum, item) => sum + item.unreadCount, 0)
   });
 }

@@ -98,7 +98,8 @@ type FeedbackEntry = {
   fileName: string;
   email: string;
   page: string;
-  timestamp: string;
+  message: string;
+  createdAt: string;
 };
 
 type RentBreakdown = {

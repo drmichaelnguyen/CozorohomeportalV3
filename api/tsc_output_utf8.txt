@@ -1,0 +1,13 @@
+﻿src/index.ts(32,33): error TS2300: Duplicate identifier 'getGroupMessages'.
+src/index.ts(32,51): error TS2300: Duplicate identifier 'markGroupRead'.
+src/index.ts(32,66): error TS2300: Duplicate identifier 'postGroupMessage'.
+src/index.ts(39,3): error TS2300: Duplicate identifier 'syncClientsFromSheet'.
+src/index.ts(40,3): error TS2300: Duplicate identifier 'readCachedClients'.
+src/index.ts(84,3): error TS2300: Duplicate identifier 'readCachedClients'.
+src/index.ts(89,3): error TS2300: Duplicate identifier 'syncClientsFromSheet'.
+src/index.ts(127,3): error TS2300: Duplicate identifier 'getGroupMessages'.
+src/index.ts(128,3): error TS2300: Duplicate identifier 'postGroupMessage'.
+src/index.ts(129,3): error TS2300: Duplicate identifier 'markGroupRead'.
+src/index.ts(1152,55): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+  Type 'undefined' is not assignable to type 'string'.
+src/index.ts(2323,14): error TS18047: 'context.client' is possibly 'null'.

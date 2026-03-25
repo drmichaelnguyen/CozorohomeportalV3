@@ -37,28 +37,7 @@ import {
   recordPaymentReceipt, 
   sendGmailReceipt,
   syncClientsFromSheet,
-  readCachedClients
-} from "./google-sheets.js";
-
-
-import {
-  adminAssignCleaningTask,
-  adminAutoAssignCleaningSlots,
-  auditCleaningTask,
-  completeCleaningTask,
-  checkSelfAssignCleaningTask,
-  getAdminCleaningCalendars,
-  generateCleaningSchedule,
-  getAvailableUsersForAdminSlot,
-  getAdminCleaningTasks,
-  getCleaningOverviewForUser,
-  getUserCleaningContext,
-  releaseCleaningTask,
-  selfAssignCleaningTask,
-  sweepOverdueCleaningTasks,
-  setCleaningAvailability
-} from "./cleaning.js";
-import {
+  readCachedClients,
   createAuthUrl,
   exchangeCodeForTokens,
   getActiveClientByEmail,
@@ -81,17 +60,14 @@ import {
   listLaundryCalendarsWithEvents,
   upgradeCozoroMemberByCoins,
   readCachedCoins,
-  readCachedClients,
   readCachedFines,
   readCachedPayments,
   createLaundryBooking,
   syncCoinsFromSheet,
-  syncClientsFromSheet,
   syncFinesFromSheet,
   syncPaymentsFromSheet,
   updateCoinSheetEntry,
-  updateClientColumns
-  ,
+  updateClientColumns,
   uploadFineImageToDrive,
   updateFineSheetEntry,
   updateLaundryBookingEntry,
@@ -108,7 +84,28 @@ import {
   MAINTENANCE_SATISFACTION_COLUMN,
   MAINTENANCE_FEEDBACK_COLUMN
 } from "./google-sheets.js";
+
+
+import {
+  adminAssignCleaningTask,
+  adminAutoAssignCleaningSlots,
+  auditCleaningTask,
+  completeCleaningTask,
+  checkSelfAssignCleaningTask,
+  getAdminCleaningCalendars,
+  generateCleaningSchedule,
+  getAvailableUsersForAdminSlot,
+  getAdminCleaningTasks,
+  getCleaningOverviewForUser,
+  getUserCleaningContext,
+  releaseCleaningTask,
+  selfAssignCleaningTask,
+  sweepOverdueCleaningTasks,
+  setCleaningAvailability
+} from "./cleaning.js";
 import { prisma } from "./prisma.js";
+
+
 import {
   getGroupUnreadCounts,
   getResidentSupportConversation,
@@ -123,11 +120,6 @@ import {
   postResidentSupportMessage,
   updateSupportConversationStatus
 } from "./support.js";
-import { 
-  getGroupMessages, 
-  postGroupMessage, 
-  markGroupRead 
-} from "./group-support.js";
 
 
 const app = express();
@@ -300,7 +292,7 @@ const airFryerStartSchema = z.object({
   inspection: z.string().min(1)
 });
 const laundryTriggerSchema = z.object({
-  email: z.string().email().optional(),
+  email: z.string().email(),
   machineId: z.string().min(1)
 });
 const privilegedAcCommandSchema = z.object({
@@ -2320,7 +2312,7 @@ app.get("/laundry/machines", async (request, response) => {
     return response.json({
       email: parsed.data.email,
       branchId: context.branchId,
-      coins: context.client["Cozoro coins hiện có"] ?? "",
+      coins: context.client?.["Cozoro coins hiện có"] ?? "",
       machines: context.machines,
       allowance: context.allowance,
       timeZone: context.timeZone
