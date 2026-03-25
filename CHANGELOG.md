@@ -19,4 +19,27 @@ All notable changes to the CozoroHome Portal project will be documented in this 
 - **Laundry Booking Re-render**: Resolved an infinite loop in `BookingsClient.tsx` caused by incorrect loading state handling when an email was not found in the resident list.
 
 ## [3.0.0] - 2026-03-22
-- Initial Version 3 Release (Transition to New Interface Branch).
+
+### User Portal Features
+- **Multi-Method Login**: Secure access via Email/Password or Google (in progress).
+- **Laundry Booking**: Real-time reservation system with Google Calendar and Sheets integration.
+- **Account Overview**: Unified view for contract info, current coins, and personal stats.
+- **Device Controller**: Remote control for AC units and common area devices.
+- **Schedule Management**: Daily and weekly schedules for residents.
+- **Support & Messaging**: Direct chat with staff and feedback submission with local storage.
+
+### Manager Workspace Features
+- **Comprehensive Client Management**: Profile editing, contract tracking, and status monitoring.
+- **Visual Room Diagram**: Interactive interactive map for branches (D2, D7) with unread message indicators.
+- **Financial Tools**:
+    - Coin adjustments (add/use coins).
+    - Fine ticket creation with image uploads.
+    - Payment receipt generation with purpose tracking.
+- **Staff Role Management**: Role-based access for App Admin, Owner, Manager, and Mechanic.
+- **Cleaning Operations**: Assignment and tracking of cleaning schedules.
+- **Machine Triggers**: Remote activation for laundry machines and AC units.
+
+### Infrastructure
+- **Stack**: Next.js frontend + Express/Prisma backend with MySQL database.
+- **Localization**: Full support for Vietnamese (VI) and English (EN).
+- **Branch Support**: Multi-branch support (D2, D7).
