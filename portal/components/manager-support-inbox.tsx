@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
 
@@ -39,26 +39,39 @@ type SupportMessage = {
   createdAt: string;
 };
 
-function formatDateTime(value: string) {
-  return new Date(value).toLocaleString();
+function formatTime(value: string) {
+  return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function roleLabel(role: SupportMessage["senderRole"]) {
-  if (role === "OWNER") {
-    return "Owner";
-  }
+function formatDateLabel(value: string) {
+  const d = new Date(value);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
 
-  if (role === "MANAGER") {
-    return "Manager";
-  }
-
-  return "Resident";
+  if (d.toDateString() === today.toDateString()) return "Today";
+  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
-function authorLabel(message: SupportMessage) {
-  const role = roleLabel(message.senderRole);
-  const identity = message.senderName?.trim() || message.senderEmail;
-  return identity ? `${role} - ${identity}` : role;
+function formatConversationTime(value: string) {
+  const d = new Date(value);
+  const today = new Date();
+  if (d.toDateString() === today.toDateString()) {
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function isStaffRole(role: SupportMessage["senderRole"]) {
+  return role === "MANAGER" || role === "OWNER";
+}
+
+function senderShortName(message: SupportMessage) {
+  if (isStaffRole(message.senderRole)) {
+    return message.senderName?.trim() || (message.senderRole === "OWNER" ? "Owner" : "Manager");
+  }
+  return message.senderName?.trim() || "Resident";
 }
 
 export function ManagerSupportInbox({
@@ -75,11 +88,21 @@ export function ManagerSupportInbox({
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const selectedPreview = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedConversationId) ?? null,
     [conversations, selectedConversationId]
   );
+
+  function scrollToBottom() {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
 
   async function loadInbox(targetConversationId?: string) {
     if (!enabled || !operatorEmail.trim()) {
@@ -137,12 +160,8 @@ export function ManagerSupportInbox({
 
       void fetch(`${API_BASE_URL}/manager/support/conversations/${encodeURIComponent(nextConversationId)}/read`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          operatorEmail
-        })
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operatorEmail })
       });
     } catch {
       setStatus("Unable to load support inbox.");
@@ -157,13 +176,10 @@ export function ManagerSupportInbox({
     }
   }, [enabled, operatorEmail]);
 
-  async function sendReply(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function sendReply(event?: React.FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
 
-    if (!selectedConversationId || !draft.trim()) {
-      setStatus("Choose a conversation and write a reply first.");
-      return;
-    }
+    if (!selectedConversationId || !draft.trim()) return;
 
     setLoading(true);
     setStatus("");
@@ -171,9 +187,7 @@ export function ManagerSupportInbox({
     try {
       const response = await fetch(`${API_BASE_URL}/manager/support/messages`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           conversationId: selectedConversationId,
           operatorEmail,
@@ -188,7 +202,6 @@ export function ManagerSupportInbox({
       }
 
       setDraft("");
-      setStatus("Reply sent.");
       await loadInbox(selectedConversationId);
     } catch {
       setStatus("Unable to send reply.");
@@ -197,10 +210,15 @@ export function ManagerSupportInbox({
     }
   }
 
-  async function updateStatus(nextStatus: "OPEN" | "CLOSED") {
-    if (!selectedConversationId) {
-      return;
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      void sendReply();
     }
+  }
+
+  async function updateStatus(nextStatus: "OPEN" | "CLOSED") {
+    if (!selectedConversationId) return;
 
     setLoading(true);
     setStatus("");
@@ -210,13 +228,8 @@ export function ManagerSupportInbox({
         `${API_BASE_URL}/manager/support/conversations/${encodeURIComponent(selectedConversationId)}/status`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            operatorEmail,
-            status: nextStatus
-          })
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ operatorEmail, status: nextStatus })
         }
       );
 
@@ -239,31 +252,92 @@ export function ManagerSupportInbox({
     return null;
   }
 
+  // Group messages by date for separators
+  function renderMessages() {
+    const items: React.ReactNode[] = [];
+    let lastDateLabel = "";
+
+    messages.forEach((message, index) => {
+      const dateLabel = formatDateLabel(message.createdAt);
+      const isStaff = isStaffRole(message.senderRole);
+      const prevMessage = messages[index - 1];
+      const nextMessage = messages[index + 1];
+
+      // Date separator
+      if (dateLabel !== lastDateLabel) {
+        lastDateLabel = dateLabel;
+        items.push(
+          <div key={`date-${message.id}`} className="my-4 flex items-center gap-3">
+            <div className="h-px flex-1 bg-slate-200" />
+            <span className="rounded-full bg-slate-100 px-3 py-0.5 text-[11px] font-medium text-slate-500">
+              {dateLabel}
+            </span>
+            <div className="h-px flex-1 bg-slate-200" />
+          </div>
+        );
+      }
+
+      // Show sender name if first in a group (role changed or first message)
+      const isFirstInGroup = !prevMessage || prevMessage.senderRole !== message.senderRole;
+      const isLastInGroup = !nextMessage || nextMessage.senderRole !== message.senderRole;
+
+      items.push(
+        <div key={message.id} className={`flex ${isStaff ? "justify-end" : "justify-start"} ${isLastInGroup ? "mb-3" : "mb-0.5"}`}>
+          <div className={`flex max-w-[75%] flex-col ${isStaff ? "items-end" : "items-start"}`}>
+            {isFirstInGroup && (
+              <span className="mb-1 px-1 text-[11px] font-medium text-slate-400">
+                {senderShortName(message)}
+              </span>
+            )}
+            <div
+              className={`rounded-2xl px-4 py-2.5 ${
+                isStaff
+                  ? `bg-blue-500 text-white ${isFirstInGroup ? "rounded-tr-sm" : ""}`
+                  : `bg-slate-100 text-slate-900 ${isFirstInGroup ? "rounded-tl-sm" : ""}`
+              }`}
+            >
+              <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.body}</p>
+              {message.pagePath ? (
+                <p className={`mt-1 text-[10px] ${isStaff ? "text-blue-200" : "text-slate-400"}`}>
+                  from {message.pagePath}
+                </p>
+              ) : null}
+            </div>
+            {isLastInGroup && (
+              <span className={`mt-1 px-1 text-[10px] text-slate-400 ${isStaff ? "text-right" : "text-left"}`}>
+                {formatTime(message.createdAt)}
+              </span>
+            )}
+          </div>
+        </div>
+      );
+    });
+
+    return items;
+  }
+
   return (
-    <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <section className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-6 py-4">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">Support Inbox</h2>
-          <p className="mt-2 text-sm text-slate-600">
-            Residents send one conversation per account, and any owner or manager can reply from this shared inbox.
-          </p>
+          <h2 className="text-base font-semibold text-slate-900">Support Inbox</h2>
+          <p className="text-xs text-slate-500">Residents send one conversation per account — reply from this shared inbox.</p>
         </div>
         <button
           type="button"
           onClick={() => void loadInbox(selectedConversationId)}
           disabled={loading}
-          className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60"
+          className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60"
         >
-          Refresh inbox
+          {loading ? "Loading…" : "Refresh"}
         </button>
       </div>
 
-      {status ? <p className="mt-4 text-sm text-slate-700">{status}</p> : null}
-
       {/* Quick Group Access */}
-      <div className="mt-6 flex flex-wrap gap-2">
-        {["BRANCH_D2", "BRANCH_D7"].map(groupId => {
-          const conv = conversations.find(c => c.id === groupId);
+      <div className="flex flex-wrap gap-2 border-b border-slate-100 px-6 py-3">
+        {["BRANCH_D2", "BRANCH_D7"].map((groupId) => {
+          const conv = conversations.find((c) => c.id === groupId);
           const unreadCount = conv?.unreadCount || 0;
           const label = groupId.replace("BRANCH_", "Branch ");
           const isSelected = selectedConversationId === groupId;
@@ -273,17 +347,17 @@ export function ManagerSupportInbox({
               key={groupId}
               type="button"
               onClick={() => void loadInbox(groupId)}
-              className={`relative flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold transition-all ${
+              className={`relative flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-all ${
                 isSelected
-                  ? "bg-slate-900 text-white border-slate-900 shadow-md"
+                  ? "border-blue-600 bg-blue-500 text-white shadow"
                   : unreadCount > 0
-                    ? "bg-sky-50 border-sky-300 text-sky-700 ring-1 ring-sky-300"
-                    : "bg-white border-slate-200 text-slate-700 hover:border-slate-300"
+                    ? "border-sky-300 bg-sky-50 text-sky-700 ring-1 ring-sky-200"
+                    : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
               }`}
             >
               {label}
               {unreadCount > 0 && (
-                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-sky-500 text-[10px] font-bold text-white shadow-sm ring-1 ring-white">
+                <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-0.5 text-[9px] font-bold text-white shadow-sm ring-1 ring-white">
                   {unreadCount}
                 </span>
               )}
@@ -292,12 +366,11 @@ export function ManagerSupportInbox({
         })}
       </div>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[20rem_1fr]">
-        <div className="space-y-3">
+      <div className="grid lg:grid-cols-[22rem_1fr]" style={{ minHeight: "540px" }}>
+        {/* Conversation list */}
+        <div className="overflow-y-auto border-r border-slate-100 lg:max-h-[600px]">
           {conversations.length === 0 ? (
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-              No resident chats yet.
-            </div>
+            <div className="p-6 text-sm text-slate-500">No conversations yet.</div>
           ) : (
             conversations.map((conversation) => {
               const isSelected = conversation.id === selectedConversationId;
@@ -307,78 +380,75 @@ export function ManagerSupportInbox({
                   key={conversation.id}
                   type="button"
                   onClick={() => void loadInbox(conversation.id)}
-                  className={`relative w-full rounded-xl border p-4 text-left transition-all ${
-                    isSelected 
-                      ? "border-slate-900 bg-slate-900 text-white shadow-md" 
+                  className={`relative w-full border-b px-4 py-3.5 text-left transition-colors ${
+                    isSelected
+                      ? "bg-blue-500 text-white"
                       : hasUnread
-                        ? "border-sky-300 bg-sky-50 text-slate-900 ring-1 ring-sky-300"
-                        : "border-slate-200 bg-white text-slate-900 hover:border-slate-300"
+                        ? "bg-sky-50 hover:bg-sky-100"
+                        : "bg-white hover:bg-slate-50"
                   }`}
                 >
                   {hasUnread && !isSelected && (
-                    <span className="absolute -right-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full bg-sky-500 text-[10px] font-bold text-white shadow-sm">
+                    <span className="absolute right-3 top-3 flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-bold text-white">
                       {conversation.unreadCount}
                     </span>
                   )}
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2 font-medium">
-                      {conversation.type === "GROUP" && (
-                        <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-500">
-                          Group
-                        </span>
-                      )}
-                      <span className="truncate">{conversation.label}</span>
-                    </div>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wider uppercase ${
-                        isSelected
-                          ? "bg-white/10 text-white"
-                          : conversation.status === "OPEN"
-                            ? "bg-emerald-100 text-emerald-700"
-                            : "bg-slate-100 text-slate-600"
-                      }`}
-                    >
+                  <div className="flex items-center gap-1.5">
+                    {conversation.type === "GROUP" && (
+                      <span className={`rounded px-1 py-0.5 text-[9px] font-bold uppercase tracking-wider ${isSelected ? "bg-white/20 text-white" : "bg-slate-200 text-slate-500"}`}>
+                        Group
+                      </span>
+                    )}
+                    <span className={`truncate text-sm font-semibold ${isSelected ? "text-white" : "text-slate-900"}`}>
+                      {conversation.label}
+                    </span>
+                    <span className={`ml-auto shrink-0 text-[9px] font-semibold uppercase ${isSelected ? "text-white/70" : conversation.status === "OPEN" ? "text-emerald-600" : "text-slate-400"}`}>
                       {conversation.status}
                     </span>
                   </div>
-                  <div className={`mt-1 truncate text-xs ${isSelected ? "text-slate-300" : "text-slate-500"}`}>
+                  <div className={`mt-0.5 truncate text-xs ${isSelected ? "text-blue-100" : "text-slate-400"}`}>
                     {conversation.subLabel}
                   </div>
                   {conversation.latestMessage ? (
-                    <div className={`mt-3 line-clamp-2 text-sm ${isSelected ? "text-slate-200" : "text-slate-600"} ${!isSelected && hasUnread ? "font-medium text-slate-900" : ""}`}>
-                      {conversation.latestMessage.body}
+                    <div className={`mt-1.5 flex items-end justify-between gap-2`}>
+                      <p className={`line-clamp-1 flex-1 text-xs ${isSelected ? "text-blue-100" : hasUnread ? "font-semibold text-slate-800" : "text-slate-500"}`}>
+                        {conversation.latestMessage.body}
+                      </p>
+                      <span className={`shrink-0 text-[10px] ${isSelected ? "text-blue-200" : "text-slate-400"}`}>
+                        {formatConversationTime(conversation.lastMessageAt)}
+                      </span>
                     </div>
                   ) : null}
-                  <div className={`mt-3 flex items-center justify-between text-[10px] ${isSelected ? "text-slate-400" : "text-slate-400"}`}>
-                    <span>{conversation.latestMessage?.senderName || ""}</span>
-                    <span>{formatDateTime(conversation.lastMessageAt)}</span>
-                  </div>
                 </button>
               );
             })
           )}
         </div>
 
-        <div className="rounded-xl border border-slate-200 p-4">
+        {/* Message thread */}
+        <div className="flex flex-col">
           {!selectedConversation && !selectedPreview ? (
-            <p className="text-sm text-slate-600">Choose a conversation to read and reply.</p>
+            <div className="flex flex-1 items-center justify-center p-8">
+              <p className="text-sm text-slate-400">Select a conversation to start reading</p>
+            </div>
           ) : (
             <>
-              <div className="flex flex-wrap items-start justify-between gap-3">
+              {/* Thread header */}
+              <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
                 <div>
-                  <h3 className="text-base font-semibold text-slate-900">
+                  <p className="text-sm font-semibold text-slate-900">
                     {selectedConversation?.residentName || selectedPreview?.label || "Conversation"}
-                  </h3>
-                  <p className="mt-1 text-sm text-slate-600">
+                  </p>
+                  <p className="text-xs text-slate-400">
                     {selectedConversation?.residentEmail || selectedPreview?.subLabel}
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex gap-2">
                   <button
                     type="button"
                     onClick={() => void updateStatus("OPEN")}
                     disabled={loading || selectedConversation?.status === "OPEN"}
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 disabled:opacity-60"
+                    className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
                   >
                     Reopen
                   </button>
@@ -386,56 +456,59 @@ export function ManagerSupportInbox({
                     type="button"
                     onClick={() => void updateStatus("CLOSED")}
                     disabled={loading || selectedConversation?.status === "CLOSED"}
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 disabled:opacity-60"
+                    className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
                   >
                     Close
                   </button>
                 </div>
               </div>
 
-              <div className="mt-4 space-y-3">
-                {messages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={`rounded-2xl border p-4 ${
-                      message.senderRole === "RESIDENT"
-                        ? "border-sky-200 bg-sky-50"
-                        : "border-emerald-200 bg-emerald-50"
-                    }`}
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-sm font-semibold text-slate-900">{authorLabel(message)}</div>
-                      <div className="text-xs text-slate-500">{formatDateTime(message.createdAt)}</div>
-                    </div>
-                    <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{message.body}</p>
-                    {message.pagePath ? (
-                      <div className="mt-2 text-xs text-slate-500">Sent from: {message.pagePath}</div>
-                    ) : null}
-                  </div>
-                ))}
+              {status ? (
+                <p className="px-5 py-2 text-xs text-slate-500">{status}</p>
+              ) : null}
+
+              {/* Messages */}
+              <div className="flex-1 overflow-y-auto px-5 py-4" style={{ maxHeight: "420px" }}>
+                {messages.length === 0 ? (
+                  <p className="text-center text-sm text-slate-400">No messages yet.</p>
+                ) : (
+                  <>
+                    {renderMessages()}
+                    <div ref={messagesEndRef} />
+                  </>
+                )}
               </div>
 
-              <form onSubmit={sendReply} className="mt-4">
-                <label className="block text-sm font-medium text-slate-700">
-                  Reply
+              {/* iMessage-style input */}
+              <div className="border-t border-slate-100 px-4 py-3">
+                <form onSubmit={sendReply} className="flex items-end gap-2">
                   <textarea
+                    ref={textareaRef}
                     value={draft}
-                    onChange={(event) => setDraft(event.target.value)}
-                    rows={4}
-                    className="mt-2 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-900"
-                    placeholder="Write a reply as owner or manager..."
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    rows={1}
+                    placeholder="Message…"
+                    className="flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-1 focus:ring-blue-200"
+                    style={{ maxHeight: "120px", overflowY: "auto" }}
+                    onInput={(e) => {
+                      const el = e.currentTarget;
+                      el.style.height = "auto";
+                      el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+                    }}
                   />
-                </label>
-                <div className="mt-4 flex justify-end">
                   <button
                     type="submit"
-                    disabled={loading || !selectedConversationId}
-                    className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+                    disabled={loading || !draft.trim() || !selectedConversationId}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-500 text-white shadow transition hover:bg-blue-600 disabled:opacity-40"
                   >
-                    {loading ? "Saving..." : "Send reply"}
+                    <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
+                      <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                    </svg>
                   </button>
-                </div>
-              </form>
+                </form>
+                <p className="mt-1.5 text-center text-[10px] text-slate-300">Enter to send · Shift+Enter for new line</p>
+              </div>
             </>
           )}
         </div>

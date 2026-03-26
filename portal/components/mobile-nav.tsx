@@ -1,20 +1,169 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
+import { API_BASE_URL } from "../lib/api-base-url";
+
+type NavBadges = {
+  laundry: number;   // schedule button top-right
+  cleaning: number;  // schedule button top-left
+  message: number;   // support button top-left
+  account: number;   // account button top-right
+  managerMessage: number; // manager message button top-left
+};
+
+const BADGE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+function useCachedBadges(cacheKey: string): [NavBadges, (b: NavBadges) => void] {
+  const empty: NavBadges = { laundry: 0, cleaning: 0, message: 0, account: 0, managerMessage: 0 };
+
+  function load(): NavBadges {
+    if (typeof window === "undefined") return empty;
+    try {
+      const raw = localStorage.getItem(cacheKey);
+      if (!raw) return empty;
+      const { data, timestamp } = JSON.parse(raw) as { data: NavBadges; timestamp: number };
+      if (Date.now() - timestamp < BADGE_CACHE_TTL) return data;
+    } catch {}
+    return empty;
+  }
+
+  const [badges, setBadgesState] = useState<NavBadges>(load);
+
+  function setBadges(next: NavBadges) {
+    setBadgesState(next);
+    try {
+      localStorage.setItem(cacheKey, JSON.stringify({ data: next, timestamp: Date.now() }));
+    } catch {}
+  }
+
+  return [badges, setBadges];
+}
+
+function useNavBadges(
+  sessionEmail: string,
+  isLoggedIn: boolean,
+  sessionRole: string | null | undefined,
+  isManagerWorkspace: boolean
+) {
+  const cacheKey = `nav_badges_${sessionEmail}`;
+  const [badges, setBadges] = useCachedBadges(cacheKey);
+  const normalizedEmail = sessionEmail.trim().toLowerCase();
+  const isAdminSession = Boolean(sessionRole && sessionRole !== "user");
+
+  async function fetchBadges() {
+    if (!isLoggedIn || !normalizedEmail) return;
+
+    try {
+      if (isAdminSession) {
+        // Manager: fetch unread support request count
+        const res = await fetch(
+          `${API_BASE_URL}/manager/support/notifications?operatorEmail=${encodeURIComponent(normalizedEmail)}`
+        );
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          unreadCount?: number;
+          notifications?: { unreadCount?: number }[];
+        };
+        const total =
+          data.notifications?.reduce((sum, n) => sum + (n.unreadCount ?? 0), 0) ??
+          data.unreadCount ??
+          0;
+        setBadges({ ...badges, managerMessage: total });
+      } else {
+        // Resident: split by notification type
+        const res = await fetch(
+          `${API_BASE_URL}/support/notifications?email=${encodeURIComponent(normalizedEmail)}`
+        );
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          notifications?: { type: string; unreadCount?: number }[];
+        };
+        const notifs = data.notifications ?? [];
+
+        const sum = (types: string[]) =>
+          notifs
+            .filter((n) => types.includes(n.type))
+            .reduce((s, n) => s + (n.unreadCount ?? 0), 0);
+
+        setBadges({
+          laundry: sum(["LAUNDRY_REMINDER"]),
+          cleaning: sum(["CLEANING_REMINDER"]),
+          message: sum(["SUPPORT_REPLY"]),
+          account: sum(["PAYMENT_DUE", "NEW_FINE"]),
+          managerMessage: 0,
+        });
+      }
+    } catch {}
+  }
+
+  useEffect(() => {
+    if (isLoggedIn && normalizedEmail) {
+      void fetchBadges();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoggedIn, normalizedEmail, isAdminSession]);
+
+  useEffect(() => {
+    if (!isLoggedIn || !normalizedEmail) return;
+
+    function onFocus() {
+      void fetchBadges();
+    }
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoggedIn, normalizedEmail, isAdminSession]);
+
+  return badges;
+}
+
+function BadgeDot({
+  count,
+  side,
+  color = "red",
+}: {
+  count: number;
+  side: "left" | "right";
+  color?: "red" | "sky" | "amber";
+}) {
+  if (count <= 0) return null;
+  const colorClass =
+    color === "sky"
+      ? "bg-sky-500"
+      : color === "amber"
+        ? "bg-amber-500"
+        : "bg-red-500";
+  const pos = side === "right" ? "-right-1.5 -top-1.5" : "-left-1.5 -top-1.5";
+  return (
+    <span
+      className={`pointer-events-none absolute ${pos} flex h-4 min-w-4 items-center justify-center rounded-full ${colorClass} px-0.5 text-[9px] font-bold leading-none text-white ring-[1.5px] ring-white`}
+    >
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+}
 
 export function MobileNav() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { t } = usePortalLanguage();
-  const { sessionRole } = usePortalSession();
+  const { sessionRole, sessionEmail, isLoggedIn } = usePortalSession();
 
-  const isManagerWorkspace = (sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin") && 
+  const isManagerWorkspace =
+    (sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin") &&
     (pathname.startsWith("/manager") || pathname.startsWith("/admin-cleaning"));
   const isMechanicWorkspace = sessionRole === "mechanic" && pathname.startsWith("/mechanic");
-  const isStaffWorkspace = isManagerWorkspace || isMechanicWorkspace;
+
+  const badges = useNavBadges(sessionEmail, isLoggedIn, sessionRole, isManagerWorkspace);
 
   const residentItems = [
     {
@@ -32,6 +181,8 @@ export function MobileNav() {
     {
       href: "/schedule",
       label: t("schedule", "Schedule"),
+      badgeRight: badges.laundry,
+      badgeLeft: badges.cleaning,
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
           <path d="M9 11l3 3L22 4" />
@@ -54,6 +205,7 @@ export function MobileNav() {
     {
       href: "/support",
       label: t("message", "Message"),
+      badgeLeft: badges.message,
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -63,6 +215,7 @@ export function MobileNav() {
     {
       href: "/account-overview",
       label: t("account", "Account"),
+      badgeRight: badges.account,
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
           <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
@@ -117,6 +270,7 @@ export function MobileNav() {
     {
       href: "/manager?view=support_chat",
       label: t("message", "Message"),
+      badgeLeft: badges.managerMessage,
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -149,6 +303,7 @@ export function MobileNav() {
     {
       href: "/support",
       label: t("message", "Message"),
+      badgeLeft: badges.message,
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -158,6 +313,7 @@ export function MobileNav() {
     {
       href: "/account-overview",
       label: t("account", "Account"),
+      badgeRight: badges.account,
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
           <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
@@ -169,16 +325,12 @@ export function MobileNav() {
 
   const navItems = isMechanicWorkspace ? mechanicItems : isManagerWorkspace ? managerItems : residentItems;
 
-  const canSeeStaffView = ["manager", "owner", "app_admin", "mechanic"].includes(sessionRole || "");
-
-  const displayItems = navItems;
-
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 flex flex-col items-center justify-center border-t border-white/20 bg-white/70 px-4 py-3 backdrop-blur-lg sm:bottom-6 sm:border-none sm:bg-transparent sm:px-0 sm:py-0">
       <div className="mx-auto flex w-full max-w-lg items-center justify-between sm:rounded-3xl sm:border sm:border-white/40 sm:bg-white/80 sm:p-2 sm:shadow-[0_8px_32px_rgba(0,0,0,0.1)] sm:backdrop-blur-xl">
-        {displayItems.map((item) => {
+        {navItems.map((item) => {
           let isActive = false;
-          
+
           if (item.href.includes("?")) {
             const [path, query] = item.href.split("?");
             const itemParams = new URLSearchParams(query);
@@ -187,29 +339,32 @@ export function MobileNav() {
           } else {
             isActive = pathname === item.href;
           }
+
+          const badgeRight = Number(("badgeRight" in item ? (item as { badgeRight?: number }).badgeRight : undefined) ?? 0);
+          const badgeLeft = Number(("badgeLeft" in item ? (item as { badgeLeft?: number }).badgeLeft : undefined) ?? 0);
+
           return (
             <Link
               key={item.href}
               href={item.href as any}
               className={`group flex flex-col items-center gap-1 transition-all duration-300 ${
-                isActive
-                  ? "scale-105 text-sky-600"
-                  : "text-slate-400 hover:text-slate-600"
+                isActive ? "scale-105 text-sky-600" : "text-slate-400 hover:text-slate-600"
               }`}
             >
               <div
-                className={`flex h-10 w-10 items-center justify-center rounded-xl transition-all duration-500 ${
-                  isActive 
-                    ? "bg-gradient-to-br from-sky-500 to-blue-600 text-white shadow-[0_5px_12px_-3px_rgba(14,165,233,0.4)] ring-2 ring-sky-50" 
+                className={`relative flex h-10 w-10 items-center justify-center rounded-xl transition-all duration-500 ${
+                  isActive
+                    ? "bg-gradient-to-br from-sky-500 to-blue-600 text-white shadow-[0_5px_12px_-3px_rgba(14,165,233,0.4)] ring-2 ring-sky-50"
                     : "bg-transparent group-hover:bg-slate-50"
                 }`}
               >
-                {/* Adjust icon wrapper to h-5 w-5 equivalent */}
-                <div className="scale-75">
-                  {item.icon}
-                </div>
+                <div className="scale-75">{item.icon}</div>
+                <BadgeDot count={badgeRight} side="right" color="red" />
+                <BadgeDot count={badgeLeft} side="left" color="sky" />
               </div>
-              <span className={`text-[9px] font-bold uppercase tracking-wider transition-opacity duration-300 ${isActive ? "opacity-100" : "opacity-50"}`}>
+              <span
+                className={`text-[9px] font-bold uppercase tracking-wider transition-opacity duration-300 ${isActive ? "opacity-100" : "opacity-50"}`}
+              >
                 {item.label}
               </span>
             </Link>
