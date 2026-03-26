@@ -63,6 +63,7 @@ import {
   readCachedFines,
   readCachedPayments,
   createLaundryBooking,
+  cancelLaundryBooking,
   syncCoinsFromSheet,
   syncFinesFromSheet,
   syncPaymentsFromSheet,
@@ -2395,6 +2396,24 @@ app.post("/laundry/bookings", async (request, response) => {
         ? 409
         : 400;
     return response.status(statusCode).json({ error: message });
+  }
+});
+
+app.post("/laundry/bookings/:id/cancel", async (request, response) => {
+  const eventId = request.params.id;
+  const { email, calendarId } = request.body;
+
+  if (!email || !calendarId) {
+    return response.status(400).json({ error: "Email and calendarId are required in the request body." });
+  }
+
+  try {
+    const result = await cancelLaundryBooking({ email, calendarId, eventId });
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to cancel laundry booking"
+    });
   }
 });
 

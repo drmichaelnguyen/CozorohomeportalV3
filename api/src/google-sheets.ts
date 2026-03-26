@@ -1889,6 +1889,78 @@ export async function createLaundryBooking(input: {
   } as LaundryCalendarEvent;
 }
 
+export async function cancelLaundryBooking(input: {
+  email: string;
+  calendarId: string;
+  eventId: string;
+}) {
+  const normalizedEmail = input.email.trim().toLowerCase();
+  const calendar = await getAuthorizedCalendarClient();
+
+  // 1. Get the event details
+  const event = await calendar.events.get({
+    calendarId: input.calendarId,
+    eventId: input.eventId
+  });
+
+  const startStr = event.data.start?.dateTime ?? event.data.start?.date;
+  if (!startStr) {
+    throw new Error("Unable to determine booking start time.");
+  }
+
+  const start = new Date(startStr);
+  const now = new Date();
+  const diffMs = start.getTime() - now.getTime();
+  const oneHourMs = 60 * 60 * 1000;
+
+  if (diffMs < oneHourMs) {
+    throw new Error("Cancellations are only allowed up to 1 hour before the scheduled time.");
+  }
+
+  // 2. Identify payment info from description
+  const description = event.data.description ?? "";
+  const paymentMethod = getLaundryPaymentMethodFromEvent(event.data);
+  const coinCost = getLaundryCoinCostFromEvent(event.data);
+
+  // 3. Delete the event
+  await calendar.events.delete({
+    calendarId: input.calendarId,
+    eventId: input.eventId
+  });
+
+  invalidateLaundryCalendar(input.calendarId);
+
+  // 4. Handle refund if paid by COINS
+  if (paymentMethod === "COINS" && coinCost > 0) {
+    const context = await getLaundryBookingContextForEmail(normalizedEmail);
+    if (context?.client && context.client[CONTRACT_CODE_COLUMN]) {
+      const nextCoinsBalance = context.allowance.currentCoinsBalance + coinCost;
+      const machine = laundryMachines.find(m => m.calendarId === input.calendarId);
+      
+      await appendCoinsSheetRow({
+        [COINS_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(new Date()),
+        [CONTRACT_CODE_COLUMN]: context.client[CONTRACT_CODE_COLUMN],
+        ["Chi nhánh Cozoro dorm"]: context.branchId.replace("D", ""),
+        [EMAIL_COLUMN]: normalizedEmail,
+        [CLIENT_NAME_COLUMN]: context.client[CLIENT_NAME_COLUMN] ?? "",
+        [CLIENT_BED_COLUMN]: context.client[CLIENT_BED_COLUMN] ?? "",
+        [COINS_BALANCE_COLUMN]: String(coinCost),
+        [COINS_EVENT_COLUMN]: machine ? `Hoàn Coins ${machine.type === "DRYER" ? "sấy" : "giặt"}` : "Hoàn Coins giặt sấy",
+        [COINS_OPERATOR_COLUMN]: "SYSTEM_CANCEL",
+        [COINS_MEMBER_COLUMN]: context.allowance.recordedMember,
+        [COINS_CURRENT_BALANCE_COLUMN]: String(nextCoinsBalance),
+        [COINS_TRANSACTION_CODE_COLUMN]: `Refund${input.eventId}${normalizedEmail}`
+      });
+
+      await updateClientColumns(context.client[CONTRACT_CODE_COLUMN], {
+        [CLIENT_CURRENT_COINS_COLUMN]: String(nextCoinsBalance)
+      });
+    }
+  }
+
+  return { ok: true };
+}
+
 export async function warmLaundryCalendarCache() {
   const calendarIds = await getLaundryCalendarIds();
   const results = await Promise.all(

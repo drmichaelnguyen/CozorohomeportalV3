@@ -19,11 +19,23 @@ if [ -f "$LIGHTNING_BIN" ] && [ ! -e "$LIGHTNING_PKG/lightningcss.linux-x64-gnu.
   ln -sf "$LIGHTNING_BIN" "$LIGHTNING_PKG/lightningcss.linux-x64-gnu.node"
 fi
 
+# Detect Windows host IP (WSL gateway) so MySQL at :3306 is reachable
+WINDOWS_HOST=$(ip route show | grep -m1 default | awk '{print $3}')
+echo "Windows host IP: $WINDOWS_HOST"
+
+# Build DATABASE_URL pointing at the Windows MySQL instance
+WSL_DATABASE_URL=$(cat "$ROOT/api/.env" 2>/dev/null | grep DATABASE_URL | cut -d= -f2- | tr -d '"' | sed "s/localhost/$WINDOWS_HOST/g")
+if [ -z "$WSL_DATABASE_URL" ]; then
+  WSL_DATABASE_URL="mysql://root:root@${WINDOWS_HOST}:3306/cozorohome"
+fi
+echo "Database: $WSL_DATABASE_URL"
+
 # Start API on 4002 in background
 (
   cd "$ROOT/api"
   PORT=4002 \
   GOOGLE_REDIRECT_URI="http://localhost:4002/integrations/google/oauth/callback" \
+  DATABASE_URL="$WSL_DATABASE_URL" \
   node --import tsx/esm src/index.ts
 ) &
 API_PID=$!
@@ -34,7 +46,7 @@ sleep 3
 # Build portal if .next build output is missing or stale
 if [ ! -d "$ROOT/portal/.next/server" ]; then
   echo "Building portal..."
-  (cd "$ROOT/portal" && npm run build)
+  (cd "$ROOT/portal" && API_SERVER_ORIGIN=http://localhost:4002 npm run build)
 fi
 
 # Start Portal on 3002 (production build)

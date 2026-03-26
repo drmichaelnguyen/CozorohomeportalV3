@@ -576,6 +576,65 @@ export function BookingsClient() {
     }
   }
 
+  async function cancelBooking(booking: LaundryBooking) {
+    const start = new Date(booking.start);
+    const now = new Date();
+    const oneHourMs = 60 * 60 * 1000;
+
+    if (start.getTime() - now.getTime() < oneHourMs) {
+      alert(
+        language === "vi"
+          ? "Bạn chỉ có thể hủy lịch trước giờ bắt đầu ít nhất 1 tiếng."
+          : "Cancellations are only allowed at least 1 hour before the start time."
+      );
+      return;
+    }
+
+    const confirmMessage =
+      language === "vi"
+        ? `Bạn có chắc chắn muốn hủy lịch đặt ${booking.summary} vào lúc ${formatDateTimeInTimeZone(
+            booking.start,
+            timeZone
+          )} không? Coins đã dùng sẽ được hoàn lại.`
+        : `Are you sure you want to cancel the booking for ${booking.summary} at ${formatDateTimeInTimeZone(
+            booking.start,
+            timeZone
+          )}? Used coins will be refunded.`;
+
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+
+    setSubmitting(true);
+    setMessage("");
+
+    try {
+      await fetchJson(`${API_BASE_URL}/laundry/bookings/${booking.id}/cancel`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          email: activeEmail.trim(),
+          calendarId: booking.calendarId
+        })
+      });
+
+      setMessage(
+        language === "vi" ? "Đã hủy lịch đặt thành công." : "Laundry booking cancelled successfully."
+      );
+
+      await Promise.all([
+        loadBookings(activeEmail, true),
+        loadContext() // Refresh coins and allowance
+      ]);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to cancel booking.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   useEffect(() => {
     if (sessionEmail) {
       setEmail(sessionEmail);
@@ -1021,14 +1080,27 @@ export function BookingsClient() {
                     Payment: {getBookingPaymentType(booking).replace("_", " ")}
                   </div>
                   {booking.htmlLink ? (
-                    <a
-                      href={booking.htmlLink}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="mt-3 inline-block text-sm font-medium text-slate-900 underline"
-                    >
-                      Open in Google Calendar
-                    </a>
+                    <div className="mt-3 flex flex-wrap items-center gap-4">
+                      <a
+                        href={booking.htmlLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-sm font-medium text-slate-900 underline"
+                      >
+                        Open in Google Calendar
+                      </a>
+                      
+                      {new Date(booking.end).getTime() > Date.now() && (
+                        <button
+                          type="button"
+                          onClick={() => void cancelBooking(booking)}
+                          disabled={submitting}
+                          className="text-sm font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
+                        >
+                          {language === "vi" ? "Hủy lịch" : "Cancel booking"}
+                        </button>
+                      )}
+                    </div>
                   ) : null}
                 </div>
               ))}
