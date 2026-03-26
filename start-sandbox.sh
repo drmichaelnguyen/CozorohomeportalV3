@@ -9,23 +9,39 @@ echo "Portal  → http://localhost:3002"
 echo "API     → http://localhost:4002"
 echo ""
 
+# Regenerate Prisma client for this platform (fixes Windows/WSL mismatch)
+(cd "$ROOT/api" && npx prisma generate --silent 2>/dev/null || true)
+
+# Fix lightningcss platform binary for Linux builds
+LIGHTNING_PKG="$ROOT/node_modules/.pnpm/lightningcss@1.32.0/node_modules/lightningcss"
+LIGHTNING_BIN="$ROOT/node_modules/.pnpm/lightningcss-linux-x64-gnu@1.32.0/node_modules/lightningcss-linux-x64-gnu/lightningcss.linux-x64-gnu.node"
+if [ -f "$LIGHTNING_BIN" ] && [ ! -e "$LIGHTNING_PKG/lightningcss.linux-x64-gnu.node" ]; then
+  ln -sf "$LIGHTNING_BIN" "$LIGHTNING_PKG/lightningcss.linux-x64-gnu.node"
+fi
+
 # Start API on 4002 in background
 (
   cd "$ROOT/api"
   PORT=4002 \
   GOOGLE_REDIRECT_URI="http://localhost:4002/integrations/google/oauth/callback" \
-  npx tsx watch src/index.ts
+  node --import tsx/esm src/index.ts
 ) &
 API_PID=$!
 
 # Give API a moment to boot
-sleep 2
+sleep 3
 
-# Start Portal on 3002 (API_SERVER_ORIGIN overrides .env.local so Next proxy hits :4002)
+# Build portal if .next build output is missing or stale
+if [ ! -d "$ROOT/portal/.next/server" ]; then
+  echo "Building portal..."
+  (cd "$ROOT/portal" && npm run build)
+fi
+
+# Start Portal on 3002 (production build)
 (
   cd "$ROOT/portal"
   API_SERVER_ORIGIN=http://localhost:4002 \
-  npx next dev -p 3002 --webpack
+  npx next start -p 3002
 )
 
 # Kill API when portal exits
