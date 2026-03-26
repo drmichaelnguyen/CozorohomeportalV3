@@ -1316,10 +1316,34 @@ async function buildCleaningOverviewForUser(email: string) {
 
   const user = (await getActiveCleaningUsers()).find((entry) => entry.email === normalizedEmail) ?? null;
 
+  // Fetch upcoming slots taken by OTHER users so the frontend can color the calendar
+  const upcomingOccupiedTasks = await prisma.cleaningTask.findMany({
+    where: {
+      scheduledDate: {
+        gte: today,
+        lte: addMonths(today, 3)
+      },
+      userEmail: { not: normalizedEmail },
+      status: { in: [CleaningTaskStatus.ASSIGNED, CleaningTaskStatus.DONE_PENDING_AUDIT] }
+    },
+    select: {
+      type: true,
+      scheduledDate: true,
+      floor: true
+    }
+  });
+
+  const occupiedSlots = upcomingOccupiedTasks.map((task) => ({
+    date: formatCalendarDate(task.scheduledDate),
+    type: task.type,
+    floor: task.floor
+  }));
+
   return {
     user,
     tasks,
-    availability
+    availability,
+    occupiedSlots
   };
 }
 
