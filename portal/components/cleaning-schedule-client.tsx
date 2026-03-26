@@ -205,6 +205,17 @@ export function CleaningScheduleClient() {
     }
   }, [sessionEmail]);
 
+  // Auto-load when the user is already logged in
+  useEffect(() => {
+    if (isLoggedIn && activeEmail && !overview) {
+      setLoading(true);
+      loadOverview(activeEmail)
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoggedIn, activeEmail]);
+
   async function readJsonSafely<T>(response: Response) {
     const contentType = response.headers.get("content-type") ?? "";
     const bodyText = await response.text();
@@ -660,7 +671,13 @@ export function CleaningScheduleClient() {
                       +20% Coins Bonus
                     </div>
                   </div>
-                  
+
+                  {allowedTaskTypes.length === 0 && (
+                    <div className="rounded-xl border border-slate-100 bg-slate-50 p-4 text-xs text-slate-500">
+                      Your cleaning profile hasn't been set up yet. Contact your manager to be added to the system.
+                    </div>
+                  )}
+
                   {allowedTaskTypes.map((type) => {
                     const isMyTask = (overview.tasks ?? []).some(
                       (t) => sameDay(new Date(t.scheduledDate), activeMenuDate) && t.type === type
@@ -865,7 +882,8 @@ export function CleaningScheduleClient() {
                   const dayDateStr = toApiCalendarDate(day);
 
                   // Determine open vs occupied slots for this day
-                  const hasOpenSlot = isFuture && isCurrentMonth && allowedTaskTypes.some((type) => {
+                  const isAssignable = isTodayOrFuture(day);
+                  const hasOpenSlot = isAssignable && isCurrentMonth && allowedTaskTypes.some((type) => {
                     const isMyTask = tasks.some((t) => t.type === type);
                     const isOccupied = (overview.occupiedSlots ?? []).some(
                       (slot) =>
@@ -876,7 +894,7 @@ export function CleaningScheduleClient() {
                     return !isMyTask && !isOccupied;
                   });
 
-                  const hasOccupiedByOthers = isFuture && isCurrentMonth && !hasOpenSlot && allowedTaskTypes.some((type) => {
+                  const hasOccupiedByOthers = isAssignable && isCurrentMonth && !hasOpenSlot && allowedTaskTypes.some((type) => {
                     const isMyTask = tasks.some((t) => t.type === type);
                     const isOccupied = (overview.occupiedSlots ?? []).some(
                       (slot) =>
