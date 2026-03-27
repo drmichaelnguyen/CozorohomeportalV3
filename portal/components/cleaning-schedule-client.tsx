@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePortalSession } from "./portal-session";
 import { usePortalLanguage } from "./portal-language";
 import { API_BASE_URL } from "../lib/api-base-url";
@@ -34,6 +34,7 @@ type CleaningOverview = {
   tasks: CleaningTask[];
   availability: CleaningAvailability[];
   occupiedSlots?: OccupiedSlot[];
+  optOut?: { month: string; paymentMethod: string } | null;
   user?: {
     branchId: string;
     floor: number | null;
@@ -196,8 +197,20 @@ export function CleaningScheduleClient() {
   const [selfAssignSuggestions, setSelfAssignSuggestions] = useState<string[]>([]);
   const [pendingSelfAssignment, setPendingSelfAssignment] = useState<PendingSelfAssignment | null>(null);
   const [activeMenuDate, setActiveMenuDate] = useState<Date | null>(null);
+  const [awayMode, setAwayMode] = useState(false);
+  const [awayDates, setAwayDates] = useState<Set<string>>(new Set());
+  const [awaySubmitting, setAwaySubmitting] = useState(false);
+  const [optOutModal, setOptOutModal] = useState(false);
+  const [optOutPayment, setOptOutPayment] = useState<"VND" | "COINS">("VND");
+  const [optOutLoading, setOptOutLoading] = useState(false);
   const canSelfAssignSelectedDate = isTodayOrFuture(selectedDate);
   const activeEmail = sessionEmail.trim().toLowerCase();
+
+  const currentMonth = (() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  })();
+  const currentMonthLabel = new Date().toLocaleString(undefined, { month: "long", year: "numeric" });
 
   useEffect(() => {
     if (sessionEmail) {
@@ -322,6 +335,88 @@ export function CleaningScheduleClient() {
       setMessage("Unable to save availability.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function submitAwayDates() {
+    if (awayDates.size === 0) return;
+    setAwaySubmitting(true);
+    setMessage("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/cleaning/availability/bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: activeEmail,
+          dates: Array.from(awayDates),
+          type: "UNAVAILABLE",
+          note: "Away"
+        })
+      });
+      const data = await readJsonSafely<{ updated?: number; error?: string }>(response);
+      if (!response.ok) {
+        setMessage(data.error ?? "Unable to save away dates.");
+        return;
+      }
+      await loadOverview(activeEmail, { refresh: true });
+      setMessage(`${data.updated ?? awayDates.size} date(s) marked as away.`);
+      setAwayDates(new Set());
+      setAwayMode(false);
+    } catch {
+      setMessage("Unable to save away dates.");
+    } finally {
+      setAwaySubmitting(false);
+    }
+  }
+
+  async function handleOptOut() {
+    setOptOutLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/cleaning/opt-out`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: activeEmail, paymentMethod: optOutPayment, month: currentMonth })
+      });
+      const data = await readJsonSafely<{ ok?: boolean; error?: string }>(response);
+      if (!response.ok) {
+        setMessage(data.error ?? "Unable to process opt-out.");
+        return;
+      }
+      await loadOverview(activeEmail, { refresh: true });
+      setOptOutModal(false);
+      setMessage(
+        optOutPayment === "COINS"
+          ? `Opted out for ${currentMonthLabel}. 150,000 coins deducted.`
+          : `Opted out for ${currentMonthLabel}. A fine of 100,000 VND has been added to your account.`
+      );
+    } catch {
+      setMessage("Unable to process opt-out.");
+    } finally {
+      setOptOutLoading(false);
+    }
+  }
+
+  async function handleCancelOptOut() {
+    setOptOutLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/cleaning/opt-out`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: activeEmail, month: currentMonth })
+      });
+      const data = await readJsonSafely<{ ok?: boolean; error?: string }>(response);
+      if (!response.ok) {
+        setMessage(data.error ?? "Unable to cancel opt-out.");
+        return;
+      }
+      await loadOverview(activeEmail, { refresh: true });
+      setMessage("Opt-out cancelled. You are back in the cleaning rotation.");
+    } catch {
+      setMessage("Unable to cancel opt-out.");
+    } finally {
+      setOptOutLoading(false);
     }
   }
 
@@ -642,6 +737,55 @@ export function CleaningScheduleClient() {
         </section>
       )}
 
+      {optOutModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
+            <h3 className="text-lg font-bold text-slate-900">Opt out of cleaning — {currentMonthLabel}</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              You will be exempt from all cleaning assignments this month. A fee will be charged.
+            </p>
+            <div className="mt-4 space-y-2">
+              <button
+                onClick={() => setOptOutPayment("VND")}
+                className={`flex w-full items-center gap-3 rounded-xl border p-4 text-left transition-all ${optOutPayment === "VND" ? "border-slate-900 bg-slate-50 ring-2 ring-slate-900" : "border-slate-200 hover:bg-slate-50"}`}
+              >
+                <div className="flex-1">
+                  <p className="text-sm font-bold text-slate-900">Pay 100,000 VND</p>
+                  <p className="text-xs text-slate-500">A fine will be added to your account.</p>
+                </div>
+                {optOutPayment === "VND" && <div className="h-4 w-4 rounded-full bg-slate-900" />}
+              </button>
+              <button
+                onClick={() => setOptOutPayment("COINS")}
+                className={`flex w-full items-center gap-3 rounded-xl border p-4 text-left transition-all ${optOutPayment === "COINS" ? "border-amber-500 bg-amber-50 ring-2 ring-amber-500" : "border-slate-200 hover:bg-slate-50"}`}
+              >
+                <div className="flex-1">
+                  <p className="text-sm font-bold text-slate-900">Pay 150,000 Coins</p>
+                  <p className="text-xs text-slate-500">Deducted from your coin balance immediately.</p>
+                </div>
+                {optOutPayment === "COINS" && <div className="h-4 w-4 rounded-full bg-amber-500" />}
+              </button>
+            </div>
+            <div className="mt-5 flex gap-3">
+              <button
+                onClick={() => void handleOptOut()}
+                disabled={optOutLoading}
+                className="flex-1 rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white disabled:opacity-60"
+              >
+                {optOutLoading ? "Processing..." : "Confirm Opt Out"}
+              </button>
+              <button
+                onClick={() => setOptOutModal(false)}
+                disabled={optOutLoading}
+                className="flex-1 rounded-lg border border-slate-300 py-2.5 text-sm text-slate-700 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {overview ? (
         <>
           {activeMenuDate && (
@@ -824,6 +968,41 @@ export function CleaningScheduleClient() {
             </div>
           </section>
 
+          {/* Opt-out section */}
+          <section className={`rounded-2xl p-5 shadow-sm ring-1 ${overview.optOut ? "bg-slate-100 ring-slate-300" : "bg-white ring-slate-200"}`}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">Cleaning Opt-out — {currentMonthLabel}</div>
+                {overview.optOut ? (
+                  <p className="mt-0.5 text-sm text-slate-600">
+                    You have opted out this month (paid via {overview.optOut.paymentMethod === "COINS" ? "150,000 coins" : "100,000 VND"}).
+                    You will not be assigned to any cleaning tasks.
+                  </p>
+                ) : (
+                  <p className="mt-0.5 text-sm text-slate-500">
+                    Pay 100,000 VND or 150,000 coins to be exempt from all cleaning assignments this month.
+                  </p>
+                )}
+              </div>
+              {overview.optOut ? (
+                <button
+                  onClick={() => void handleCancelOptOut()}
+                  disabled={optOutLoading}
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60 hover:bg-white transition-colors"
+                >
+                  {optOutLoading ? "..." : "Cancel opt-out"}
+                </button>
+              ) : (
+                <button
+                  onClick={() => setOptOutModal(true)}
+                  className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50 transition-colors"
+                >
+                  Opt out this month
+                </button>
+              )}
+            </div>
+          </section>
+
           <section className="grid gap-6 xl:grid-cols-[1.7fr_1fr]">
             <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -855,11 +1034,35 @@ export function CleaningScheduleClient() {
                   >
                     Next
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => { setAwayMode((m) => !m); setAwayDates(new Set()); }}
+                    className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${awayMode ? "border-orange-400 bg-orange-50 text-orange-700" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}
+                  >
+                    {awayMode ? "Cancel Away" : "Mark Away"}
+                  </button>
                 </div>
               </div>
 
-              <div className="mt-4 text-sm text-slate-600">
-                {calendarFocusDate.toLocaleString(undefined, { month: "long", year: "numeric" })}
+              <div className="mt-4 flex items-center justify-between gap-3">
+                <div className="text-sm text-slate-600">
+                  {calendarFocusDate.toLocaleString(undefined, { month: "long", year: "numeric" })}
+                </div>
+                {awayMode && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-orange-700">
+                      {awayDates.size} date{awayDates.size !== 1 ? "s" : ""} selected
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void submitAwayDates()}
+                      disabled={awaySubmitting || awayDates.size === 0}
+                      className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50 hover:bg-orange-600 transition-colors"
+                    >
+                      {awaySubmitting ? "Saving..." : "Mark Away"}
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="mt-4 overflow-x-auto pb-2 hide-scrollbar">
@@ -905,11 +1108,22 @@ export function CleaningScheduleClient() {
                     return !isMyTask && isOccupied;
                   });
 
+                  const isAwaySelected = awayDates.has(dayDateStr);
+
                   return (
                     <button
                       key={day.toISOString()}
                       type="button"
                       onClick={() => {
+                        if (awayMode) {
+                          setAwayDates((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(dayDateStr)) next.delete(dayDateStr);
+                            else next.add(dayDateStr);
+                            return next;
+                          });
+                          return;
+                        }
                         setSelectedDate(startOfDay(day));
                         setActiveMenuDate(startOfDay(day));
                         setPendingSelfAssignment(null);
@@ -918,16 +1132,20 @@ export function CleaningScheduleClient() {
                       }}
                       className={[
                         "min-h-[3.5rem] md:min-h-28 rounded-lg border p-1 md:p-2 text-left transition-all",
+                        awayMode && isAwaySelected ? "bg-orange-100 border-orange-400 ring-2 ring-orange-400" :
+                        awayMode ? "hover:bg-orange-50 hover:border-orange-300" :
                         isSelected ? "ring-2 ring-slate-900 border-slate-900" : "hover:border-slate-400",
-                        isToday ? "border-slate-400" : "",
-                        hasOpenSlot && !isSelected ? "bg-emerald-50 border-emerald-300" :
-                        hasOccupiedByOthers && !isSelected ? "bg-sky-50 border-sky-300" :
+                        isToday && !awayMode ? "border-slate-400" : "",
+                        !awayMode && hasOpenSlot && !isSelected ? "bg-emerald-50 border-emerald-300" :
+                        !awayMode && hasOccupiedByOthers && !isSelected ? "bg-sky-50 border-sky-300" :
                         isCurrentMonth ? "border-slate-200 bg-white" : "border-slate-100 bg-slate-50"
                       ].filter(Boolean).join(" ")}
                     >
                       <div className="flex items-center justify-between">
                         <div className={`text-[10px] md:text-xs font-semibold ${isToday ? "text-blue-600" : "text-slate-900"}`}>{day.getDate()}</div>
-                        {availability?.type === "UNAVAILABLE" ? (
+                        {awayMode && isAwaySelected ? (
+                          <div className="h-1.5 w-1.5 rounded-full bg-orange-500" title="Away" />
+                        ) : availability?.type === "UNAVAILABLE" ? (
                           <div className="h-1.5 w-1.5 rounded-full bg-rose-400" title="Unavailable" />
                         ) : hasOpenSlot ? (
                           <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" title="Open slot" />
@@ -936,19 +1154,22 @@ export function CleaningScheduleClient() {
                         ) : null}
                       </div>
                       <div className="mt-1 flex flex-wrap gap-0.5">
-                        {tasks.map((task) => (
+                        {!awayMode && tasks.map((task) => (
                           <div key={task.id} className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500 md:h-auto md:w-full md:bg-amber-500 md:px-1.5 md:py-0.5 md:text-[10px] md:text-white md:truncate">
                             <span className="hidden md:inline">{prettyTaskType(task.type)}</span>
                           </div>
                         ))}
-                        {hasOpenSlot && tasks.length === 0 && (
+                        {!awayMode && hasOpenSlot && tasks.length === 0 && (
                           <div className="text-[8px] font-bold text-emerald-600 uppercase hidden md:block">Open</div>
                         )}
-                        {hasOccupiedByOthers && tasks.length === 0 && (
+                        {!awayMode && hasOccupiedByOthers && tasks.length === 0 && (
                           <div className="text-[8px] font-bold text-sky-600 uppercase hidden md:block">Taken</div>
                         )}
-                        {availability?.type === "UNAVAILABLE" && (
+                        {!awayMode && availability?.type === "UNAVAILABLE" && (
                           <div className="text-[8px] font-medium text-slate-500 uppercase hidden md:block">Off</div>
+                        )}
+                        {awayMode && isAwaySelected && (
+                          <div className="text-[8px] font-bold text-orange-600 uppercase hidden md:block">Away</div>
                         )}
                       </div>
                     </button>

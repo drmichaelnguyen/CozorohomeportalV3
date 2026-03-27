@@ -1047,6 +1047,14 @@ export async function selfAssignCleaningTask(input: {
     throw new Error("This date is marked unavailable");
   }
 
+  const selfAssignMonth = `${normalizedTaskDate.getFullYear()}-${String(normalizedTaskDate.getMonth() + 1).padStart(2, "0")}`;
+  const optOut = await prisma.cleaningOptOut.findFirst({
+    where: { userEmail: normalizedEmail, month: selfAssignMonth }
+  });
+  if (optOut) {
+    throw new Error("You have opted out of cleaning for this month. Cancel your opt-out to self-assign.");
+  }
+
   const slotFloor = input.type === CleaningTaskType.TRASH_D7 ? user.floor : null;
   const existingSlot = await prisma.cleaningTask.findFirst({
     where: {
@@ -1125,6 +1133,17 @@ export async function checkSelfAssignCleaningTask(input: {
     return {
       canSubmit: false,
       reason: "This date is marked unavailable."
+    };
+  }
+
+  const checkMonth = `${normalizedTaskDate.getFullYear()}-${String(normalizedTaskDate.getMonth() + 1).padStart(2, "0")}`;
+  const optOut = await prisma.cleaningOptOut.findFirst({
+    where: { userEmail: normalizedEmail, month: checkMonth }
+  });
+  if (optOut) {
+    return {
+      canSubmit: false,
+      reason: "You have opted out of cleaning for this month. Cancel your opt-out to self-assign."
     };
   }
 
@@ -1339,11 +1358,17 @@ async function buildCleaningOverviewForUser(email: string) {
     floor: task.floor
   }));
 
+  const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  const optOut = await prisma.cleaningOptOut.findFirst({
+    where: { userEmail: normalizedEmail, month: currentMonth }
+  });
+
   return {
     user,
     tasks,
     availability,
-    occupiedSlots
+    occupiedSlots,
+    optOut: optOut ? { month: optOut.month, paymentMethod: optOut.paymentMethod } : null
   };
 }
 
@@ -1904,4 +1929,87 @@ export async function getUserCleaningContext(email: string) {
   const normalizedEmail = email.trim().toLowerCase();
   const activeUsers = await getActiveCleaningUsers();
   return activeUsers.find((entry) => entry.email === normalizedEmail) ?? null;
+}
+
+export async function setBulkCleaningAvailability(input: {
+  email: string;
+  dates: Date[];
+  type: CleaningAvailabilityType;
+  note?: string;
+}) {
+  const normalizedEmail = input.email.trim().toLowerCase();
+  const userContext = await getUserCleaningContext(normalizedEmail);
+  if (!userContext) {
+    throw new Error("Active user not found for cleaning availability");
+  }
+
+  const results = [];
+  for (const date of input.dates) {
+    const result = await setCleaningAvailability({
+      email: normalizedEmail,
+      branchId: userContext.branchId,
+      floor: userContext.floor,
+      date,
+      type: input.type,
+      note: input.note
+    });
+    results.push(result);
+  }
+
+  return results;
+}
+
+function currentYearMonth() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+export async function getCleaningOptOutForEmail(email: string, month?: string) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const targetMonth = month ?? currentYearMonth();
+  return prisma.cleaningOptOut.findFirst({
+    where: { userEmail: normalizedEmail, month: targetMonth }
+  });
+}
+
+export async function setCleaningOptOut(input: {
+  email: string;
+  branchId: string;
+  month: string;
+  paymentMethod: string;
+}) {
+  const normalizedEmail = input.email.trim().toLowerCase();
+  const existing = await prisma.cleaningOptOut.findFirst({
+    where: { userEmail: normalizedEmail, month: input.month }
+  });
+  if (existing) {
+    throw new Error("You have already opted out of cleaning for this month.");
+  }
+  const result = await prisma.cleaningOptOut.create({
+    data: {
+      userEmail: normalizedEmail,
+      branchId: input.branchId,
+      month: input.month,
+      paymentMethod: input.paymentMethod,
+      chargedAt: new Date()
+    }
+  });
+  await invalidateCleaningOverviewCache(normalizedEmail);
+  return result;
+}
+
+export async function cancelCleaningOptOut(email: string, month: string) {
+  const normalizedEmail = email.trim().toLowerCase();
+  await prisma.cleaningOptOut.deleteMany({
+    where: { userEmail: normalizedEmail, month }
+  });
+  await invalidateCleaningOverviewCache(normalizedEmail);
+}
+
+export async function getOptedOutEmailsForMonth(month: string): Promise<Set<string>> {
+  const optOuts = await prisma.cleaningOptOut.findMany({
+    where: { month },
+    select: { userEmail: true }
+  });
+  return new Set(optOuts.map((o) => o.userEmail));
 }

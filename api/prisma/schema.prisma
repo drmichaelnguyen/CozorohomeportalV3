@@ -237,3 +237,17 @@ model GroupReadState {
 
   @@unique([groupId, viewerEmail])
 }
+
+model CleaningOptOut {
+  id            String    @id @default(cuid())
+  userEmail     String
+  branchId      String
+  month         String    // "YYYY-MM"
+  paymentMethod String    // "VND" | "COINS"
+  chargedAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([userEmail, month])
+  @@index([branchId, month])
+}

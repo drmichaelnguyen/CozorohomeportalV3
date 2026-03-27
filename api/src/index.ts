@@ -34,7 +34,8 @@ import {
   calculateRentBreakdown 
 } from "./calculation-engine.js";
 import { 
-  recordPaymentReceipt, 
+  recordPaymentReceipt,
+  createAutomaticFineForEmail,
   sendGmailReceipt,
   syncClientsFromSheet,
   readCachedClients,
@@ -102,7 +103,11 @@ import {
   releaseCleaningTask,
   selfAssignCleaningTask,
   sweepOverdueCleaningTasks,
-  setCleaningAvailability
+  setCleaningAvailability,
+  setBulkCleaningAvailability,
+  getCleaningOptOutForEmail,
+  setCleaningOptOut,
+  cancelCleaningOptOut
 } from "./cleaning.js";
 import { prisma } from "./prisma.js";
 
@@ -2028,6 +2033,137 @@ app.post("/cleaning/availability", async (request, response) => {
   return response.json(availability);
 });
 
+app.post("/cleaning/availability/bulk", async (request, response) => {
+  const parsed = z.object({
+    email: z.string().email(),
+    dates: z.array(z.string()).min(1).max(60),
+    type: z.enum(["AVAILABLE", "UNAVAILABLE", "PREFERRED"]),
+    note: z.string().optional()
+  }).safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid bulk availability payload" });
+  }
+
+  try {
+    const parsedDates = parsed.data.dates.map((d) => parseCalendarDateInput(d));
+    const results = await setBulkCleaningAvailability({
+      email: parsed.data.email,
+      dates: parsedDates,
+      type: parsed.data.type as CleaningAvailabilityType,
+      note: parsed.data.note
+    });
+    return response.json({ updated: results.length });
+  } catch (error) {
+    return response.status(400).json({ error: error instanceof Error ? error.message : "Unable to save availability" });
+  }
+});
+
+app.get("/cleaning/opt-out", async (request, response) => {
+  const email = String(request.query.email ?? "").trim();
+  if (!email) {
+    return response.status(400).json({ error: "Email is required" });
+  }
+  const month = String(request.query.month ?? "").trim() || undefined;
+  try {
+    const optOut = await getCleaningOptOutForEmail(email, month);
+    return response.json({ optOut: optOut ? { month: optOut.month, paymentMethod: optOut.paymentMethod } : null });
+  } catch {
+    return response.status(500).json({ error: "Unable to check opt-out status" });
+  }
+});
+
+const CLEANING_OPT_OUT_VND_AMOUNT = 100000;
+const CLEANING_OPT_OUT_COINS_AMOUNT = 150000;
+
+app.post("/cleaning/opt-out", async (request, response) => {
+  const parsed = z.object({
+    email: z.string().email(),
+    paymentMethod: z.enum(["VND", "COINS"]),
+    month: z.string().regex(/^\d{4}-\d{2}$/).optional()
+  }).safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid opt-out payload" });
+  }
+
+  const { email, paymentMethod } = parsed.data;
+  const normalizedEmail = email.trim().toLowerCase();
+  const targetMonth = parsed.data.month ?? (() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  })();
+
+  try {
+    const userContext = await getUserCleaningContext(normalizedEmail);
+    if (!userContext) {
+      return response.status(404).json({ error: "Active user not found." });
+    }
+
+    // Process payment before recording opt-out
+    if (paymentMethod === "COINS") {
+      const allClients = await getManagerClients();
+      const client = allClients.find((c) => c.email.trim().toLowerCase() === normalizedEmail);
+      if (!client) {
+        return response.status(404).json({ error: "Client not found for coin deduction." });
+      }
+      await managerAdjustCoins({
+        maHd: client.maHd,
+        delta: -CLEANING_OPT_OUT_COINS_AMOUNT,
+        reason: `Phí miễn vệ sinh tháng ${targetMonth}`,
+        operator: "Cleaning system"
+      });
+    } else {
+      // VND — create a fine
+      const dueDate = new Date();
+      dueDate.setDate(dueDate.getDate() + 7);
+      await createAutomaticFineForEmail({
+        email: normalizedEmail,
+        amount: CLEANING_OPT_OUT_VND_AMOUNT,
+        content: `Phí miễn vệ sinh tháng ${targetMonth}`,
+        description: "Cleaning opt-out fee",
+        dueDate: dueDate.toISOString(),
+        operator: "Cleaning system"
+      });
+    }
+
+    await setCleaningOptOut({
+      email: normalizedEmail,
+      branchId: userContext.branchId,
+      month: targetMonth,
+      paymentMethod
+    });
+
+    return response.json({ ok: true, month: targetMonth, paymentMethod });
+  } catch (error) {
+    return response.status(400).json({ error: error instanceof Error ? error.message : "Unable to process opt-out" });
+  }
+});
+
+app.delete("/cleaning/opt-out", async (request, response) => {
+  const parsed = z.object({
+    email: z.string().email(),
+    month: z.string().regex(/^\d{4}-\d{2}$/).optional()
+  }).safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid opt-out cancellation payload" });
+  }
+
+  const { email } = parsed.data;
+  const targetMonth = parsed.data.month ?? (() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  })();
+
+  try {
+    await cancelCleaningOptOut(email.trim().toLowerCase(), targetMonth);
+    return response.json({ ok: true });
+  } catch {
+    return response.status(500).json({ error: "Unable to cancel opt-out" });
+  }
+});
+
 app.post("/cleaning/generate", async (request, response) => {
   const parsed = generateCleaningSchema.safeParse(request.body);
 
@@ -2386,6 +2522,27 @@ app.post("/laundry/bookings", async (request, response) => {
   }
 
   try {
+    // Block laundry booking if the user marked that date as unavailable (away)
+    const bookingStart = new Date(parsed.data.start);
+    if (!Number.isNaN(bookingStart.getTime())) {
+      const bookingDate = new Date(Date.UTC(
+        bookingStart.getFullYear(),
+        bookingStart.getMonth(),
+        bookingStart.getDate()
+      ));
+      const nextDate = new Date(bookingDate.getTime() + 24 * 60 * 60 * 1000);
+      const unavailable = await prisma.cleaningAvailability.findFirst({
+        where: {
+          userEmail: parsed.data.email.trim().toLowerCase(),
+          type: CleaningAvailabilityType.UNAVAILABLE,
+          date: { gte: bookingDate, lt: nextDate }
+        }
+      });
+      if (unavailable) {
+        return response.status(400).json({ error: "You have marked this date as away/unavailable. Remove the mark to book laundry on this day." });
+      }
+    }
+
     const booking = await createLaundryBooking(parsed.data);
     return response.status(201).json(booking);
   } catch (error) {
