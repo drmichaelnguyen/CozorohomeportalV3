@@ -17,6 +17,7 @@ if (!process.env.API_SERVER_ORIGIN && !publicApiOrigin) {
 }
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ["app.cozorohome.com"],
   turbopack: {
     root: configDir
   },
