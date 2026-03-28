@@ -827,6 +827,7 @@ async function createCleaningTaskRecord(input: {
       type: input.type,
       scheduledDate: normalizedScheduledDate,
       rewardCoins,
+      isSelfAssigned: input.isSelfAssigned ?? false,
       calendarId,
       calendarEventId
     }
