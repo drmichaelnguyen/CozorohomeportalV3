@@ -1953,9 +1953,9 @@ app.post("/manager/payments/create", async (request, response) => {
       if (staffName) {
         receiver = staffName;
       } else {
-        const clients = await readCachedClients();
-        const actorAsClient = clients.find(
-          (c) => c.email?.trim().toLowerCase() === parsed.data.actorEmail.trim().toLowerCase()
+        const allClients = await getManagerClients();
+        const actorAsClient = allClients.find(
+          (c) => c.email.trim().toLowerCase() === parsed.data.actorEmail.trim().toLowerCase()
         );
         receiver = actorAsClient?.name?.trim() || parsed.data.actorEmail;
       }
