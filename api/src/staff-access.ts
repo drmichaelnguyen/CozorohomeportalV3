@@ -25,6 +25,7 @@ export type StaffRole = "manager" | "owner" | "app_admin" | "mechanic";
 type StaffAccessEntry = {
   email: string;
   role: StaffRole;
+  name?: string;
   addedAt: string;
   addedBy: string;
 };
@@ -382,6 +383,7 @@ export async function upsertStaffAccess(input: {
   actorEmail: string;
   targetEmail: string;
   role: StaffRole;
+  name?: string;
 }) {
   const { targetEmail: normalizedTargetEmail } = await assertCanManageStaffAccess({
     actorEmail: input.actorEmail,
@@ -394,6 +396,7 @@ export async function upsertStaffAccess(input: {
   const nextEntry: StaffAccessEntry = {
     email: normalizedTargetEmail,
     role: input.role,
+    ...(input.name?.trim() ? { name: input.name.trim() } : {}),
     addedAt: new Date().toISOString(),
     addedBy: normalizeEmail(input.actorEmail)
   };
@@ -402,6 +405,7 @@ export async function upsertStaffAccess(input: {
     file.staff[existingIndex] = {
       ...file.staff[existingIndex],
       role: input.role,
+      ...(input.name?.trim() ? { name: input.name.trim() } : {}),
       addedAt: nextEntry.addedAt,
       addedBy: nextEntry.addedBy
     };
@@ -415,6 +419,12 @@ export async function upsertStaffAccess(input: {
     ok: true,
     staff: (await readStaffAccessFile()).staff
   };
+}
+
+export async function getStaffName(email: string): Promise<string | null> {
+  const file = await readStaffAccessFile();
+  const entry = file.staff.find((s) => normalizeEmail(s.email) === normalizeEmail(email));
+  return entry?.name?.trim() || null;
 }
 
 export async function removeStaffAccess(input: {

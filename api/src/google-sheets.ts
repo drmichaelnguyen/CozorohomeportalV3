@@ -6,6 +6,7 @@ import { calendar_v3, google } from "googleapis";
 import { repairMojibake, repairUnknownText } from "./text-encoding.js";
 
 const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID ?? "";
+const paymentsSpreadsheetId = process.env.GOOGLE_PAYMENT_SPREADSHEET_ID ?? spreadsheetId;
 const sheetName = process.env.GOOGLE_SHEET_NAME ?? "COZORODATABASE";
 const coinsSheetName = process.env.GOOGLE_COINS_SHEET_NAME ?? "COZORO COINS";
 const paymentsSheetName = process.env.GOOGLE_PAYMENTS_SHEET_NAME ?? "BIÊN NHẬN";
@@ -1066,8 +1067,8 @@ export async function readCoinsSheetRows() {
 }
 
 export async function readPaymentsSheetRows() {
-  if (!spreadsheetId) {
-    throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
+  if (!paymentsSpreadsheetId) {
+    throw new Error("GOOGLE_PAYMENT_SPREADSHEET_ID is not configured");
   }
 
   const sheets = await getAuthorizedSheetsClient();
@@ -1075,7 +1076,7 @@ export async function readPaymentsSheetRows() {
 
   if (Number.isFinite(paymentsSheetId) && paymentsSheetId > 0) {
     const response = await sheets.spreadsheets.values.batchGetByDataFilter({
-      spreadsheetId,
+      spreadsheetId: paymentsSpreadsheetId,
       requestBody: {
         majorDimension: "ROWS",
         dataFilters: [
@@ -1091,7 +1092,7 @@ export async function readPaymentsSheetRows() {
     values = (response.data.valueRanges?.[0]?.valueRange?.values as string[][] | undefined) ?? [];
   } else {
     const response = await sheets.spreadsheets.values.get({
-      spreadsheetId,
+      spreadsheetId: paymentsSpreadsheetId,
       range: `${paymentsSheetName}!A:AMJ`
     });
     values = (response.data.values as string[][] | undefined) ?? [];
@@ -1164,13 +1165,13 @@ export async function recordPaymentReceipt(data: {
   payer: string;
   receiver: string;
 }) {
-  if (!spreadsheetId) {
-    throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
+  if (!paymentsSpreadsheetId) {
+    throw new Error("GOOGLE_PAYMENT_SPREADSHEET_ID is not configured");
   }
 
   const sheets = await getAuthorizedSheetsClient();
   const timestamp = new Date().toLocaleString("vi-VN", { timeZone: COZORO_TIMEZONE });
-  
+
   const values = [
     [
       timestamp,
@@ -1184,7 +1185,7 @@ export async function recordPaymentReceipt(data: {
   ];
 
   await sheets.spreadsheets.values.append({
-    spreadsheetId,
+    spreadsheetId: paymentsSpreadsheetId,
     range: `${paymentsSheetName}!A:G`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values }
@@ -2157,7 +2158,7 @@ export function getConfiguredCleaningCalendars() {
 
     definitions.push({
       calendarId: mapping.calendarId,
-      title: `Äá»• rÃ¡c D7 - Floor ${mapping.floor}`,
+      title: `Trash D7 - Floor ${mapping.floor}`,
       type: "TRASH_D7",
       branchId: "D7",
       floor: mapping.floor
@@ -3096,7 +3097,7 @@ export async function managerCreatePaymentReceipt(input: {
   purpose: string;
   details?: string;
   payer?: string;
-  receiver: string;
+  receiver?: string;
 }) {
   if (!spreadsheetId) {
     throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
@@ -3124,7 +3125,7 @@ export async function managerCreatePaymentReceipt(input: {
     [PAYMENT_PURPOSE_COLUMN]: input.purpose.trim(),
     [PAYMENT_DETAILS_COLUMN]: input.details?.trim() ?? "",
     [PAYMENT_PAYER_COLUMN]: input.payer?.trim() || client.name || client.email,
-    [PAYMENT_RECEIVER_COLUMN]: input.receiver.trim()
+    [PAYMENT_RECEIVER_COLUMN]: input.receiver?.trim() ?? ""
   });
 
   return {
@@ -3549,13 +3550,13 @@ async function appendCoinsSheetRow(entry: Record<string, string>) {
 }
 
 async function appendPaymentSheetRow(entry: Record<string, string>) {
-  if (!spreadsheetId) {
-    throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
+  if (!paymentsSpreadsheetId) {
+    throw new Error("GOOGLE_PAYMENT_SPREADSHEET_ID is not configured");
   }
 
   const sheets = await getAuthorizedSheetsClient();
   const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
+    spreadsheetId: paymentsSpreadsheetId,
     range: `${paymentsSheetName}!A:AMJ`
   });
   const values = response.data.values ?? [];
@@ -3567,7 +3568,7 @@ async function appendPaymentSheetRow(entry: Record<string, string>) {
   const row = headers.map((header) => entry[header] ?? "");
 
   await sheets.spreadsheets.values.append({
-    spreadsheetId,
+    spreadsheetId: paymentsSpreadsheetId,
     range: `${paymentsSheetName}!A:AMJ`,
     valueInputOption: "USER_ENTERED",
     insertDataOption: "INSERT_ROWS",
@@ -3585,8 +3586,10 @@ async function updateSheetRowColumns(input: {
   syncAfterUpdate: () => Promise<unknown>;
   values: Record<string, string>;
   findRow: (headers: string[], row: string[], index: number) => boolean;
+  targetSpreadsheetId?: string;
 }) {
-  if (!spreadsheetId) {
+  const targetId = input.targetSpreadsheetId ?? spreadsheetId;
+  if (!targetId) {
     throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
   }
 
@@ -3597,7 +3600,7 @@ async function updateSheetRowColumns(input: {
 
   const sheets = await getAuthorizedSheetsClient();
   const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
+    spreadsheetId: targetId,
     range: input.range
   });
   const sheetValues = response.data.values ?? [];
@@ -3623,7 +3626,7 @@ async function updateSheetRowColumns(input: {
     }
 
     await sheets.spreadsheets.values.update({
-      spreadsheetId,
+      spreadsheetId: targetId,
       range: `${input.range.split("!")[0]}!${columnIndexToLetter(columnIndex)}${rowIndex + 1}`,
       valueInputOption: "USER_ENTERED",
       requestBody: {
@@ -3679,6 +3682,7 @@ export async function updatePaymentSheetEntry(input: {
     rowLabel: "payments",
     values: input.values,
     syncAfterUpdate: syncPaymentsFromSheet,
+    targetSpreadsheetId: paymentsSpreadsheetId,
     findRow: (headers, row) => {
       const mappedRow = mapRow(headers, row) as unknown as PaymentRow;
       const matchesEmail = mappedRow[EMAIL_COLUMN]?.trim().toLowerCase() === normalizedEmail;

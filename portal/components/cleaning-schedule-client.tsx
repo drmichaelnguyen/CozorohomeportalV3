@@ -40,6 +40,8 @@ type CleaningOverview = {
     floor: number | null;
     name: string;
   } | null;
+  releasesThisMonth?: number;
+  monthlyReleaseLimit?: number;
 };
 
 type PendingSelfAssignment = {
@@ -50,9 +52,9 @@ type PendingSelfAssignment = {
 };
 
 function prettyTaskType(type: CleaningTask["type"]) {
-  if (type === "KITCHEN_D2") return "Vệ sinh bếp D2";
-  if (type === "KITCHEN_D7") return "Vệ sinh bếp D7";
-  return "Đổ rác D7";
+  if (type === "KITCHEN_D2") return "Kitchen D2";
+  if (type === "KITCHEN_D7") return "Kitchen D7";
+  return "Trash D7";
 }
 
 function startOfDay(date: Date) {
@@ -906,26 +908,42 @@ export function CleaningScheduleClient() {
                     );
                   })}
 
-                  {(overview.tasks ?? []).filter(t => sameDay(new Date(t.scheduledDate), activeMenuDate)).map(task => (
-                    <button
-                      key={task.id}
-                      onClick={() => {
-                        void releaseTask(task.id);
-                        setActiveMenuDate(null);
-                      }}
-                      className="flex w-full items-center gap-3 rounded-xl border border-rose-100 bg-rose-50/50 p-4 text-left transition-all hover:bg-rose-50 active:scale-[0.98]"
-                    >
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-100 text-rose-600">
-                        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 12H4" />
-                        </svg>
+                  {(overview.tasks ?? []).filter(t => sameDay(new Date(t.scheduledDate), activeMenuDate)).map(task => {
+                    const releasePenalty = getReleasePenalty(task);
+                    const releasesUsed = overview.releasesThisMonth ?? 0;
+                    const releaseLimit = overview.monthlyReleaseLimit ?? 3;
+                    const atMonthlyLimit = releasesUsed >= releaseLimit;
+                    const canRelease = releasePenalty.canRelease && !atMonthlyLimit;
+                    return (
+                      <div key={task.id} className="space-y-2">
+                        <button
+                          disabled={!canRelease || loading}
+                          onClick={() => {
+                            void releaseTask(task.id);
+                            setActiveMenuDate(null);
+                          }}
+                          className="flex w-full items-center gap-3 rounded-xl border border-rose-100 bg-rose-50/50 p-4 text-left transition-all hover:bg-rose-50 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-100 text-rose-600">
+                            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 12H4" />
+                            </svg>
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-rose-900">Remove Myself ({releasePenalty.label})</p>
+                            <p className="text-xs text-rose-700">{prettyTaskType(task.type)} — {releasePenalty.helpText}</p>
+                          </div>
+                        </button>
+                        {atMonthlyLimit ? (
+                          <p className="text-xs text-rose-600 px-1">You have used all {releaseLimit} removals for this month.</p>
+                        ) : canRelease ? (
+                          <p className="text-xs text-slate-500 px-1">
+                            You will be automatically reassigned to another date. ({releasesUsed}/{releaseLimit} removals used this month)
+                          </p>
+                        ) : null}
                       </div>
-                      <div>
-                        <p className="text-sm font-bold text-rose-900">Remove Myself</p>
-                        <p className="text-xs text-rose-700">{prettyTaskType(task.type)}</p>
-                      </div>
-                    </button>
-                  ))}
+                    );
+                  })}
 
                   <div className="pt-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Availability</div>
                   
@@ -1341,6 +1359,10 @@ export function CleaningScheduleClient() {
                 {futureTasks.length === 0 ? <p className="text-sm text-slate-600">No upcoming tasks.</p> : null}
                 {futureTasks.map((task) => {
                   const releasePenalty = getReleasePenalty(task);
+                  const releasesUsed = overview?.releasesThisMonth ?? 0;
+                  const releaseLimit = overview?.monthlyReleaseLimit ?? 3;
+                  const atMonthlyLimit = releasesUsed >= releaseLimit;
+                  const canRelease = releasePenalty.canRelease && !atMonthlyLimit;
 
                   return (
                   <div key={task.id} className="rounded-xl border border-slate-200 p-4">
@@ -1382,17 +1404,23 @@ export function CleaningScheduleClient() {
                         <button
                           type="button"
                           onClick={() => void releaseTask(task.id)}
-                          disabled={loading || !releasePenalty.canRelease}
+                          disabled={loading || !canRelease}
                           className="mt-3 ml-3 rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60"
                         >
                           Remove myself ({releasePenalty.label})
                         </button>
-                        {!releasePenalty.canRelease ? (
+                        {atMonthlyLimit ? (
+                          <div className="mt-2 text-sm text-rose-600">
+                            You have used all {releaseLimit} removals for this month.
+                          </div>
+                        ) : !releasePenalty.canRelease ? (
                           <div className="mt-2 text-sm text-amber-700">
                             {releasePenalty.helpText}
                           </div>
                         ) : (
-                          <div className="mt-2 text-sm text-slate-500">{releasePenalty.helpText}</div>
+                          <div className="mt-2 text-sm text-slate-500">
+                            You will be automatically reassigned to another date. ({releasesUsed}/{releaseLimit} removals used this month)
+                          </div>
                         )}
                       </>
                     ) : null}

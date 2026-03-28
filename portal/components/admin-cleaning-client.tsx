@@ -51,9 +51,9 @@ type AutoAssignPreview = {
 };
 
 function prettyTaskType(type: AdminTask["type"]) {
-  if (type === "KITCHEN_D2") return "Vệ sinh bếp D2";
-  if (type === "KITCHEN_D7") return "Vệ sinh bếp D7";
-  return "Đổ rác D7";
+  if (type === "KITCHEN_D2") return "Kitchen D2";
+  if (type === "KITCHEN_D7") return "Kitchen D7";
+  return "Trash D7";
 }
 
 function startOfDay(date: Date) {

@@ -575,13 +575,30 @@ async function getNearestOpenDatesForUser(input: {
   return suggestions;
 }
 
+async function getRecentTaskCounts(since: Date): Promise<Map<string, number>> {
+  const tasks = await prisma.cleaningTask.findMany({
+    where: {
+      scheduledDate: { gte: since },
+      status: { not: CleaningTaskStatus.MISSED }
+    },
+    select: { userEmail: true }
+  });
+  const counts = new Map<string, number>();
+  for (const { userEmail } of tasks) {
+    const key = userEmail.toLowerCase();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
 async function getAssignableCandidates(
   activeUsers: ActiveCleaningUser[],
   availabilityMap: Map<string, Prisma.CleaningAvailabilityGetPayload<Record<string, never>>>,
   scheduledDate: Date,
   type: CleaningTaskType,
   occupiedTasks: Array<{ userEmail: string; scheduledDate: Date }>,
-  floor?: number | null
+  floor?: number | null,
+  recentTaskCounts?: Map<string, number>
 ) {
   const normalizedDateKey = normalizeCalendarDate(scheduledDate).toISOString();
 
@@ -617,7 +634,14 @@ async function getAssignableCandidates(
         return availabilityDelta;
       }
 
-      return countAssignments(occupiedTasks, left.email) - countAssignments(occupiedTasks, right.email);
+      // Sort by recent task count (last 60 days) — least work first
+      const leftCount = recentTaskCounts?.get(left.email) ?? 0;
+      const rightCount = recentTaskCounts?.get(right.email) ?? 0;
+      if (leftCount !== rightCount) {
+        return leftCount - rightCount;
+      }
+
+      return left.name.localeCompare(right.name);
     });
 }
 
@@ -853,11 +877,26 @@ async function syncCalendarTasksIntoDatabase(
     const existingTask = existingTaskByEventId ?? placeholderSlotTask;
 
     if (existingTask) {
+      // If the calendar shows a user who is UNAVAILABLE on this date, the DB assignment is
+      // authoritative (they released the task). Keep the existing DB email/name instead of
+      // overwriting with stale calendar data.
+      let syncEmail = userEmail;
+      let syncName = userName;
+      if (normalizedEmail && normalizedEmail !== existingTask.userEmail.trim().toLowerCase()) {
+        const calendarUserAvailability = await prisma.cleaningAvailability.findUnique({
+          where: { userEmail_date: { userEmail: normalizedEmail, date: scheduledDate } }
+        });
+        if (calendarUserAvailability?.type === CleaningAvailabilityType.UNAVAILABLE) {
+          syncEmail = existingTask.userEmail;
+          syncName = existingTask.userName;
+        }
+      }
+
       const updatedTask = await prisma.cleaningTask.update({
         where: { id: existingTask.id },
         data: {
-          userEmail,
-          userName,
+          userEmail: syncEmail,
+          userName: syncName,
           branchId,
           floor,
           type: event.taskType as CleaningTaskType,
@@ -1179,6 +1218,22 @@ export async function checkSelfAssignCleaningTask(input: {
   };
 }
 
+const MONTHLY_RELEASE_LIMIT = 3;
+
+async function countReleasesThisMonth(email: string): Promise<number> {
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
+  const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
+  return prisma.cleaningAvailability.count({
+    where: {
+      userEmail: email.trim().toLowerCase(),
+      type: CleaningAvailabilityType.UNAVAILABLE,
+      note: "Released self-assigned cleaning task",
+      date: { gte: monthStart, lte: monthEnd }
+    }
+  });
+}
+
 export async function releaseCleaningTask(taskId: string, email: string) {
   const normalizedEmail = email.trim().toLowerCase();
   const task = await prisma.cleaningTask.findUnique({
@@ -1195,6 +1250,11 @@ export async function releaseCleaningTask(taskId: string, email: string) {
 
   if (task.status !== CleaningTaskStatus.ASSIGNED) {
     throw new Error("Only assigned tasks can be released");
+  }
+
+  const releasesThisMonth = await countReleasesThisMonth(normalizedEmail);
+  if (releasesThisMonth >= MONTHLY_RELEASE_LIMIT) {
+    throw new Error(`You have reached the limit of ${MONTHLY_RELEASE_LIMIT} removals this month.`);
   }
 
   const releasePenalty = getCleaningReleasePenalty(task.scheduledDate);
@@ -1220,6 +1280,35 @@ export async function releaseCleaningTask(taskId: string, email: string) {
   const replacementUser = await getUserCleaningContext(replacement.email);
   if (!replacementUser) {
     throw new Error("Replacement user context not found");
+  }
+
+  const newFloor = task.type === CleaningTaskType.TRASH_D7 ? replacementUser.floor : task.floor;
+
+  // Attempt to update Google Calendar. If this fails, log and continue — the DB is
+  // authoritative for released tasks, and the sync will respect the UNAVAILABLE record
+  // set below to avoid overwriting with stale calendar data.
+  if (task.calendarId && task.calendarEventId) {
+    const target = getCleaningCalendarTarget(task.type, { floor: newFloor });
+    if (target) {
+      try {
+        await updateCleaningCalendarEvent({
+          calendarId: task.calendarId,
+          eventId: task.calendarEventId,
+          title: target.title,
+          scheduledDate: task.scheduledDate,
+          userEmail: replacementUser.email,
+          userName: replacementUser.name,
+          branchId: replacementUser.branchId,
+          floor: newFloor,
+          rewardCoins: task.rewardCoins,
+          type: task.type,
+          status: task.status,
+          auditorNote: task.auditorNote
+        });
+      } catch (calendarError) {
+        console.error("[releaseCleaningTask] Google Calendar update failed, proceeding with DB release:", calendarError);
+      }
+    }
   }
 
   const reassignedTask = await prisma.$transaction(async (tx) => {
@@ -1252,33 +1341,13 @@ export async function releaseCleaningTask(taskId: string, email: string) {
         userEmail: replacementUser.email,
         userName: replacementUser.name,
         branchId: replacementUser.branchId,
-        floor: task.type === CleaningTaskType.TRASH_D7 ? replacementUser.floor : task.floor
+        floor: newFloor
       }
     });
 
     void updatedAvailability;
     return updatedTask;
   });
-
-  if (reassignedTask.calendarId && reassignedTask.calendarEventId) {
-    const target = getCleaningCalendarTarget(reassignedTask.type, { floor: reassignedTask.floor });
-    if (target) {
-      await updateCleaningCalendarEvent({
-        calendarId: reassignedTask.calendarId,
-        eventId: reassignedTask.calendarEventId,
-        title: target.title,
-        scheduledDate: reassignedTask.scheduledDate,
-        userEmail: reassignedTask.userEmail,
-        userName: reassignedTask.userName,
-        branchId: reassignedTask.branchId,
-        floor: reassignedTask.floor,
-        rewardCoins: reassignedTask.rewardCoins,
-        type: reassignedTask.type,
-        status: reassignedTask.status,
-        auditorNote: reassignedTask.auditorNote
-      });
-    }
-  }
 
   if (releasePenalty.fineAmount > 0) {
     await createAutomaticFineForEmail({
@@ -1293,6 +1362,17 @@ export async function releaseCleaningTask(taskId: string, email: string) {
 
   await invalidateCleaningOverviewCache(normalizedEmail);
   await invalidateCleaningOverviewCache(replacement.email);
+
+  // Auto-reassign the releasing user to the next available date of the same type
+  void autoReassignReleasedUser({
+    email: normalizedEmail,
+    releasedDate: task.scheduledDate,
+    type: task.type,
+    floor: task.floor
+  }).catch((err) => {
+    console.warn("[releaseCleaningTask] auto-reassign failed:", err instanceof Error ? err.message : err);
+  });
+
   return {
     task: reassignedTask,
     penalty: {
@@ -1363,13 +1443,41 @@ async function buildCleaningOverviewForUser(email: string) {
     where: { userEmail: normalizedEmail, month: currentMonth }
   });
 
+  const releasesThisMonth = await countReleasesThisMonth(normalizedEmail);
+
   return {
     user,
     tasks,
     availability,
     occupiedSlots,
-    optOut: optOut ? { month: optOut.month, paymentMethod: optOut.paymentMethod } : null
+    optOut: optOut ? { month: optOut.month, paymentMethod: optOut.paymentMethod } : null,
+    releasesThisMonth,
+    monthlyReleaseLimit: MONTHLY_RELEASE_LIMIT
   };
+}
+
+async function fetchFreshOccupiedSlots(normalizedEmail: string) {
+  const today = new Date();
+  const upcomingOccupiedTasks = await prisma.cleaningTask.findMany({
+    where: {
+      scheduledDate: {
+        gte: today,
+        lte: addMonths(today, 3)
+      },
+      userEmail: { not: normalizedEmail },
+      status: { in: [CleaningTaskStatus.ASSIGNED, CleaningTaskStatus.DONE_PENDING_AUDIT] }
+    },
+    select: {
+      type: true,
+      scheduledDate: true,
+      floor: true
+    }
+  });
+  return upcomingOccupiedTasks.map((task) => ({
+    date: formatCalendarDate(task.scheduledDate),
+    type: task.type,
+    floor: task.floor
+  }));
 }
 
 export async function getCleaningOverviewForUser(email: string, options?: { forceRefresh?: boolean }) {
@@ -1380,12 +1488,15 @@ export async function getCleaningOverviewForUser(email: string, options?: { forc
 
   if (!options?.forceRefresh) {
     if (memoryCached) {
-      return memoryCached;
+      // occupiedSlots depends on all users' tasks — always fetch fresh to avoid stale slot visibility
+      const occupiedSlots = await fetchFreshOccupiedSlots(normalizedEmail);
+      return { ...memoryCached, occupiedSlots };
     }
 
     if (fileCached) {
       cleaningOverviewMemoryCache.set(normalizedEmail, fileCached);
-      return fileCached;
+      const occupiedSlots = await fetchFreshOccupiedSlots(normalizedEmail);
+      return { ...fileCached, occupiedSlots };
     }
   }
 
@@ -1600,7 +1711,9 @@ export async function adminAutoAssignCleaningSlots(input: {
   type: CleaningTaskType;
   floor?: number | null;
 }) {
+  const today = normalizeCalendarDate(new Date());
   const activeUsers = await getActiveCleaningUsers();
+  const recentTaskCounts = await getRecentTaskCounts(addDays(today, -60));
   const results: CleaningTaskRecord[] = [];
   const reservedEmails = new Set<string>();
 
@@ -1641,7 +1754,8 @@ export async function adminAutoAssignCleaningSlots(input: {
       normalizedDate,
       input.type,
       occupiedTasks,
-      input.floor ?? null
+      input.floor ?? null,
+      recentTaskCounts
     ).then((entries) => entries.filter((user) => !reservedEmails.has(user.email)));
     const selectedUser = candidates[0];
     if (!selectedUser) {
@@ -1655,6 +1769,7 @@ export async function adminAutoAssignCleaningSlots(input: {
       floor: input.floor ?? selectedUser.floor
     });
     reservedEmails.add(selectedUser.email);
+    recentTaskCounts.set(selectedUser.email, (recentTaskCounts.get(selectedUser.email) ?? 0) + 1);
     results.push(assignedTask);
   }
 
@@ -1925,6 +2040,82 @@ export async function sweepOverdueCleaningTasks(now = new Date()) {
   };
 }
 
+const MONTHLY_EVASION_FINE_AMOUNT = 100000;
+const MONTHLY_EVASION_FINE_CONTENT = "Cleaning duty evasion";
+const MONTHLY_EVASION_UNAVAILABLE_THRESHOLD = 15;
+
+function isEvasionFineForUserMonth(row: Record<string, string>, email: string, month: string) {
+  return (
+    row["EMAIL"]?.trim().toLowerCase() === email.toLowerCase() &&
+    row[FINE_CONTENT_COLUMN] === MONTHLY_EVASION_FINE_CONTENT &&
+    (row[FINE_DESCRIPTION_COLUMN] ?? "").includes(month)
+  );
+}
+
+// Charges users who evaded cleaning duties for the previous month:
+// - Marked UNAVAILABLE more than 15 days
+// - Released at least 1 task
+// - Has no active or completed cleaning task that month
+export async function sweepMonthlyEvasionPenalties(now = new Date()) {
+  const prevMonthDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  const month = `${prevMonthDate.getUTCFullYear()}-${String(prevMonthDate.getUTCMonth() + 1).padStart(2, "0")}`;
+  const monthStart = new Date(Date.UTC(prevMonthDate.getUTCFullYear(), prevMonthDate.getUTCMonth(), 1, 0, 0, 0, 0));
+  const monthEnd = new Date(Date.UTC(prevMonthDate.getUTCFullYear(), prevMonthDate.getUTCMonth() + 1, 0, 23, 59, 59, 999));
+
+  const activeUsers = await getActiveCleaningUsers();
+  const knownFines = await getManagerFines();
+  const results: Array<{ email: string; month: string; unavailableDays: number; releases: number }> = [];
+
+  for (const user of activeUsers) {
+    const email = user.email;
+
+    if (knownFines.some((f) => isEvasionFineForUserMonth(f.row, email, month))) {
+      continue;
+    }
+
+    const unavailableDays = await prisma.cleaningAvailability.count({
+      where: {
+        userEmail: email,
+        type: CleaningAvailabilityType.UNAVAILABLE,
+        date: { gte: monthStart, lte: monthEnd }
+      }
+    });
+    if (unavailableDays <= MONTHLY_EVASION_UNAVAILABLE_THRESHOLD) continue;
+
+    const releases = await prisma.cleaningAvailability.count({
+      where: {
+        userEmail: email,
+        type: CleaningAvailabilityType.UNAVAILABLE,
+        note: "Released self-assigned cleaning task",
+        date: { gte: monthStart, lte: monthEnd }
+      }
+    });
+    if (releases < 1) continue;
+
+    const taskInMonth = await prisma.cleaningTask.findFirst({
+      where: {
+        userEmail: email,
+        scheduledDate: { gte: monthStart, lte: monthEnd },
+        status: { in: [CleaningTaskStatus.ASSIGNED, CleaningTaskStatus.DONE_PENDING_AUDIT, CleaningTaskStatus.APPROVED] }
+      }
+    });
+    if (taskInMonth) continue;
+
+    await createAutomaticFineForEmail({
+      email,
+      amount: MONTHLY_EVASION_FINE_AMOUNT,
+      content: MONTHLY_EVASION_FINE_CONTENT,
+      description: `Cleaning duty evasion for ${month}: ${unavailableDays} unavailable days, ${releases} task release(s), no completed cleaning task.`,
+      location: user.branchId,
+      operator: AUTO_CLEANING_FINE_OPERATOR
+    });
+
+    results.push({ email, month, unavailableDays, releases });
+  }
+
+  return { scanned: activeUsers.length, charged: results.length, entries: results };
+}
+
 export async function getUserCleaningContext(email: string) {
   const normalizedEmail = email.trim().toLowerCase();
   const activeUsers = await getActiveCleaningUsers();
@@ -2012,4 +2203,145 @@ export async function getOptedOutEmailsForMonth(month: string): Promise<Set<stri
     select: { userEmail: true }
   });
   return new Set(optOuts.map((o) => o.userEmail));
+}
+
+// Auto-schedule all cleaning slots for the next `horizonDays` days.
+// Algorithm: for each empty slot, assign the eligible user with the least
+// tasks in the last 60 days who has no other task that day and is not
+// unavailable / opted out.
+export async function autoScheduleCleaningTasks(horizonDays = 15) {
+  const today = normalizeCalendarDate(new Date());
+  const recentTaskCounts = await getRecentTaskCounts(addDays(today, -60));
+  const activeUsers = await getActiveCleaningUsers();
+  const calendarDefs = await getConfiguredCleaningCalendars();
+
+  // Build slot definitions from calendar config (includes floor-specific TRASH_D7)
+  const slotDefs =
+    calendarDefs.length > 0
+      ? calendarDefs.map((def) => ({ type: def.type as CleaningTaskType, floor: def.floor ?? null }))
+      : dailyTaskConfigs.map((cfg) => ({ type: cfg.type, floor: null as number | null }));
+
+  const optOutCache = new Map<string, Set<string>>();
+  const getOptedOut = async (month: string) => {
+    if (!optOutCache.has(month)) {
+      optOutCache.set(month, await getOptedOutEmailsForMonth(month));
+    }
+    return optOutCache.get(month)!;
+  };
+
+  const results = { created: 0, skipped: 0 };
+
+  for (let d = 1; d <= horizonDays; d++) {
+    const date = addDays(today, d);
+    const month = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+    const optedOut = await getOptedOut(month);
+    const eligibleUsers = activeUsers.filter((u) => !optedOut.has(u.email));
+
+    const dayTasks = await prisma.cleaningTask.findMany({
+      where: {
+        scheduledDate: { gte: calendarRangeStart(date), lte: calendarRangeEnd(date) }
+      }
+    });
+    const availabilityMap = await getAvailabilityMap(date, date);
+
+    for (const def of slotDefs) {
+      const existingSlot = dayTasks.find(
+        (t) => t.type === def.type && (def.type !== CleaningTaskType.TRASH_D7 || t.floor === def.floor)
+      );
+      if (existingSlot) {
+        results.skipped++;
+        continue;
+      }
+
+      const candidates = await getAssignableCandidates(
+        eligibleUsers,
+        availabilityMap,
+        date,
+        def.type,
+        dayTasks,
+        def.floor,
+        recentTaskCounts
+      );
+
+      if (candidates.length === 0) {
+        continue;
+      }
+
+      const user = candidates[0];
+      await assignTaskToUser({ user, date, type: def.type, floor: def.floor });
+
+      // Update in-memory counts so the same user isn't over-assigned within this run
+      const key = user.email.toLowerCase();
+      recentTaskCounts.set(key, (recentTaskCounts.get(key) ?? 0) + 1);
+
+      await invalidateCleaningOverviewCache(user.email);
+      results.created++;
+    }
+  }
+
+  return results;
+}
+
+// After a user releases a task, find the next open slot of the same type
+// within the 15-day horizon and assign them to it.
+async function autoReassignReleasedUser(input: {
+  email: string;
+  releasedDate: Date;
+  type: CleaningTaskType;
+  floor: number | null;
+}) {
+  const today = normalizeCalendarDate(new Date());
+  const horizon = addDays(today, 15);
+  const normalizedEmail = input.email.toLowerCase();
+  const user = await getUserCleaningContext(normalizedEmail);
+  if (!user) return;
+
+  let cursor = addDays(normalizeCalendarDate(input.releasedDate), 1);
+
+  while (cursor.getTime() <= horizon.getTime()) {
+    const month = `${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}`;
+    const optedOut = await getOptedOutEmailsForMonth(month);
+    if (optedOut.has(normalizedEmail)) {
+      cursor = addDays(cursor, 1);
+      continue;
+    }
+
+    // Skip if slot already has an assignment
+    const existingSlot = await prisma.cleaningTask.findFirst({
+      where: {
+        type: input.type,
+        scheduledDate: { gte: calendarRangeStart(cursor), lte: calendarRangeEnd(cursor) },
+        ...(input.type === CleaningTaskType.TRASH_D7 ? { floor: input.floor } : {})
+      }
+    });
+    if (existingSlot) {
+      cursor = addDays(cursor, 1);
+      continue;
+    }
+
+    // Check user is not marked unavailable on this date
+    const availabilityMap = await getAvailabilityMap(cursor, cursor);
+    const normalizedDateKey = normalizeCalendarDate(cursor).toISOString();
+    const availability = availabilityMap.get(`${normalizedEmail}|${normalizedDateKey}`);
+    if (availability?.type === CleaningAvailabilityType.UNAVAILABLE) {
+      cursor = addDays(cursor, 1);
+      continue;
+    }
+
+    // Check no same-day task already
+    const sameDayTask = await prisma.cleaningTask.findFirst({
+      where: {
+        userEmail: normalizedEmail,
+        scheduledDate: { gte: calendarRangeStart(cursor), lte: calendarRangeEnd(cursor) }
+      }
+    });
+    if (sameDayTask) {
+      cursor = addDays(cursor, 1);
+      continue;
+    }
+
+    await assignTaskToUser({ user, date: cursor, type: input.type, floor: input.floor });
+    await invalidateCleaningOverviewCache(normalizedEmail);
+    return;
+  }
 }

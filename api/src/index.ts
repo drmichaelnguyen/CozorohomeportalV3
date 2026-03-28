@@ -21,6 +21,7 @@ import {
 import { getUserAirFryerContext, startAirFryerUse } from "./airfryer-controller.js";
 import {
   getGooglePortalClientConfig,
+  getStaffName,
   listStaffAccess,
   removeStaffAccess,
   requirePortalRole,
@@ -103,6 +104,8 @@ import {
   releaseCleaningTask,
   selfAssignCleaningTask,
   sweepOverdueCleaningTasks,
+  sweepMonthlyEvasionPenalties,
+  autoScheduleCleaningTasks,
   setCleaningAvailability,
   setBulkCleaningAvailability,
   getCleaningOptOutForEmail,
@@ -135,6 +138,11 @@ const cleaningSweepIntervalMs = Number(process.env.CLEANING_SWEEP_INTERVAL_MS ??
 const backgroundCleaningSweepEnabled = process.env.ENABLE_CLEANING_SWEEP === "true";
 const cleaningSweepOnStartup = process.env.CLEANING_SWEEP_ON_STARTUP === "true";
 let overdueCleaningSweepRunning = false;
+
+const autoScheduleIntervalMs = Number(process.env.AUTO_SCHEDULE_INTERVAL_MS ?? 60 * 60 * 1000); // default 1 hour
+const autoScheduleEnabled = process.env.ENABLE_AUTO_SCHEDULE !== "false"; // enabled by default
+const autoScheduleHorizonDays = Number(process.env.AUTO_SCHEDULE_HORIZON_DAYS ?? 15);
+let autoScheduleRunning = false;
 const SENSITIVE_CLIENT_FIELD_PATTERNS = [
   "ngaysinh",
   "birthday",
@@ -175,6 +183,24 @@ function parseCalendarDateInput(value: string) {
   return new Date(`${value}T12:00:00.000Z`);
 }
 
+async function runAutoSchedule(trigger: "startup" | "interval" | "manual") {
+  if (autoScheduleRunning) {
+    return { skipped: true, reason: "A previous auto-schedule run is still in progress." };
+  }
+
+  autoScheduleRunning = true;
+
+  try {
+    const result = await autoScheduleCleaningTasks(autoScheduleHorizonDays);
+    console.log(
+      `[cleaning-auto-schedule] trigger=${trigger} created=${result.created} skipped=${result.skipped}`
+    );
+    return { skipped: false, ...result };
+  } finally {
+    autoScheduleRunning = false;
+  }
+}
+
 async function runOverdueCleaningSweep(trigger: "startup" | "interval" | "manual") {
   if (overdueCleaningSweepRunning) {
     return {
@@ -190,9 +216,18 @@ async function runOverdueCleaningSweep(trigger: "startup" | "interval" | "manual
     console.log(
       `[cleaning-overdue-sweep] trigger=${trigger} scanned=${result.scanned} markedMissed=${result.markedMissed}`
     );
+
+    const evasionResult = await sweepMonthlyEvasionPenalties();
+    if (evasionResult.charged > 0) {
+      console.log(
+        `[cleaning-evasion-sweep] trigger=${trigger} scanned=${evasionResult.scanned} charged=${evasionResult.charged}`
+      );
+    }
+
     return {
       skipped: false,
-      ...result
+      ...result,
+      evasion: evasionResult
     };
   } finally {
     overdueCleaningSweepRunning = false;
@@ -283,6 +318,7 @@ const staffAccessMutationSchema = z.object({
   actorEmail: z.string().email(),
   targetEmail: z.string().email(),
   role: z.enum(["manager", "owner"]),
+  name: z.string().trim().optional(),
   password: z.string().trim().min(4).optional()
 });
 const staffAccessRemovalSchema = z.object({
@@ -329,7 +365,7 @@ const managerPaymentReceiptCreateSchema = z.object({
   purpose: z.string().trim().min(1),
   details: z.string().trim().optional(),
   payer: z.string().trim().optional(),
-  receiver: z.string().trim().min(1)
+  receiver: z.string().trim().optional()
 });
 const cozoroMemberUpgradeSchema = z.object({
   email: z.string().email(),
@@ -1887,13 +1923,28 @@ app.post("/manager/payments/create", async (request, response) => {
       ["manager", "owner"],
       "Only managers and owners can create payment receipts."
     );
+
+    let receiver = parsed.data.receiver;
+    if (!receiver) {
+      const staffName = await getStaffName(parsed.data.actorEmail);
+      if (staffName) {
+        receiver = staffName;
+      } else {
+        const clients = await readCachedClients();
+        const actorAsClient = clients.find(
+          (c) => c.email?.trim().toLowerCase() === parsed.data.actorEmail.trim().toLowerCase()
+        );
+        receiver = actorAsClient?.name?.trim() || parsed.data.actorEmail;
+      }
+    }
+
     const result = await managerCreatePaymentReceipt({
       maHd: parsed.data.maHd,
       amount: parsed.data.amount,
       purpose: parsed.data.purpose,
       details: parsed.data.details,
       payer: parsed.data.payer,
-      receiver: parsed.data.receiver
+      receiver
     });
     return response.status(201).json(result);
   } catch (error) {
@@ -2277,6 +2328,17 @@ app.post("/admin/cleaning/auto-assign", async (request, response) => {
   } catch (error) {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to auto-assign cleaning tasks"
+    });
+  }
+});
+
+app.post("/admin/cleaning/auto-schedule", async (_request, response) => {
+  try {
+    const result = await runAutoSchedule("manual");
+    return response.json(result);
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Auto-schedule failed"
     });
   }
 });
@@ -3011,5 +3073,19 @@ app.listen(port, "127.0.0.1", () => {
     }, cleaningSweepIntervalMs);
 
     timer.unref();
+  }
+
+  if (autoScheduleEnabled) {
+    void runAutoSchedule("startup").catch((error) => {
+      console.error("[cleaning-auto-schedule] startup failed", error);
+    });
+
+    const scheduleTimer = setInterval(() => {
+      void runAutoSchedule("interval").catch((error) => {
+        console.error("[cleaning-auto-schedule] interval failed", error);
+      });
+    }, autoScheduleIntervalMs);
+
+    scheduleTimer.unref();
   }
 });

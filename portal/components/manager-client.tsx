@@ -92,6 +92,7 @@ type LaundryEntry = {
 type StaffEntry = {
   email: string;
   role: StaffRole;
+  name?: string;
   addedBy: string;
 };
 type FeedbackEntry = {
@@ -590,6 +591,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [paymentPayer, setPaymentPayer] = useState("");
   const [staffEntries, setStaffEntries] = useState<StaffEntry[]>([]);
   const [newStaffEmail, setNewStaffEmail] = useState("");
+  const [newStaffName, setNewStaffName] = useState("");
   const [newStaffRole, setNewStaffRole] = useState<StaffRole>("manager");
   const [newStaffPassword, setNewStaffPassword] = useState("");
   const [editingId, setEditingId] = useState("");
@@ -2141,8 +2143,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 amount: Number(paymentAmount),
                                 purpose: paymentPurposeSelections.join(", "),
                                 details: paymentDetails,
-                                payer: paymentPayer,
-                                receiver: normalizedEmail
+                                payer: paymentPayer
                               },
                               "Payment receipt created.",
                               async () => {
@@ -2677,13 +2678,20 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 ) : null}
               </div>
 
-              <div className="grid gap-4 md:grid-cols-4">
+              <div className="grid gap-4 md:grid-cols-5">
                 <input
                   type="email"
                   value={newStaffEmail}
                   onChange={(event) => setNewStaffEmail(event.target.value)}
                   className="rounded-lg border border-slate-300 px-3 py-2"
                   placeholder="team@example.com"
+                />
+                <input
+                  type="text"
+                  value={newStaffName}
+                  onChange={(event) => setNewStaffName(event.target.value)}
+                  className="rounded-lg border border-slate-300 px-3 py-2"
+                  placeholder="Display name"
                 />
                 <select
                   value={newStaffRole}
@@ -2709,6 +2717,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       {
                         actorEmail: normalizedEmail,
                         targetEmail: newStaffEmail,
+                        name: newStaffName.trim() || undefined,
                         role: newStaffRole,
                         password: newStaffPassword.trim() || undefined
                       },
@@ -2716,6 +2725,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       async () => {
                         await loadTeam();
                         setNewStaffEmail("");
+                        setNewStaffName("");
                         setNewStaffRole("manager");
                         setNewStaffPassword("");
                       }
@@ -2742,7 +2752,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 p-4"
                 >
                   <div>
-                    <div className="font-medium text-slate-900">{entry.email}</div>
+                    <div className="font-medium text-slate-900">
+                      {entry.name ? `${entry.name} — ` : ""}{entry.email}
+                    </div>
                     <div className="mt-1 text-sm text-slate-600">
                       Role: {entry.role} | Added by: {entry.addedBy || "system"}
                     </div>
