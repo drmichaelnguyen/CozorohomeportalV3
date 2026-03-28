@@ -2090,44 +2090,55 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           Amount
                           <input type="number" min="1" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2" />
                         </label>
-                        <label className="block text-sm font-medium text-slate-700">
+                        <div className="block text-sm font-medium text-slate-700">
                           Purpose
-                          <input
-                            type="text"
-                            list="payment-purpose-options"
-                            value={paymentPurposeInput}
-                            onChange={(event) => setPaymentPurposeInput(event.target.value)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter" || event.key === ",") {
-                                event.preventDefault();
-                                addPaymentPurposeOption(paymentPurposeInput);
-                              }
-                            }}
-                            className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
-                            placeholder="Search previous purposes or add your own"
-                          />
-                          <datalist id="payment-purpose-options">
-                            {paymentPurposeSuggestions.map((option) => (
-                              <option key={option} value={option} />
-                            ))}
-                          </datalist>
                           <div className="mt-2 flex flex-wrap gap-2">
-                            {paymentPurposeSelections.map((purpose) => (
-                              <button
-                                key={purpose}
-                                type="button"
-                                onClick={() =>
-                                  syncPaymentPurposeSelection(
-                                    paymentPurposeSelections.filter((entry) => entry !== purpose)
-                                  )
-                                }
-                                className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-medium text-sky-900"
-                              >
-                                {purpose} x
-                              </button>
-                            ))}
+                            {paymentPurposeSuggestions.map((option) => {
+                              const isSelected = paymentPurposeSelections.some((s) => s.toLowerCase() === option.toLowerCase());
+                              return (
+                                <button
+                                  key={option}
+                                  type="button"
+                                  onClick={() =>
+                                    isSelected
+                                      ? syncPaymentPurposeSelection(paymentPurposeSelections.filter((s) => s.toLowerCase() !== option.toLowerCase()))
+                                      : syncPaymentPurposeSelection([...paymentPurposeSelections, option])
+                                  }
+                                  className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                                    isSelected
+                                      ? "border-sky-400 bg-sky-500 text-white"
+                                      : "border-slate-300 bg-white text-slate-700 hover:border-sky-300 hover:bg-sky-50"
+                                  }`}
+                                >
+                                  {option}
+                                </button>
+                              );
+                            })}
                           </div>
-                        </label>
+                          <div className="mt-2 flex gap-2">
+                            <input
+                              type="text"
+                              value={paymentPurposeInput}
+                              onChange={(event) => setPaymentPurposeInput(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === ",") {
+                                  event.preventDefault();
+                                  addPaymentPurposeOption(paymentPurposeInput);
+                                }
+                              }}
+                              className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                              placeholder="Custom purpose..."
+                            />
+                            <button
+                              type="button"
+                              onClick={() => addPaymentPurposeOption(paymentPurposeInput)}
+                              disabled={!paymentPurposeInput.trim()}
+                              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 disabled:opacity-40 hover:bg-slate-50"
+                            >
+                              Add
+                            </button>
+                          </div>
+                        </div>
                         <label className="block text-sm font-medium text-slate-700">
                           Details
                           <textarea value={paymentDetails} onChange={(event) => setPaymentDetails(event.target.value)} rows={3} className="mt-1 w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm" />
