@@ -590,6 +590,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [paymentDetails, setPaymentDetails] = useState("");
   const [paymentPayer, setPaymentPayer] = useState("");
   const [staffEntries, setStaffEntries] = useState<StaffEntry[]>([]);
+  const [selfDisplayName, setSelfDisplayName] = useState("");
+  const [selfDisplayNameSaving, setSelfDisplayNameSaving] = useState(false);
   const [newStaffEmail, setNewStaffEmail] = useState("");
   const [newStaffName, setNewStaffName] = useState("");
   const [newStaffRole, setNewStaffRole] = useState<StaffRole>("manager");
@@ -1043,6 +1045,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     const data = (await response.json()) as { staff?: StaffEntry[]; error?: string };
     if (response.ok) {
       setStaffEntries(data.staff ?? []);
+      const myEntry = (data.staff ?? []).find((s) => s.email.trim().toLowerCase() === normalizedEmail);
+      if (myEntry?.name) setSelfDisplayName(myEntry.name);
     } else {
       setStatus(data.error ?? "Unable to load owners and employees.");
     }
@@ -2134,14 +2138,20 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         </label>
                         <button
                           type="button"
-                          onClick={() =>
+                          onClick={() => {
+                            const effectivePurposes = paymentPurposeSelections.length > 0
+                              ? paymentPurposeSelections
+                              : paymentPurposeInput.trim()
+                                ? [paymentPurposeInput.trim()]
+                                : [];
+                            if (!effectivePurposes.length) return;
                             void postJson(
                               `${API_BASE_URL}/manager/payments/create`,
                               {
                                 actorEmail: normalizedEmail,
                                 maHd: selectedClient?.maHd ?? "",
                                 amount: Number(paymentAmount),
-                                purpose: paymentPurposeSelections.join(", "),
+                                purpose: effectivePurposes.join(", "),
                                 details: paymentDetails,
                                 payer: paymentPayer
                               },
@@ -2151,9 +2161,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 setPaymentPurposeInput("");
                                 syncPaymentPurposeSelection(["Monthly rent"]);
                               }
-                            )
-                          }
-                          disabled={loading || !selectedClient || !canCreatePaymentReceipt || !Number(paymentAmount) || !paymentPurposeSelections.length}
+                            );
+                          }}
+                          disabled={loading || !selectedClient || !canCreatePaymentReceipt || !Number(paymentAmount) || (!paymentPurposeSelections.length && !paymentPurposeInput.trim())}
                           className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
                         >
                           Create payment receipt
@@ -2643,6 +2653,50 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 <option value="en">{t("english", "English")}</option>
                 <option value="vi">{t("vietnamese", "Vietnamese")}</option>
               </select>
+            </div>
+          </div>
+
+          <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-6 shadow-sm">
+            <h3 className="text-lg font-semibold text-slate-900">
+              {language === "vi" ? "Tên hiển thị" : "Your Display Name"}
+            </h3>
+            <p className="mt-1 text-sm text-slate-600">
+              {language === "vi"
+                ? "Tên này hiển thị trên biên lai thanh toán. Email không thể thay đổi."
+                : "This name appears on payment receipts. Your email cannot be changed."}
+            </p>
+            <div className="mt-4 flex gap-2">
+              <input
+                type="text"
+                value={selfDisplayName}
+                onChange={(e) => setSelfDisplayName(e.target.value)}
+                placeholder={normalizedEmail}
+                className="flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+              />
+              <button
+                type="button"
+                disabled={selfDisplayNameSaving || !selfDisplayName.trim()}
+                onClick={async () => {
+                  setSelfDisplayNameSaving(true);
+                  try {
+                    const res = await fetch(`${API_BASE_URL}/staff-access/self`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ actorEmail: normalizedEmail, name: selfDisplayName.trim() })
+                    });
+                    const data = (await res.json()) as { ok?: boolean; name?: string; error?: string };
+                    if (!res.ok) throw new Error(data.error ?? "Failed to save");
+                    setStatus(language === "vi" ? "Đã lưu tên hiển thị." : "Display name saved.");
+                  } catch (err) {
+                    setStatus(err instanceof Error ? err.message : "Failed to save display name");
+                  } finally {
+                    setSelfDisplayNameSaving(false);
+                  }
+                }}
+                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {selfDisplayNameSaving ? (language === "vi" ? "Đang lưu..." : "Saving...") : (language === "vi" ? "Lưu" : "Save")}
+              </button>
             </div>
           </div>
 

@@ -682,6 +682,33 @@ export function CleaningScheduleClient() {
     return overview.user.floor ? (["TRASH_D7", "KITCHEN_D7"] as CleaningTask["type"][]) : (["KITCHEN_D7"] as CleaningTask["type"][]);
   }, [overview]);
 
+  // Upcoming open slots: next 90 days grouped by task type
+  const upcomingOpenSlots = useMemo(() => {
+    if (!overview || allowedTaskTypes.length === 0) return {} as Record<CleaningTask["type"], string[]>;
+    const result: Record<string, string[]> = {};
+    for (const type of allowedTaskTypes) {
+      result[type] = [];
+    }
+    const today = startOfDay(new Date());
+    for (let i = 0; i < 90; i++) {
+      const day = addDays(today, i);
+      const dayStr = toApiCalendarDate(day);
+      for (const type of allowedTaskTypes) {
+        const isMyTask = (overview.tasks ?? []).some((t) => t.type === type && t.scheduledDate.startsWith(dayStr));
+        const isOccupied = (overview.occupiedSlots ?? []).some(
+          (slot) =>
+            slot.date === dayStr &&
+            slot.type === type &&
+            (type !== "TRASH_D7" || slot.floor === (overview.user?.floor ?? null))
+        );
+        if (!isMyTask && !isOccupied) {
+          result[type].push(dayStr);
+        }
+      }
+    }
+    return result as Record<CleaningTask["type"], string[]>;
+  }, [overview, allowedTaskTypes]);
+
   function moveMonth(direction: -1 | 1) {
     setCalendarFocusDate((current) => new Date(current.getFullYear(), current.getMonth() + direction, 1));
   }
@@ -1021,6 +1048,66 @@ export function CleaningScheduleClient() {
             </div>
           </section>
 
+          {allowedTaskTypes.length > 0 && Object.values(upcomingOpenSlots).some((dates) => dates.length > 0) && (
+            <section className="rounded-2xl bg-emerald-50 p-5 shadow-sm ring-1 ring-emerald-200">
+              <h2 className="text-sm font-semibold text-emerald-900">Upcoming open slots — available to self-assign</h2>
+              <div className="mt-3 space-y-3">
+                {(Object.entries(upcomingOpenSlots) as [CleaningTask["type"], string[]][]).map(([type, dates]) => {
+                  if (dates.length === 0) return null;
+                  const label = type === "KITCHEN_D2" ? "Kitchen D2" : type === "KITCHEN_D7" ? "Kitchen D7" : `Trash D7 (floor ${overview?.user?.floor ?? "?"})`;
+                  // Group dates by month
+                  const byMonth: Record<string, string[]> = {};
+                  for (const d of dates) {
+                    const monthKey = d.slice(0, 7);
+                    if (!byMonth[monthKey]) byMonth[monthKey] = [];
+                    byMonth[monthKey].push(d);
+                  }
+                  return (
+                    <div key={type}>
+                      <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">{label}</div>
+                      <div className="mt-1 space-y-1">
+                        {Object.entries(byMonth).map(([month, monthDates]) => {
+                          const [year, mon] = month.split("-");
+                          const monthLabel = new Date(Number(year), Number(mon) - 1, 1).toLocaleString(undefined, { month: "long", year: "numeric" });
+                          return (
+                            <div key={month} className="flex flex-wrap items-baseline gap-x-2">
+                              <span className="text-xs font-medium text-emerald-800 w-28 shrink-0">{monthLabel}:</span>
+                              <div className="flex flex-wrap gap-1">
+                                {monthDates.slice(0, 20).map((d) => {
+                                  const dayNum = parseInt(d.slice(8), 10);
+                                  return (
+                                    <button
+                                      key={d}
+                                      type="button"
+                                      onClick={() => {
+                                        const target = new Date(d + "T00:00:00");
+                                        setCalendarFocusDate(new Date(target.getFullYear(), target.getMonth(), 1));
+                                        setSelectedDate(startOfDay(target));
+                                        setActiveMenuDate(startOfDay(target));
+                                        setPendingSelfAssignment(null);
+                                        setSelfAssignSuggestions([]);
+                                      }}
+                                      className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-800 hover:bg-emerald-200 transition-colors"
+                                    >
+                                      {dayNum}
+                                    </button>
+                                  );
+                                })}
+                                {monthDates.length > 20 && (
+                                  <span className="text-xs text-emerald-600">+{monthDates.length - 20} more</span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
           <section className="grid gap-6 xl:grid-cols-[1.7fr_1fr]">
             <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1104,7 +1191,7 @@ export function CleaningScheduleClient() {
 
                   // Determine open vs occupied slots for this day
                   const isAssignable = isTodayOrFuture(day);
-                  const hasOpenSlot = isAssignable && isCurrentMonth && allowedTaskTypes.some((type) => {
+                  const hasOpenSlot = isAssignable && allowedTaskTypes.some((type) => {
                     const isMyTask = tasks.some((t) => t.type === type);
                     const isOccupied = (overview.occupiedSlots ?? []).some(
                       (slot) =>
@@ -1115,7 +1202,7 @@ export function CleaningScheduleClient() {
                     return !isMyTask && !isOccupied;
                   });
 
-                  const hasOccupiedByOthers = isAssignable && isCurrentMonth && !hasOpenSlot && allowedTaskTypes.some((type) => {
+                  const hasOccupiedByOthers = isAssignable && !hasOpenSlot && allowedTaskTypes.some((type) => {
                     const isMyTask = tasks.some((t) => t.type === type);
                     const isOccupied = (overview.occupiedSlots ?? []).some(
                       (slot) =>

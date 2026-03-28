@@ -427,6 +427,24 @@ export async function getStaffName(email: string): Promise<string | null> {
   return entry?.name?.trim() || null;
 }
 
+export async function updateSelfName(actorEmail: string, name: string): Promise<{ ok: boolean; name: string }> {
+  const normalized = normalizeEmail(actorEmail);
+  const file = await readStaffAccessFile();
+  const found = file.staff.some((s) => normalizeEmail(s.email) === normalized);
+  if (!found) {
+    throw new Error("Your account was not found in staff access.");
+  }
+  const trimmed = name.trim();
+  if (!trimmed) {
+    throw new Error("Display name cannot be empty.");
+  }
+  const updatedStaff = file.staff.map((s) =>
+    normalizeEmail(s.email) === normalized ? { ...s, name: trimmed } : s
+  );
+  await writeStaffAccessFile({ staff: updatedStaff });
+  return { ok: true, name: trimmed };
+}
+
 export async function removeStaffAccess(input: {
   actorEmail: string;
   targetEmail: string;

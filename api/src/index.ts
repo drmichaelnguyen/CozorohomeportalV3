@@ -27,6 +27,7 @@ import {
   requirePortalRole,
   resolveGooglePortalLogin,
   resolvePortalLogin,
+  updateSelfName,
   upsertStaffAccess
 } from "./staff-access.js";
 import { adminSetPortalPassword, changePortalPassword, loginWithPortalPassword, setPortalPassword } from "./portal-auth.js";
@@ -1009,6 +1010,28 @@ app.delete("/staff-access", async (request, response) => {
   }
 });
 
+app.patch("/staff-access/self", async (request, response) => {
+  const parsed = z.object({ actorEmail: z.string().email(), name: z.string().min(1) }).safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "actorEmail and name are required" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin", "mechanic"],
+      "Only staff members can update their display name."
+    );
+    const result = await updateSelfName(parsed.data.actorEmail, parsed.data.name);
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to update display name"
+    });
+  }
+});
+
 app.get("/controller/ac", async (request, response) => {
   const parsed = clientLookupSchema.safeParse({
     email: request.query.email
@@ -1920,7 +1943,7 @@ app.post("/manager/payments/create", async (request, response) => {
   try {
     await requirePortalRole(
       parsed.data.actorEmail,
-      ["manager", "owner"],
+      ["manager", "owner", "app_admin"],
       "Only managers and owners can create payment receipts."
     );
 
