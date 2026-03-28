@@ -24,7 +24,7 @@ export default function RootLayout({
       <head>
         <meta charSet="utf-8" />
       </head>
-      <body className={beVietnamPro.className}>
+      <body className={beVietnamPro.className} suppressHydrationWarning>
         <SiteShell>{children}</SiteShell>
       </body>
     </html>
