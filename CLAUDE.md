@@ -66,6 +66,21 @@ If `esbuild` fails with a platform mismatch (win32-x64 vs linux-x64), run:
 cd api && npm install
 ```
 
+### Login broken via public URL (Cloudflare tunnel)
+**Symptom:** Login page loads at `https://app.cozorohome.com` but submitting does nothing — form appears interactive but clicks/submits have no effect.
+
+**Cause:** Next.js 16+ dev mode blocks HMR SSE connections (`/_next/webpack-hmr`) from non-localhost origins by default. When the browser can't establish the HMR connection, the `AppDevOverlayErrorBoundary` silently prevents React from fully hydrating, so event handlers (including the login form's `onSubmit`) are never attached.
+
+**Fix:** Ensure `portal/next.config.ts` includes:
+```ts
+const nextConfig: NextConfig = {
+  allowedDevOrigins: ["app.cozorohome.com"],
+  ...
+};
+```
+
+**Prevention:** After any Next.js upgrade, verify `allowedDevOrigins` is still present in `next.config.ts`. If it gets lost (e.g. during a config rewrite), re-add it. This must be in both the `sandboxing` and `main`/`cozorohome-prod` worktree configs.
+
 ---
 
 ## Architecture
