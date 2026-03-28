@@ -1253,12 +1253,17 @@ export async function releaseCleaningTask(taskId: string, email: string) {
     throw new Error("Only assigned tasks can be released");
   }
 
-  const releasesThisMonth = await countReleasesThisMonth(normalizedEmail);
-  if (releasesThisMonth >= MONTHLY_RELEASE_LIMIT) {
-    throw new Error(`You have reached the limit of ${MONTHLY_RELEASE_LIMIT} removals this month.`);
-  }
-
   const releasePenalty = getCleaningReleasePenalty(task.scheduledDate);
+
+  // Self-assigned tasks released with 5+ days notice: no penalty and doesn't count against monthly limit
+  const isSelfAssignedEarlyRelease = task.isSelfAssigned && releasePenalty.fineRate === 0;
+
+  if (!isSelfAssignedEarlyRelease) {
+    const releasesThisMonth = await countReleasesThisMonth(normalizedEmail);
+    if (releasesThisMonth >= MONTHLY_RELEASE_LIMIT) {
+      throw new Error(`You have reached the limit of ${MONTHLY_RELEASE_LIMIT} removals this month.`);
+    }
+  }
 
   if (!releasePenalty.canRelease || !canReleaseCalendarDate(task.scheduledDate)) {
     throw new Error(releasePenalty.message);

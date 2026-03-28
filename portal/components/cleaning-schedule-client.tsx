@@ -13,6 +13,7 @@ type CleaningTask = {
   scheduledDate: string;
   status: "ASSIGNED" | "DONE_PENDING_AUDIT" | "APPROVED" | "REJECTED" | "MISSED";
   rewardCoins: number;
+  isSelfAssigned: boolean;
   completionNote?: string | null;
   auditorNote?: string | null;
 };
@@ -144,7 +145,7 @@ function canReleaseTask(task: { scheduledDate: string }) {
   return taskDate.getTime() >= today.getTime();
 }
 
-function getReleasePenalty(task: { scheduledDate: string }) {
+function getReleasePenalty(task: { scheduledDate: string; isSelfAssigned?: boolean }) {
   const taskDate = startOfDay(new Date(task.scheduledDate));
   const today = startOfDay(new Date());
   const millisecondsPerDay = 24 * 60 * 60 * 1000;
@@ -155,6 +156,15 @@ function getReleasePenalty(task: { scheduledDate: string }) {
       canRelease: false,
       label: "Past due",
       helpText: "The assigned date has passed. No work is charged as a full fine."
+    };
+  }
+
+  if (task.isSelfAssigned && daysUntilTask >= 5) {
+    return {
+      canRelease: true,
+      label: "No fine",
+      helpText: "Self-assigned — no fine when releasing 5+ days ahead. Does not count against your monthly limit.",
+      isSelfAssignedFree: true
     };
   }
 
@@ -939,10 +949,19 @@ export function CleaningScheduleClient() {
                     const releasePenalty = getReleasePenalty(task);
                     const releasesUsed = overview.releasesThisMonth ?? 0;
                     const releaseLimit = overview.monthlyReleaseLimit ?? 3;
-                    const atMonthlyLimit = releasesUsed >= releaseLimit;
+                    const atMonthlyLimit = !releasePenalty.isSelfAssignedFree && releasesUsed >= releaseLimit;
                     const canRelease = releasePenalty.canRelease && !atMonthlyLimit;
                     return (
                       <div key={task.id} className="space-y-2">
+                        {task.isSelfAssigned && (
+                          <div className="flex items-center gap-1.5 px-1">
+                            <span className="text-amber-500">★</span>
+                            <span className="text-xs font-semibold text-amber-700">Self-assigned task</span>
+                            {releasePenalty.isSelfAssignedFree && (
+                              <span className="ml-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Free release</span>
+                            )}
+                          </div>
+                        )}
                         <button
                           disabled={!canRelease || loading}
                           onClick={() => {
@@ -963,9 +982,13 @@ export function CleaningScheduleClient() {
                         </button>
                         {atMonthlyLimit ? (
                           <p className="text-xs text-rose-600 px-1">You have used all {releaseLimit} removals for this month.</p>
-                        ) : canRelease ? (
+                        ) : canRelease && !releasePenalty.isSelfAssignedFree ? (
                           <p className="text-xs text-slate-500 px-1">
                             You will be automatically reassigned to another date. ({releasesUsed}/{releaseLimit} removals used this month)
+                          </p>
+                        ) : canRelease && releasePenalty.isSelfAssignedFree ? (
+                          <p className="text-xs text-emerald-700 px-1">
+                            You will be reassigned to another date. This will not count against your monthly removal limit.
                           </p>
                         ) : null}
                       </div>
@@ -1261,7 +1284,7 @@ export function CleaningScheduleClient() {
                       <div className="mt-1 flex flex-wrap gap-0.5">
                         {!awayMode && tasks.map((task) => (
                           <div key={task.id} className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500 md:h-auto md:w-full md:bg-amber-500 md:px-1.5 md:py-0.5 md:text-[10px] md:text-white md:truncate">
-                            <span className="hidden md:inline">{prettyTaskType(task.type)}</span>
+                            <span className="hidden md:inline">{prettyTaskType(task.type)}{task.isSelfAssigned ? " ★" : ""}</span>
                           </div>
                         ))}
                         {!awayMode && hasOpenSlot && tasks.length === 0 && (
