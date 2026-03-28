@@ -5,13 +5,28 @@
 CozoroHome is a resident management portal for co-living housing (branches D2 and D7). It has two main parts:
 
 - **portal/** — Next.js 16 frontend (TypeScript, Tailwind CSS)
-- **api/** — Node.js/Express backend (TypeScript, Prisma ORM, SQLite)
+- **api/** — Node.js/Express backend (TypeScript, Prisma ORM, MariaDB)
 
 ---
 
-## Running Locally
+## Environments
 
-### Sandbox (isolated dev — ports 3002 / 4002)
+| Environment | Portal | API | Folder | Branch |
+|-------------|--------|-----|--------|--------|
+| **Production (public)** | :3000 | :4000 | `cozorohome-prod` (git worktree) | `main` |
+| **Sandbox (dev)** | :3002 | :4002 | `cozorohome webapp` | `sandboxing` |
+
+### Start production (public app)
+```cmd
+cd C:\Users\User\Desktop\cozorohome-prod
+start-prod.cmd
+```
+Starts API (:4000), portal (:3000), and Cloudflare tunnel in separate windows.
+
+- Public URL: https://app.cozorohome.com
+- API URL: https://api.cozorohome.com
+
+### Start sandbox (dev)
 ```bash
 bash start-sandbox.sh
 # or on Windows:
@@ -20,8 +35,25 @@ start-sandbox.cmd
 - Portal: http://localhost:3002
 - API: http://localhost:4002
 
-### Production dev (ports 3001 / 4001)
-Run the standard Next.js dev and API dev commands in each directory.
+### Git worktree setup
+Production runs as a git worktree of the same repo:
+```bash
+# Already created — do not run again:
+git worktree add ../cozorohome-prod main
+```
+To ship dev changes to production:
+```bash
+git checkout main
+git merge sandboxing
+git checkout sandboxing
+# then restart start-prod.cmd
+```
+
+### Cloudflare tunnel
+Named tunnel `cozorohome-portal` (ID: `ace69517-369e-44a3-9f00-3304bf2153df`)
+- Config: `C:\Users\User\.cloudflared\config.yml`
+- Routes `app.cozorohome.com` → `localhost:3000` and `api.cozorohome.com` → `localhost:4000`
+- `cloudflared.exe` lives in `tools/` (not in git — copy from `cozorohome-public/tools/` if missing)
 
 ### After pulling or changing Prisma schema
 ```bash
@@ -116,6 +148,7 @@ cd api && npm install
 
 | Version | Description |
 |---------|-------------|
+| 3.3.0 | Auto-scheduling (15-day horizon, 60-day fairness), monthly release limit (3/month), evasion penalty (100k VND), staff names on receipts, payment sheet fix |
 | 3.2.2 | Nav badges (laundry/cleaning/message/account), cleaning self-assign fix for today + 8pm takeover, manager iMessage UI |
 | 3.1.1 | iMessage-style messaging, cleaning bonus |
 | 3.0.2 | Manager tabs, updated badge |
