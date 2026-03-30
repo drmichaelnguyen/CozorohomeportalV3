@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
+  CleaningAssignmentSource,
   CleaningAuditDecision,
   CleaningAvailabilityType,
   CleaningTaskStatus,
@@ -653,6 +654,7 @@ async function assignTaskToUser(input: {
   allowSameDayOverride?: boolean;
   allowExistingSlotReassign?: boolean;
   isSelfAssigned?: boolean;
+  assignmentSource?: CleaningAssignmentSource;
 }) {
   const normalizedTaskDate = normalizeCalendarDate(input.date);
   const normalizedEmail = input.user.email.trim().toLowerCase();
@@ -770,7 +772,8 @@ async function assignTaskToUser(input: {
     title: config.title,
     scheduledDate: normalizedTaskDate,
     floor: slotFloor,
-    isSelfAssigned: input.isSelfAssigned
+    isSelfAssigned: input.isSelfAssigned,
+    assignmentSource: input.assignmentSource ?? (input.isSelfAssigned ? CleaningAssignmentSource.SELF : CleaningAssignmentSource.MANAGER)
   });
 
   await invalidateCleaningOverviewCache(normalizedEmail);
@@ -784,6 +787,7 @@ async function createCleaningTaskRecord(input: {
   scheduledDate: Date;
   floor?: number | null;
   isSelfAssigned?: boolean;
+  assignmentSource?: CleaningAssignmentSource;
 }) {
   const normalizedScheduledDate = normalizeCalendarDate(input.scheduledDate);
   let rewardCoins = cleaningRewardMap[input.type];
@@ -828,6 +832,7 @@ async function createCleaningTaskRecord(input: {
       scheduledDate: normalizedScheduledDate,
       rewardCoins,
       isSelfAssigned: input.isSelfAssigned ?? false,
+      assignmentSource: input.assignmentSource ?? CleaningAssignmentSource.MANAGER,
       calendarId,
       calendarEventId
     }
@@ -937,7 +942,8 @@ async function syncCalendarTasksIntoDatabase(
         scheduledDate,
         calendarId: event.calendarId,
         calendarEventId: event.id,
-        rewardCoins: cleaningRewardMap[event.taskType as CleaningTaskType]
+        rewardCoins: cleaningRewardMap[event.taskType as CleaningTaskType],
+        assignmentSource: CleaningAssignmentSource.SYSTEM
       }
     });
     importedTasks.push(createdTask);
@@ -1399,11 +1405,7 @@ async function buildCleaningOverviewForUser(email: string) {
 
   const tasks = await prisma.cleaningTask.findMany({
     where: {
-      userEmail: normalizedEmail,
-      OR: [
-        { calendarId: { not: null } },
-        { calendarEventId: { not: null } }
-      ]
+      userEmail: normalizedEmail
     },
     orderBy: {
       scheduledDate: "asc"
@@ -1525,10 +1527,6 @@ export async function getCleaningOverviewForUser(email: string, options?: { forc
 export async function getAdminCleaningTasks(from?: Date, to?: Date) {
   return prisma.cleaningTask.findMany({
     where: {
-      OR: [
-        { calendarId: { not: null } },
-        { calendarEventId: { not: null } }
-      ],
       ...(from || to
         ? {
             scheduledDate: {
@@ -1572,6 +1570,7 @@ export async function getAvailableUsersForAdminSlot(input: {
   type: CleaningTaskType;
   floor?: number | null;
   excludeEmails?: string[];
+  showAll?: boolean;
 }) {
   const normalizedDate = normalizeCalendarDate(input.date);
   if (!isFutureCalendarDate(normalizedDate)) {
@@ -1595,11 +1594,7 @@ export async function getAvailableUsersForAdminSlot(input: {
       }
     }
   });
-  const allTasks = await prisma.cleaningTask.findMany({
-    where: {
-      OR: [{ calendarId: { not: null } }, { calendarEventId: { not: null } }]
-    }
-  });
+  const allTasks = await prisma.cleaningTask.findMany({});
   const normalizedDateKey = normalizeCalendarDate(normalizedDate).toISOString();
 
   const candidates: CleaningAvailableUser[] = [];
@@ -1621,7 +1616,7 @@ export async function getAvailableUsersForAdminSlot(input: {
     }
 
     const availabilityType = availabilityMap.get(`${user.email}|${normalizedDateKey}`)?.type ?? null;
-    if (availabilityType === CleaningAvailabilityType.UNAVAILABLE) {
+    if (!input.showAll && availabilityType === CleaningAvailabilityType.UNAVAILABLE) {
       continue;
     }
 
@@ -1694,7 +1689,7 @@ export async function adminAssignCleaningTask(input: {
       }
     }
   });
-  if (availability?.type === CleaningAvailabilityType.UNAVAILABLE) {
+  if (!input.force && availability?.type === CleaningAvailabilityType.UNAVAILABLE) {
     throw new Error("This user marked the date as unavailable");
   }
 
@@ -1750,7 +1745,6 @@ export async function adminAutoAssignCleaningSlots(input: {
     });
 
     if (existingSlot) {
-      results.push(existingSlot);
       continue;
     }
 
@@ -1772,7 +1766,8 @@ export async function adminAutoAssignCleaningSlots(input: {
       user: selectedUser,
       date: normalizedDate,
       type: input.type,
-      floor: input.floor ?? selectedUser.floor
+      floor: input.floor ?? selectedUser.floor,
+      assignmentSource: CleaningAssignmentSource.MANAGER
     });
     reservedEmails.add(selectedUser.email);
     recentTaskCounts.set(selectedUser.email, (recentTaskCounts.get(selectedUser.email) ?? 0) + 1);
@@ -1780,6 +1775,16 @@ export async function adminAutoAssignCleaningSlots(input: {
   }
 
   return results;
+}
+
+export async function adminRemoveCleaningTask(taskId: string) {
+  const task = await prisma.cleaningTask.findUnique({ where: { id: taskId } });
+  if (!task) {
+    throw new Error("Cleaning task not found");
+  }
+  await prisma.cleaningTask.delete({ where: { id: taskId } });
+  invalidateCleaningOverviewCache(task.userEmail);
+  return { id: taskId, removed: true };
 }
 
 export async function completeCleaningTask(taskId: string, email: string, note?: string, photo?: string) {
@@ -2274,7 +2279,7 @@ export async function autoScheduleCleaningTasks(horizonDays = 15) {
       }
 
       const user = candidates[0];
-      await assignTaskToUser({ user, date, type: def.type, floor: def.floor });
+      await assignTaskToUser({ user, date, type: def.type, floor: def.floor, assignmentSource: CleaningAssignmentSource.SYSTEM });
 
       // Update in-memory counts so the same user isn't over-assigned within this run
       const key = user.email.toLowerCase();
@@ -2346,7 +2351,7 @@ async function autoReassignReleasedUser(input: {
       continue;
     }
 
-    await assignTaskToUser({ user, date: cursor, type: input.type, floor: input.floor });
+    await assignTaskToUser({ user, date: cursor, type: input.type, floor: input.floor, assignmentSource: CleaningAssignmentSource.SYSTEM });
     await invalidateCleaningOverviewCache(normalizedEmail);
     return;
   }

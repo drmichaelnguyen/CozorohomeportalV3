@@ -16,6 +16,9 @@ type AdminTask = {
   scheduledDate: string;
   status: "ASSIGNED" | "DONE_PENDING_AUDIT" | "APPROVED" | "REJECTED" | "MISSED";
   rewardCoins: number;
+  isSelfAssigned: boolean;
+  assignmentSource?: "SYSTEM" | "MANAGER" | "SELF";
+  calendarId?: string | null;
   completionNote?: string | null;
   auditorNote?: string | null;
 };
@@ -121,6 +124,7 @@ export function AdminCleaningClient() {
   } | null>(null);
   const [autoAssignPreview, setAutoAssignPreview] = useState<AutoAssignPreview[]>([]);
   const [selectedAutoAssignDates, setSelectedAutoAssignDates] = useState<string[]>([]);
+  const [showAllUsers, setShowAllUsers] = useState(false);
   const selectedCalendar =
     calendars.find((entry) => calendarKey(entry) === selectedCalendarKey) ?? calendars[0] ?? null;
   const canAssignSelectedDate = isFutureDate(selectedDate);
@@ -182,7 +186,7 @@ export function AdminCleaningClient() {
     return dates;
   }
 
-  async function loadAvailableUsers() {
+  async function loadAvailableUsers(all = false) {
     if (!selectedCalendar) {
       setMessage("Choose a cleaning calendar first.");
       return;
@@ -204,6 +208,9 @@ export function AdminCleaningClient() {
       if (selectedCalendar.floor) {
         params.set("floor", String(selectedCalendar.floor));
       }
+      if (all) {
+        params.set("showAll", "true");
+      }
 
       const response = await fetch(`${API_BASE_URL}/admin/cleaning/available-users?${params.toString()}`);
       const data = await readJsonSafely<{ users?: AdminAvailableUser[]; error?: string }>(response);
@@ -216,9 +223,30 @@ export function AdminCleaningClient() {
       const nextUsers = data.users ?? [];
       setAvailableUsers(nextUsers);
       setSelectedAssignEmail(nextUsers[0]?.email ?? "");
-      setMessage(nextUsers.length > 0 ? "Suggested users loaded." : "No eligible users available for this date.");
+      setMessage(nextUsers.length > 0 ? (all ? `${nextUsers.length} users loaded.` : "Suggested users loaded.") : "No eligible users available for this date.");
     } catch {
       setMessage("Unable to load suggested users.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function removeTask(taskId: string) {
+    setLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/cleaning/tasks/${encodeURIComponent(taskId)}`, {
+        method: "DELETE"
+      });
+      const data = await readJsonSafely<{ error?: string }>(response);
+      if (!response.ok) {
+        setMessage(data.error ?? "Unable to remove task.");
+        return;
+      }
+      await reloadAll();
+      setMessage("Task removed.");
+    } catch {
+      setMessage("Unable to remove task.");
     } finally {
       setLoading(false);
     }
@@ -568,8 +596,8 @@ export function AdminCleaningClient() {
                       <div className="text-sm font-semibold text-slate-900">{date.getDate()}</div>
                       <div className="mt-2 space-y-1">
                         {dayTasks.slice(0, 3).map((task) => (
-                          <div key={task.id} className="truncate rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-700">
-                            {task.userName || task.userEmail}
+                          <div key={task.id} className={`truncate rounded-md px-2 py-1 text-xs ${task.calendarId ? "bg-slate-100 text-slate-700" : "bg-amber-50 text-amber-800 border border-amber-200"}`}>
+                            {(task.assignmentSource === "SELF" || task.isSelfAssigned) ? "★ " : task.assignmentSource === "SYSTEM" ? "⚙ " : "👤 "}{task.userName || task.userEmail}
                           </div>
                         ))}
                         {dayTasks.length > 3 ? (
@@ -592,16 +620,21 @@ export function AdminCleaningClient() {
               </div>
 
               <div className="flex flex-wrap gap-2">
-                <div className="rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-700">
-                  Calendar-backed view only
-                </div>
                 <button
-                    type="button"
-                    onClick={() => void loadAvailableUsers()}
-                    disabled={loading || !canAssignSelectedDate}
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 disabled:opacity-60"
+                  type="button"
+                  onClick={() => { setShowAllUsers(false); void loadAvailableUsers(false); }}
+                  disabled={loading || !canAssignSelectedDate}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 disabled:opacity-60"
                 >
                   {loading ? "Loading..." : "Find best user"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowAllUsers(true); void loadAvailableUsers(true); }}
+                  disabled={loading || !canAssignSelectedDate}
+                  className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-sm text-sky-700 disabled:opacity-60"
+                >
+                  Show all users
                 </button>
                 <button
                   type="button"
@@ -620,9 +653,30 @@ export function AdminCleaningClient() {
                     <p className="text-sm text-slate-600">No cleaning task on this day yet.</p>
                   ) : (
                     selectedDayTasks.map((task) => (
-                      <div key={task.id} className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
-                        <div className="font-medium text-slate-900">{task.userName || task.userEmail}</div>
-                        <div>Status: {task.status}</div>
+                      <div key={task.id} className="flex items-start justify-between gap-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
+                        <div>
+                          <div className="font-medium text-slate-900">{task.userName || task.userEmail}</div>
+                          <div className="text-xs text-slate-500">{task.userEmail}</div>
+                          <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                            <span className="text-xs text-slate-600">Status: {task.status}</span>
+                            {(task.assignmentSource === "SELF" || task.isSelfAssigned) ? (
+                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">★ Self</span>
+                            ) : task.assignmentSource === "SYSTEM" ? (
+                              <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">⚙ Auto</span>
+                            ) : (
+                              <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600">👤 Manager</span>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void removeTask(task.id)}
+                          disabled={loading}
+                          title="Remove assignment"
+                          className="shrink-0 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                        >
+                          Remove
+                        </button>
                       </div>
                     ))
                   )}
@@ -638,7 +692,7 @@ export function AdminCleaningClient() {
                 ) : (
                   <div className="mt-2 space-y-3">
                     <label className="block text-sm font-medium text-slate-700">
-                      Suggested user
+                      {showAllUsers ? "All eligible users" : "Suggested user"}
                       <select
                         value={selectedAssignEmail}
                         onChange={(event) => {
@@ -649,8 +703,9 @@ export function AdminCleaningClient() {
                       >
                         {availableUsers.map((user) => (
                           <option key={user.email} value={user.email}>
-                            {user.name} ({user.email}) | availability {user.availabilityCount} | tasks {user.totalTaskCount}
-                            {user.hasSameDayTask ? " | warning: already booked this day" : ""}
+                            {user.name} ({user.email}) | tasks {user.totalTaskCount}
+                            {user.availabilityType === "UNAVAILABLE" ? " | UNAVAILABLE" : user.availabilityType === "PREFERRED" ? " | preferred" : ""}
+                            {user.hasSameDayTask ? " | already booked" : ""}
                           </option>
                         ))}
                       </select>

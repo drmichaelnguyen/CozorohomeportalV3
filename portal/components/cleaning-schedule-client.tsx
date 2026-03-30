@@ -14,6 +14,7 @@ type CleaningTask = {
   status: "ASSIGNED" | "DONE_PENDING_AUDIT" | "APPROVED" | "REJECTED" | "MISSED";
   rewardCoins: number;
   isSelfAssigned: boolean;
+  assignmentSource?: "SYSTEM" | "MANAGER" | "SELF";
   completionNote?: string | null;
   auditorNote?: string | null;
 };
@@ -953,15 +954,27 @@ export function CleaningScheduleClient() {
                     const canRelease = releasePenalty.canRelease && !atMonthlyLimit;
                     return (
                       <div key={task.id} className="space-y-2">
-                        {task.isSelfAssigned && (
-                          <div className="flex items-center gap-1.5 px-1">
-                            <span className="text-amber-500">★</span>
-                            <span className="text-xs font-semibold text-amber-700">Self-assigned task</span>
-                            {releasePenalty.isSelfAssignedFree && (
-                              <span className="ml-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Free release</span>
-                            )}
-                          </div>
-                        )}
+                        <div className="flex items-center gap-1.5 px-1 flex-wrap">
+                          {(task.assignmentSource === "SELF" || task.isSelfAssigned) ? (
+                            <>
+                              <span className="text-amber-500">★</span>
+                              <span className="text-xs font-semibold text-amber-700">Self-assigned</span>
+                              {releasePenalty.isSelfAssignedFree && (
+                                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Free release</span>
+                              )}
+                            </>
+                          ) : task.assignmentSource === "SYSTEM" ? (
+                            <>
+                              <span className="text-sky-500">⚙</span>
+                              <span className="text-xs font-semibold text-sky-700">Auto-scheduled</span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-slate-400">👤</span>
+                              <span className="text-xs font-semibold text-slate-600">Assigned by manager</span>
+                            </>
+                          )}
+                        </div>
                         <button
                           disabled={!canRelease || loading}
                           onClick={() => {
@@ -1284,7 +1297,7 @@ export function CleaningScheduleClient() {
                       <div className="mt-1 flex flex-wrap gap-0.5">
                         {!awayMode && tasks.map((task) => (
                           <div key={task.id} className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500 md:h-auto md:w-full md:bg-amber-500 md:px-1.5 md:py-0.5 md:text-[10px] md:text-white md:truncate">
-                            <span className="hidden md:inline">{prettyTaskType(task.type)}{task.isSelfAssigned ? " ★" : ""}</span>
+                            <span className="hidden md:inline">{prettyTaskType(task.type)}{(task.assignmentSource === "SELF" || task.isSelfAssigned) ? " ★" : task.assignmentSource === "SYSTEM" ? " ⚙" : " 👤"}</span>
                           </div>
                         ))}
                         {!awayMode && hasOpenSlot && tasks.length === 0 && (

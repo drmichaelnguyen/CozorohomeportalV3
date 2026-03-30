@@ -43,6 +43,12 @@ enum CleaningTaskStatus {
   MISSED
 }
 
+enum CleaningAssignmentSource {
+  SYSTEM
+  MANAGER
+  SELF
+}
+
 enum CleaningAvailabilityType {
   AVAILABLE
   UNAVAILABLE
@@ -148,6 +154,7 @@ model CleaningTask {
   status           CleaningTaskStatus @default(ASSIGNED)
   rewardCoins      Int
   isSelfAssigned   Boolean            @default(false)
+  assignmentSource CleaningAssignmentSource @default(MANAGER)
   completedAt      DateTime?
   completionNote   String?
   completionPhoto  String?
@@ -251,4 +258,42 @@ model CleaningOptOut {
 
   @@unique([userEmail, month])
   @@index([branchId, month])
+}
+
+enum StayBookingStatus {
+  CONFIRMED
+  CANCELLED
+}
+
+model StayBooking {
+  id          String            @id @default(cuid())
+  branchId    String
+  roomCode    String
+  bedNumber   Int
+  guestName   String
+  guestEmail  String
+  guestPhone  String?
+  checkIn     DateTime
+  checkOut    DateTime
+  nights      Int
+  notes       String?
+  status      StayBookingStatus @default(CONFIRMED)
+  source      String            @default("DIRECT_WEB")
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([branchId, checkIn, checkOut])
+  @@index([branchId, bedNumber, checkIn, checkOut])
+  @@index([guestEmail, createdAt])
+}
+
+model PushSubscription {
+  id        Int      @id @default(autoincrement())
+  email     String
+  endpoint  String   @unique @db.VarChar(500)
+  p256dh    String   @db.Text
+  auth      String
+  createdAt DateTime @default(now())
+
+  @@index([email])
 }
