@@ -103,3 +103,78 @@ If you want the API to have its own stable hostname too, add another ingress hos
 and point it to:
 
 - `http://localhost:4000`
+
+## Chatbot tunnel (recommended separate named tunnel)
+
+This keeps the chatbot independent from the portal tunnel and avoids accidental downtime when restarting the portal tunnel.
+
+Runtime model:
+
+- `chatbot.cozorohome.com` is not served by the main portal or the main API
+- it is served by the separate `bot/` service
+- the Windows Cloudflare tunnel for the chatbot points to the Windows-local origin `http://127.0.0.1:4111`
+- if the bot is only running inside WSL and not reachable from Windows on `127.0.0.1:4111`, the public chatbot hostname can fail even though the bot looks healthy inside WSL
+
+Recommended operational rule:
+
+- run the chatbot on Windows on port `4111` whenever you need the public hostname to work through Cloudflare
+- keep this separate from the main portal tunnel and the main API process
+
+### Create the chatbot tunnel
+
+```powershell
+cd "C:\Users\User\Desktop\cozorohome webapp\tools"
+.\cloudflared.exe tunnel create cozorohome-chatbot
+```
+
+### Configure the chatbot tunnel
+
+Copy:
+
+- `C:\Users\User\Desktop\cozorohome webapp\tools\cloudflared-config.chatbot.example.yml`
+
+to:
+
+- `C:\Users\User\.cloudflared\config.chatbot.yml`
+
+Then replace:
+
+- `REPLACE_WITH_CHATBOT_TUNNEL_ID`
+
+with your real tunnel ID.
+
+### Route the DNS hostname
+
+```powershell
+cd "C:\Users\User\Desktop\cozorohome webapp\tools"
+.\cloudflared.exe tunnel --config "C:\Users\User\.cloudflared\config.chatbot.yml" route dns cozorohome-chatbot chatbot.cozorohome.com
+```
+
+### Run the tunnel
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "C:\Users\User\Desktop\cozorohome webapp\tools\restart-chatbot-tunnel.ps1"
+```
+
+This will expose your local chatbot at:
+
+- `https://chatbot.cozorohome.com`
+
+### Run the bot process that the tunnel expects
+
+The chatbot tunnel config routes traffic to `http://127.0.0.1:4111`, so make sure the bot is running on Windows on that port:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "C:\Users\User\Desktop\cozorohome webapp\bot\start-bot-win.ps1"
+```
+
+Or use the repo helper:
+
+```batch
+C:\Users\User\Desktop\cozorohome webapp\start-bot-wsl.bat restart
+```
+
+Useful checks:
+
+- local bot health: `http://127.0.0.1:4111/health`
+- public bot health: `https://chatbot.cozorohome.com/health`

@@ -6,6 +6,7 @@ This repo contains the Cozorohome portal frontend, the API backend, and a few lo
 
 - `portal/`: Next.js frontend
 - `api/`: Express + Prisma backend
+- `bot/`: separate Messenger chatbot service
 - `docs/`: project notes and runbooks
 - `tools/`: tunnel utilities and Cloudflare helpers
 - `portal/feedback/`: locally stored feedback payloads
@@ -158,6 +159,28 @@ The API and Portal now support dynamic ports via the `PORT` environment variable
 - **Portal**: Uses `PORT` in `portal/.env.local`.
 
 If the public site cannot log in while localhost works, check that `API_SERVER_ORIGIN` in the public portal's `.env.local` points to the correct production API address.
+
+## Chatbot Service
+
+The chatbot is intentionally separate from the main app:
+
+- `portal/` serves the web UI
+- `api/` serves the main app backend
+- `bot/` serves the Messenger chatbot
+
+The chatbot has its own Cloudflare Tunnel and should be treated as its own service. Important details:
+
+- public chatbot hostname: `https://chatbot.cozorohome.com`
+- public chatbot health check: `https://chatbot.cozorohome.com/health`
+- chatbot tunnel origin: `http://127.0.0.1:4111`
+- recommended Windows bot launcher: `bot/start-bot-win.ps1`
+- helper manager script: `start-bot-wsl.bat`
+
+Operational note:
+
+- if you only run the bot inside WSL, the bot may be healthy locally but the Windows Cloudflare tunnel can still fail to reach it
+- when the public chatbot must work, run the bot on Windows on port `4111`
+- keep the chatbot lifecycle separate from the portal and API lifecycle
 
 ## Typecheck
 
