@@ -5,6 +5,9 @@
   "scripts": {
     "dev": "pnpm -r --parallel dev",
     "build": "pnpm --filter cozorohome-api build && pnpm --filter cozorohome-portal build",
+    "dev:bot": "pnpm --filter cozorohome-bot dev",
+    "build:bot": "pnpm --filter cozorohome-bot build",
+    "start:bot": "pnpm --filter cozorohome-bot start",
     "start:api": "pnpm --filter cozorohome-api start",
     "start:portal": "pnpm --filter cozorohome-portal start"
   }

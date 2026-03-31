@@ -1,9 +1,49 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalSession } from "./portal-session";
 import { usePortalLanguage } from "./portal-language";
+
+const SOUND_PREF_KEY = "chat_sound_enabled";
+const POLL_INTERVAL_MS = 10000;
+
+function requestNotificationPermission() {
+  if (typeof Notification !== "undefined" && Notification.permission === "default") {
+    void Notification.requestPermission();
+  }
+}
+
+function showBrowserNotification(title: string, body: string) {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  try {
+    const n = new Notification(title, { body, icon: "/favicon.ico", tag: "chat-message" });
+    setTimeout(() => n.close(), 5000);
+  } catch {
+    // silently ignore
+  }
+}
+
+function playNotificationSound() {
+  try {
+    const ctx = new AudioContext();
+    const gain = ctx.createGain();
+    gain.connect(ctx.destination);
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+
+    const osc = ctx.createOscillator();
+    osc.connect(gain);
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(660, ctx.currentTime + 0.2);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.4);
+    osc.onended = () => ctx.close();
+  } catch {
+    // AudioContext not available
+  }
+}
 
 
 
@@ -79,6 +119,26 @@ export function SupportClient() {
   const [customLocation, setCustomLocation] = useState("");
   const [isReporting, setIsReporting] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const lastMessageIdRef = useRef<string | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    const stored = localStorage.getItem(SOUND_PREF_KEY);
+    return stored === null ? true : stored === "true";
+  });
+
+  function toggleSound() {
+    setSoundEnabled((prev) => {
+      const next = !prev;
+      localStorage.setItem(SOUND_PREF_KEY, String(next));
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    requestNotificationPermission();
+  }, []);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -102,6 +162,56 @@ export function SupportClient() {
 
 
 
+
+  const silentPollGroup = useCallback(async () => {
+    if (activeTab === "personal" || !sessionEmail.trim()) return;
+    const groupId = overrideGroupId || (groupContext ? groupContext.groupIds[activeTab as "room" | "floor" | "branch"] : null);
+    if (!groupId) return;
+
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/support/group-messages?groupId=${encodeURIComponent(groupId)}&email=${encodeURIComponent(sessionEmail.trim().toLowerCase())}`
+      );
+      if (!res.ok) return;
+      const data = (await res.json()) as { messages?: SupportMessage[] };
+      const incoming = data.messages ?? [];
+      if (incoming.length === 0) return;
+
+      const latestId = incoming[incoming.length - 1]!.id;
+      if (lastMessageIdRef.current && latestId !== lastMessageIdRef.current) {
+        // New message arrived — check if it's from someone else
+        const prevCreatedAt = new Date(incoming.find(x => x.id === lastMessageIdRef.current)?.createdAt ?? 0);
+        const newMsgs = incoming.filter(
+          (m) => m.senderEmail !== sessionEmail.trim().toLowerCase() &&
+            new Date(m.createdAt) > prevCreatedAt
+        );
+        if (newMsgs.length > 0) {
+          if (soundEnabled) playNotificationSound();
+          const latest = newMsgs[newMsgs.length - 1]!;
+          const senderDisplay = latest.isAnonymous ? "Anonymous" : (latest.senderName || "Neighbor");
+          showBrowserNotification(senderDisplay, latest.body);
+          window.dispatchEvent(new Event("new-group-message"));
+        }
+        setMessages(incoming);
+      }
+      lastMessageIdRef.current = latestId;
+    } catch {
+      // silently ignore poll errors
+    }
+  }, [activeTab, sessionEmail, groupContext, overrideGroupId, soundEnabled]);
+
+  // Set up polling for group tabs
+  useEffect(() => {
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    if (activeTab !== "personal") {
+      pollTimerRef.current = setInterval(() => {
+        void silentPollGroup();
+      }, POLL_INTERVAL_MS);
+    }
+    return () => {
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    };
+  }, [activeTab, silentPollGroup]);
 
   async function loadConversation() {
     if (!sessionEmail.trim()) {
@@ -178,8 +288,12 @@ export function SupportClient() {
           return;
         }
 
-        setMessages(data.messages ?? []);
+        const groupMsgs = data.messages ?? [];
+        setMessages(groupMsgs);
         setConversation(null);
+        if (groupMsgs.length > 0) {
+          lastMessageIdRef.current = groupMsgs[groupMsgs.length - 1]!.id;
+        }
 
         // Mark group as read
         void fetch(`${API_BASE_URL}/support/group-read`, {
@@ -319,15 +433,41 @@ export function SupportClient() {
             <h1 className="text-xl font-bold text-slate-900">{t("residentMessages", "Messages")}</h1>
             <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{activeTab === "personal" ? t("cozoroSupport", "Cozoro Support") : `${activeTab} ${t("community", "Community")}`}</p>
           </div>
-          <button
-            onClick={() => setShowReportModal(true)}
-            className="inline-flex items-center gap-1.5 rounded-full bg-sky-50 px-3 py-1.5 text-[11px] font-bold text-sky-700 transition-all hover:bg-sky-100"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="h-3 w-3">
-              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-            </svg>
-            {t("report", "Report")}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={toggleSound}
+              title={soundEnabled ? t("soundOn", "Sound On") : t("soundOff", "Sound Off")}
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-full border transition-all ${
+                soundEnabled
+                  ? "border-sky-200 bg-sky-50 text-sky-600 hover:bg-sky-100"
+                  : "border-slate-200 bg-slate-50 text-slate-400 hover:bg-slate-100"
+              }`}
+            >
+              {soundEnabled ? (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                  <line x1="23" y1="9" x2="17" y2="15" />
+                  <line x1="17" y1="9" x2="23" y2="15" />
+                </svg>
+              )}
+            </button>
+            <button
+              onClick={() => setShowReportModal(true)}
+              className="inline-flex items-center gap-1.5 rounded-full bg-sky-50 px-3 py-1.5 text-[11px] font-bold text-sky-700 transition-all hover:bg-sky-100"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="h-3 w-3">
+                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+              </svg>
+              {t("report", "Report")}
+            </button>
+          </div>
         </div>
 
         <div className="mt-4 flex gap-1 overflow-x-auto pb-1 no-scrollbar">

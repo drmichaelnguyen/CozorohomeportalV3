@@ -32,6 +32,7 @@ import {
 } from "./staff-access.js";
 import { adminSetPortalPassword, changePortalPassword, loginWithPortalPassword, setPortalPassword } from "./portal-auth.js";
 import { getClientGroupContext, getGroupMessages, markGroupRead, postGroupMessage } from "./group-support.js";
+import { VAPID_PUBLIC_KEY, savePushSubscription, deletePushSubscription } from "./push.js";
 import { 
   calculateRentBreakdown 
 } from "./calculation-engine.js";
@@ -40,6 +41,7 @@ import {
   createAutomaticFineForEmail,
   sendGmailReceipt,
   syncClientsFromSheet,
+  upsertPaidGuestBookingClient,
   readCachedClients,
   createAuthUrl,
   exchangeCodeForTokens,
@@ -93,6 +95,7 @@ import {
 import {
   adminAssignCleaningTask,
   adminAutoAssignCleaningSlots,
+  adminRemoveCleaningTask,
   auditCleaningTask,
   completeCleaningTask,
   checkSelfAssignCleaningTask,
@@ -122,6 +125,7 @@ import {
   getSupportConversationById,
   isPrivilegedSupportOperator,
   listManagerInbox,
+  clearAllResidentNotificationCaches,
   listResidentSupportNotifications,
   listStaffSupportNotifications,
   markSupportConversationRead,
@@ -178,6 +182,26 @@ for (const origin of portalOrigins) {
 
 function isAllowedOrigin(origin: string) {
   return allowedOriginPatterns.some((pattern) => pattern.test(origin));
+}
+
+function isLoopbackAddress(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim().replace(/^::ffff:/, "");
+  return normalized === "127.0.0.1" || normalized === "::1";
+}
+
+function isAuthorizedInternalRequest(request: express.Request) {
+  const configuredKey = process.env.INTERNAL_API_KEY?.trim();
+  const providedKey = request.get("x-internal-api-key")?.trim();
+
+  if (configuredKey) {
+    return providedKey === configuredKey;
+  }
+
+  const forwardedFor = String(request.headers["x-forwarded-for"] ?? "")
+    .split(",")[0]
+    ?.trim();
+
+  return [request.ip, request.socket.remoteAddress, forwardedFor].some((value) => isLoopbackAddress(value));
 }
 
 function parseCalendarDateInput(value: string) {
@@ -453,6 +477,18 @@ const clientUpdateSchema = z.object({
   actorEmail: z.string().email(),
   values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
 });
+const paidGuestBookingSyncSchema = z.object({
+  guestEmail: z.string().email(),
+  guestName: z.string().trim().min(1),
+  guestPhone: z.string().optional(),
+  bioSex: z.string().trim().min(1),
+  branchId: z.enum(["D2", "D7"]),
+  bedNumber: z.coerce.number().int().positive(),
+  checkIn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  checkOut: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  pricingTotal: z.coerce.number().int().nonnegative(),
+  notes: z.string().optional()
+});
 const cleaningAvailabilitySchema = z.object({
   email: z.string().email(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -485,6 +521,7 @@ const adminCleaningAvailabilitySchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   type: z.enum(["KITCHEN_D2", "KITCHEN_D7", "TRASH_D7"]),
   floor: z.coerce.number().int().positive().optional(),
+  showAll: z.preprocess((v) => v === "true" || v === true, z.boolean()).optional(),
   excludeEmails: z
     .preprocess((value) => {
       if (typeof value !== "string") {
@@ -664,6 +701,37 @@ app.post("/clients/sync", async (_request, response) => {
   } catch (error) {
     return response.status(500).json({
       error: error instanceof Error ? error.message : "Unable to sync clients from Google Sheets"
+    });
+  }
+});
+
+app.post("/internal/guest-bookings/import-paid", async (request, response) => {
+  if (!isAuthorizedInternalRequest(request)) {
+    return response.status(403).json({ error: "This endpoint only accepts internal requests." });
+  }
+
+  const parsed = paidGuestBookingSyncSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid paid guest booking payload." });
+  }
+
+  try {
+    const cache = await upsertPaidGuestBookingClient({
+      guestEmail: parsed.data.guestEmail,
+      guestName: parsed.data.guestName,
+      guestPhone: parsed.data.guestPhone ?? "",
+      bioSex: parsed.data.bioSex,
+      branchId: parsed.data.branchId,
+      bedNumber: parsed.data.bedNumber,
+      checkIn: parsed.data.checkIn,
+      checkOut: parsed.data.checkOut,
+      pricingTotal: parsed.data.pricingTotal,
+      notes: parsed.data.notes
+    });
+    return response.json(cache);
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to import paid guest booking."
     });
   }
 });
@@ -900,6 +968,7 @@ app.post("/support/group-messages", async (request, response) => {
       body: parsed.data.body,
       isAnonymous: parsed.data.isAnonymous ?? false
     });
+    clearAllResidentNotificationCaches();
     return response.json(result);
   } catch (error) {
     return response.status(400).json({
@@ -2279,6 +2348,7 @@ app.get("/admin/cleaning/available-users", async (request, response) => {
     date: request.query.date,
     type: request.query.type,
     floor: request.query.floor,
+    showAll: request.query.showAll,
     excludeEmails: request.query.excludeEmails
   });
 
@@ -2291,6 +2361,7 @@ app.get("/admin/cleaning/available-users", async (request, response) => {
       date: parseCalendarDateInput(parsed.data.date),
       type: parsed.data.type,
       floor: parsed.data.floor,
+      showAll: parsed.data.showAll,
       excludeEmails: parsed.data.excludeEmails
     });
     return response.json({ users });
@@ -2351,6 +2422,21 @@ app.post("/admin/cleaning/auto-assign", async (request, response) => {
   } catch (error) {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to auto-assign cleaning tasks"
+    });
+  }
+});
+
+app.delete("/admin/cleaning/tasks/:id", async (request, response) => {
+  const { id } = request.params;
+  if (!id) {
+    return response.status(400).json({ error: "Task ID is required" });
+  }
+  try {
+    const result = await adminRemoveCleaningTask(id);
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to remove cleaning task"
     });
   }
 });
@@ -3066,6 +3152,39 @@ Cảm ơn bạn đã đồng hành cùng Cozoro Home!
     res.json({ success: true, message: "Payment recorded and receipt sent" });
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : "Payment failed" });
+  }
+});
+
+// ── Push Notification Routes ──────────────────────────────────────────────────
+
+app.get("/push/vapid-public-key", (_req, res) => {
+  res.json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+app.post("/push/subscribe", async (req, res) => {
+  const { email, subscription } = req.body as {
+    email: string;
+    subscription: { endpoint: string; keys: { p256dh: string; auth: string } };
+  };
+  if (!email || !subscription?.endpoint) {
+    return res.status(400).json({ error: "Missing email or subscription" });
+  }
+  try {
+    await savePushSubscription(email, subscription);
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ error: "Failed to save subscription" });
+  }
+});
+
+app.post("/push/unsubscribe", async (req, res) => {
+  const { endpoint } = req.body as { endpoint: string };
+  if (!endpoint) return res.status(400).json({ error: "Missing endpoint" });
+  try {
+    await deletePushSubscription(endpoint);
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ error: "Failed to remove subscription" });
   }
 });
 

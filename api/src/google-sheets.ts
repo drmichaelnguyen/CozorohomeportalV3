@@ -150,10 +150,20 @@ export const laundryMachines = [
 ] as const;
 
 const EMAIL_COLUMN = "\u0110\u1ecba ch\u1ec9 email";
+const HIDDEN_EMAIL_COLUMN = "\u0110\u1ecba ch\u1ec9 email - Hidden";
 const ACTIVE_STAYING_COLUMN = "Hi\u1ec7n c\u00f2n \u1edf";
 const CONTRACT_CODE_COLUMN = "M\u00c3 HD";
 const CLIENT_NAME_COLUMN = "T\u00ean";
 const CLIENT_BED_COLUMN = "s\u1ed1 gi\u01b0\u1eddng";
+const CLIENT_GENDER_COLUMN = "Gi\u1edbi t\u00ednh";
+const CLIENT_BRANCH_COLUMN = "Chi nh\u00e1nh Cozoro dorm";
+const CLIENT_PHONE_COLUMN = "S\u1ed1 \u0111i\u1ec7n tho\u1ea1i li\u00ean h\u1ec7";
+const CLIENT_CONTRACT_START_COLUMN = "Ng\u00e0y b\u1eaft \u0111\u1ea7u h\u1ee3p \u0111\u1ed3ng";
+const CLIENT_CONTRACT_END_COLUMN = "Ng\u00e0y h\u1ebft h\u1ea1n h\u1ee3p \u0111\u1ed3ng";
+const CLIENT_SHORT_TERM_FEE_COLUMN = "Ph\u00ed ng\u1eafn h\u1ea1n";
+const CLIENT_SHORT_TERM_FREE_COLUMN = "Mi\u1ec5n ph\u00ed ng\u1eafn h\u1ea1n?";
+const CLIENT_TOTAL_COINS_COLUMN = "T\u1ed5ng Coins t\u00edch lu\u1ef9";
+const CLIENT_NOTE_COLUMN = "Ch\u00fa th\u00edch";
 const CLIENT_CURRENT_COINS_COLUMN = "Cozoro coins hi\u1ec7n c\u00f3";
 const COINS_TIMESTAMP_COLUMN = "D\u1ea4U TH\u1edcI GIAN";
 const COINS_BALANCE_COLUMN = "COINS";
@@ -199,6 +209,7 @@ const cozoroMemberTiers = [
 
 const normalizedHeaderAliases = new Map<string, string>([
   ["\u0111\u1ecba ch\u1ec9 email", EMAIL_COLUMN],
+  ["\u0111\u1ecba ch\u1ec9 email hidden", HIDDEN_EMAIL_COLUMN],
   ["hi\u1ec7n c\u00f2n \u1edf", ACTIVE_STAYING_COLUMN],
   ["m\u00e3 hd", CONTRACT_CODE_COLUMN],
   ["d\u1ea5u th\u1eddi gian", COINS_TIMESTAMP_COLUMN],
@@ -239,6 +250,19 @@ export type PaymentRow = Record<string, string> & {
 export type PaymentsCache = {
   syncedAt: string;
   rows: PaymentRow[];
+};
+
+export type PaidGuestBookingClientInput = {
+  guestEmail: string;
+  guestName: string;
+  guestPhone: string;
+  bioSex: string;
+  branchId: "D2" | "D7";
+  bedNumber: number;
+  checkIn: string;
+  checkOut: string;
+  pricingTotal: number;
+  notes?: string;
 };
 
 export type FineRow = Record<string, string> & {
@@ -529,6 +553,22 @@ function normalizeClientBranch(value: string) {
   }
 
   return "D2" as const;
+}
+
+function formatClientContractDate(value: string) {
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid contract date: ${value}`);
+  }
+
+  const day = String(parsed.getUTCDate()).padStart(2, "0");
+  const month = String(parsed.getUTCMonth() + 1).padStart(2, "0");
+  const year = parsed.getUTCFullYear();
+  return `${day}/${month}/${year}`;
+}
+
+function mapBioSexToVietnamese(value: string) {
+  return value === "female" ? "N\u1eef" : "Nam";
 }
 
 const CLIENT_BRANCH_COLUMN_ALIASES = [
@@ -2586,6 +2626,98 @@ export async function syncClientsFromSheet() {
   return payload;
 }
 
+export async function upsertPaidGuestBookingClient(input: PaidGuestBookingClientInput) {
+  if (!spreadsheetId) {
+    throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
+  }
+
+  const normalizedEmail = input.guestEmail.trim().toLowerCase();
+  if (!normalizedEmail) {
+    throw new Error("Guest email is required.");
+  }
+
+  const sheets = await getAuthorizedSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetName}!A:AMJ`
+  });
+
+  const sheetValues = response.data.values ?? [];
+  if (sheetValues.length === 0) {
+    throw new Error("The Google Sheet is empty");
+  }
+
+  const headers = (sheetValues[0] ?? []).map((value) => normalizeHeader(String(value)));
+  const existingRowIndex = sheetValues.findIndex((row, index) => {
+    if (index === 0) {
+      return false;
+    }
+
+    const mappedRow = mapRow(headers, row.map((value) => String(value)));
+    return mappedRow[EMAIL_COLUMN]?.trim().toLowerCase() === normalizedEmail;
+  });
+
+  const existingRow =
+    existingRowIndex === -1
+      ? ({} as ClientRow)
+      : mapRow(headers, (sheetValues[existingRowIndex] ?? []).map((value) => String(value)));
+
+  const currentTimestamp = new Date().toISOString();
+  const nextContractCode =
+    String(existingRow[CONTRACT_CODE_COLUMN] ?? "").trim() ||
+    `SHORTTERM${Date.now()}`;
+
+  const nextRow: Record<string, string> = {
+    ...existingRow,
+    [COINS_TIMESTAMP_COLUMN]: String(existingRow[COINS_TIMESTAMP_COLUMN] ?? "").trim() || currentTimestamp,
+    [HIDDEN_EMAIL_COLUMN]: normalizedEmail,
+    [EMAIL_COLUMN]: normalizedEmail,
+    [CLIENT_NAME_COLUMN]: input.guestName.trim(),
+    [CLIENT_GENDER_COLUMN]: mapBioSexToVietnamese(input.bioSex),
+    [CLIENT_BRANCH_COLUMN]: input.branchId === "D7" ? "7" : "2",
+    [CLIENT_PHONE_COLUMN]: input.guestPhone.trim(),
+    [CLIENT_BED_COLUMN]: String(input.bedNumber),
+    [ACTIVE_STAYING_COLUMN]: "1",
+    [CLIENT_CONTRACT_START_COLUMN]: formatClientContractDate(input.checkIn),
+    [CLIENT_CONTRACT_END_COLUMN]: formatClientContractDate(input.checkOut),
+    [CONTRACT_CODE_COLUMN]: nextContractCode,
+    [CLIENT_SHORT_TERM_FEE_COLUMN]: String(input.pricingTotal),
+    [CLIENT_SHORT_TERM_FREE_COLUMN]: "FALSE",
+    [CLIENT_CURRENT_COINS_COLUMN]: String(existingRow[CLIENT_CURRENT_COINS_COLUMN] ?? "").trim() || "0",
+    [CLIENT_TOTAL_COINS_COLUMN]: String(existingRow[CLIENT_TOTAL_COINS_COLUMN] ?? "").trim() || "0",
+    [COINS_MEMBER_COLUMN]: String(existingRow[COINS_MEMBER_COLUMN] ?? "").trim() || "Standard",
+    [CLIENT_NOTE_COLUMN]:
+      input.notes?.trim() ||
+      String(existingRow[CLIENT_NOTE_COLUMN] ?? "").trim() ||
+      "Imported from guest-booking-standalone after Stripe payment"
+  };
+
+  const orderedRow = headers.map((header) => nextRow[header] ?? "");
+
+  if (existingRowIndex === -1) {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${sheetName}!A:AMJ`,
+      valueInputOption: "USER_ENTERED",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: {
+        values: [orderedRow]
+      }
+    });
+  } else {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!A${existingRowIndex + 1}:AMJ${existingRowIndex + 1}`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [orderedRow]
+      }
+    });
+  }
+
+  return syncClientsFromSheet();
+}
+
 export async function syncCoinsFromSheet() {
   const rows = await readCoinsSheetRows();
 
@@ -3098,6 +3230,12 @@ export async function managerCreatePaymentReceipt(input: {
   details?: string;
   payer?: string;
   receiver?: string;
+  branch?: string;
+  recipientEmail?: string;
+  memberTier?: string;
+  currentCoins?: string;
+  discountAmount?: number;
+  discountCondition?: string;
 }) {
   if (!spreadsheetId) {
     throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
@@ -3125,7 +3263,13 @@ export async function managerCreatePaymentReceipt(input: {
     [PAYMENT_PURPOSE_COLUMN]: input.purpose.trim(),
     [PAYMENT_DETAILS_COLUMN]: input.details?.trim() ?? "",
     [PAYMENT_PAYER_COLUMN]: input.payer?.trim() || client.name || client.email,
-    [PAYMENT_RECEIVER_COLUMN]: input.receiver?.trim() ?? ""
+    [PAYMENT_RECEIVER_COLUMN]: input.receiver?.trim() ?? "",
+    ["Chi nhánh Dorm"]: input.branch?.trim() ?? client.branch ?? "",
+    ["Địa chỉ email người nhận"]: input.recipientEmail?.trim() ?? client.email,
+    ["Cozoro Member"]: input.memberTier?.trim() ?? client.recordedMember ?? "",
+    ["Số Coins hiện có"]: input.currentCoins?.trim() ?? String(client.currentCoins ?? ""),
+    ["Số tiền hưởng ưu đãi"]: input.discountAmount != null ? String(input.discountAmount) : "",
+    ["Điều kiện hưởng ưu đãi"]: input.discountCondition?.trim() ?? ""
   });
 
   return {

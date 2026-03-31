@@ -4,12 +4,13 @@ import Link from "next/link";
 import type { Route } from "next";
 import { usePathname } from "next/navigation";
 
-import { FeedbackFab } from "./feedback-fab";
 import { NotificationBell } from "./notification-bell";
 import { PortalLanguageProvider, usePortalLanguage } from "./portal-language";
 import { PortalSessionProvider, usePortalSession } from "./portal-session";
 import { MobileNav } from "./mobile-nav";
+import { ChatNotifier } from "./chat-notifier";
 import { VersionBadge } from "./version-badge";
+import { PushSubscription } from "./push-subscription";
 
 function SiteChrome({ children }: { children: React.ReactNode }) {
   const { language, setLanguage, t } = usePortalLanguage();
@@ -120,8 +121,9 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
           </section>
         )}
       </main>
-      {isLoggedIn ? <FeedbackFab /> : null}
       {isLoggedIn && !isLoginPage ? <MobileNav /> : null}
+      {isLoggedIn ? <ChatNotifier /> : null}
+      {isLoggedIn && sessionEmail ? <PushSubscription email={sessionEmail} /> : null}
       <VersionBadge />
     </div>
   );

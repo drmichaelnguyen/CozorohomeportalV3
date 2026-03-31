@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
@@ -99,6 +99,50 @@ async function fetchJson<T>(url: string, init?: RequestInit) {
   }
 }
 
+function parseLooseDate(value: string | undefined): Date | null {
+  if (!value) return null;
+  const cleaned = value.trim().replace(/\//g, "-");
+  const parsed = new Date(cleaned);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getAccountStatus(client: Record<string, string> | null): {
+  isBlocked: boolean;
+  blockReason: string | null;
+  warnings: string[];
+} {
+  if (!client) return { isBlocked: false, blockReason: null, warnings: [] };
+  const now = new Date();
+  const MS_PER_DAY = 86400000;
+  const BLOCK_GRACE_DAYS = 5;
+  const WARN_DAYS_AHEAD = 7;
+  const contractEnd = parseLooseDate(client["Ngày hết hạn hợp đồng"]);
+  const paymentExpiry = parseLooseDate(client["Ngày hết hạn gói đã thanh toán"]);
+  const warnings: string[] = [];
+  let blockReason: string | null = null;
+  if (contractEnd) {
+    const diffDays = (now.getTime() - contractEnd.getTime()) / MS_PER_DAY;
+    if (diffDays > BLOCK_GRACE_DAYS) {
+      blockReason = `Hợp đồng đã hết hạn ${Math.floor(diffDays)} ngày. Liên hệ quản lý để gia hạn.`;
+    } else if (diffDays > 0) {
+      warnings.push(`Hợp đồng đã hết hạn ${Math.floor(diffDays)} ngày — còn ${BLOCK_GRACE_DAYS - Math.floor(diffDays)} ngày ân hạn.`);
+    } else if (-diffDays < WARN_DAYS_AHEAD) {
+      warnings.push(`Hợp đồng sắp hết hạn vào ngày ${contractEnd.toLocaleDateString("vi-VN")}.`);
+    }
+  }
+  if (!blockReason && paymentExpiry) {
+    const diffDays = (now.getTime() - paymentExpiry.getTime()) / MS_PER_DAY;
+    if (diffDays > BLOCK_GRACE_DAYS) {
+      blockReason = `Tiền thuê quá hạn ${Math.floor(diffDays)} ngày. Vui lòng thanh toán để tiếp tục sử dụng dịch vụ.`;
+    } else if (diffDays > 0) {
+      warnings.push(`Tiền thuê quá hạn ${Math.floor(diffDays)} ngày — còn ${BLOCK_GRACE_DAYS - Math.floor(diffDays)} ngày ân hạn.`);
+    } else if (-diffDays < WARN_DAYS_AHEAD) {
+      warnings.push(`Gói thanh toán sắp hết hạn vào ngày ${paymentExpiry.toLocaleDateString("vi-VN")}.`);
+    }
+  }
+  return { isBlocked: blockReason !== null, blockReason, warnings };
+}
+
 function formatTimestamp(value: string | null, language: "en" | "vi") {
   if (!value) {
     return language === "vi" ? "Chưa có" : "Not yet";
@@ -134,6 +178,7 @@ export function ControllerClient({
   const [nextLaundryBooking, setNextLaundryBooking] = useState<LaundryBooking | null>(null);
   const [triggeringLaundry, setTriggeringLaundry] = useState(false);
   const [selectedInspection, setSelectedInspection] = useState<string>("");
+  const [clientRecord, setClientRecord] = useState<Record<string, string> | null>(null);
   const [message, setMessage] = useState("");
 
   async function loadControllerContext() {
@@ -174,9 +219,18 @@ export function ControllerClient({
         setAirFryerContext(null);
       }
 
-      const laundryData = await fetchJson<{ active: LaundryBooking | null; next: LaundryBooking | null }>(`${API_BASE_URL}/controller/laundry?email=${encodeURIComponent(resolvedEmail)}`);
-      setActiveLaundryBooking(laundryData.active);
-      setNextLaundryBooking(laundryData.next);
+      const [laundryData, clientResult] = await Promise.allSettled([
+        fetchJson<{ active: LaundryBooking | null; next: LaundryBooking | null }>(`${API_BASE_URL}/controller/laundry?email=${encodeURIComponent(resolvedEmail)}`),
+        fetchJson<Record<string, string>>(`${API_BASE_URL}/clients?email=${encodeURIComponent(resolvedEmail)}`)
+      ]);
+
+      if (laundryData.status === "fulfilled") {
+        setActiveLaundryBooking(laundryData.value.active);
+        setNextLaundryBooking(laundryData.value.next);
+      }
+      if (clientResult.status === "fulfilled") {
+        setClientRecord(clientResult.value);
+      }
 
       setActiveEmail(resolvedEmail);
       login(resolvedEmail);
@@ -313,11 +367,30 @@ export function ControllerClient({
     }
   }
 
+  const { isBlocked, blockReason, warnings } = useMemo(
+    () => getAccountStatus(clientRecord),
+    [clientRecord]
+  );
+
   return (
     <div className="space-y-6">
       <div className="space-y-2">
         <h1 className="text-3xl font-semibold text-slate-900">{title}</h1>
       </div>
+
+      {isBlocked && blockReason ? (
+        <section className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-800">
+          <div className="font-semibold">{language === "vi" ? "Tài khoản bị tạm khóa dịch vụ" : "Service access restricted"}</div>
+          <div className="mt-1">{blockReason}</div>
+        </section>
+      ) : warnings.length > 0 ? (
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800">
+          <div className="font-semibold">{language === "vi" ? "Lưu ý tài khoản" : "Account notice"}</div>
+          <ul className="mt-1 list-disc pl-5 space-y-1">
+            {warnings.map((w) => <li key={w}>{w}</li>)}
+          </ul>
+        </section>
+      ) : null}
 
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="text-sm text-slate-700">
@@ -375,7 +448,7 @@ export function ControllerClient({
                     <button
                       type="button"
                       onClick={() => void sendCommand("ON")}
-                      disabled={submittingAction !== null || !context.room.iftttConfigured || !context.restrictions.canTurnOnNow}
+                      disabled={isBlocked || submittingAction !== null || !context.room.iftttConfigured || !context.restrictions.canTurnOnNow}
                       className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-300"
                     >
                       {submittingAction === "ON" ? (language === "vi" ? "Đang gửi..." : "Sending...") : language === "vi" ? "Bật máy lạnh" : "Turn AC on"}
@@ -383,7 +456,7 @@ export function ControllerClient({
                     <button
                       type="button"
                       onClick={() => void sendCommand("OFF")}
-                      disabled={submittingAction !== null || !context.room.iftttConfigured}
+                      disabled={isBlocked || submittingAction !== null || !context.room.iftttConfigured}
                       className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-300"
                     >
                       {submittingAction === "OFF" ? (language === "vi" ? "Đang gửi..." : "Sending...") : language === "vi" ? "Tắt máy lạnh" : "Turn AC off"}
@@ -507,7 +580,7 @@ export function ControllerClient({
                     <button
                       type="button"
                       onClick={() => void startAirFryer()}
-                      disabled={startingAirFryer || !airFryerContext.status.availableNow || !selectedInspection}
+                      disabled={isBlocked || startingAirFryer || !airFryerContext.status.availableNow || !selectedInspection}
                       className="w-full rounded-xl bg-amber-600 py-3 text-sm font-bold text-white shadow-lg shadow-amber-100 hover:bg-amber-700 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {startingAirFryer 

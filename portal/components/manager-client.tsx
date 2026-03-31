@@ -28,8 +28,11 @@ type ManagerClientRecord = {
   name: string;
   branch: string;
   bed: string;
-  currentCoins: number;
-  totalCoins: number;
+  gender: string;
+  activeStay: string;
+  currentCoins: string;
+  totalCoins: string;
+  recordedMember: string;
   row: Record<string, any>;
 };
 
@@ -589,6 +592,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [paymentPurposeSelections, setPaymentPurposeSelections] = useState<string[]>(["Monthly rent"]);
   const [paymentDetails, setPaymentDetails] = useState("");
   const [paymentPayer, setPaymentPayer] = useState("");
+  const [paymentBranch, setPaymentBranch] = useState("");
+  const [paymentRecipientEmail, setPaymentRecipientEmail] = useState("");
+  const [paymentMemberTier, setPaymentMemberTier] = useState("");
+  const [paymentCurrentCoins, setPaymentCurrentCoins] = useState("");
+  const [paymentDiscountAmount, setPaymentDiscountAmount] = useState("");
+  const [paymentDiscountCondition, setPaymentDiscountCondition] = useState("");
   const [staffEntries, setStaffEntries] = useState<StaffEntry[]>([]);
   const [selfDisplayName, setSelfDisplayName] = useState("");
   const [selfDisplayNameSaving, setSelfDisplayNameSaving] = useState(false);
@@ -1072,7 +1081,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     setPaymentPurpose("Monthly rent");
     setPaymentPurposeInput("");
     setPaymentPurposeSelections(["Monthly rent"]);
-  }, [selectedMaHd]);
+    setPaymentDiscountAmount("");
+    setPaymentDiscountCondition("");
+    const client = clients.find((c) => c.maHd === selectedMaHd) ?? null;
+    setPaymentBranch(client ? normalizeBranchLabel(client.branch) : "");
+    setPaymentRecipientEmail(client?.email ?? "");
+    setPaymentMemberTier(client?.recordedMember ?? "");
+    setPaymentCurrentCoins(client?.currentCoins ?? "");
+  }, [selectedMaHd, clients]);
 
   useEffect(() => {
     if (activeAction === "message" && selectedClient?.email) {
@@ -2087,11 +2103,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     ) : (
                       <div className="space-y-3">
                         <label className="block text-sm font-medium text-slate-700">
-                          Amount
+                          Số tiền / Amount
                           <input type="number" min="1" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2" />
                         </label>
                         <div className="block text-sm font-medium text-slate-700">
-                          Purpose
+                          Mục đích / Purpose
                           <div className="mt-2 flex flex-wrap gap-2">
                             {paymentPurposeSuggestions.map((option) => {
                               const isSelected = paymentPurposeSelections.some((s) => s.toLowerCase() === option.toLowerCase());
@@ -2127,7 +2143,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 }
                               }}
                               className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                              placeholder="Custom purpose..."
+                              placeholder="Mục đích khác..."
                             />
                             <button
                               type="button"
@@ -2135,16 +2151,46 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               disabled={!paymentPurposeInput.trim()}
                               className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 disabled:opacity-40 hover:bg-slate-50"
                             >
-                              Add
+                              Thêm
                             </button>
                           </div>
                         </div>
                         <label className="block text-sm font-medium text-slate-700">
-                          Details
-                          <textarea value={paymentDetails} onChange={(event) => setPaymentDetails(event.target.value)} rows={3} className="mt-1 w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm" />
+                          Mục đích - Ghi rõ / Details
+                          <textarea value={paymentDetails} onChange={(event) => setPaymentDetails(event.target.value)} rows={2} className="mt-1 w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm" />
                         </label>
+                        <div className="grid grid-cols-2 gap-3">
+                          <label className="block text-sm font-medium text-slate-700">
+                            Chi nhánh Dorm
+                            <input type="text" value={paymentBranch} onChange={(event) => setPaymentBranch(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
+                          </label>
+                          <label className="block text-sm font-medium text-slate-700">
+                            Cozoro Member
+                            <input type="text" value={paymentMemberTier} onChange={(event) => setPaymentMemberTier(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
+                          </label>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <label className="block text-sm font-medium text-slate-700">
+                            Số Coins hiện có
+                            <input type="text" value={paymentCurrentCoins} onChange={(event) => setPaymentCurrentCoins(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
+                          </label>
+                          <label className="block text-sm font-medium text-slate-700">
+                            Địa chỉ email người nhận
+                            <input type="text" value={paymentRecipientEmail} onChange={(event) => setPaymentRecipientEmail(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" placeholder={selectedClient?.email ?? ""} />
+                          </label>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <label className="block text-sm font-medium text-slate-700">
+                            Số tiền hưởng ưu đãi
+                            <input type="number" min="0" value={paymentDiscountAmount} onChange={(event) => setPaymentDiscountAmount(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" placeholder="0" />
+                          </label>
+                          <label className="block text-sm font-medium text-slate-700">
+                            Điều kiện hưởng ưu đãi
+                            <input type="text" value={paymentDiscountCondition} onChange={(event) => setPaymentDiscountCondition(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" placeholder="VD: Member Gold" />
+                          </label>
+                        </div>
                         <label className="block text-sm font-medium text-slate-700">
-                          Payer
+                          Người đóng tiền / Payer
                           <input type="text" value={paymentPayer} onChange={(event) => setPaymentPayer(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2" placeholder={selectedClient?.name || selectedClient?.email || ""} />
                         </label>
                         <button
@@ -2164,9 +2210,15 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 amount: Number(paymentAmount),
                                 purpose: effectivePurposes.join(", "),
                                 details: paymentDetails,
-                                payer: paymentPayer
+                                payer: paymentPayer,
+                                branch: paymentBranch,
+                                recipientEmail: paymentRecipientEmail,
+                                memberTier: paymentMemberTier,
+                                currentCoins: paymentCurrentCoins,
+                                discountAmount: paymentDiscountAmount ? Number(paymentDiscountAmount) : undefined,
+                                discountCondition: paymentDiscountCondition
                               },
-                              "Payment receipt created.",
+                              "Đã tạo biên nhận thanh toán.",
                               async () => {
                                 if (selectedClient) await loadWorkspace("payments", selectedClient.maHd);
                                 setPaymentPurposeInput("");

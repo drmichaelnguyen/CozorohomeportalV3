@@ -163,6 +163,56 @@ function getBookingPaymentType(booking: LaundryBooking): "FREE_LAUNDRY" | "COINS
   return "OTHER";
 }
 
+function parseLooseDate(value: string | undefined): Date | null {
+  if (!value) return null;
+  const cleaned = value.trim().replace(/\//g, "-");
+  const parsed = new Date(cleaned);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getAccountStatus(client: Record<string, string> | null): {
+  isBlocked: boolean;
+  blockReason: string | null;
+  warnings: string[];
+} {
+  if (!client) return { isBlocked: false, blockReason: null, warnings: [] };
+
+  const now = new Date();
+  const MS_PER_DAY = 86400000;
+  const BLOCK_GRACE_DAYS = 5;
+  const WARN_DAYS_AHEAD = 7;
+
+  const contractEnd = parseLooseDate(client["Ngày hết hạn hợp đồng"]);
+  const paymentExpiry = parseLooseDate(client["Ngày hết hạn gói đã thanh toán"]);
+
+  const warnings: string[] = [];
+  let blockReason: string | null = null;
+
+  if (contractEnd) {
+    const diffDays = (now.getTime() - contractEnd.getTime()) / MS_PER_DAY;
+    if (diffDays > BLOCK_GRACE_DAYS) {
+      blockReason = `Hợp đồng đã hết hạn ${Math.floor(diffDays)} ngày. Liên hệ quản lý để gia hạn.`;
+    } else if (diffDays > 0) {
+      warnings.push(`Hợp đồng đã hết hạn ${Math.floor(diffDays)} ngày — còn ${BLOCK_GRACE_DAYS - Math.floor(diffDays)} ngày ân hạn.`);
+    } else if (-diffDays < WARN_DAYS_AHEAD) {
+      warnings.push(`Hợp đồng sắp hết hạn vào ngày ${contractEnd.toLocaleDateString("vi-VN")}.`);
+    }
+  }
+
+  if (!blockReason && paymentExpiry) {
+    const diffDays = (now.getTime() - paymentExpiry.getTime()) / MS_PER_DAY;
+    if (diffDays > BLOCK_GRACE_DAYS) {
+      blockReason = `Tiền thuê quá hạn ${Math.floor(diffDays)} ngày. Vui lòng thanh toán để tiếp tục sử dụng dịch vụ.`;
+    } else if (diffDays > 0) {
+      warnings.push(`Tiền thuê quá hạn ${Math.floor(diffDays)} ngày — còn ${BLOCK_GRACE_DAYS - Math.floor(diffDays)} ngày ân hạn.`);
+    } else if (-diffDays < WARN_DAYS_AHEAD) {
+      warnings.push(`Gói thanh toán sắp hết hạn vào ngày ${paymentExpiry.toLocaleDateString("vi-VN")}.`);
+    }
+  }
+
+  return { isBlocked: blockReason !== null, blockReason, warnings };
+}
+
 export function BookingsClient() {
   const { t, language } = usePortalLanguage();
   const { sessionEmail, isLoggedIn, login } = usePortalSession();
@@ -171,6 +221,7 @@ export function BookingsClient() {
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
+  const [clientRecord, setClientRecord] = useState<Record<string, string> | null>(null);
   const [branchId, setBranchId] = useState<"D2" | "D7" | "">("");
   const [coins, setCoins] = useState("");
   const [timeZone, setTimeZone] = useState("Asia/Ho_Chi_Minh");
@@ -353,6 +404,10 @@ export function BookingsClient() {
     () => (showAllBookings ? filteredBookings : filteredBookings.slice(0, 10)),
     [filteredBookings, showAllBookings]
   );
+  const { isBlocked, blockReason, warnings } = useMemo(
+    () => getAccountStatus(clientRecord),
+    [clientRecord]
+  );
 
   async function loadBookings(emailValue?: string, shouldRefresh = false) {
     const trimmedEmail = (emailValue ?? activeEmail).trim();
@@ -427,10 +482,15 @@ export function BookingsClient() {
       setBookingDayFilter("all");
       setBookingPaymentFilter("all");
       setBookingSortDirection("desc");
-      const [bookingsResult, availabilityResult] = await Promise.allSettled([
+      const [bookingsResult, availabilityResult, clientResult] = await Promise.allSettled([
         loadBookings(trimmedEmail),
-        nextMachineId ? loadAvailability(nextMachineId, trimmedEmail, true) : Promise.resolve()
+        nextMachineId ? loadAvailability(nextMachineId, trimmedEmail, true) : Promise.resolve(),
+        fetchJson<Record<string, string>>(`${API_BASE_URL}/clients?email=${encodeURIComponent(trimmedEmail)}`)
       ]);
+
+      if (clientResult.status === "fulfilled") {
+        setClientRecord(clientResult.value);
+      }
 
       if (bookingsResult.status === "rejected" || availabilityResult.status === "rejected") {
         const issues = [
@@ -651,6 +711,20 @@ export function BookingsClient() {
             : "Choose your branch machine, then book an open time in the next 7 days. Once booked, that slot is blocked in Google Calendar."}
         </p>
       </section>
+
+      {isBlocked && blockReason ? (
+        <section className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-800">
+          <div className="font-semibold">{language === "vi" ? "Tài khoản bị tạm khóa dịch vụ" : "Service access restricted"}</div>
+          <div className="mt-1">{blockReason}</div>
+        </section>
+      ) : warnings.length > 0 ? (
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800">
+          <div className="font-semibold">{language === "vi" ? "Lưu ý tài khoản" : "Account notice"}</div>
+          <ul className="mt-1 list-disc pl-5 space-y-1">
+            {warnings.map((w) => <li key={w}>{w}</li>)}
+          </ul>
+        </section>
+      ) : null}
 
       <section className="grid gap-6 md:grid-cols-[1.2fr,0.8fr]">
         <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
@@ -895,6 +969,7 @@ export function BookingsClient() {
               onClick={() => void createBooking()}
               disabled={
                 submitting ||
+                isBlocked ||
                 !selectedMachineId ||
                 !selectedStart ||
                 isPastSlot(selectedStart) ||

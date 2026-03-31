@@ -49,10 +49,17 @@ export function NotificationBell() {
     window.addEventListener("focus", handleVisibilityOrFocus);
     document.addEventListener("visibilitychange", handleVisibilityOrFocus);
 
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void loadUnreadCount();
+      }
+    }, 30000);
+
     return () => {
       cancelled = true;
       window.removeEventListener("focus", handleVisibilityOrFocus);
       document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+      clearInterval(interval);
     };
   }, [isAdminSession, isLoggedIn, normalizedEmail]);
 
