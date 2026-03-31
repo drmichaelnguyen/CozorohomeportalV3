@@ -13,6 +13,8 @@ import {
 } from "./google-sheets.js";
 import { prisma } from "./prisma.js";
 import { requirePortalRole, resolvePortalLogin } from "./staff-access.js";
+import { sendPushToEmail } from "./push.js";
+import { getClientGroupContext } from "./group-support.js";
 type SupportViewerRoleValue = "RESIDENT" | "STAFF";
 type NotificationSummary<TNotification> = {
   unreadCount: number;
@@ -341,6 +343,10 @@ function writeNotificationCache<TNotification>(
   return value;
 }
 
+export function clearAllResidentNotificationCaches() {
+  residentNotificationCache.clear();
+}
+
 function clearNotificationCaches(email: string, residentEmail?: string) {
   const normalizedEmail = normalizeEmail(email);
   residentNotificationCache.delete(normalizedEmail);
@@ -461,7 +467,8 @@ type ResidentNotificationItem = {
     | "PAYMENT_DUE"
     | "NEW_FINE"
     | "LAUNDRY_REMINDER"
-    | "CLEANING_REMINDER";
+    | "CLEANING_REMINDER"
+    | "CLEANING_AUDIT_RESULT";
   title: string;
   body: string;
   createdAt: string | Date;
@@ -526,7 +533,8 @@ function minutesUntil(target: Date, now = new Date()) {
 async function buildResidentReminderNotifications(email: string) {
   const normalizedEmail = normalizeEmail(email);
   const now = new Date();
-  const [client, fineEntries, laundryBookings, cleaningTasks] = await Promise.all([
+  const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+  const [client, fineEntries, laundryBookings, cleaningTasks, recentlyAuditedTasks] = await Promise.all([
     getActiveClientByEmail(normalizedEmail),
     getFinesForEmail(normalizedEmail),
     getLaundryBookingsForEmailWithOptions(normalizedEmail, { forceRefresh: false }),
@@ -538,6 +546,14 @@ async function buildResidentReminderNotifications(email: string) {
       orderBy: {
         scheduledDate: "asc"
       }
+    }),
+    prisma.cleaningTask.findMany({
+      where: {
+        userEmail: normalizedEmail,
+        status: { in: [CleaningTaskStatus.APPROVED, CleaningTaskStatus.REJECTED] },
+        updatedAt: { gte: fourteenDaysAgo }
+      },
+      orderBy: { updatedAt: "desc" }
     })
   ]);
   const notifications: ResidentNotificationItem[] = [];
@@ -643,6 +659,31 @@ async function buildResidentReminderNotifications(email: string) {
     }
   }
 
+  for (const task of recentlyAuditedTasks) {
+    const taskDate = new Date(task.scheduledDate).toLocaleDateString();
+    if (task.status === CleaningTaskStatus.REJECTED) {
+      notifications.push({
+        id: `cleaning-audit-rejected-${task.id}`,
+        type: "CLEANING_AUDIT_RESULT",
+        title: "Cleaning task not approved",
+        body: `Your cleaning on ${taskDate} was not approved — coins forfeited.${task.auditorNote ? ` Note: ${task.auditorNote}` : ""}`,
+        createdAt: task.updatedAt.toISOString(),
+        unreadCount: 1,
+        href: "/schedule"
+      });
+    } else if (task.status === CleaningTaskStatus.APPROVED) {
+      notifications.push({
+        id: `cleaning-audit-approved-${task.id}`,
+        type: "CLEANING_AUDIT_RESULT",
+        title: "Cleaning task approved",
+        body: `Your cleaning on ${taskDate} was approved — +${task.rewardCoins.toLocaleString()} coins added.`,
+        createdAt: task.updatedAt.toISOString(),
+        unreadCount: 1,
+        href: "/schedule"
+      });
+    }
+  }
+
   return notifications.sort(
     (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
   );
@@ -687,6 +728,54 @@ export async function listResidentSupportNotifications(email: string) {
         href: `/support?chat=${encodeURIComponent(conversation.id)}`
       });
     }
+  }
+
+  // Add unread group message notifications (room/floor/branch chats)
+  try {
+    const groupContext = await getClientGroupContext(normalizedEmail);
+    const groupIds = Object.values(groupContext.groupIds);
+
+    for (const groupId of groupIds) {
+      const readState = await prisma.groupReadState.findUnique({
+        where: { groupId_viewerEmail: { groupId, viewerEmail: normalizedEmail } }
+      });
+      const lastRead = readState?.lastReadAt ?? null;
+
+      const unreadMessages = await prisma.groupMessage.findMany({
+        where: {
+          groupId,
+          senderEmail: { not: normalizedEmail },
+          createdAt: { gt: lastRead ?? new Date(0) }
+        },
+        orderBy: { createdAt: "desc" }
+      });
+
+      if (unreadMessages.length > 0) {
+        const latest = unreadMessages[0]!;
+        let label = groupId;
+        if (groupId.startsWith("BRANCH_")) label = "Branch " + groupId.replace("BRANCH_", "");
+        else if (groupId.startsWith("FLOOR_")) {
+          const parts = groupId.split("_");
+          label = `Floor ${parts[1]}-${parts[2]}`;
+        } else if (groupId.startsWith("ROOM_")) {
+          const parts = groupId.split("_");
+          label = `Room ${parts[2]} (${parts[1]})`;
+        }
+
+        notifications.push({
+          id: `group-${groupId}-${latest.id}`,
+          type: "SUPPORT_REPLY",
+          conversationId: groupId,
+          title: `New message in ${label}`,
+          body: latest.isAnonymous ? "Anonymous message" : `${latest.senderName}: ${latest.body}`,
+          createdAt: latest.createdAt,
+          unreadCount: unreadMessages.length,
+          href: `/support?groupId=${encodeURIComponent(groupId)}`
+        });
+      }
+    }
+  } catch {
+    // If client has no group context (not an active resident), skip group notifications
   }
 
   return writeNotificationCache(residentNotificationCache, normalizedEmail, {
@@ -895,7 +984,7 @@ export async function postOperatorSupportMessage(input: {
   const senderRole = actor.role === "owner" ? SupportMessageSenderRole.OWNER : SupportMessageSenderRole.MANAGER;
   clearNotificationCaches(normalizedOperatorEmail, existingConversation.residentEmail);
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const message = await tx.supportMessage.create({
       data: {
         conversationId: existingConversation.id,
@@ -915,6 +1004,16 @@ export async function postOperatorSupportMessage(input: {
 
     return { conversation: updatedConversation, message };
   });
+
+  const senderLabel = actor.role === "owner" ? "Owner" : "Manager";
+  void sendPushToEmail(
+    existingConversation.residentEmail,
+    `New message from ${senderLabel}`,
+    trimmedBody.length > 100 ? trimmedBody.slice(0, 97) + "…" : trimmedBody,
+    "/support"
+  ).catch(() => {});
+
+  return result;
 }
 
 export async function postOperatorSupportMessageToResident(input: {

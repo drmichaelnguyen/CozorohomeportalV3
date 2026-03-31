@@ -19,7 +19,9 @@ type AdminTask = {
   isSelfAssigned: boolean;
   assignmentSource?: "SYSTEM" | "MANAGER" | "SELF";
   calendarId?: string | null;
+  completedAt?: string | null;
   completionNote?: string | null;
+  completionPhoto?: string | null;
   auditorNote?: string | null;
 };
 
@@ -125,6 +127,8 @@ export function AdminCleaningClient() {
   const [autoAssignPreview, setAutoAssignPreview] = useState<AutoAssignPreview[]>([]);
   const [selectedAutoAssignDates, setSelectedAutoAssignDates] = useState<string[]>([]);
   const [showAllUsers, setShowAllUsers] = useState(false);
+  const [auditingTaskId, setAuditingTaskId] = useState<string | null>(null);
+  const [auditNote, setAuditNote] = useState("");
   const selectedCalendar =
     calendars.find((entry) => calendarKey(entry) === selectedCalendarKey) ?? calendars[0] ?? null;
   const canAssignSelectedDate = isFutureDate(selectedDate);
@@ -410,6 +414,31 @@ export function AdminCleaningClient() {
     }
   }
 
+  async function auditTask(taskId: string, decision: "APPROVE" | "REJECT") {
+    setLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/cleaning/tasks/${taskId}/audit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviewer: activeEmail, decision, note: auditNote.trim() || undefined })
+      });
+      const data = await readJsonSafely<{ error?: string }>(response);
+      if (!response.ok) {
+        setMessage(data.error ?? "Unable to audit task.");
+        return;
+      }
+      setAuditingTaskId(null);
+      setAuditNote("");
+      await reloadAll();
+      setMessage(decision === "APPROVE" ? "Task approved — coins granted." : "Task rejected — coins forfeited.");
+    } catch {
+      setMessage("Unable to audit task.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleLoad(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
@@ -648,37 +677,115 @@ export function AdminCleaningClient() {
 
               <div>
                 <h3 className="text-sm font-semibold text-slate-900">Tasks on this day</h3>
-                <div className="mt-2 space-y-2">
+                <div className="mt-2 space-y-3">
                   {selectedDayTasks.length === 0 ? (
                     <p className="text-sm text-slate-600">No cleaning task on this day yet.</p>
                   ) : (
-                    selectedDayTasks.map((task) => (
-                      <div key={task.id} className="flex items-start justify-between gap-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
-                        <div>
-                          <div className="font-medium text-slate-900">{task.userName || task.userEmail}</div>
-                          <div className="text-xs text-slate-500">{task.userEmail}</div>
-                          <div className="flex items-center gap-2 flex-wrap mt-0.5">
-                            <span className="text-xs text-slate-600">Status: {task.status}</span>
-                            {(task.assignmentSource === "SELF" || task.isSelfAssigned) ? (
-                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">★ Self</span>
-                            ) : task.assignmentSource === "SYSTEM" ? (
-                              <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">⚙ Auto</span>
-                            ) : (
-                              <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600">👤 Manager</span>
-                            )}
+                    selectedDayTasks.map((task) => {
+                      const isAuditing = auditingTaskId === task.id;
+                      const isPast = !isFutureDate(new Date(task.scheduledDate));
+                      const canAudit = task.status === "DONE_PENDING_AUDIT" || (isPast && (task.status === "APPROVED" || task.status === "REJECTED"));
+                      const statusColors: Record<string, string> = {
+                        ASSIGNED: "bg-sky-100 text-sky-700",
+                        DONE_PENDING_AUDIT: "bg-amber-100 text-amber-700",
+                        APPROVED: "bg-emerald-100 text-emerald-700",
+                        REJECTED: "bg-rose-100 text-rose-700",
+                        MISSED: "bg-slate-200 text-slate-600"
+                      };
+                      return (
+                        <div key={task.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="font-medium text-slate-900 truncate">{task.userName || task.userEmail}</div>
+                              <div className="text-xs text-slate-500 truncate">{task.userEmail}</div>
+                              <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusColors[task.status] ?? "bg-slate-100 text-slate-600"}`}>
+                                  {task.status.replace("_", " ")}
+                                </span>
+                                {(task.assignmentSource === "SELF" || task.isSelfAssigned) ? (
+                                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">★ Self</span>
+                                ) : task.assignmentSource === "SYSTEM" ? (
+                                  <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">⚙ Auto</span>
+                                ) : (
+                                  <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600">👤 Manager</span>
+                                )}
+                                {task.status === "REJECTED" ? (
+                                  <span className="text-[11px] font-semibold text-rose-500 line-through">+{task.rewardCoins.toLocaleString()} coins</span>
+                                ) : task.status === "APPROVED" ? (
+                                  <span className="text-[11px] font-semibold text-emerald-600">+{task.rewardCoins.toLocaleString()} coins</span>
+                                ) : (
+                                  <span className="text-[11px] text-slate-500">+{task.rewardCoins.toLocaleString()} coins</span>
+                                )}
+                              </div>
+                              {task.completionNote && (
+                                <p className="mt-1 text-xs text-slate-600 italic">"{task.completionNote}"</p>
+                              )}
+                              {task.completionPhoto && (
+                                <a href={task.completionPhoto} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-xs text-sky-600 underline">View photo</a>
+                              )}
+                              {task.auditorNote && (
+                                <p className="mt-1 text-xs text-rose-700 font-medium">Auditor: {task.auditorNote}</p>
+                              )}
+                            </div>
+                            <div className="flex flex-col gap-1 shrink-0">
+                              {task.status === "ASSIGNED" && (
+                                <button
+                                  type="button"
+                                  onClick={() => void removeTask(task.id)}
+                                  disabled={loading}
+                                  className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                                >
+                                  Remove
+                                </button>
+                              )}
+                              {canAudit && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAuditingTaskId(isAuditing ? null : task.id);
+                                    setAuditNote(task.auditorNote ?? "");
+                                  }}
+                                  disabled={loading}
+                                  className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                                >
+                                  {isAuditing ? "Cancel" : task.status === "DONE_PENDING_AUDIT" ? "Audit" : "Re-audit"}
+                                </button>
+                              )}
+                            </div>
                           </div>
+
+                          {isAuditing && (
+                            <div className="border-t border-slate-200 pt-2 space-y-2">
+                              <textarea
+                                rows={2}
+                                placeholder="Auditor note (optional)"
+                                value={auditNote}
+                                onChange={(e) => setAuditNote(e.target.value)}
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                              />
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void auditTask(task.id, "APPROVE")}
+                                  disabled={loading}
+                                  className="flex-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                                >
+                                  ✓ Approve — grant +{task.rewardCoins.toLocaleString()} coins
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void auditTask(task.id, "REJECT")}
+                                  disabled={loading}
+                                  className="flex-1 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+                                >
+                                  ✗ Reject — forfeit coins
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => void removeTask(task.id)}
-                          disabled={loading}
-                          title="Remove assignment"
-                          className="shrink-0 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>

@@ -954,27 +954,51 @@ export function CleaningScheduleClient() {
                     const canRelease = releasePenalty.canRelease && !atMonthlyLimit;
                     return (
                       <div key={task.id} className="space-y-2">
-                        <div className="flex items-center gap-1.5 px-1 flex-wrap">
-                          {(task.assignmentSource === "SELF" || task.isSelfAssigned) ? (
-                            <>
-                              <span className="text-amber-500">★</span>
-                              <span className="text-xs font-semibold text-amber-700">Self-assigned</span>
-                              {releasePenalty.isSelfAssignedFree && (
-                                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Free release</span>
-                              )}
-                            </>
-                          ) : task.assignmentSource === "SYSTEM" ? (
-                            <>
-                              <span className="text-sky-500">⚙</span>
-                              <span className="text-xs font-semibold text-sky-700">Auto-scheduled</span>
-                            </>
+                        <div className="flex items-center justify-between px-1 flex-wrap gap-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {(task.assignmentSource === "SELF" || task.isSelfAssigned) ? (
+                              <>
+                                <span className="text-amber-500">★</span>
+                                <span className="text-xs font-semibold text-amber-700">Self-assigned</span>
+                                {releasePenalty.isSelfAssignedFree && (
+                                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Free release</span>
+                                )}
+                              </>
+                            ) : task.assignmentSource === "SYSTEM" ? (
+                              <>
+                                <span className="text-sky-500">⚙</span>
+                                <span className="text-xs font-semibold text-sky-700">Auto-scheduled</span>
+                              </>
+                            ) : (
+                              <>
+                                <span className="text-slate-400">👤</span>
+                                <span className="text-xs font-semibold text-slate-600">Assigned by manager</span>
+                              </>
+                            )}
+                          </div>
+                          {task.status === "REJECTED" ? (
+                            <span className="text-xs font-semibold text-rose-500 line-through">+{task.rewardCoins.toLocaleString()} coins</span>
+                          ) : task.status === "APPROVED" ? (
+                            <span className="text-xs font-semibold text-emerald-600">+{task.rewardCoins.toLocaleString()} coins ✓</span>
+                          ) : task.status === "DONE_PENDING_AUDIT" ? (
+                            <span className="text-xs text-amber-600">+{task.rewardCoins.toLocaleString()} coins ⏳</span>
+                          ) : task.status === "MISSED" ? (
+                            <span className="text-xs text-slate-400 line-through">+{task.rewardCoins.toLocaleString()} coins</span>
                           ) : (
-                            <>
-                              <span className="text-slate-400">👤</span>
-                              <span className="text-xs font-semibold text-slate-600">Assigned by manager</span>
-                            </>
+                            <span className="text-xs text-slate-500">+{task.rewardCoins.toLocaleString()} coins</span>
                           )}
                         </div>
+                        {task.status === "REJECTED" && task.auditorNote && (
+                          <div className="rounded-lg bg-rose-50 border border-rose-100 px-3 py-2">
+                            <p className="text-xs font-semibold text-rose-700">Not approved</p>
+                            <p className="text-xs text-rose-600 mt-0.5">{task.auditorNote}</p>
+                          </div>
+                        )}
+                        {task.status === "APPROVED" && (
+                          <div className="rounded-lg bg-emerald-50 border border-emerald-100 px-3 py-2">
+                            <p className="text-xs font-semibold text-emerald-700">Approved — +{task.rewardCoins.toLocaleString()} coins added to your account</p>
+                          </div>
+                        )}
                         <button
                           disabled={!canRelease || loading}
                           onClick={() => {
@@ -1296,8 +1320,8 @@ export function CleaningScheduleClient() {
                       </div>
                       <div className="mt-1 flex flex-wrap gap-0.5">
                         {!awayMode && tasks.map((task) => (
-                          <div key={task.id} className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500 md:h-auto md:w-full md:bg-amber-500 md:px-1.5 md:py-0.5 md:text-[10px] md:text-white md:truncate">
-                            <span className="hidden md:inline">{prettyTaskType(task.type)}{(task.assignmentSource === "SELF" || task.isSelfAssigned) ? " ★" : task.assignmentSource === "SYSTEM" ? " ⚙" : " 👤"}</span>
+                          <div key={task.id} className={`h-1.5 w-1.5 shrink-0 rounded-full md:h-auto md:w-full md:px-1.5 md:py-0.5 md:text-[10px] md:truncate ${task.status === "REJECTED" ? "bg-rose-400 md:bg-rose-100 md:text-rose-700" : task.status === "APPROVED" ? "bg-emerald-500 md:bg-emerald-100 md:text-emerald-800" : "bg-amber-500 md:bg-amber-500 md:text-white"}`}>
+                            <span className={`hidden md:inline ${task.status === "REJECTED" ? "line-through" : ""}`}>{prettyTaskType(task.type)}{(task.assignmentSource === "SELF" || task.isSelfAssigned) ? " ★" : task.assignmentSource === "SYSTEM" ? " ⚙" : " 👤"}</span>
                           </div>
                         ))}
                         {!awayMode && hasOpenSlot && tasks.length === 0 && (

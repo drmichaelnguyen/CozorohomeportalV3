@@ -15,7 +15,8 @@ type NavBadges = {
   managerMessage: number; // manager message button top-left
 };
 
-const BADGE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const BADGE_CACHE_TTL = 30 * 1000; // 30 seconds
+const BADGE_POLL_INTERVAL = 30 * 1000; // poll every 30 seconds
 
 function useCachedBadges(cacheKey: string): [NavBadges, (b: NavBadges) => void] {
   const empty: NavBadges = { laundry: 0, cleaning: 0, message: 0, account: 0, managerMessage: 0 };
@@ -91,7 +92,7 @@ function useNavBadges(
 
         setBadges({
           laundry: sum(["LAUNDRY_REMINDER"]),
-          cleaning: sum(["CLEANING_REMINDER"]),
+          cleaning: sum(["CLEANING_REMINDER", "CLEANING_AUDIT_RESULT"]),
           message: sum(["SUPPORT_REPLY"]),
           account: sum(["PAYMENT_DUE", "NEW_FINE"]),
           managerMessage: 0,
@@ -114,11 +115,25 @@ function useNavBadges(
       void fetchBadges();
     }
 
+    function onNewGroupMessage() {
+      void fetchBadges();
+    }
+
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
+    window.addEventListener("new-group-message", onNewGroupMessage);
+
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void fetchBadges();
+      }
+    }, BADGE_POLL_INTERVAL);
+
     return () => {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
+      window.removeEventListener("new-group-message", onNewGroupMessage);
+      clearInterval(interval);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoggedIn, normalizedEmail, isAdminSession]);
