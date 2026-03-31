@@ -1,0 +1,16 @@
+{
+  "name": "cozorohome-guest-booking-standalone",
+  "version": "1.0.0",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "mysql2": "^3.15.2",
+    "stripe": "^21.0.1"
+  }
+}

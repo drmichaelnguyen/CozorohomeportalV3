@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Payment Confirmation | CozoroHome</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <div class="hero-inner">
+        <div class="hero-copy">
+          <p class="eyebrow">Shortterm.CozoroHome.com</p>
+          <h1>Confirming Your Payment</h1>
+          <p>Your booking will be confirmed as soon as Stripe reports the payment.</p>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="card wide">
+        <h2>Booking Status</h2>
+        <p id="statusText" class="status-message">We are validating your Stripe payment now.</p>
+        <p><a href="/">Return to booking site</a></p>
+      </section>
+    </main>
+
+    <script>
+      (async function () {
+        const params = new URLSearchParams(window.location.search);
+        const sessionId = params.get("session_id");
+        const statusText = document.getElementById("statusText");
+
+        if (!sessionId) {
+          statusText.textContent = "Missing session id. Please contact the host.";
+          return;
+        }
+
+        try {
+          const response = await fetch(`/api/confirm-payment?session_id=${encodeURIComponent(sessionId)}`);
+          const payload = await response.json();
+
+          if (!response.ok || !payload.paid) {
+            statusText.textContent = payload.error || "Payment not completed yet.";
+            return;
+          }
+
+          const booking = payload.booking || {};
+          statusText.textContent = `Payment complete. Your stay is confirmed for ${booking.checkIn} to ${booking.checkOut} in room ${booking.roomCode}, bed ${booking.bedNumber}. You can now log into the main app with your booking email and your phone number as the default password.`;
+        } catch (error) {
+          statusText.textContent = error.message || "Unable to confirm payment.";
+        }
+      })();
+    </script>
+  </body>
+</html>

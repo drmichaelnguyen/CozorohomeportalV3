@@ -1,0 +1,265 @@
+:root {
+  --bg: #f6f1e8;
+  --ink: #1f2f33;
+  --line: #ddd4c6;
+  --card: rgba(255, 255, 255, 0.88);
+  --green: #126154;
+  --green-soft: #dcefe8;
+  --amber: #cd7a4a;
+  --amber-soft: #fde7d7;
+  --slate-soft: #e7ebee;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(18, 97, 84, 0.14), transparent 30%),
+    radial-gradient(circle at top right, rgba(205, 122, 74, 0.16), transparent 28%),
+    linear-gradient(180deg, #fffaf5 0%, var(--bg) 100%);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.hero {
+  padding: 2rem 1rem 1rem;
+}
+
+.hero-inner {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+}
+
+.hero-copy,
+.hero-card,
+.card {
+  border: 1px solid rgba(255,255,255,0.7);
+  background: var(--card);
+  backdrop-filter: blur(12px);
+  border-radius: 28px;
+  box-shadow: 0 24px 60px rgba(31, 47, 51, 0.08);
+}
+
+.hero-copy {
+  padding: 2rem;
+}
+
+.hero-card {
+  padding: 1.5rem;
+  background: linear-gradient(160deg, #10242c, #126154);
+  color: white;
+}
+
+.eyebrow,
+.hero-card-label,
+.summary-label {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.75rem;
+}
+
+h1,
+ h2,
+ h3 {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(2.4rem, 5vw, 4.8rem);
+  line-height: 0.95;
+  letter-spacing: -0.05em;
+  margin: 0.5rem 0 1rem;
+}
+
+.hero-pills,
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
+.hero-pills span,
+.legend-chip,
+.bed-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.hero-pills span {
+  background: white;
+  color: var(--green);
+}
+
+.layout {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  padding: 0 1rem 2rem;
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1fr 1fr;
+}
+
+.card {
+  padding: 1.35rem;
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+.form-grid {
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+label {
+  display: grid;
+  gap: 0.45rem;
+  font-size: 0.93rem;
+}
+
+input,
+select,
+textarea {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 0.75rem 0.85rem;
+  background: white;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--green), #0d4a40);
+  color: white;
+  font-weight: 700;
+  padding: 0.8rem 1rem;
+  cursor: pointer;
+}
+
+.section-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.section-note,
+.status-message {
+  color: rgba(31, 47, 51, 0.75);
+}
+
+.summary-box {
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 0.85rem 0.95rem;
+  background: linear-gradient(135deg, #ffffff, #f8f4ee);
+}
+
+.summary-value {
+  margin-top: 0.35rem;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.rooms-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.room-card {
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 1rem;
+  background: linear-gradient(180deg, #fff, #f9f5ef);
+}
+
+.room-meta {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.room-count {
+  font-size: 0.82rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid var(--line);
+}
+
+.beds-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 1rem;
+}
+
+.bed-chip {
+  border: 1px solid transparent;
+  background: white;
+  color: var(--ink);
+}
+
+.bed-chip.available,
+.legend-chip.available {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.bed-chip.available:hover {
+  border-color: var(--green);
+}
+
+.bed-chip.selected {
+  background: var(--green);
+  color: white;
+}
+
+.bed-chip.resident,
+.legend-chip.resident {
+  background: var(--slate-soft);
+  color: #546168;
+  cursor: not-allowed;
+}
+
+.bed-chip.booked,
+.legend-chip.booked {
+  background: var(--amber-soft);
+  color: #9a5326;
+  cursor: not-allowed;
+}
+
+@media (max-width: 860px) {
+  .hero-inner,
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}

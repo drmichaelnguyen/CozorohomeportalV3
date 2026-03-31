@@ -1,0 +1,9 @@
+tunnel: ad9e15ac-e266-4795-ab83-bdf044b23270
+credentials-file: C:\Users\User\.cloudflared\ad9e15ac-e266-4795-ab83-bdf044b23270.json
+
+ingress:
+  - hostname: chatbot.cozorohome.com
+    service: http://127.0.0.1:4111
+  - hostname: shortterm.cozorohome.com
+    service: http://127.0.0.1:4115
+  - service: http_status:404

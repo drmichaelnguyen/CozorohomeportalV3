@@ -1,0 +1,662 @@
+[
+  {
+    "id": "2cac25fff9e3963dceae1229fe4d58a6f8a756cb",
+    "question": "o 3 thang co uu dai gi",
+    "answer": "3 thang: giam 500k goi 3 thang, co the +8% short term, va con uu dai khac",
+    "source": "playground-admin-correction",
+    "channel": "playground",
+    "createdAt": "2026-03-29T04:03:44.956Z",
+    "conversationKey": "learn-win-4",
+    "adminAuthor": "tester4",
+    "tags": [
+      "auto-learned",
+      "playground"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "88687bfe873396b3c21632172f1d7fac9032635d",
+    "question": "m là ai",
+    "answer": "m là ai tức là hỏi mày là ai đó",
+    "source": "playground-admin-correction",
+    "channel": "playground",
+    "createdAt": "2026-03-29T06:56:16.228Z",
+    "conversationKey": "0d3f342de8f0219d377d13ea",
+    "tags": [
+      "auto-learned",
+      "playground"
+    ],
+    "active": true,
+    "status": "rejected",
+    "reviewedAt": "2026-03-29T15:45:26.256Z",
+    "reviewedBy": "cozorohome@gmail.com"
+  },
+  {
+    "id": "fanpage-learn-003",
+    "question": "Ưu đãi này là tháng đầu hay mỗi tháng?",
+    "answer": "Dạ ưu đãi này là cho tháng đầu khi ký hợp đồng khách mới nha quý khách. Còn ưu đãi theo gói thì là ưu đãi thường xuyên trong thời gian ở ạ.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "discount",
+      "monthly",
+      "policy"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-004",
+    "question": "Q10 còn slot nữ gần ĐHYD không ạ?",
+    "answer": "Dạ Q10 vẫn có thể còn slot nữ nha quý khách. Nếu quý khách muốn, Cozoro sẽ chốt lại tình trạng chỗ trống theo thời điểm và tư vấn giường phù hợp ạ.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "availability",
+      "q10",
+      "female"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-005",
+    "question": "1 phòng có 6 giường đúng không?",
+    "answer": "Dạ Cozoro có phòng 6 giường và phòng 9 giường nha quý khách. Mình sẽ được chọn giường theo tình trạng trống của từng thời điểm ạ.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "room_capacity",
+      "bed_count"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-006",
+    "question": "Chi nhánh quận 6 có phải chỉ dành cho nữ không?",
+    "answer": "Dạ đúng rồi ạ, chi nhánh quận 6 hiện là chi nhánh dành riêng cho nữ nha quý khách.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "q6",
+      "female",
+      "policy"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-007",
+    "question": "Cọc 1 tháng hay có thể giữ chỗ 500k ạ?",
+    "answer": "Dạ thông thường bên mình cọc 1 tháng nha quý khách. Nếu chỉ giữ chỗ thì có thể có mức 500k tùy thời điểm và tình trạng phòng ạ.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "deposit",
+      "hold-room",
+      "policy"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-008",
+    "question": "1 phòng có 6-9 người hay 4-6 người vậy?",
+    "answer": "Dạ phòng có 6 giường hoặc 9 giường nha quý khách, nhưng thực tế sinh hoạt thường thoáng hơn vì không phải lúc nào cũng full giường ạ.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "room_capacity",
+      "bed_count"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-009",
+    "question": "Nếu ở 1-3 tháng thì phụ thu bao nhiêu?",
+    "answer": "Dạ nếu ở 1-3 tháng thì thường có phụ thu ngắn hạn 12% trên giá cơ bản ạ. Từ 3-5 tháng thì phụ thu khoảng 8%, còn 6 tháng trở lên thì không có phụ thu ngắn hạn nha quý khách.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "short-term",
+      "pricing",
+      "policy"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-010",
+    "question": "Quận 10 cho nam 1 người còn phòng không ạ?",
+    "answer": "Dạ Q10 vẫn có thể còn phòng nha quý khách. Cozoro sẽ kiểm tra tình trạng chỗ trống theo thời điểm và tư vấn giường phù hợp cho mình ạ.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "availability",
+      "male",
+      "q10"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-011",
+    "question": "Em là nhân viên y tế, ở 3 tháng thì có ưu đãi gì không ạ?",
+    "answer": "Dạ nhân viên y tế và sinh viên sẽ có ưu đãi riêng nha quý khách, ngoài ra ở 3 tháng còn có thể áp dụng khuyến mãi gói 3 tháng và ưu đãi tháng đầu cho khách mới nữa ạ. Cozoro sẽ chốt mức cuối cùng theo hồ sơ của mình để ra giá tốt nhất.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "discount",
+      "healthcare",
+      "short-term"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-012",
+    "question": "Tuần này mình đến xem phòng được không ạ?",
+    "answer": "Dạ được nha quý khách. Mình cứ nhắn trước thời gian dự kiến đến xem, Cozoro sẽ hỗ trợ sắp lịch và giữ thông tin cho tiện ạ.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "viewing",
+      "schedule"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-013",
+    "question": "Quận 10 cho nam, 1 người còn phòng không ạ?",
+    "answer": "Dạ Q10 cho nam 1 người hiện Cozoro sẽ kiểm tra tình trạng chỗ trống theo thời điểm giúp quý khách nha.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "availability",
+      "male",
+      "q10"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-014",
+    "question": "Em là nhân viên y tế, đi học 3 tháng thì ưu đãi sao ạ?",
+    "answer": "Dạ nhân viên y tế và sinh viên sẽ có ưu đãi riêng nha quý khách. Ở 3 tháng thì còn có thể áp dụng khuyến mãi gói 3 tháng và phụ thu ngắn hạn theo chính sách hiện hành ạ, Cozoro sẽ chốt mức cuối cùng để ra giá tốt nhất.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "discount",
+      "healthcare",
+      "short-term"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-015",
+    "question": "Mình có liên hệ chị Phụng rồi, Chủ nhật tuần này mình đến xem phòng.",
+    "answer": "Dạ Cozoro cảm ơn quý khách nhiều ạ. Chủ nhật mình cứ đến xem phòng theo lịch đã hẹn, Cozoro rất hân hạnh được đón tiếp mình nha.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "viewing",
+      "schedule"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-016",
+    "question": "Quận 10, 1 nữ, tài chính 2tr5 đổ lại ạ.",
+    "answer": "Dạ bên mình thỏa mãn điều kiện này nha quý khách. Với mức tài chính 2tr5 thì Cozoro sẽ tư vấn các option phù hợp nhất theo thời điểm và các khuyến mãi đang áp dụng ạ.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "female",
+      "q10",
+      "budget"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-017",
+    "question": "Em đang học thạc sĩ ạ.",
+    "answer": "Dạ học thạc sĩ vẫn được xem là nhu cầu ở hợp lệ nha quý khách. Cozoro sẽ hỗ trợ tư vấn ưu đãi phù hợp theo hồ sơ và thời gian mình muốn ở ạ.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "student",
+      "profile",
+      "policy"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-018",
+    "question": "Cho em xin hình với ạ.",
+    "answer": "Dạ được nha quý khách. Cozoro có thể hỗ trợ hình và video tham khảo để mình xem rõ hơn trước khi đến thực tế ạ.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "media",
+      "viewing"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-019",
+    "question": "Mình có ở q6 thôi ạ?",
+    "answer": "Dạ Cozoro có chi nhánh ở quận 6 dành riêng cho nữ nha quý khách. Nếu mình muốn, Cozoro sẽ tư vấn thêm chi nhánh phù hợp theo nhu cầu của mình ạ.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "q6",
+      "female",
+      "location"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-020",
+    "question": "Mình quan tâm dạng phòng dorm cho nữ",
+    "answer": "Dạ nếu mình quan tâm dorm cho nữ thì Cozoro có thể tư vấn chi nhánh phù hợp và chỗ trống hiện tại cho mình nha quý khách.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "female",
+      "dorm",
+      "lead"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-021",
+    "question": "Mình đi làm.",
+    "answer": "Dạ đi làm vẫn ở Cozoro được nha quý khách. Cozoro sẽ tư vấn theo chi nhánh, thời gian ở và ngân sách để ra lựa chọn phù hợp ạ.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "working",
+      "lead"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-022",
+    "question": "Xin giá và hình ảnh, địa chỉ ạ.",
+    "answer": "Dạ Cozoro hiện có chi nhánh quận 6 ở 491 Hậu Giang và quận 10 ở 7A/19/28 Thành Thái. Mình muốn xem chi nhánh nào thì Cozoro sẽ gửi hình và tư vấn giá phù hợp cho mình nha quý khách.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "pricing",
+      "media",
+      "location"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-023",
+    "question": "2 chi nhánh nằm ở đường nào ạ?",
+    "answer": "Dạ chi nhánh quận 6 ở 491 Hậu Giang, quận 6; còn chi nhánh quận 10 ở 7A/19/28 Thành Thái, quận 10 ạ.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "location",
+      "q6",
+      "q10"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-024",
+    "question": "Không, mình không phải bạn ngành y tế.",
+    "answer": "Dạ không sao ạ, Cozoro vẫn sẽ tư vấn ưu đãi phù hợp cho mình theo hồ sơ và nhu cầu ở thôi nha quý khách.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "discount",
+      "lead"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-025",
+    "question": "Chi phí như thế nào ạ?",
+    "answer": "Dạ chi phí ở Cozoro sẽ phụ thuộc chi nhánh, loại giường và thời gian mình ở nha quý khách. Nếu mình cho Cozoro biết Q6 hay Q10 thì mình sẽ báo giá và ưu đãi sát hơn ạ.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "pricing",
+      "lead"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-026",
+    "question": "Quận 10 thì sao ạ?",
+    "answer": "Dạ quận 10 đang có giá tham khảo từ 1.870.000đ cho giường trên và 1.980.000đ cho giường giữa/dưới, sau khuyến mãi thường sẽ mềm hơn nữa nha quý khách. Cozoro sẽ chốt theo thời gian ở và hồ sơ của mình ạ.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "pricing",
+      "q10"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-027",
+    "question": "Mình tham khảo trước ạ.",
+    "answer": "Dạ hoàn toàn được nha quý khách. Mình cứ tham khảo thoải mái, khi nào cần Cozoro sẽ tư vấn chi tiết theo chi nhánh, ngân sách và thời gian mình ở ạ.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "lead",
+      "survey"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-028",
+    "question": "Quận 10 còn phòng nào 4 người không ạ?",
+    "answer": "Dạ Cozoro hiện không thiết kế phòng 4 người nha quý khách. Bên mình có phòng 6 giường hoặc 9 giường để tối ưu không gian học tập và sinh hoạt ạ.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "room_capacity",
+      "q10"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-029",
+    "question": "Phòng 4 giường có không ạ?",
+    "answer": "Dạ bên mình không có phòng 4 giường nha quý khách. Hiện Cozoro chủ trương phòng 6 hoặc 9 giường ạ.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "room_capacity",
+      "bed_count"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-030",
+    "question": "M?y ng??i m?t ph?ng ??",
+    "answer": "D? t?y ph?ng th?c t? b?n m?nh th??ng kho?ng 3 ??n 6 ng??i, v? nhi?u l?c Cozoro s? c? ph?ng 6 ho?c 9 gi??ng t?y chi nh?nh v?i t?nh tr?ng tr?ng ?. N?u qu? kh?ch mu?n ?t ng??i h?n th? Cozoro s? ?u ti?n t? v?n ph?ng th?a tr??c cho m?nh nha.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "room_capacity",
+      "fanpage-case"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-031",
+    "question": "Nam m?i th?ng ???c gi?t mi?n ph? m?y l?n ??",
+    "answer": "D? theo case fanpage hi?n t?i th? c? d?n nam ???c gi?t mi?n ph? 6 l?n m?i th?ng, c?n n? l? 8 l?n ?. N?u c?n th?m l??t th? m?nh c? th? d?ng Cozoro Coins ?? mua th?m nha.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "laundry",
+      "coins",
+      "fanpage-case"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-032",
+    "question": "Cozoro Coins d?ng ?? l?m g? v?y ??",
+    "answer": "D? Cozoro Coins c? th? d?ng ?? mua th?m l??t gi?t s?y v? khi t?ch l?y ?? theo h?ng th?nh vi?n th? c?n c? th? quy ??i v?o m?t s? h?a ??n n?a ?. M?nh c?ng t?ch l?y l?u th? th??ng s? c?ng c? th?m ?u ??i nha.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "coins",
+      "laundry",
+      "fanpage-case"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-033",
+    "question": "Kh?ng ti?n xem ph?ng tr??c th? c? th? gi? ch? online kh?ng ??",
+    "answer": "D? ???c nha qu? kh?ch. Tr??ng h?p m?nh ch?a xem ph?ng tr??c th? Cozoro v?n c? th? h? tr? ??t c?c online ?? gi? ch?, r?i ch?t l?i khi m?nh s?p v?o ? ?.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "deposit",
+      "hold-room",
+      "fanpage-case"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-034",
+    "question": "C?c tr??c m?y ng?y v? c?c bao nhi?u ??",
+    "answer": "D? theo case t? v?n fanpage, b?n m?nh th??ng c?c tr??c khi v?o ? v? m?c c?c ti?u chu?n l? 1 th?ng ti?n nh? nha qu? kh?ch. N?u m?nh ?ang h?i gi? ch? s?m th? Cozoro s? b?o l?i m?c c?c ph? h?p theo th?i ?i?m ?.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "deposit",
+      "policy",
+      "fanpage-case"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-035",
+    "question": "Qu?n 10 g?n ?i?n Bi?n Ph? kh?ng ??",
+    "answer": "D? chi nh?nh Q10 ? khu Th?nh Th?i, g?n ??i h?c Y D??c, Ph?m Ng?c Th?ch v? B?ch Khoa n?n th??ng kh? thu?n ???ng ?i sang c?c khu trung t?m ?. N?u qu? kh?ch cho Cozoro bi?t ?o?n ?i?n Bi?n Ph? m?nh hay ?i th? Cozoro s? t? v?n s?t h?n nha.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "location",
+      "q10",
+      "fanpage-case"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-036",
+    "question": "M?nh l? nh?n vi?n y t? th? c? ?u ??i g? ??",
+    "answer": "D? nh?m sinh vi?n ho?c nh?n vi?n y t? th??ng ???c gi?m th?m 500.000 VND nha qu? kh?ch. Cozoro s? c?ng c?ng c?c ?u ??i ph? h?p kh?c theo t?ng ch??ng tr?nh ?ang ch?y ?.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "discount",
+      "medical",
+      "fanpage-case"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "fanpage-learn-037",
+    "question": "??t c?c online c? ?u ??i g? kh?ng ??",
+    "answer": "D? theo case fanpage th? kh?ch ??t c?c ph?ng online c? th? ???c gi?m th?m 200.000 VND trong nh?m ?u ??i kh?ch m?i nha qu? kh?ch. Cozoro s? ch?t l?i theo ch??ng tr?nh ?ang ?p d?ng t?i th?i ?i?m m?nh v?o ? ?.",
+    "source": "fanpage-import",
+    "channel": "facebook",
+    "createdAt": "2026-03-29T00:00:00.000Z",
+    "adminAuthor": "cozoro-admin",
+    "tags": [
+      "manual-trainer",
+      "discount",
+      "deposit",
+      "fanpage-case"
+    ],
+    "active": true,
+    "status": "approved"
+  },
+  {
+    "id": "a7d276c622c790cba72b7c670f5f0c2048ad6624",
+    "question": "điện nước ra sao",
+    "answer": "phải trả lời là điện nước wifi đã bao gồm trong chi phí ở",
+    "source": "playground-admin-correction",
+    "channel": "playground",
+    "createdAt": "2026-03-29T18:56:46.229Z",
+    "conversationKey": "0d3f342de8f0219d377d13ea",
+    "tags": [
+      "auto-learned",
+      "playground"
+    ],
+    "active": true,
+    "status": "pending"
+  },
+  {
+    "id": "be128dee4e99d77ed0830f2ba155cc36d74bca52",
+    "question": "có hồ bơi ko",
+    "answer": "phải nói là ở chi nhánh quận 6 có hồ bơi vì đó là chung cư cao cấp nhưng chưa bao gồm trong phí ở",
+    "source": "playground-admin-correction",
+    "channel": "playground",
+    "createdAt": "2026-03-29T18:58:43.280Z",
+    "conversationKey": "0d3f342de8f0219d377d13ea",
+    "tags": [
+      "auto-learned",
+      "playground"
+    ],
+    "active": true,
+    "status": "pending"
+  },
+  {
+    "id": "1d017323ba43a86944ea08c8cf33dd56dcd7dc97",
+    "question": "bạn bao nhiêu tuổi",
+    "answer": "câu này phải nói là Cozoro được thành lập từ năm 2019 bởi một anh Bác sỹ, nên có thể nói là Cozoro đã 7 tuổi rồi",
+    "source": "playground-admin-correction",
+    "channel": "playground",
+    "createdAt": "2026-03-29T19:00:39.262Z",
+    "conversationKey": "0d3f342de8f0219d377d13ea",
+    "tags": [
+      "auto-learned",
+      "playground"
+    ],
+    "active": true,
+    "status": "pending"
+  }
+]

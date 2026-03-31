@@ -1,0 +1,374 @@
+[
+  {
+    "id": "seed-router-001",
+    "input": "km co gi",
+    "decision": "allow",
+    "route": "simple_policy",
+    "reason": "Khach dang hoi khuyen mai bang viet tat.",
+    "tags": ["discount", "slang", "vi"],
+    "source": "seed-router",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "seed-router-002",
+    "input": "gia bn 3 thang",
+    "decision": "allow",
+    "route": "deep_policy",
+    "reason": "Khach hoi gia va ky han ngan bang viet tat.",
+    "tags": ["pricing", "short-term", "vi"],
+    "source": "seed-router",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "seed-router-003",
+    "input": "q10 con cho k",
+    "decision": "allow",
+    "route": "deep_policy",
+    "reason": "Hoi con giuong trong o chi nhanh q10 bang chat ngan.",
+    "tags": ["availability", "location", "vi"],
+    "source": "seed-router",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "seed-router-004",
+    "input": "d2 co may say k",
+    "decision": "allow",
+    "route": "simple_policy",
+    "reason": "Hoi tien ich may say bang slang.",
+    "tags": ["laundry", "vi"],
+    "source": "seed-router",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "seed-router-005",
+    "input": "ib tu van nha",
+    "decision": "allow",
+    "route": "simple_policy",
+    "reason": "Khach muon duoc tu van, van la intent ve dorm sales.",
+    "tags": ["support", "viewing", "vi"],
+    "source": "seed-router",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "seed-router-006",
+    "input": "m la ai",
+    "decision": "allow",
+    "route": "simple_policy",
+    "reason": "Hoi danh tinh bot.",
+    "tags": ["identity", "vi"],
+    "source": "seed-router",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "seed-router-007",
+    "input": "toi o 3 thang",
+    "context": "truoc do khach dang hoi khuyen mai",
+    "decision": "allow",
+    "route": "deep_policy",
+    "reason": "Can dung context de hieu day la follow-up.",
+    "tags": ["contextual", "discount", "short-term", "vi"],
+    "source": "seed-router",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "seed-router-008",
+    "input": "hom nay btc len bao nhieu",
+    "decision": "deny",
+    "route": "off_topic",
+    "reason": "Ngoai chu de dorm.",
+    "tags": ["off-topic"],
+    "source": "seed-router",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "seed-router-009",
+    "input": "viet code python cho toi",
+    "decision": "deny",
+    "route": "off_topic",
+    "reason": "Ngoai chu de dorm.",
+    "tags": ["off-topic"],
+    "source": "seed-router",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-010",
+    "input": "q10 con slot nu ko ạ",
+    "decision": "allow",
+    "route": "deep_policy",
+    "reason": "Hoi con cho nu o Q10 bang cach viet ngan va teencode.",
+    "tags": ["availability", "female", "q10", "slang", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-011",
+    "input": "uu dai nay la thang dau hay moi thang?",
+    "decision": "allow",
+    "route": "simple_policy",
+    "reason": "Cau hoi ve dieu kien uu dai va thoi han ap dung.",
+    "tags": ["discount", "pricing", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-012",
+    "input": "phong 6 giuong hay 9 giuong vay",
+    "decision": "allow",
+    "route": "deep_policy",
+    "reason": "Hoi loai phong va so giuong.",
+    "tags": ["room_capacity", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-013",
+    "input": "cuoi thang 4 moi het hop dong",
+    "context": "khach dang hoi thong tin tham khao truoc",
+    "decision": "allow",
+    "route": "deep_policy",
+    "reason": "Follow-up lien quan thoi gian chuyen tro va ke hoach phong.",
+    "tags": ["contextual", "timeline", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-014",
+    "input": "q6 chi co nu ko ạ",
+    "decision": "allow",
+    "route": "simple_policy",
+    "reason": "Hoi chinh sach gioi tinh cua chi nhanh Q6.",
+    "tags": ["location", "female", "q6", "policy", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-015",
+    "input": "cọc 1 tháng hay 500k giữ chỗ z ạ",
+    "decision": "allow",
+    "route": "simple_policy",
+    "reason": "Hoi chinh sach coc va giu cho.",
+    "tags": ["deposit", "policy", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-016",
+    "input": "1 phong 6-9 nguoi hay 4-6 nguoi",
+    "decision": "allow",
+    "route": "deep_policy",
+    "reason": "Hoi ro so giuong va so nguoi sinh hoat thuc te.",
+    "tags": ["room_capacity", "bed_count", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-017",
+    "input": "phu thu ngan han 1-3 thang hay 6 thang",
+    "decision": "allow",
+    "route": "deep_policy",
+    "reason": "Hoi ve phu thu theo ky han hop dong.",
+    "tags": ["short-term", "pricing", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-018",
+    "input": "q10 nam 1 nguoi con phong ko",
+    "decision": "allow",
+    "route": "deep_policy",
+    "reason": "Hoi chi nhanh Q10 cho nam 1 nguoi va con cho hay khong.",
+    "tags": ["availability", "male", "q10", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-019",
+    "input": "e la nhan vien y te o 3 thang",
+    "decision": "allow",
+    "route": "deep_policy",
+    "reason": "Hoi ve ho so va thoi han o de tinh uu dai.",
+    "tags": ["discount", "healthcare", "short-term", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-020",
+    "input": "cn nay tuan nay minh den xem phong",
+    "decision": "allow",
+    "route": "simple_policy",
+    "reason": "Cau xac nhan lich xem phong va ke hoach di xem.",
+    "tags": ["viewing", "schedule", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-021",
+    "input": "q10 nam 1 nguoi e",
+    "decision": "allow",
+    "route": "deep_policy",
+    "reason": "Hoi chi nhanh Q10 cho nam 1 nguoi bang cau ngan.",
+    "tags": ["availability", "male", "q10", "slang", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-022",
+    "input": "e la nvyt di hoc 3 thang",
+    "decision": "allow",
+    "route": "deep_policy",
+    "reason": "Hoi ho so nhan vien y te va ky han 3 thang de tinh uu dai.",
+    "tags": ["healthcare", "short-term", "discount", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-023",
+    "input": "cn chu nhat nay em den xem phong",
+    "decision": "allow",
+    "route": "simple_policy",
+    "reason": "Xac nhan lich xem phong trong tuan.",
+    "tags": ["viewing", "schedule", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-024",
+    "input": "q10 nu tai chinh 2tr5",
+    "decision": "allow",
+    "route": "deep_policy",
+    "reason": "Hoi chi nhanh Q10 cho nu va nganh sach tai chinh.",
+    "tags": ["availability", "female", "q10", "budget", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-025",
+    "input": "em hoc thac si",
+    "decision": "allow",
+    "route": "simple_policy",
+    "reason": "Thong tin ho so de phan loai uu dai, van la lead hop le.",
+    "tags": ["lead", "student", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-026",
+    "input": "cho em xin hinh voi",
+    "decision": "allow",
+    "route": "simple_policy",
+    "reason": "Yeu cau gui hinh va tu van them, van la nhu cau dorm.",
+    "tags": ["media", "viewing", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-027",
+    "input": "q6 co cho nu ko",
+    "decision": "allow",
+    "route": "simple_policy",
+    "reason": "Hoi chinh sach va con phong o q6 cho nu.",
+    "tags": ["female", "q6", "availability", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-028",
+    "input": "q10 la dorm cho nu",
+    "decision": "allow",
+    "route": "simple_policy",
+    "reason": "Xac nhan chi nhanh Q10 va doi tuong.",
+    "tags": ["q10", "female", "location", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-029",
+    "input": "em di lam",
+    "decision": "allow",
+    "route": "simple_policy",
+    "reason": "Thong tin doi tuong lead, van la hoi thoai ve o tro.",
+    "tags": ["lead", "working", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-030",
+    "input": "xin gia va hinh anh dia chi",
+    "decision": "allow",
+    "route": "deep_policy",
+    "reason": "Hoi nhieu thong tin cung luc ve gia, hinh va dia chi.",
+    "tags": ["pricing", "media", "location", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-031",
+    "input": "2 chi nhanh nam o duong nao",
+    "decision": "allow",
+    "route": "simple_policy",
+    "reason": "Hoi dia chi cua hai chi nhanh.",
+    "tags": ["location", "q6", "q10", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-032",
+    "input": "chao minh khong co banang y te",
+    "decision": "allow",
+    "route": "simple_policy",
+    "reason": "Khach xac nhan khong thuoc dien uu dai y te/sinh vien.",
+    "tags": ["lead", "discount", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-033",
+    "input": "chi phi nhu the nao a",
+    "decision": "allow",
+    "route": "deep_policy",
+    "reason": "Hoi chi phi va gia chung, can vao context de tu van tiep.",
+    "tags": ["pricing", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-034",
+    "input": "q10 thi sao a",
+    "decision": "allow",
+    "route": "deep_policy",
+    "reason": "Follow-up sang chi nhanh Q10 sau khi hoi chi phi chung.",
+    "tags": ["pricing", "q10", "contextual", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-035",
+    "input": "em tham khao truoc",
+    "decision": "allow",
+    "route": "simple_policy",
+    "reason": "Lead dang tham khao, van la nhu cau o tro hop le.",
+    "tags": ["lead", "survey", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-036",
+    "input": "q10 con phong 4 nguoi ko",
+    "decision": "allow",
+    "route": "deep_policy",
+    "reason": "Hoi so nguoi trong phong va co phong 4 nguoi hay khong.",
+    "tags": ["room_capacity", "q10", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  },
+  {
+    "id": "fanpage-router-037",
+    "input": "phong 4 giuong co khong",
+    "decision": "allow",
+    "route": "deep_policy",
+    "reason": "Hoi truc tiep ve phong 4 giuong.",
+    "tags": ["room_capacity", "bed_count", "vi"],
+    "source": "fanpage-import",
+    "createdAt": "2026-03-29T00:00:00.000Z"
+  }
+]

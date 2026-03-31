@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CozoroHome Guest Booking</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <div class="hero-inner">
+        <div class="hero-copy">
+          <p class="eyebrow">Standalone Direct Booking</p>
+          <h1 id="siteTitle">CozoroHome Guest Booking</h1>
+          <p>
+            Choose your stay, see the direct-booking price, and finish securely with Stripe checkout.
+          </p>
+        </div>
+        <aside class="hero-card">
+          <div class="hero-card-label">How it works</div>
+          <ol>
+            <li>Pick branch and dates</li>
+            <li>See which bed is actually open</li>
+            <li>Book that bed directly</li>
+          </ol>
+        </aside>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="card search-card">
+        <div class="section-head">
+          <h2>Search Availability</h2>
+          <button id="refreshBtn" type="button">Refresh</button>
+        </div>
+        <div class="form-grid">
+          <label>
+            Branch
+            <select id="branchId">
+              <option value="D7">D7</option>
+              <option value="D2">D2</option>
+            </select>
+          </label>
+          <label>
+            Check-in
+            <input id="checkIn" type="date" />
+          </label>
+          <label>
+            Check-out
+            <input id="checkOut" type="date" />
+          </label>
+        </div>
+        <p id="statusMessage" class="status-message"></p>
+      </section>
+
+      <section class="card booking-card">
+        <h2>Guest Details</h2>
+        <div class="form-grid">
+          <label>
+            Guest name
+            <input id="guestName" type="text" />
+          </label>
+          <label>
+            Guest email
+            <input id="guestEmail" type="email" />
+          </label>
+          <label>
+            Biological sex
+            <select id="bioSex">
+              <option value="">Select</option>
+              <option value="female">Female</option>
+              <option value="male">Male</option>
+            </select>
+          </label>
+          <label>
+            Guest phone
+            <input id="guestPhone" type="text" required />
+          </label>
+          <div class="summary-box">
+            <div class="summary-label">Selected bed</div>
+            <div id="selectedBedLabel" class="summary-value">None selected</div>
+          </div>
+          <div class="summary-box">
+            <div class="summary-label">Price</div>
+            <div id="priceSummary" class="summary-value">Enter dates to calculate</div>
+            <div id="priceDetails" class="section-note"></div>
+          </div>
+        </div>
+        <label>
+          Notes
+          <textarea id="notes" rows="4" placeholder="Arrival time, room preference, or anything the host should know."></textarea>
+        </label>
+        <button id="bookBtn" type="button">Pay and Book with Stripe</button>
+      </section>
+
+      <section class="card rooms-card wide">
+        <div class="section-head">
+          <div>
+            <h2>Choose a Bed</h2>
+            <p class="section-note">Enter guest details, dates, and biological sex to see beds that can be booked.</p>
+          </div>
+        </div>
+        <div id="roomsGrid" class="rooms-grid"></div>
+      </section>
+    </main>
+
+    <script src="/script.js"></script>
+  </body>
+</html>

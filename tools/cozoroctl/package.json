@@ -1,0 +1,16 @@
+{
+  "name": "cozoroctl",
+  "private": true,
+  "version": "0.1.0",
+  "type": "commonjs",
+  "bin": {
+    "cozoroctl": "cozoroctl.cjs"
+  },
+  "pkg": {
+    "scripts": [
+      "cozoroctl.cjs"
+    ],
+    "assets": []
+  }
+}
+

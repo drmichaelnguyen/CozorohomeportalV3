@@ -27,6 +27,7 @@ Start-Sleep -Seconds 1
 
 Write-Host "Starting Cloudflare named tunnel: $chatbotTunnelName" -ForegroundColor Cyan
 Write-Host "Tunnel URL: https://chatbot.cozorohome.com" -ForegroundColor Green
+Write-Host "Short-term URL: https://shortterm.cozorohome.com" -ForegroundColor Green
 Write-Host "Keep this PowerShell window open while chatbot tunnel is in use." -ForegroundColor Yellow
 
 & $cloudflaredPath tunnel --config $chatbotConfigPath run $chatbotTunnelName

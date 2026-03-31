@@ -533,7 +533,7 @@ export function HomeDashboardClient() {
                   onClick={() => setShowCoinDetail(true)}
                   className="rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700 hover:bg-sky-100 transition-colors"
                 >
-                  More detail
+                  {t("moreDetail", "More detail")}
                 </button>
                 <Link href="/billings/fine" className="text-sm font-medium text-sky-800">
                   {t("reviewFines", "Review fines")}
@@ -672,13 +672,13 @@ export function HomeDashboardClient() {
                         onChange={(e) => setFeedbackSatisfaction(e.target.value)}
                         className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs"
                       >
-                        <option value="satisfied">Satisfied</option>
-                        <option value="neutral">Neutral</option>
-                        <option value="unsatisfied">Unsatisfied</option>
+                        <option value="satisfied">{t("satisfied", "Satisfied")}</option>
+                        <option value="neutral">{t("neutral", "Neutral")}</option>
+                        <option value="unsatisfied">{t("unsatisfied", "Unsatisfied")}</option>
                       </select>
                       <input
                         type="text"
-                        placeholder="Optional comment"
+                        placeholder={t("optionalComment", "Optional comment")}
                         value={feedbackComment}
                         onChange={(e) => setFeedbackComment(e.target.value)}
                         className="w-full rounded-lg border border-slate-300 px-2 py-1 text-xs"
@@ -705,9 +705,9 @@ export function HomeDashboardClient() {
                           }}
                           className="flex-1 rounded-lg bg-emerald-600 py-1 text-xs font-bold text-white"
                         >
-                          Send
+                          {t("send", "Send")}
                         </button>
-                        <button onClick={() => setFeedbackTicketId("")} className="text-xs text-slate-500">Cancel</button>
+                        <button onClick={() => setFeedbackTicketId("")} className="text-xs text-slate-500">{t("cancel", "Cancel")}</button>
                       </div>
                     </div>
                   )}
@@ -732,8 +732,8 @@ export function HomeDashboardClient() {
           <div className="w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-[2rem] bg-white shadow-2xl animate-in zoom-in-95 slide-in-from-bottom-4 duration-300">
             <div className="flex items-center justify-between border-b border-slate-100 p-6">
               <div>
-                <h2 className="text-xl font-bold text-slate-900">Coin Portfolio</h2>
-                <p className="text-sm text-slate-500">Member: {client?.["Tên"] || "-"}</p>
+                <h2 className="text-xl font-bold text-slate-900">{t("coinPortfolio", "Coin Portfolio")}</h2>
+                <p className="text-sm text-slate-500">{t("memberLabel", "Member")}: {client?.["Tên"] || "-"}</p>
               </div>
               <button
                 onClick={() => setShowCoinDetail(false)}
@@ -750,26 +750,26 @@ export function HomeDashboardClient() {
               {/* Mini Summary Cards */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-sky-50/50 rounded-2xl p-4 border border-sky-100">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-sky-600">This Month Earned</div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-sky-600">{t("thisMonthEarned", "This Month Earned")}</div>
                   <div className="text-2xl font-bold text-sky-900 mt-1">+{formatCoins(coinSummary.earnedThisMonth)}</div>
                 </div>
                 <div className="bg-rose-50/50 rounded-2xl p-4 border border-rose-100">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-rose-600">This Month Used</div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-rose-600">{t("thisMonthUsed", "This Month Used")}</div>
                   <div className="text-2xl font-bold text-rose-900 mt-1">-{formatCoins(coinSummary.usedThisMonth)}</div>
                 </div>
                 <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Last Month Earned</div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{t("lastMonthEarned", "Last Month Earned")}</div>
                   <div className="text-xl font-semibold text-slate-700 mt-1">+{formatCoins(coinSummary.earnedLastMonth)}</div>
                 </div>
                 <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Last Month Used</div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{t("lastMonthUsed", "Last Month Used")}</div>
                   <div className="text-xl font-semibold text-slate-700 mt-1">-{formatCoins(coinSummary.usedLastMonth)}</div>
                 </div>
               </div>
 
               {/* Recent Entries */}
               <div className="space-y-4">
-                <h3 className="text-sm font-bold uppercase tracking-widest text-slate-400">Recent Transactions</h3>
+                <h3 className="text-sm font-bold uppercase tracking-widest text-slate-400">{t("recentTransactions", "Recent Transactions")}</h3>
                 <div className="space-y-3">
                   {coinSummary.recentEntries?.length ? (
                     coinSummary.recentEntries.map((entry, idx) => (
@@ -786,7 +786,7 @@ export function HomeDashboardClient() {
                       </div>
                     ))
                   ) : (
-                    <div className="text-center py-8 text-sm text-slate-400 italic">No recent transactions.</div>
+                    <div className="text-center py-8 text-sm text-slate-400 italic">{t("noRecentTransactions", "No recent transactions.")}</div>
                   )}
                 </div>
               </div>
@@ -797,7 +797,7 @@ export function HomeDashboardClient() {
                   onClick={() => setShowCoinDetail(false)}
                   className="inline-flex items-center gap-2 text-xs font-bold text-sky-700 hover:text-sky-800 bg-sky-50 px-6 py-3 rounded-full transition-all hover:shadow-sm"
                 >
-                  View Full History
+                  {t("viewFullHistory", "View Full History")}
                   <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                   </svg>

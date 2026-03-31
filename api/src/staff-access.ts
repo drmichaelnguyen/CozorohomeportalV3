@@ -330,8 +330,8 @@ export async function assertCanResetPortalPassword(input: {
 }) {
   const actor = await requirePortalRole(
     input.actorEmail,
-    ["owner", "app_admin"],
-    "Only app admins or owners can reset other users' passwords."
+    ["manager", "owner", "app_admin"],
+    "Only app admins, owners, or managers can reset other users' passwords."
   );
   const targetEmail = normalizeEmail(input.targetEmail);
 
@@ -350,6 +350,10 @@ export async function assertCanResetPortalPassword(input: {
 
   if (target.role === "app_admin") {
     throw new Error("App admin passwords can only be changed by the app admin account directly.");
+  }
+
+  if (actor.role === "manager" && target.role !== "user") {
+    throw new Error("Managers can only reset passwords for residents.");
   }
 
   if (actor.role === "owner" && target.role === "owner") {

@@ -85,12 +85,12 @@ function formatDateTime(value: string) {
   return new Date(value).toLocaleString();
 }
 
-function senderLabel(message: SupportMessage, sessionEmail: string) {
+function senderLabel(message: SupportMessage, sessionEmail: string, t: (key: string, fallback?: string) => string) {
   if (message.senderRole === "OWNER" || message.senderRole === "MANAGER") {
-    return "Cozoro";
+    return t("cozoroLabel", "Cozoro");
   }
 
-  return message.senderEmail === sessionEmail ? "You" : message.senderName || "Resident";
+  return message.senderEmail === sessionEmail ? t("you", "You") : message.senderName || t("userViewShort", "Cozoronian");
 }
 
 export function SupportClient() {
@@ -188,7 +188,7 @@ export function SupportClient() {
         if (newMsgs.length > 0) {
           if (soundEnabled) playNotificationSound();
           const latest = newMsgs[newMsgs.length - 1]!;
-          const senderDisplay = latest.isAnonymous ? "Anonymous" : (latest.senderName || "Neighbor");
+          const senderDisplay = latest.isAnonymous ? t("anonymous", "Anonymous") : (latest.senderName || t("neighbor", "Neighbor"));
           showBrowserNotification(senderDisplay, latest.body);
           window.dispatchEvent(new Event("new-group-message"));
         }
@@ -244,7 +244,7 @@ export function SupportClient() {
         };
 
         if (!response.ok) {
-          setStatus(data.error ?? "Unable to load support chat.");
+          setStatus(data.error ?? t("unableToLoadChat", "Unable to load support chat."));
           return;
         }
 
@@ -284,7 +284,7 @@ export function SupportClient() {
 
 
         if (!response.ok) {
-          setStatus(data.error ?? "Unable to load group messages.");
+          setStatus(data.error ?? t("unableToLoadGroupMessages", "Unable to load group messages."));
           return;
         }
 
@@ -307,7 +307,7 @@ export function SupportClient() {
       }
 
     } catch {
-      setStatus("Unable to load chat.");
+      setStatus(t("unableToLoadChat", "Unable to load chat."));
     } finally {
       setLoading(false);
     }
@@ -324,7 +324,7 @@ export function SupportClient() {
 
     const body = draft.trim();
     if (!body) {
-      setStatus("Please enter a message first.");
+      setStatus(t("enterMessageFirst", "Please enter a message first."));
       return;
     }
 
@@ -366,15 +366,14 @@ export function SupportClient() {
 
       const data = (await response.json()) as { error?: string };
       if (!response.ok) {
-        setStatus(data.error ?? "Unable to send your message.");
+        setStatus(data.error ?? t("unableToSendMessage", "Unable to send your message."));
         return;
       }
-
       setDraft("");
-      setStatus("Message sent.");
+      setStatus(t("messageSent", "Message sent."));
       await loadConversation();
     } catch {
-      setStatus("Unable to send your message.");
+      setStatus(t("unableToSendMessage", "Unable to send your message."));
     } finally {
       setSubmitting(false);
     }
@@ -383,7 +382,7 @@ export function SupportClient() {
   async function handleReportSubmit() {
     const finalLocation = reportLocation === "OTHER" ? customLocation : reportLocation;
     if (!finalLocation || !reportIssue) {
-      setStatus("Please fill in location and issue description.");
+      setStatus(t("fillRequiredFields", "Please fill in location and issue description."));
       return;
     }
 
@@ -403,11 +402,11 @@ export function SupportClient() {
 
       if (!response.ok) {
         const data = await response.json();
-        setStatus(data.error || "Unable to submit report.");
+        setStatus(data.error || t("unableToSubmitReport", "Unable to submit report."));
         return;
       }
 
-      setStatus("Report submitted successfully! 5000 coins added to your account.");
+      setStatus(t("reportSuccess", "Report submitted successfully! 5000 coins added to your account."));
       setShowReportModal(false);
       setReportLocation("");
       setCustomLocation("");
@@ -418,7 +417,7 @@ export function SupportClient() {
       setDraft(t("reportedIssueSystemMsg", `[System] Reported maintenance issue: ${reportIssue} at ${finalLocation}${reportMachine ? ` (${reportMachine})` : ""}`));
       // We don't auto-submit the message, let the user see the success first
     } catch {
-      setStatus("Unable to submit report.");
+      setStatus(t("unableToSubmitReport", "Unable to submit report."));
     } finally {
       setIsReporting(false);
     }
@@ -542,7 +541,7 @@ export function SupportClient() {
               >
                 {!sameSender && (
                   <span className="mb-1 px-2 text-[10px] font-bold text-slate-400">
-                    {isMe ? t("you", "You") : isCozoro ? "Cozoro" : message.senderName || t("neighbor", "Neighbor")}
+                    {isMe ? t("you", "You") : isCozoro ? t("cozoroLabel", "Cozoro") : (message.senderName || t("neighbor", "Neighbor"))}
                   </span>
                 )}
                 

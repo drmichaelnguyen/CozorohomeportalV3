@@ -13,7 +13,7 @@ import Link from "next/link";
 
 type StaffRole = "manager" | "owner" | "app_admin" | "mechanic";
 type StatsTab = "laundry" | "coins" | "payments" | "fines";
-type ClientAction = "call" | "sms" | "email" | "message" | "fine" | "coins" | "payment" | "";
+type ClientAction = "call" | "sms" | "email" | "message" | "fine" | "coins" | "payment" | "password" | "";
 type CoinEntryMode = "add" | "use";
 type ManagerView = "overview" | "client_list" | "owners_employees" | "support_chat" | "feedbacks" | "admin_cleaning" | "scheduling" | "controller";
 type StatSummaryItem = {
@@ -245,7 +245,7 @@ function formatCurrency(value: number) {
   return `${formatNumber(value)} VND`;
 }
 
-function summarizeLaundry(entries: LaundryEntry[]): StatSummaryItem[] {
+function summarizeLaundry(entries: LaundryEntry[], t: (key: string, fallback?: string) => string): StatSummaryItem[] {
   const now = Date.now();
   const upcoming = entries.filter((entry) => new Date(entry.start).getTime() > now).length;
   const completed = entries.filter((entry) => new Date(entry.end).getTime() <= now).length;
@@ -254,14 +254,14 @@ function summarizeLaundry(entries: LaundryEntry[]): StatSummaryItem[] {
     .sort((left, right) => new Date(left.start).getTime() - new Date(right.start).getTime())[0];
 
   return [
-    { label: "Total bookings", value: formatNumber(entries.length) },
-    { label: "Upcoming", value: formatNumber(upcoming), tone: upcoming > 0 ? "positive" : "default" },
-    { label: "Completed", value: formatNumber(completed) },
-    { label: "Next booking", value: nextBooking ? formatDateTime(nextBooking.start) : "No upcoming booking", tone: nextBooking ? "warning" : "default" }
+    { label: t("totalBookings", "Total bookings"), value: formatNumber(entries.length) },
+    { label: t("upcoming", "Upcoming"), value: formatNumber(upcoming), tone: upcoming > 0 ? "positive" : "default" },
+    { label: t("completed", "Completed"), value: formatNumber(completed) },
+    { label: t("nextBooking", "Next booking"), value: nextBooking ? formatDateTime(nextBooking.start) : t("noUpcomingBooking", "No upcoming booking"), tone: nextBooking ? "warning" : "default" }
   ];
 }
 
-function summarizeCoins(entries: CoinEntry[], client: ManagerClientRecord | null): StatSummaryItem[] {
+function summarizeCoins(entries: CoinEntry[], client: ManagerClientRecord | null, t: (key: string, fallback?: string) => string): StatSummaryItem[] {
   const deltas = entries.map((entry) =>
     parseLooseNumber(findRowValue(entry.row, ["coins"]) || entry.row.COINS || entry.row["COINS"])
   );
@@ -269,14 +269,14 @@ function summarizeCoins(entries: CoinEntry[], client: ManagerClientRecord | null
   const spent = Math.abs(deltas.filter((value) => value < 0).reduce((sum, value) => sum + value, 0));
 
   return [
-    { label: "Current balance", value: formatNumber(parseLooseNumber(client?.currentCoins != null ? String(client.currentCoins) : null)), tone: "positive" },
-    { label: "Lifetime coins", value: formatNumber(parseLooseNumber(client?.totalCoins != null ? String(client.totalCoins) : null)) },
-    { label: "Coins added", value: formatNumber(earned) },
-    { label: "Coins used", value: formatNumber(spent), tone: spent > 0 ? "warning" : "default" }
+    { label: t("currentBalance", "Current balance"), value: formatNumber(parseLooseNumber(client?.currentCoins != null ? String(client.currentCoins) : null)), tone: "positive" },
+    { label: t("lifetimeCoins", "Lifetime coins"), value: formatNumber(parseLooseNumber(client?.totalCoins != null ? String(client.totalCoins) : null)) },
+    { label: t("coinsAdded", "Coins added"), value: formatNumber(earned) },
+    { label: t("coinsUsed", "Coins used"), value: formatNumber(spent), tone: spent > 0 ? "warning" : "default" }
   ];
 }
 
-function summarizePayments(entries: PaymentEntry[]): StatSummaryItem[] {
+function summarizePayments(entries: PaymentEntry[], t: (key: string, fallback?: string) => string): StatSummaryItem[] {
   const amounts = entries.map((entry) =>
     parseLooseNumber(findRowValue(entry.row, ["sotien"]) || findRowValue(entry.row, ["amount"]))
   );
@@ -284,14 +284,14 @@ function summarizePayments(entries: PaymentEntry[]): StatSummaryItem[] {
   const latestPayment = entries[0]?.parsedTimestamp ?? null;
 
   return [
-    { label: "Payment count", value: formatNumber(entries.length) },
-    { label: "Total paid", value: formatCurrency(totalPaid), tone: "positive" },
-    { label: "Average payment", value: entries.length ? formatCurrency(Math.round(totalPaid / entries.length)) : formatCurrency(0) },
-    { label: "Latest payment", value: latestPayment ? formatDateTime(latestPayment) : "No payments yet" }
+    { label: t("paymentCount", "Payment count"), value: formatNumber(entries.length) },
+    { label: t("totalPaid", "Total paid"), value: formatCurrency(totalPaid), tone: "positive" },
+    { label: t("averagePayment", "Average payment"), value: entries.length ? formatCurrency(Math.round(totalPaid / entries.length)) : formatCurrency(0) },
+    { label: t("latestPayment", "Latest payment"), value: latestPayment ? formatDateTime(latestPayment) : t("noPaymentsYet", "No payments yet") }
   ];
 }
 
-function summarizeFines(entries: FineEntry[]): StatSummaryItem[] {
+function summarizeFines(entries: FineEntry[], t: (key: string, fallback?: string) => string): StatSummaryItem[] {
   const amounts = entries.map((entry) =>
     parseLooseNumber(findRowValue(entry.row, ["chiphi"]) || findRowValue(entry.row, ["amount"]))
   );
@@ -305,28 +305,28 @@ function summarizeFines(entries: FineEntry[]): StatSummaryItem[] {
     .sort((left, right) => new Date(left.parsedDueDate ?? "").getTime() - new Date(right.parsedDueDate ?? "").getTime())[0];
 
   return [
-    { label: "Fine count", value: formatNumber(entries.length) },
-    { label: "Unpaid fines", value: formatNumber(unpaidCount), tone: unpaidCount > 0 ? "warning" : "default" },
-    { label: "Total fine value", value: formatCurrency(totalFine) },
-    { label: "Nearest due date", value: nextDue?.parsedDueDate ? formatDateTime(nextDue.parsedDueDate) : "No due date", tone: nextDue?.parsedDueDate ? "warning" : "default" }
+    { label: t("fineCount", "Fine count"), value: formatNumber(entries.length) },
+    { label: t("unpaidFines", "Unpaid fines"), value: formatNumber(unpaidCount), tone: unpaidCount > 0 ? "warning" : "default" },
+    { label: t("totalFineValue", "Total fine value"), value: formatCurrency(totalFine) },
+    { label: t("nearestDueDate", "Nearest due date"), value: nextDue?.parsedDueDate ? formatDateTime(nextDue.parsedDueDate) : t("noDueDate", "No due date"), tone: nextDue?.parsedDueDate ? "warning" : "default" }
   ];
 }
 
-function getSummaryItems(tab: StatsTab, workspace: WorkspacePayload | null): StatSummaryItem[] {
+function getSummaryItems(tab: StatsTab, workspace: WorkspacePayload | null, t: (key: string, fallback?: string) => string): StatSummaryItem[] {
   if (!workspace) {
     return [];
   }
 
   if (tab === "laundry") {
-    return summarizeLaundry(workspace.stats.laundry);
+    return summarizeLaundry(workspace.stats.laundry, t);
   }
   if (tab === "coins") {
-    return summarizeCoins(workspace.stats.coins, workspace.client);
+    return summarizeCoins(workspace.stats.coins, workspace.client, t);
   }
   if (tab === "payments") {
-    return summarizePayments(workspace.stats.payments);
+    return summarizePayments(workspace.stats.payments, t);
   }
-  return summarizeFines(workspace.stats.fines);
+  return summarizeFines(workspace.stats.fines, t);
 }
 
 function normalizeBranchLabel(value: string) {
@@ -572,6 +572,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [isEditingClientProfile, setIsEditingClientProfile] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspacePayload | null>(null);
   const [activeTab, setActiveTab] = useState<StatsTab>("laundry");
+  const [clientNewPassword, setClientNewPassword] = useState("");
+  const [clientPasswordLoading, setClientPasswordLoading] = useState(false);
   const [messageDraft, setMessageDraft] = useState("");
   const [clientChatMessages, setClientChatMessages] = useState<ClientChatMessage[]>([]);
   const [clientChatLoading, setClientChatLoading] = useState(false);
@@ -701,22 +703,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     [clients, selectedMaHd]
   );
   const fineLabels = fineFieldLabels(language);
-  const fineUiText =
-    language === "vi"
-      ? {
-          suggestionPlaceholder: "T\u00ecm gi\u00e1 tr\u1ecb c\u0169 ho\u1eb7c nh\u1eadp m\u1edbi",
-          uploadHint: "Ch\u1ee5p \u1ea3nh ho\u1eb7c t\u1ea3i l\u00ean t\u1eeb \u0111i\u1ec7n tho\u1ea1i / m\u00e1y t\u00ednh",
-          uploading: "\u0110ang t\u1ea3i \u1ea3nh l\u00ean...",
-          uploaded: "\u0110\u00e3 t\u1ea3i \u1ea3nh l\u00ean Google Drive",
-          removeImage: "X\u00f3a \u1ea3nh"
-        }
-      : {
-          suggestionPlaceholder: "Search previous entries or type a new value",
-          uploadHint: "Take a picture or upload an image from phone or computer",
-          uploading: "Uploading image...",
-          uploaded: "Image uploaded to Google Drive",
-          removeImage: "Remove image"
-        };
+  const fineUiText = {
+    suggestionPlaceholder: t("suggestionPlaceholder", "Search previous entries or type a new value"),
+    uploadHint: t("uploadHint", "Take a picture or upload an image from phone or computer"),
+    uploading: t("uploading", "Uploading image..."),
+    uploaded: t("uploaded", "Image uploaded to Google Drive"),
+    removeImage: t("removeImage", "Remove image")
+  };
 
   const quickNav = useMemo(() => {
     const branches = new Map<string, Map<string, ManagerClientRecord[]>>();
@@ -768,7 +761,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
   const visibleRoomClients =
     visibleRooms.find((entry) => entry.room === selectedRoom)?.clients ?? [];
-  const summaryItems = useMemo(() => getSummaryItems(activeTab, workspace), [activeTab, workspace]);
+  const summaryItems = useMemo(() => getSummaryItems(activeTab, workspace, t), [activeTab, workspace, t]);
   const roomDiagram = useMemo(() => buildBunkDiagram(visibleRoomClients), [visibleRoomClients]);
   const coinEventSuggestions = useMemo(() => {
     const historicalEvents =
@@ -900,7 +893,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
     return [
       {
-        label: selectedBranch || "Rooms",
+        label: selectedBranch || t("rooms"),
         rooms
       }
     ];
@@ -912,10 +905,10 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     const totalBeds = overviewRooms.reduce((sum, room) => sum + room.clients.length, 0);
 
     return [
-      { label: "Branches", value: formatNumber(branchCount) },
-      { label: selectedBranch === "D7" ? "Floors" : "Rooms", value: formatNumber(selectedBranch === "D7" ? floors.size : overviewRooms.length) },
-      { label: selectedBranch === "D7" ? "Rooms" : "Occupied beds", value: formatNumber(selectedBranch === "D7" ? overviewRooms.length : totalBeds) },
-      { label: "Clients", value: formatNumber(selectedBranch ? totalBeds : clients.length) }
+      { label: t("branches"), value: formatNumber(branchCount) },
+      { label: selectedBranch === "D7" ? t("floors") : t("rooms"), value: formatNumber(selectedBranch === "D7" ? floors.size : overviewRooms.length) },
+      { label: selectedBranch === "D7" ? t("rooms") : t("occupiedBeds"), value: formatNumber(selectedBranch === "D7" ? overviewRooms.length : totalBeds) },
+      { label: t("clients"), value: formatNumber(selectedBranch ? totalBeds : clients.length) }
     ];
   }, [branchOverviewGroups, clients.length, quickNav.length, selectedBranch]);
 
@@ -1000,7 +993,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       const response = await fetch(`${API_BASE_URL}/staff/clients?actorEmail=${encodeURIComponent(normalizedEmail)}`);
       const data = (await response.json()) as { clients?: ManagerClientRecord[]; error?: string };
       if (!response.ok) {
-        setStatus(data.error ?? "Unable to load clients.");
+        setStatus(data.error ?? t("unableToLoadClients"));
         return;
       }
       const nextClients = data.clients ?? [];
@@ -1013,9 +1006,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         setSelectedMaHd(nextSelected?.maHd ?? "");
         fillClientForm(nextSelected);
       }
-      setStatus(syncFirst ? "Client data refreshed." : "Client list loaded.");
+      setStatus(syncFirst ? t("clientDataRefreshed") : t("clientListLoaded"));
     } catch {
-      setStatus("Unable to load clients.");
+      setStatus(t("unableToLoadClients"));
     } finally {
       setLoading(false);
     }
@@ -1033,14 +1026,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       );
       const data = (await response.json()) as WorkspacePayload & { error?: string };
       if (!response.ok) {
-        setStatus(data.error ?? "Unable to load client workspace.");
+        setStatus(data.error ?? t("unableToLoadWorkspace"));
         return;
       }
       setWorkspace(data);
       setActiveTab(tab);
-      setStatus(`Loaded ${tab} for ${data.client.name || data.client.email}.`);
+      setStatus(t("loadedTabFor").replace("{tab}", tab).replace("{name}", data.client.name || data.client.email));
     } catch {
-      setStatus("Unable to load client workspace.");
+      setStatus(t("unableToLoadWorkspace"));
     } finally {
       setLoading(false);
     }
@@ -1057,7 +1050,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       const myEntry = (data.staff ?? []).find((s) => s.email.trim().toLowerCase() === normalizedEmail);
       if (myEntry?.name) setSelfDisplayName(myEntry.name);
     } else {
-      setStatus(data.error ?? "Unable to load owners and employees.");
+      setStatus(data.error ?? t("unableToLoadTeam"));
     }
   }
 
@@ -1142,16 +1135,16 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         void fetchDevices();
       } else {
         const data = await response.json();
-        alert(data.error || "Failed to control AC");
+        alert(data.error || t("failedControlAc"));
       }
     } catch (err) {
-      alert("Network error controlling AC");
+      alert(t("networkErrorAc"));
     }
   };
 
   const handleMachineTrigger = async (machineId: string, deviceType: "laundry" | "airfryer") => {
     // AntiGravity: Manager manual override warning
-    if (!window.confirm(`WARNING: Manual override for ${machineId}. This will bypass resident booking schedules. Proceed?`)) {
+    if (!window.confirm(t("manualOverrideWarning").replace("{id}", machineId))) {
       return;
     }
     try {
@@ -1165,13 +1158,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         body: JSON.stringify({ machineId })
       });
       if (response.ok) {
-        alert(`${machineId} triggered successfully.`);
+        alert(t("triggeredSuccess").replace("{id}", machineId));
       } else {
         const data = await response.json();
-        alert(data.error || `Failed to trigger ${deviceType}`);
+        alert(data.error || t("failedToTrigger").replace("{type}", deviceType));
       }
     } catch (err) {
-      alert(`Network error triggering ${deviceType}`);
+      alert(t("networkErrorTrigger").replace("{type}", deviceType));
     }
   };
 
@@ -1192,7 +1185,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       });
       const data = (await response.json()) as { error?: string };
       if (!response.ok) {
-        setStatus(data.error ?? "Request failed.");
+        setStatus(data.error ?? t("requestFailed"));
         return;
       }
       if (after) {
@@ -1202,7 +1195,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       setEditValues({});
       setStatus(successMessage);
     } catch {
-      setStatus("Request failed.");
+      setStatus(t("requestFailed"));
     } finally {
       setLoading(false);
     }
@@ -1221,12 +1214,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       );
       const data = (await response.json()) as { messages?: ClientChatMessage[]; error?: string };
       if (!response.ok) {
-        setStatus(data.error ?? "Unable to load client chat.");
+        setStatus(data.error ?? t("unableToLoadChat"));
         return;
       }
       setClientChatMessages(data.messages ?? []);
     } catch {
-      setStatus("Unable to load client chat.");
+      setStatus(t("unableToLoadChat"));
     } finally {
       setClientChatLoading(false);
     }
@@ -1238,12 +1231,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       const response = await fetch("/api/feedback");
       const data = (await response.json()) as { entries?: FeedbackEntry[]; error?: string };
       if (!response.ok) {
-        setStatus(data.error ?? "Unable to load feedbacks.");
+        setStatus(data.error ?? t("unableToLoadFeedbacks"));
         return;
       }
       setFeedbackEntries(data.entries ?? []);
     } catch {
-      setStatus("Unable to load feedbacks.");
+      setStatus(t("unableToLoadFeedbacks"));
     } finally {
       setFeedbackLoading(false);
     }
@@ -1292,15 +1285,15 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       });
       const data = (await response.json()) as { url?: string; fileName?: string; error?: string };
       if (!response.ok || !data.url) {
-        setStatus(data.error ?? "Unable to upload fine image.");
+        setStatus(data.error ?? t("unableToUploadFineImage"));
         return;
       }
 
       setFineImage(data.url);
       setFineImageFileName(data.fileName ?? file.name);
-      setStatus("Fine image uploaded.");
+      setStatus(t("fineImageUploaded"));
     } catch {
-      setStatus("Unable to upload fine image.");
+      setStatus(t("unableToUploadFineImage"));
     } finally {
       setFineImageUploading(false);
     }
@@ -1332,9 +1325,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   if (!isStaffSession) {
     return (
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h1 className="text-2xl font-semibold text-slate-900">Cozoro Side</h1>
+        <h1 className="text-2xl font-semibold text-slate-900">{t("cozoroSide")}</h1>
         <p className="mt-2 text-sm text-slate-600">
-          Sign in with a Cozoro, manager, or owner account to search clients, send messages, create fine tickets, add coin entries, and review client statistics.
+          {t("staffLoginRequired")}
         </p>
       </section>
     );
@@ -1345,9 +1338,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h1 className="text-2xl font-semibold text-slate-900">Management Workspace</h1>
+              <h1 className="text-2xl font-semibold text-slate-900">{t("managementWorkspace")}</h1>
               <p className="mt-2 text-sm text-slate-600">
-                Search clients, edit their profile, send messages, create fine tickets and coin entries, then open laundry, coins, payments, or fines from latest to oldest.
+                {t("managementWorkspaceDesc")}
               </p>
             </div>
           <button
@@ -1356,7 +1349,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             disabled={loading}
             className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60"
           >
-            Refresh data
+            {t("refreshData")}
           </button>
         </div>
         {status ? <p className="mt-4 text-sm text-slate-700">{status}</p> : null}
@@ -1375,7 +1368,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   : "border-transparent text-slate-400 hover:text-slate-600"
               }`}
             >
-              1. Browse List
+              {t("browseList")}
             </button>
             {selectedMaHd && (
               <button
@@ -1387,7 +1380,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     : "border-transparent text-slate-400 hover:text-slate-600"
                 }`}
               >
-                2. Client Details
+                {t("clientDetailsTab")}
               </button>
             )}
           </div>
@@ -1403,7 +1396,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   selectedBranch === "D2" ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700"
                 }`}
               >
-                Branch D2
+                {t("branchD2")}
               </button>
               <button
                 type="button"
@@ -1412,13 +1405,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   selectedBranch === "D7" ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700"
                 }`}
               >
-                Branch D7
+                {t("branchD7")}
               </button>
               <Link
                 href="/support?newGroup=true"
                 className="rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-medium text-sky-700 transition-all hover:bg-sky-100"
               >
-                + New Group Message
+                {t("newGroupMessage")}
               </Link>
             </div>
             <div className="flex rounded-xl bg-slate-100 p-1 shadow-inner">
@@ -1429,7 +1422,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   clientListMode === "diagram" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
                 }`}
               >
-                Diagram
+                {t("diagram")}
               </button>
               <button
                 type="button"
@@ -1438,7 +1431,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   clientListMode === "table" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
                 }`}
               >
-                Table
+                {t("table")}
               </button>
             </div>
           </div>
@@ -1460,8 +1453,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             </span>
                           )}
                           <div className="flex items-center justify-between border-b border-slate-50 pb-2">
-                            <span className="text-sm font-bold text-slate-900">Room {room.room}</span>
-                            <span className="text-[10px] font-medium text-slate-500">{room.clients.length} beds</span>
+                            <span className="text-sm font-bold text-slate-900">{t("roomLabel")} {room.room}</span>
+                            <span className="text-[10px] font-medium text-slate-500">{room.clients.length} {t("bedsLabel")}</span>
                           </div>
                           <div className="mt-3 flex flex-wrap gap-3">
                             {room.diagram.bunks.map((bunk) => (
@@ -1487,7 +1480,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                             ? "border-emerald-100 bg-emerald-50 text-emerald-700"
                                             : "border-dashed border-slate-200 bg-slate-25 text-slate-300"
                                       }`}
-                                      title={client ? `${client.name} (Bed ${slot.bedNumber})` : `Bed ${slot.bedNumber} (Empty)`}
+                                      title={client ? `${client.name} (${t("bedLabel")} ${slot.bedNumber})` : `${t("bedLabel")} ${slot.bedNumber} (${t("emptyLabel")})`}
                                     >
                                       {client && (
                                         <span className="absolute left-0.5 top-0.5 text-[7px] leading-none text-emerald-600/70">
@@ -1515,7 +1508,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 <table className="min-w-full divide-y divide-slate-200">
                   <thead className="bg-slate-50">
                     <tr>
-                      {["Name", "Branch", "Room", "Bed", "Contract", "Phone", "Coins", "Status"].map((header) => (
+                      {[t("tableHeaderName"), t("branch"), t("roomLabel"), t("bedLabel"), t("tableHeaderContract"), t("tableHeaderPhone"), t("coins"), t("tableHeaderStatus")].map((header) => (
                         <th key={header} className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
                           {header}
                         </th>
@@ -1543,7 +1536,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{getClientPhone(client)}</td>
                           <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-emerald-600">{client.currentCoins}</td>
                           <td className="whitespace-nowrap px-6 py-4 text-xs">
-                             <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700 font-medium">Active</span>
+                             <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700 font-medium">{t("activeStatus")}</span>
                           </td>
                         </tr>
                       ))}
@@ -1559,9 +1552,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Selected Client</h2>
+                <h2 className="text-lg font-semibold text-slate-900">{t("selectedClient")}</h2>
                 <p className="mt-1 text-sm text-slate-600">
-                  {selectedClient ? `${selectedClient.name || selectedClient.email} • ${selectedClient.maHd}` : "Choose a client from the list."}
+                  {selectedClient ? `${selectedClient.name || selectedClient.email} • ${selectedClient.maHd}` : t("chooseClientPrompt")}
                 </p>
               </div>
               <div className="flex flex-wrap gap-3">
@@ -1571,7 +1564,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   disabled={!selectedClient}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60"
                 >
-                  {showClientDetails ? "Hide details" : "Show details"}
+                  {showClientDetails ? t("hideDetails") : t("showDetails")}
                 </button>
                 <button
                   type="button"
@@ -1579,7 +1572,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   disabled={loading || !selectedClient || isEditingClientProfile}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60"
                 >
-                  Edit profile
+                  {t("editProfile")}
                 </button>
                 {selectedClient && (
                   <>
@@ -1587,13 +1580,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       href={`/support?tab=room&groupId=ROOM_${normalizeBranchLabel(selectedClient.branch)}_${resolveClientRoom(selectedClient)}`}
                       className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-medium text-sky-700 hover:bg-sky-100"
                     >
-                      Message Room
+                      {t("messageRoom")}
                     </Link>
                     <Link
                       href={`/support?tab=branch&groupId=BRANCH_${normalizeBranchLabel(selectedClient.branch)}`}
                       className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
                     >
-                      Message Branch
+                      {t("messageBranch")}
                     </Link>
                   </>
                 )}
@@ -1605,7 +1598,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     void postJson(
                       `${API_BASE_URL}/staff/client-sheet-update`,
                       { actorEmail: normalizedEmail, maHd: selectedClient?.maHd ?? "", values: clientForm },
-                      "Client profile updated.",
+                      t("clientProfileUpdated"),
                       async () => {
                         await loadClients(false);
                       }
@@ -1614,7 +1607,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   disabled={loading || !selectedClient || !isEditingClientProfile}
                   className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
                 >
-                  Submit profile changes
+                  {t("submitProfileChanges")}
                 </button>
                 <button
                   type="button"
@@ -1622,7 +1615,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   disabled={loading || !selectedClient || !isEditingClientProfile}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60"
                 >
-                  Cancel edit
+                  {t("cancelEdit")}
                 </button>
               </div>
             </div>
@@ -1631,31 +1624,31 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               <div className="mt-4 space-y-4">
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Contract</div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("tableHeaderContract")}</div>
                     <div className="mt-2 text-base font-semibold text-slate-900">{selectedClient.maHd || "-"}</div>
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Branch</div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("branch")}</div>
                     <div className="mt-2 text-base font-semibold text-slate-900">{selectedClient.branch || "-"}</div>
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Room / Bed</div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("roomLabel")} / {t("bedLabel")}</div>
                     <div className="mt-2 text-base font-semibold text-slate-900">{resolveClientRoom(selectedClient)} / {selectedClient.bed || "-"}</div>
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Coins</div>
-                    <div className="mt-2 text-base font-semibold text-slate-900">{selectedClient.currentCoins || "0"} current</div>
-                    <div className="mt-1 text-sm text-slate-600">{selectedClient.totalCoins || "0"} lifetime</div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("coins")}</div>
+                    <div className="mt-2 text-base font-semibold text-slate-900">{selectedClient.currentCoins || "0"} {t("categoryCoinsCurrent")}</div>
+                    <div className="mt-1 text-sm text-slate-600">{selectedClient.totalCoins || "0"} {t("categoryCoinsLifetime")}</div>
                   </div>
                 </div>
 
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="rounded-2xl border border-slate-200 p-4">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Email</div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("emailLabel")}</div>
                     <div className="mt-2 text-sm text-slate-800">{selectedClient.email || "-"}</div>
                   </div>
                   <div className="rounded-2xl border border-slate-200 p-4">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Phone</div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("phone")}</div>
                     <div className="mt-2 text-sm text-slate-800">{selectedClientPhone || "-"}</div>
                   </div>
                 </div>
@@ -1687,9 +1680,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Client Actions</h2>
+                <h2 className="text-lg font-semibold text-slate-900">{t("clientActions")}</h2>
                 <p className="mt-1 text-sm text-slate-600">
-                  Choose an action first, then complete it in the popup form.
+                  {t("chooseActionPrompt")}
                 </p>
               </div>
               <div className="text-sm text-slate-600">
@@ -1699,13 +1692,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             </div>
               <div className="mt-4 flex flex-wrap gap-3">
                   {[
-                    ["call", "Call client"],
-                    ["sms", "Text client"],
-                    ["email", "Email client"],
-                    ["message", "Open chat"],
-                    ["fine", "New fine ticket"],
-                  ["coins", "New coins entry"],
-                  ...(canCreatePaymentReceipt ? ([["payment", "New payment receipt"]] as const) : [])
+                    ["call", t("callClient")],
+                    ["sms", t("textClient")],
+                    ["email", t("emailClient")],
+                    ["message", t("openChat")],
+                    ["fine", t("newFineTicket")],
+                  ["coins", t("newCoinsEntry")],
+                  ["password", t("changePassword", "Change password")],
+                  ...(canCreatePaymentReceipt ? ([["payment", t("newPaymentReceipt")]] as const) : [])
                 ].map(([value, label]) => (
                   <button
                   key={value}
@@ -1728,25 +1722,27 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <h3 className="text-base font-semibold text-slate-900">
                     {activeAction === "call"
-                      ? "Call Client"
+                      ? t("callClient")
                       : activeAction === "sms"
-                        ? "Text Client"
+                        ? t("textClient")
                         : activeAction === "email"
-                          ? "Email Client"
+                          ? t("emailClient")
                           : activeAction === "message"
-                            ? "Client Chat"
+                            ? t("clientChatTitle")
                             : activeAction === "payment"
-                                ? "Create Payment Receipt"
+                                ? t("createPaymentReceipt")
                               : activeAction === "fine"
-                                ? "Create Fine Ticket"
-                                : "Create Coins Entry"}
+                                ? t("createFineTicket")
+                                : activeAction === "password"
+                                  ? t("changePassword", "Change password")
+                                  : t("createCoinsEntry")}
                   </h3>
                   <button
                     type="button"
                     onClick={() => setActiveAction("")}
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
                   >
-                    Close
+                    {t("closeLabel")}
                   </button>
                 </div>
 
@@ -1772,7 +1768,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         }
                       }}
                     >
-                      Start call
+                      {t("startCall")}
                     </a>
                   </div>
                 ) : null}
@@ -1826,7 +1822,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         }
                       }}
                     >
-                      Open email
+                      {t("openEmail")}
                     </a>
                   </div>
                 ) : null}
@@ -1835,7 +1831,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   <div className="mt-4 space-y-4">
                     <div className="flex items-center justify-between gap-3">
                       <div className="text-sm text-slate-600">
-                        Conversation with {selectedClient?.name || selectedClient?.email || "client"}
+                        {t("conversationWith").replace("{name}", selectedClient?.name || selectedClient?.email || t("userViewShort"))}
                       </div>
                       <button
                         type="button"
@@ -1843,7 +1839,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         disabled={clientChatLoading || !selectedClient}
                         className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 disabled:opacity-60"
                       >
-                        Refresh chat
+                        {t("refreshChat")}
                       </button>
                     </div>
                     <div className="max-h-80 space-y-3 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4">
@@ -1875,7 +1871,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         })
                       ) : (
                         <div className="text-sm text-slate-500">
-                          {clientChatLoading ? "Loading chat..." : "No chat messages yet. Start the conversation below."}
+                          {clientChatLoading ? t("loadingChat") : t("noChatMessagesStarted")}
                         </div>
                       )}
                     </div>
@@ -1884,7 +1880,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       onChange={(event) => setMessageDraft(event.target.value)}
                       rows={4}
                       className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm"
-                      placeholder="Write a reply to this client..."
+                      placeholder={t("replyPlaceholder")}
                     />
                     <button
                       type="button"
@@ -1917,7 +1913,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           rentPaymentMode === "rent" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
                         }`}
                       >
-                        Rent Calculation
+                        {t("rentCalculation")}
                       </button>
                       <button
                         type="button"
@@ -1926,7 +1922,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           rentPaymentMode === "simple" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
                         }`}
                       >
-                        Simple Receipt
+                        {t("simpleReceipt")}
                       </button>
                     </div>
 
@@ -1934,7 +1930,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       <div className="space-y-4">
                         <div className="grid gap-3 sm:grid-cols-2">
                           <label className="block text-sm font-medium text-slate-700">
-                            Target Month
+                            {t("targetMonth")}
                             <input
                               type="month"
                               value={targetMonthInput}
@@ -1943,7 +1939,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             />
                           </label>
                           <label className="block text-sm font-medium text-slate-700">
-                            Manager Discount (VND)
+                            {t("managerDiscountVnd")}
                             <input
                               type="number"
                               value={managerDiscountInput}
@@ -1967,11 +1963,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                   managerDiscountVnd: Number(managerDiscountInput)
                                 })
                               });
-                              if (!response.ok) throw new Error("Calculation failed");
+                              if (!response.ok) throw new Error(t("requestFailed"));
                               const data = await response.json();
                               setRentBreakdown(data);
                             } catch (err) {
-                              alert(err instanceof Error ? err.message : "Error");
+                              alert(err instanceof Error ? err.message : t("requestFailed"));
                             } finally {
                               setCalculatingRent(false);
                             }
@@ -1979,81 +1975,81 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           disabled={calculatingRent || !selectedClient}
                           className="w-full rounded-xl bg-slate-900 py-3 text-sm font-semibold text-white transition-all hover:bg-slate-800 disabled:opacity-50"
                         >
-                          {calculatingRent ? "Calculating..." : "Calculate Rent Breakdown"}
+                          {calculatingRent ? t("calculating") : t("calculateRentBreakdown")}
                         </button>
 
                         {rentBreakdown ? (
                           <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                            <h4 className="text-sm font-bold text-slate-900">Breakdown for {rentBreakdown.month}</h4>
+                            <h4 className="text-sm font-bold text-slate-900">{t("breakdownFor").replace("{month}", rentBreakdown.month)}</h4>
                             
                             <div className="space-y-2 text-sm">
                               <div className="flex justify-between">
-                                <span className="text-slate-600">Base Rent</span>
+                                <span className="text-slate-600">{t("baseRent")}</span>
                                 <span className="font-medium">{rentBreakdown.baseRent.toLocaleString()} VND</span>
                               </div>
                               
                               {rentBreakdown.tenureSurchargeVnd > 0 && (
                                 <div className="flex justify-between text-amber-600">
-                                  <span>Tenure Surcharge ({rentBreakdown.tenureSurchargeRate * 100}%)</span>
+                                  <span>{t("tenureSurcharge")} ({rentBreakdown.tenureSurchargeRate * 100}%)</span>
                                   <span>+{rentBreakdown.tenureSurchargeVnd.toLocaleString()} VND</span>
                                 </div>
                               )}
 
                               {rentBreakdown.professionalDiscountVnd > 0 && (
                                 <div className="flex justify-between text-emerald-600">
-                                  <span>Professional Discount (10%)</span>
+                                  <span>{t("professionalDiscount")} (10%)</span>
                                   <span>-{rentBreakdown.professionalDiscountVnd.toLocaleString()} VND</span>
                                 </div>
                               )}
 
                               {rentBreakdown.planDiscountVnd > 0 && (
                                 <div className="flex justify-between text-emerald-600">
-                                  <span>Plan Discount</span>
+                                  <span>{t("planDiscount")}</span>
                                   <span>-{rentBreakdown.planDiscountVnd.toLocaleString()} VND</span>
                                 </div>
                               )}
 
                               {rentBreakdown.managerDiscountVnd > 0 && (
                                 <div className="flex justify-between text-emerald-600">
-                                  <span>Manager Discount</span>
+                                  <span>{t("managerDiscount")}</span>
                                   <span>-{rentBreakdown.managerDiscountVnd.toLocaleString()} VND</span>
                                 </div>
                               )}
 
                               <div className="flex justify-between">
-                                <span className="text-slate-600">Parking Fee</span>
+                                <span className="text-slate-600">{t("parkingFee")}</span>
                                 <span className="font-medium">{rentBreakdown.parkingFeeVnd.toLocaleString()} VND</span>
                               </div>
 
                               <div className="flex justify-between">
-                                <span className="text-slate-600">Laundry Fee ({rentBreakdown.details.laundryCount.cash} paid uses)</span>
+                                <span className="text-slate-600">{t("laundryFeeLabel").replace("{count}", rentBreakdown.details.laundryCount.cash.toString())}</span>
                                 <span className="font-medium">{rentBreakdown.laundryFeeVnd.toLocaleString()} VND</span>
                               </div>
 
                               <div className="flex justify-between">
-                                <span className="text-slate-600">Unpaid Fines</span>
+                                <span className="text-slate-600">{t("unpaidFinesLabel")}</span>
                                 <span className="font-medium">{rentBreakdown.finesVnd.toLocaleString()} VND</span>
                               </div>
 
                               <div className="my-2 border-t border-slate-100 pt-2 font-bold flex justify-between">
-                                <span>Subtotal</span>
+                                <span>{t("subtotal")}</span>
                                 <span>{rentBreakdown.totalBeforeCoinsVnd.toLocaleString()} VND</span>
                               </div>
 
                               <div className="flex justify-between text-sky-600">
-                                <span>Coin Usage ({rentBreakdown.recommendedCoinUsage} coins)</span>
+                                <span>{t("coinUsageLabel").replace("{count}", rentBreakdown.recommendedCoinUsage.toString())}</span>
                                 <span>-{rentBreakdown.recommendedCoinValueVnd.toLocaleString()} VND</span>
                               </div>
 
                               <div className="my-2 rounded-xl bg-slate-900 p-4 text-white flex justify-between items-center">
-                                <span className="text-xs uppercase tracking-wider opacity-70 font-bold">Total Due</span>
+                                <span className="text-xs uppercase tracking-wider opacity-70 font-bold">{t("totalDue")}</span>
                                 <span className="text-xl font-bold">{rentBreakdown.finalTotalVnd.toLocaleString()} VND</span>
                               </div>
                             </div>
 
                             <div className="space-y-3 pt-3">
                               <label className="block text-sm font-medium text-slate-700">
-                                Payer Name
+                                {t("payerName")}
                                 <input
                                   type="text"
                                   value={paymentPayer}
@@ -2103,11 +2099,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     ) : (
                       <div className="space-y-3">
                         <label className="block text-sm font-medium text-slate-700">
-                          Số tiền / Amount
+                          {t("amountLabel")}
                           <input type="number" min="1" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2" />
                         </label>
                         <div className="block text-sm font-medium text-slate-700">
-                          Mục đích / Purpose
+                          {t("purposeLabel")}
                           <div className="mt-2 flex flex-wrap gap-2">
                             {paymentPurposeSuggestions.map((option) => {
                               const isSelected = paymentPurposeSelections.some((s) => s.toLowerCase() === option.toLowerCase());
@@ -2143,7 +2139,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 }
                               }}
                               className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                              placeholder="Mục đích khác..."
+                              placeholder={t("otherPurposePlaceholder")}
                             />
                             <button
                               type="button"
@@ -2156,41 +2152,41 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           </div>
                         </div>
                         <label className="block text-sm font-medium text-slate-700">
-                          Mục đích - Ghi rõ / Details
+                          {t("detailsLabel")}
                           <textarea value={paymentDetails} onChange={(event) => setPaymentDetails(event.target.value)} rows={2} className="mt-1 w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm" />
                         </label>
                         <div className="grid grid-cols-2 gap-3">
                           <label className="block text-sm font-medium text-slate-700">
-                            Chi nhánh Dorm
+                            {t("dormBranch")}
                             <input type="text" value={paymentBranch} onChange={(event) => setPaymentBranch(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
                           </label>
                           <label className="block text-sm font-medium text-slate-700">
-                            Cozoro Member
+                            {t("cozoroMember")}
                             <input type="text" value={paymentMemberTier} onChange={(event) => setPaymentMemberTier(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
                           </label>
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                           <label className="block text-sm font-medium text-slate-700">
-                            Số Coins hiện có
+                            {t("currentCoins")}
                             <input type="text" value={paymentCurrentCoins} onChange={(event) => setPaymentCurrentCoins(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
                           </label>
                           <label className="block text-sm font-medium text-slate-700">
-                            Địa chỉ email người nhận
+                            {t("receiverEmail")}
                             <input type="text" value={paymentRecipientEmail} onChange={(event) => setPaymentRecipientEmail(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" placeholder={selectedClient?.email ?? ""} />
                           </label>
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                           <label className="block text-sm font-medium text-slate-700">
-                            Số tiền hưởng ưu đãi
+                            {t("discountAmount")}
                             <input type="number" min="0" value={paymentDiscountAmount} onChange={(event) => setPaymentDiscountAmount(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" placeholder="0" />
                           </label>
                           <label className="block text-sm font-medium text-slate-700">
-                            Điều kiện hưởng ưu đãi
+                            {t("discountCondition")}
                             <input type="text" value={paymentDiscountCondition} onChange={(event) => setPaymentDiscountCondition(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" placeholder="VD: Member Gold" />
                           </label>
                         </div>
                         <label className="block text-sm font-medium text-slate-700">
-                          Người đóng tiền / Payer
+                          {t("payerName")}
                           <input type="text" value={paymentPayer} onChange={(event) => setPaymentPayer(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2" placeholder={selectedClient?.name || selectedClient?.email || ""} />
                         </label>
                         <button
@@ -2218,7 +2214,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 discountAmount: paymentDiscountAmount ? Number(paymentDiscountAmount) : undefined,
                                 discountCondition: paymentDiscountCondition
                               },
-                              "Đã tạo biên nhận thanh toán.",
+                              t("paymentReceiptCreated"),
                               async () => {
                                 if (selectedClient) await loadWorkspace("payments", selectedClient.maHd);
                                 setPaymentPurposeInput("");
@@ -2229,7 +2225,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           disabled={loading || !selectedClient || !canCreatePaymentReceipt || !Number(paymentAmount) || (!paymentPurposeSelections.length && !paymentPurposeInput.trim())}
                           className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
                         >
-                          Create payment receipt
+                          {t("createPaymentReceipt")}
                         </button>
                       </div>
                     )}
@@ -2358,7 +2354,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         void postJson(
                           `${API_BASE_URL}/manager/fines`,
                           { maHd: selectedClient?.maHd ?? "", amount: Number(fineAmount), content: fineContent, description: fineDescription, location: fineLocation, dueDate: fineDueDate || undefined, image: fineImage, operator: normalizedEmail },
-                          "Fine ticket created.",
+                          t("fineTicketCreated"),
                           async () => {
                             if (selectedClient) await loadWorkspace("fines", selectedClient.maHd);
                             setFineContent("");
@@ -2381,18 +2377,18 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 {activeAction === "coins" ? (
                   <div className="mt-4 space-y-3">
                     <select value={coinEntryMode} onChange={(event) => setCoinEntryMode(event.target.value as CoinEntryMode)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2">
-                      <option value="add">Adding coins</option>
-                      <option value="use">Using coins</option>
+                      <option value="add">{t("addingCoins")}</option>
+                      <option value="use">{t("usingCoins")}</option>
                     </select>
                     <label className="block text-sm font-medium text-slate-700">
-                      Search or create event
+                      {t("searchCreateEvent")}
                       <input
                         type="text"
                         list="coin-event-options"
                         value={coinReason}
                         onChange={(event) => setCoinReason(event.target.value)}
                         className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
-                        placeholder="Search available events or type a new one"
+                        placeholder={t("searchEventsPlaceholder")}
                       />
                     </label>
                     <datalist id="coin-event-options">
@@ -2402,7 +2398,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     </datalist>
                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                       <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Available options and previous entries
+                        {t("previousEntriesHeader")}
                       </div>
                       <div className="mt-2 flex flex-wrap gap-2">
                         {filteredCoinEventSuggestions.length ? (
@@ -2422,19 +2418,19 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           ))
                         ) : (
                           <div className="text-sm text-slate-500">
-                            No match found. You can create a new event by typing it above.
+                            {t("noMatchFoundCreate")}
                           </div>
                         )}
                       </div>
                     </div>
-                    <input type="number" min="1" value={coinAmount} onChange={(event) => setCoinAmount(event.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2" placeholder="Coins amount" />
+                    <input type="number" min="1" value={coinAmount} onChange={(event) => setCoinAmount(event.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2" placeholder={t("coinsAmountPlaceholder")} />
                     <button
                       type="button"
                       onClick={() =>
                         void postJson(
                           `${API_BASE_URL}/manager/coins/adjust`,
                           { maHd: selectedClient?.maHd ?? "", delta: Math.abs(Number(coinAmount)) * (coinEntryMode === "use" ? -1 : 1), reason: coinReason, operator: normalizedEmail },
-                          "Coins entry created.",
+                          t("coinsEntryCreated"),
                           async () => {
                             await loadClients(true);
                             if (selectedClient) await loadWorkspace("coins", selectedClient.maHd);
@@ -2444,7 +2440,42 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       disabled={loading || !selectedClient || !Number(coinAmount) || !coinReason.trim()}
                       className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
                     >
-                      Create coins entry
+                      {t("createCoinsEntry")}
+                    </button>
+                  </div>
+                ) : null}
+
+                {activeAction === "password" ? (
+                  <div className="mt-4 space-y-3">
+                    <label className="block text-sm font-medium text-slate-700">
+                      {t("newPassword", "New password")}
+                      <input
+                        type="password"
+                        value={clientNewPassword}
+                        onChange={(event) => setClientNewPassword(event.target.value)}
+                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+                        placeholder={t("mustBe4Chars", "Must be at least 4 characters")}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setClientPasswordLoading(true);
+                        void postJson(
+                          `${API_BASE_URL}/auth/admin-set-password`,
+                          { actorEmail: normalizedEmail, targetEmail: selectedClient?.email ?? "", newPassword: clientNewPassword },
+                          t("passwordUpdated", "Password updated successfully"),
+                          async () => {
+                            setClientNewPassword("");
+                            setActiveAction("");
+                            setClientPasswordLoading(false);
+                          }
+                        ).catch(() => setClientPasswordLoading(false));
+                      }}
+                      disabled={loading || clientPasswordLoading || !selectedClient || clientNewPassword.length < 4}
+                      className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-emerald-200 shadow-md hover:bg-emerald-700 disabled:opacity-60"
+                    >
+                      {clientPasswordLoading ? "Saving..." : t("changePassword", "Change password")}
                     </button>
                   </div>
                 ) : null}
@@ -2455,8 +2486,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Client Statistics</h2>
-                <p className="mt-1 text-sm text-slate-600">Open laundry, coins, payments, or fines on demand. Each tab starts with a summary, and raw entries only appear when requested.</p>
+                <h2 className="text-lg font-semibold text-slate-900">{t("clientStatistics")}</h2>
+                <p className="mt-1 text-sm text-slate-600">{t("clientStatsDesc")}</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 {(["laundry", "coins", "payments", "fines"] as StatsTab[]).map((tab) => (
@@ -2477,7 +2508,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
             {!workspace ? (
               <div className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
-                Select a client and press one of the statistic buttons.
+                {t("statsSelectPrompt")}
               </div>
             ) : null}
 
@@ -2516,7 +2547,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     onClick={() => setShowAllStatsEntries((current) => !current)}
                     className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
                   >
-                    {showAllStatsEntries ? "Hide entries panel" : "Open entries panel"}
+                    {showAllStatsEntries ? t("hideDetails") : t("showDetails")}
                   </button>
                 </div>
               </div>
@@ -2525,18 +2556,18 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             {workspace && showAllStatsEntries && activeTab === "laundry" ? (
               <div className="mt-4 space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-sm text-slate-600">
-                  Laundry entries are packed into a scroll panel so the manager page stays shorter.
+                  {t("laundryPackingDesc")}
                 </div>
                 <div className="max-h-[28rem] overflow-auto rounded-2xl border border-slate-200 bg-white">
                   <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-slate-200 text-sm">
                     <thead className="bg-slate-50 text-left text-slate-600">
                       <tr>
-                        <th className="px-4 py-3 font-medium">Summary</th>
-                        <th className="px-4 py-3 font-medium">Start</th>
-                        <th className="px-4 py-3 font-medium">End</th>
-                        <th className="px-4 py-3 font-medium">Location</th>
-                        <th className="px-4 py-3 font-medium">Actions</th>
+                        <th className="px-4 py-3 font-medium">{t("purpose")}</th>
+                        <th className="px-4 py-3 font-medium">{t("timestamp")}</th>
+                        <th className="px-4 py-3 font-medium">{t("timestamp")}</th>
+                        <th className="px-4 py-3 font-medium">{t("location")}</th>
+                        <th className="px-4 py-3 font-medium">{t("clientActions")}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 bg-white">
@@ -2552,7 +2583,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             <td className="px-4 py-3 text-slate-700">{formatDateTime(entry.end)}</td>
                             <td className="px-4 py-3 text-slate-700">{entry.location || entry.calendarSummary || "-"}</td>
                             <td className="px-4 py-3">
-                              <button type="button" onClick={() => { setEditingId(`laundry:${key}`); setEditValues({ summary: entry.summary, description: entry.description, location: entry.location, start: toDateTimeLocalValue(entry.start), end: toDateTimeLocalValue(entry.end) }); }} className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700">Edit</button>
+                              <button type="button" onClick={() => { setEditingId(`laundry:${key}`); setEditValues({ summary: entry.summary, description: entry.description, location: entry.location, start: toDateTimeLocalValue(entry.start), end: toDateTimeLocalValue(entry.end) }); }} className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700">{t("editProfile")}</button>
                             </td>
                           </tr>
                         );
@@ -2574,8 +2605,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         <input type="datetime-local" value={editValues.end ?? ""} onChange={(event) => setEditValues((current) => ({ ...current, end: event.target.value }))} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
                         <textarea value={editValues.description ?? ""} onChange={(event) => setEditValues((current) => ({ ...current, description: event.target.value }))} rows={4} className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm" />
                         <div className="flex gap-3">
-                          <button type="button" onClick={() => void postJson(`${API_BASE_URL}/staff/laundry/update`, { actorEmail: normalizedEmail, calendarId: entry.calendarId, eventId: entry.id, summary: editValues.summary ?? "", description: editValues.description ?? "", location: editValues.location ?? "", start: new Date(editValues.start ?? "").toISOString(), end: new Date(editValues.end ?? "").toISOString() }, "Laundry entry updated.", async () => { if (selectedClient) await loadWorkspace("laundry", selectedClient.maHd); })} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white">Save</button>
-                          <button type="button" onClick={() => setEditingId("")} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700">Cancel</button>
+                          <button type="button" onClick={() => void postJson(`${API_BASE_URL}/staff/laundry/update`, { actorEmail: normalizedEmail, calendarId: entry.calendarId, eventId: entry.id, summary: editValues.summary ?? "", description: editValues.description ?? "", location: editValues.location ?? "", start: new Date(editValues.start ?? "").toISOString(), end: new Date(editValues.end ?? "").toISOString() }, "Laundry entry updated.", async () => { if (selectedClient) await loadWorkspace("laundry", selectedClient.maHd); })} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white">{t("saveLabel")}</button>
+                          <button type="button" onClick={() => setEditingId("")} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700">{t("cancelEdit")}</button>
                         </div>
                       </div>
                     </div>
@@ -2587,18 +2618,18 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             {workspace && showAllStatsEntries && activeTab !== "laundry" ? (
               <div className="mt-4 space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-sm text-slate-600">
-                  Showing a compact entries panel with its own scroll area.
+                  {t("compactPanelDesc")}
                 </div>
                 <div className="max-h-[28rem] overflow-auto rounded-2xl border border-slate-200 bg-white">
                   <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-slate-200 text-sm">
                     <thead className="bg-slate-50 text-left text-slate-600">
                       <tr>
-                        <th className="px-4 py-3 font-medium">When</th>
-                        <th className="px-4 py-3 font-medium">Detail 1</th>
-                        <th className="px-4 py-3 font-medium">Detail 2</th>
-                        <th className="px-4 py-3 font-medium">Detail 3</th>
-                        <th className="px-4 py-3 font-medium">Actions</th>
+                        <th className="px-4 py-3 font-medium">{t("whenLabel")}</th>
+                        <th className="px-4 py-3 font-medium">{t("detailLabel")} 1</th>
+                        <th className="px-4 py-3 font-medium">{t("detailLabel")} 2</th>
+                        <th className="px-4 py-3 font-medium">{t("detailLabel")} 3</th>
+                        <th className="px-4 py-3 font-medium">{t("clientActions")}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 bg-white">
@@ -2686,9 +2717,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold text-slate-900">Owners & employees</h2>
+              <h2 className="text-lg font-semibold text-slate-900">{t("ownersEmployees")}</h2>
               <p className="mt-1 text-sm text-slate-600">
-                Store and review Cozoro-side accounts with manager, owner, or app admin status.
+                {t("ownersEmployeesDesc")}
               </p>
             </div>
             <button
@@ -2696,17 +2727,17 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               onClick={() => void loadTeam()}
               className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
             >
-              Refresh accounts
+              {t("refreshAccounts")}
             </button>
           </div>
 
           <div className="mt-8 rounded-2xl border border-slate-200 bg-slate-50 p-6 shadow-sm">
             <h3 className="text-lg font-semibold text-slate-900">
-              {language === "vi" ? "Cài đặt ngôn ngữ" : "Language Preference"}
+              {t("languagePreference")}
             </h3>
             <div className="mt-4 flex items-center justify-between">
               <p className="text-sm text-slate-600">
-                {language === "vi" ? "Chọn ngôn ngữ hiển thị cho cổng quản lý." : "Choose the display language for the management portal."}
+                {t("chooseDisplayLanguage")}
               </p>
               <select
                 value={language}
@@ -2721,12 +2752,10 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
           <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-6 shadow-sm">
             <h3 className="text-lg font-semibold text-slate-900">
-              {language === "vi" ? "Tên hiển thị" : "Your Display Name"}
+              {t("yourDisplayName")}
             </h3>
             <p className="mt-1 text-sm text-slate-600">
-              {language === "vi"
-                ? "Tên này hiển thị trên biên lai thanh toán. Email không thể thay đổi."
-                : "This name appears on payment receipts. Your email cannot be changed."}
+              {t("displayNameDesc")}
             </p>
             <div className="mt-4 flex gap-2">
               <input
@@ -2748,8 +2777,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       body: JSON.stringify({ actorEmail: normalizedEmail, name: selfDisplayName.trim() })
                     });
                     const data = (await res.json()) as { ok?: boolean; name?: string; error?: string };
-                    if (!res.ok) throw new Error(data.error ?? "Failed to save");
-                    setStatus(language === "vi" ? "Đã lưu tên hiển thị." : "Display name saved.");
+                    if (!res.ok) throw new Error(data.error ?? t("requestFailed"));
+                    setStatus(t("displayNamesSaved"));
                   } catch (err) {
                     setStatus(err instanceof Error ? err.message : "Failed to save display name");
                   } finally {
@@ -2758,7 +2787,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 }}
                 className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
               >
-                {selfDisplayNameSaving ? (language === "vi" ? "Đang lưu..." : "Saving...") : (language === "vi" ? "Lưu" : "Save")}
+                {selfDisplayNameSaving ? t("calculating") : t("saveLabel")}
               </button>
             </div>
           </div>
@@ -2766,11 +2795,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           {canManageOwnersEmployees ? (
             <div className="mt-6 space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <div>
-                <div className="text-sm font-semibold text-slate-900">Create or update account access</div>
+                <div className="text-sm font-semibold text-slate-900">{t("createUpdateAccess")}</div>
                 <p className="mt-1 text-sm text-slate-600">
-                  {isAppAdminSession
-                    ? "App admin can add managers and owners. A selected client can also be promoted to manager."
-                    : "Owners can add or update manager accounts. A selected client can also be promoted to manager."}
+                  {t("promoteManagerPrompt")}
                 </p>
               </div>
 
@@ -2786,11 +2813,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   disabled={!selectedClient?.email}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60"
                 >
-                  Make selected client a manager
+                  {t("makeClientManager")}
                 </button>
                 {selectedClient?.email ? (
                   <div className="text-sm text-slate-600">
-                    Selected client email: {selectedClient.email}
+                    {t("selectedClientEmail").replace("{email}", selectedClient.email)}
                   </div>
                 ) : null}
               </div>
@@ -2808,7 +2835,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   value={newStaffName}
                   onChange={(event) => setNewStaffName(event.target.value)}
                   className="rounded-lg border border-slate-300 px-3 py-2"
-                  placeholder="Display name"
+                  placeholder={t("yourDisplayName")}
                 />
                 <select
                   value={newStaffRole}
@@ -2838,7 +2865,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         role: newStaffRole,
                         password: newStaffPassword.trim() || undefined
                       },
-                      "Account access updated. New accounts will be asked to change password on first login.",
+                      t("accountAccessUpdated"),
                       async () => {
                         await loadTeam();
                         setNewStaffEmail("");
@@ -2851,13 +2878,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   disabled={!newStaffEmail.trim()}
                   className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
                 >
-                  Save account
+                  {t("saveAccount")}
                 </button>
               </div>
             </div>
           ) : (
             <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-              Managers can view the owners and employees directory here, but only owners or the app admin can change it.
+              {t("managersViewOnly")}
             </div>
           )}
 
@@ -2873,7 +2900,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       {entry.name ? `${entry.name} — ` : ""}{entry.email}
                     </div>
                     <div className="mt-1 text-sm text-slate-600">
-                      Role: {entry.role} | Added by: {entry.addedBy || "system"}
+                      {t("roleLabel")}: {entry.role} | {t("addedByLabel")}: {entry.addedBy || "system"}
                     </div>
                   </div>
 
@@ -2914,17 +2941,17 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         disabled={entry.role === "app_admin"}
                         className="rounded-lg border border-rose-200 px-3 py-2 text-sm text-rose-700 disabled:opacity-50"
                       >
-                        Remove
+                        {t("removeLabel")}
                       </button>
                     </div>
                   ) : (
-                    <div className="text-sm text-slate-500">View only</div>
+                    <div className="text-sm text-slate-500">{t("viewOnly")}</div>
                   )}
                 </div>
               ))
             ) : (
               <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
-                No owners or employees have been added yet.
+                {t("noAccountsAdded")}
               </div>
             )}
           </div>
@@ -2967,9 +2994,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-semibold text-slate-900">Resident Feedbacks</h2>
+                  <h2 className="text-lg font-semibold text-slate-900">{t("residentFeedbacks")}</h2>
                   <p className="mt-1 text-sm text-slate-600">
-                    Review notes submitted by residents via the portal.
+                    {t("reviewNotesDesc")}
                   </p>
                 </div>
                 <button

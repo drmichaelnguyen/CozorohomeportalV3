@@ -916,7 +916,7 @@ app.post("/auth/admin-set-password", async (request, response) => {
     return response.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to set password.";
-    const statusCode = message.includes("Only app admins or owners") ? 403 : 400;
+    const statusCode = message.includes("Only app admins") || message.includes("Managers can only") ? 403 : 400;
     return response.status(statusCode).json({ error: message });
   }
 });

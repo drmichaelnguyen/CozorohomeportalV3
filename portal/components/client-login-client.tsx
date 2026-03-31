@@ -238,22 +238,7 @@ function PasswordVisibilityButton({
 }
 
 async function fetchWithTimeout(input: string, init?: RequestInit, timeoutMs = 15000) {
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await fetch(input, {
-      ...init,
-      signal: controller.signal
-    });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error("Request timed out. Please try again.");
-    }
-    throw error;
-  } finally {
-    window.clearTimeout(timeoutId);
-  }
+  return await fetch(input, init);
 }
 
 export function ClientLoginClient() {
@@ -990,7 +975,7 @@ export function ClientLoginClient() {
               )}
             </div>
 
-            <form onSubmit={handleSubmit} className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+            <form onSubmit={handleSubmit} className="mt-4 rounded-2xl border border-slate-200 bg-white p-4" suppressHydrationWarning>
               <div className="text-sm font-medium text-slate-900">{t("signInWithEmail", "Sign in with email")}</div>
               <p className="mt-1 text-sm text-slate-600">
                 {t("ifYouSignedOut", "If you signed out on this computer, the email and password fields will show again here.")}
@@ -1003,6 +988,7 @@ export function ClientLoginClient() {
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
                   autoComplete="username"
+                  suppressHydrationWarning
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                   placeholder="name[at]example.com"
                 />
@@ -1039,12 +1025,7 @@ export function ClientLoginClient() {
               </label>
 
               <button
-                type="button"
-                onClick={(e) => { 
-                  console.log("[ClientLoginClient] Login Button Clicked!");
-                  e.preventDefault(); 
-                  void handleSubmit(e as any); 
-                }}
+                type="submit"
                 disabled={loading}
                 className="mt-4 inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
               >

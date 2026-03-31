@@ -1,0 +1,89 @@
+{
+  "recentCustomerByConversation": {
+    "4fdf242c5086d19d3c306548": {
+      "id": "36e6a23c66927d42ac5b169a3dcf2be9105552ba",
+      "conversationKey": "4fdf242c5086d19d3c306548",
+      "role": "customer",
+      "text": "sao ngu va6y5h",
+      "channel": "playground",
+      "createdAt": "2026-03-30T16:00:48.458Z",
+      "source": "playground-customer-message"
+    }
+  },
+  "recentMessagesByConversation": {
+    "4fdf242c5086d19d3c306548": [
+      {
+        "id": "4d0b62fa0e358ec8102409d536f4d3c36311bf15",
+        "conversationKey": "4fdf242c5086d19d3c306548",
+        "role": "customer",
+        "text": "có ưu đãi gì",
+        "channel": "playground",
+        "createdAt": "2026-03-30T16:00:13.427Z",
+        "source": "playground-customer-message"
+      },
+      {
+        "id": "1e98941eff2a91fbdc99fab33af5d574b00ef11e",
+        "conversationKey": "4fdf242c5086d19d3c306548",
+        "role": "bot",
+        "text": "Cozoro có thông tin liên quan, nhưng để trả lời thật gọn và thật chuẩn cho quý khách thì Cozoro khuyên nên xác nhận thêm với staff nhé.",
+        "channel": "playground",
+        "createdAt": "2026-03-30T16:00:15.983Z",
+        "source": "playground-bot-reply"
+      },
+      {
+        "id": "ab6653c0b8bae7329dcef677d0a18a4b48f3736e",
+        "conversationKey": "4fdf242c5086d19d3c306548",
+        "role": "customer",
+        "text": "ý là hỏi mày về khuyến mãi á",
+        "channel": "playground",
+        "createdAt": "2026-03-30T16:00:42.246Z",
+        "source": "playground-customer-message"
+      },
+      {
+        "id": "b6935d16fb4218037e72b1f697a3d22ef699aab9",
+        "conversationKey": "4fdf242c5086d19d3c306548",
+        "role": "bot",
+        "text": "Dạ có nhiều ưu đãi lắm nha quý khách. Mặc định gần như lúc nào cũng có: 1) Gói 6 tháng: tặng thêm 1 tháng (ở tháng thứ 7). 2) Gói 3 tháng: giảm 500.000 VND. Ngoài ra thường có ưu đãi theo hồ sơ như sinh viên, nhân viên y tế, và một số chương trình theo thời điểm nữa ạ. Quý khách cho Cozoro xin: muốn ở D7 (Thành Thái Q10) hay D2 (Hậu Giang Q6), và dự định ở mấy tháng để Cozoro chốt mức rẻ nhất giúp mình nha. Để Cozoro chốt giá cuối cùng đúng ưu đãi theo hồ sơ, quý khách có thể nhắn “gặp người thật” hoặc gọi 0902949682 giúp Cozoro nha.",
+        "channel": "playground",
+        "createdAt": "2026-03-30T16:00:42.255Z",
+        "source": "playground-bot-reply"
+      },
+      {
+        "id": "36e6a23c66927d42ac5b169a3dcf2be9105552ba",
+        "conversationKey": "4fdf242c5086d19d3c306548",
+        "role": "customer",
+        "text": "sao ngu va6y5h",
+        "channel": "playground",
+        "createdAt": "2026-03-30T16:00:48.458Z",
+        "source": "playground-customer-message"
+      },
+      {
+        "id": "6e5b58da4639f19d751fefd47083d42c15bdd4ac",
+        "conversationKey": "4fdf242c5086d19d3c306548",
+        "role": "bot",
+        "text": "Cozoro xin lỗi nếu vừa rồi trả lời chưa đúng ý quý khách nha. Quý khách hỏi lại giúp Cozoro 1 câu ngắn theo nhu cầu chính (giá, ưu đãi, địa chỉ, số người/phòng, xem nhà), Cozoro trả lời đúng trọng tâm liền ạ.",
+        "channel": "playground",
+        "createdAt": "2026-03-30T16:00:48.466Z",
+        "source": "playground-bot-reply"
+      }
+    ]
+  },
+  "handoffByConversation": {},
+  "botReplyFingerprints": [
+    {
+      "conversationKey": "4fdf242c5086d19d3c306548",
+      "text": "Cozoro có thông tin liên quan, nhưng để trả lời thật gọn và thật chuẩn cho quý khách thì Cozoro khuyên nên xác nhận thêm với staff nhé.",
+      "createdAt": "2026-03-30T16:00:15.983Z"
+    },
+    {
+      "conversationKey": "4fdf242c5086d19d3c306548",
+      "text": "Dạ có nhiều ưu đãi lắm nha quý khách. Mặc định gần như lúc nào cũng có: 1) Gói 6 tháng: tặng thêm 1 tháng (ở tháng thứ 7). 2) Gói 3 tháng: giảm 500.000 VND. Ngoài ra thường có ưu đãi theo hồ sơ như sinh viên, nhân viên y tế, và một số chương trình theo thời điểm nữa ạ. Quý khách cho Cozoro xin: muốn ở D7 (Thành Thái Q10) hay D2 (Hậu Giang Q6), và dự định ở mấy tháng để Cozoro chốt mức rẻ nhất giúp mình nha. Để Cozoro chốt giá cuối cùng đúng ưu đãi theo hồ sơ, quý khách có thể nhắn “gặp người thật” hoặc gọi 0902949682 giúp Cozoro nha.",
+      "createdAt": "2026-03-30T16:00:42.255Z"
+    },
+    {
+      "conversationKey": "4fdf242c5086d19d3c306548",
+      "text": "Cozoro xin lỗi nếu vừa rồi trả lời chưa đúng ý quý khách nha. Quý khách hỏi lại giúp Cozoro 1 câu ngắn theo nhu cầu chính (giá, ưu đãi, địa chỉ, số người/phòng, xem nhà), Cozoro trả lời đúng trọng tâm liền ạ.",
+      "createdAt": "2026-03-30T16:00:48.466Z"
+    }
+  ]
+}

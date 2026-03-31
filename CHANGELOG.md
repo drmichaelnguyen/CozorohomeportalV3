@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.3.4] - 2026-03-31
+### Added
+- **Manager Password Reset**: Managers can now securely reset passwords for residents directly from the client details view in the portal.
+- **Failover Tooling**: Added manual tunnel operation scripts and automated PowerShell failover monitors for the primary API server.
+
+
 ## [3.1.1] - 2026-03-25
 ### Added
 - **iMessage-Style Messaging**: Full-screen mobile layout with sticky bottom input and auto-scroll for a better chat experience.
