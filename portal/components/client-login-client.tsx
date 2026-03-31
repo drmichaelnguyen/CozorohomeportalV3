@@ -570,7 +570,7 @@ export function ClientLoginClient() {
         return;
       }
 
-      const loginResponse = await fetchWithTimeout(`${API_BASE_URL}/auth/login`, {
+      const loginResponse = await fetch(`${API_BASE_URL}/auth/login`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
