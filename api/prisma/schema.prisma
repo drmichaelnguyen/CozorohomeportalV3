@@ -154,7 +154,7 @@ model CleaningTask {
   status           CleaningTaskStatus @default(ASSIGNED)
   rewardCoins      Int
   isSelfAssigned   Boolean            @default(false)
-  assignmentSource CleaningAssignmentSource @default(MANAGER)
+  assignmentSource CleaningAssignmentSource?
   completedAt      DateTime?
   completionNote   String?
   completionPhoto  String?

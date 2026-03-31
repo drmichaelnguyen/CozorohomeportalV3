@@ -773,7 +773,7 @@ async function assignTaskToUser(input: {
     scheduledDate: normalizedTaskDate,
     floor: slotFloor,
     isSelfAssigned: input.isSelfAssigned,
-    assignmentSource: input.assignmentSource ?? (input.isSelfAssigned ? CleaningAssignmentSource.SELF : CleaningAssignmentSource.MANAGER)
+    assignmentSource: input.assignmentSource ?? (input.isSelfAssigned ? CleaningAssignmentSource.SELF : null)
   });
 
   await invalidateCleaningOverviewCache(normalizedEmail);
@@ -832,7 +832,7 @@ async function createCleaningTaskRecord(input: {
       scheduledDate: normalizedScheduledDate,
       rewardCoins,
       isSelfAssigned: input.isSelfAssigned ?? false,
-      assignmentSource: input.assignmentSource ?? CleaningAssignmentSource.MANAGER,
+      assignmentSource: input.assignmentSource ?? null,
       calendarId,
       calendarEventId
     }

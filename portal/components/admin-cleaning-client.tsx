@@ -626,7 +626,7 @@ export function AdminCleaningClient() {
                       <div className="mt-2 space-y-1">
                         {dayTasks.slice(0, 3).map((task) => (
                           <div key={task.id} className={`truncate rounded-md px-2 py-1 text-xs ${task.calendarId ? "bg-slate-100 text-slate-700" : "bg-amber-50 text-amber-800 border border-amber-200"}`}>
-                            {(task.assignmentSource === "SELF" || task.isSelfAssigned) ? "★ " : task.assignmentSource === "SYSTEM" ? "⚙ " : "👤 "}{task.userName || task.userEmail}
+                            {(task.assignmentSource === "SELF" || task.isSelfAssigned) ? "★ " : task.assignmentSource === "SYSTEM" ? "⚙ " : task.assignmentSource === "MANAGER" ? "👤 " : ""}{task.userName || task.userEmail}
                           </div>
                         ))}
                         {dayTasks.length > 3 ? (
@@ -706,9 +706,9 @@ export function AdminCleaningClient() {
                                   <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">★ Self</span>
                                 ) : task.assignmentSource === "SYSTEM" ? (
                                   <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">⚙ Auto</span>
-                                ) : (
+                                ) : task.assignmentSource === "MANAGER" ? (
                                   <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600">👤 Manager</span>
-                                )}
+                                ) : null}
                                 {task.status === "REJECTED" ? (
                                   <span className="text-[11px] font-semibold text-rose-500 line-through">+{task.rewardCoins.toLocaleString()} coins</span>
                                 ) : task.status === "APPROVED" ? (
