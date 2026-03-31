@@ -98,6 +98,9 @@ Check:
 - portal env points to real production API
 - Google Cloud origins match the public hostname
 
+### Intermittent 502s on Public API
+If the Cloudflare tunnel (`app.cozorohome.com` or `api.cozorohome.com`) randomly returns `502 Bad Gateway`, check if `cloudflared` is running on a backup computer or another terminal using the same tunnel token. Cloudflare automatically load-balances traffic across all connected instances of the same tunnel. If the backup machine isn't running the API server on port 4000, half of the requests will fail with 502. Ensure the tunnel is only active on the primary instance.
+
 ## Login Notes
 
 ### Manual login

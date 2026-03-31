@@ -82,6 +82,9 @@ Most likely:
 - production portal env is missing `API_SERVER_ORIGIN` or absolute `NEXT_PUBLIC_API_BASE_URL`
 - Google origin config is wrong if the problem is Google-only
 
+### Intermittent 502s on Public Site / Login
+If the public API drops intermittently (showing `502 Bad Gateway` on preflights) or mobile login fails seemingly at random, **check if `cloudflared` is running on a backup computer or another terminal.** Cloudflare tunnels load-balance traffic, and if a backup machine isn't actively running the API on port 4000, half of all requests will fail. Turn off `cloudflared` on the backup computer to resolve this.
+
 ## Current Login Intent
 
 - logged-out users should see manual email/password form
