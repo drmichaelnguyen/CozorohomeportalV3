@@ -49,7 +49,7 @@ export function PushSubscription({ email }: { email: string }) {
         const vapidKey = await getVapidKey();
         const subscription = await registration.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(vapidKey)
+          applicationServerKey: urlBase64ToUint8Array(vapidKey).buffer as ArrayBuffer
         });
 
         await fetch(`${API_BASE_URL}/push/subscribe`, {
