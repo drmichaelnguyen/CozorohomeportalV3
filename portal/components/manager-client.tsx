@@ -13,7 +13,7 @@ import Link from "next/link";
 
 type StaffRole = "manager" | "owner" | "app_admin" | "mechanic";
 type StatsTab = "laundry" | "coins" | "payments" | "fines";
-type ClientAction = "call" | "sms" | "email" | "message" | "fine" | "coins" | "payment" | "password" | "";
+type ClientAction = "call" | "sms" | "email" | "message" | "fine" | "coins" | "payment" | "password" | "remove" | "";
 type CoinEntryMode = "add" | "use";
 type ManagerView = "overview" | "client_list" | "owners_employees" | "support_chat" | "feedbacks" | "admin_cleaning" | "scheduling" | "controller";
 type StatSummaryItem = {
@@ -2440,47 +2440,98 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       disabled={loading || !selectedClient || !Number(coinAmount) || !coinReason.trim()}
                       className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
                     >
-                      {t("createCoinsEntry")}
-                    </button>
-                  </div>
-                ) : null}
+                    {t("createCoinsEntry")}
+                  </button>
+                </div>
+              ) : null}
 
-                {activeAction === "password" ? (
-                  <div className="mt-4 space-y-3">
-                    <label className="block text-sm font-medium text-slate-700">
-                      {t("newPassword", "New password")}
-                      <input
-                        type="password"
-                        value={clientNewPassword}
-                        onChange={(event) => setClientNewPassword(event.target.value)}
-                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
-                        placeholder={t("mustBe4Chars", "Must be at least 4 characters")}
-                      />
-                    </label>
+              {activeAction === "password" ? (
+                <div className="mt-4 space-y-3">
+                  <label className="block text-sm font-medium text-slate-700">
+                    {t("newPassword", "New password")}
+                    <input
+                      type="password"
+                      value={clientNewPassword}
+                      onChange={(event) => setClientNewPassword(event.target.value)}
+                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+                      placeholder={t("mustBe4Chars", "Must be at least 4 characters")}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setClientPasswordLoading(true);
+                      void postJson(
+                        `${API_BASE_URL}/auth/admin-set-password`,
+                        { actorEmail: normalizedEmail, targetEmail: selectedClient?.email ?? "", newPassword: clientNewPassword },
+                        t("passwordUpdated", "Password updated successfully"),
+                        async () => {
+                          setClientNewPassword("");
+                          setActiveAction("");
+                          setClientPasswordLoading(false);
+                        }
+                      ).catch(() => setClientPasswordLoading(false));
+                    }}
+                    disabled={loading || clientPasswordLoading || !selectedClient || clientNewPassword.length < 4}
+                    className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-emerald-200 shadow-md hover:bg-emerald-700 disabled:opacity-60"
+                  >
+                    {clientPasswordLoading ? "Saving..." : t("changePassword", "Change password")}
+                  </button>
+                </div>
+              ) : null}
+
+              {activeAction === "remove" ? (
+                <div className="mt-4 space-y-4 rounded-2xl border border-rose-200 bg-rose-50 p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 rounded-full bg-rose-100 p-1 text-rose-600">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="h-4 w-4">
+                        <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm font-bold text-rose-900">{t("removeResident")}</p>
+                      <p className="text-xs font-medium text-rose-700 leading-relaxed">
+                        {t("confirmRemoveResident")}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
                     <button
                       type="button"
                       onClick={() => {
-                        setClientPasswordLoading(true);
+                        setLoading(true);
                         void postJson(
-                          `${API_BASE_URL}/auth/admin-set-password`,
-                          { actorEmail: normalizedEmail, targetEmail: selectedClient?.email ?? "", newPassword: clientNewPassword },
-                          t("passwordUpdated", "Password updated successfully"),
+                          `${API_BASE_URL}/staff/client-sheet-update`,
+                          {
+                            actorEmail: normalizedEmail,
+                            maHd: selectedClient?.maHd ?? "",
+                            values: { "Hiện còn ở": "-1" }
+                          },
+                          t("residentRemoved"),
                           async () => {
-                            setClientNewPassword("");
                             setActiveAction("");
-                            setClientPasswordLoading(false);
+                            await loadClients(true);
+                            setSelectedClient(null);
                           }
-                        ).catch(() => setClientPasswordLoading(false));
+                        ).finally(() => setLoading(false));
                       }}
-                      disabled={loading || clientPasswordLoading || !selectedClient || clientNewPassword.length < 4}
-                      className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-emerald-200 shadow-md hover:bg-emerald-700 disabled:opacity-60"
+                      disabled={loading || !selectedClient}
+                      className="flex-1 rounded-xl bg-rose-600 py-2.5 text-sm font-bold text-white shadow-md shadow-rose-200 hover:bg-rose-700 disabled:opacity-60"
                     >
-                      {clientPasswordLoading ? "Saving..." : t("changePassword", "Change password")}
+                      {loading ? "Removing..." : t("removeLabel")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveAction("")}
+                      className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      {t("cancel")}
                     </button>
                   </div>
-                ) : null}
-              </div>
-            ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           </section>
 
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">

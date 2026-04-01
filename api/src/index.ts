@@ -83,6 +83,7 @@ import {
   startMaintenanceSyncInterval,
   syncMaintenanceFromSheet,
   updateMaintenanceTicket,
+  extendClientContract,
   MAINTENANCE_STATUS_COLUMN,
   MAINTENANCE_MECHANIC_EMAIL_COLUMN,
   MAINTENANCE_SOLVED_AT_COLUMN,
@@ -701,6 +702,26 @@ app.post("/clients/sync", async (_request, response) => {
   } catch (error) {
     return response.status(500).json({
       error: error instanceof Error ? error.message : "Unable to sync clients from Google Sheets"
+    });
+  }
+});
+
+app.post("/clients/contracts/extend", async (request, response) => {
+  const parsed = z.object({
+    email: z.string().email(),
+    extensionMonths: z.number().int().positive()
+  }).safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid contract extension payload" });
+  }
+
+  try {
+    await extendClientContract(parsed.data.email, parsed.data.extensionMonths);
+    return response.json({ ok: true });
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to extend contract."
     });
   }
 });

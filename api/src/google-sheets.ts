@@ -492,7 +492,9 @@ function mapRow(headers: string[], row: string[]) {
 }
 
 function isActiveClient(row: Record<string, string>) {
-  return row[ACTIVE_STAYING_COLUMN] === "1";
+  const status = String(row[ACTIVE_STAYING_COLUMN] || "").trim();
+  // Any status is "Active" except for explicitly removed (-1)
+  return status !== "-1";
 }
 
 function parseSheetTimestamp(value: string) {
@@ -4179,3 +4181,186 @@ export async function getActiveLaundryBooking(email: string) {
     next: next ?? null
   };
 }
+
+export async function extendClientContract(email: string, extensionMonths: number) {
+  const normalizedEmail = email.trim().toLowerCase();
+  
+  const sheets = await getAuthorizedSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetName}!A:AMJ`
+  });
+  
+  const values = response.data.values ?? [];
+  if (values.length === 0) {
+    throw new Error("Target sheet contains no data.");
+  }
+  
+  const rawHeaders = (values[0] ?? []).map((value) => String(value));
+  const headers = rawHeaders.map((value) => normalizeHeader(value));
+  const activeColIndex = headers.indexOf(normalizeHeader(ACTIVE_STAYING_COLUMN));
+  const startColIndex = headers.indexOf(normalizeHeader(CLIENT_CONTRACT_START_COLUMN));
+  const endColIndex = headers.indexOf(normalizeHeader(CLIENT_CONTRACT_END_COLUMN));
+  const timestampColIndex = headers.indexOf(normalizeHeader(COINS_TIMESTAMP_COLUMN));
+  const durationColIndex = headers.indexOf(normalizeHeader("Thời hạn hợp đồng (tháng)"));
+  
+  if (activeColIndex === -1 || startColIndex === -1 || endColIndex === -1) {
+    throw new Error("Missing required columns for contract extension in Google Sheets.");
+  }
+  
+  let targetRowIndex = -1;
+  let targetRowData: string[] = [];
+  
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] ?? [];
+    const mapped = mapRow(headers, row.map(v => String(v)));
+    if (mapped[EMAIL_COLUMN]?.trim().toLowerCase() === normalizedEmail && isActiveClient(mapped)) {
+      targetRowIndex = i + 1; // Google sheets uses 1-based indexing for rows
+      targetRowData = row.map(v => String(v));
+      break;
+    }
+  }
+  
+  if (targetRowIndex === -1) {
+    throw new Error("Could not find an active client record to extend.");
+  }
+  
+  // 1. Mark current row as inactive (-1)
+  const activeColLetter = columnIndexToLetter(activeColIndex);
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${sheetName}!${activeColLetter}${targetRowIndex}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [["-1"]] }
+  });
+
+  await syncClientsFromSheet();
+
+  // Clear AutoCrat metadata from the copied row data so it doesn't clutter the sheet
+  const autocratColumns = [
+    "Merged Doc ID - HĐ",
+    "Merged Doc URL - HĐ",
+    "Link to merged Doc - HĐ",
+    "Document Merge Status - HĐ"
+  ];
+  autocratColumns.forEach(col => {
+    const idx = headers.indexOf(normalizeHeader(col));
+    if (idx !== -1) targetRowData[idx] = "";
+  });
+  
+  // 2. Prepare new row data
+  const oldEndDateStr = targetRowData[endColIndex] ?? "";
+  let oldEndDate: Date;
+  if (oldEndDateStr.includes("/")) {
+    const [d, m, y] = oldEndDateStr.split("/");
+    oldEndDate = new Date(Number(y), Number(m) - 1, Number(d));
+  } else {
+    oldEndDate = new Date();
+  }
+  if (Number.isNaN(oldEndDate.getTime())) {
+    oldEndDate = new Date();
+  }
+  
+  const newEndDate = new Date(oldEndDate);
+  newEndDate.setMonth(newEndDate.getMonth() + extensionMonths);
+  
+  const newStartDate = new Date(oldEndDate);
+  newStartDate.setDate(newStartDate.getDate() + 1);
+  
+  const formatDate = (date: Date) => {
+    return `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()}`;
+  };
+
+  const formatTimestamp = (date: Date) => {
+    const d = date.getDate().toString().padStart(2, '0');
+    const m = (date.getMonth() + 1).toString().padStart(2, '0');
+    const y = date.getFullYear();
+    const hh = date.getHours().toString().padStart(2, '0');
+    const mm = date.getMinutes().toString().padStart(2, '0');
+    const ss = date.getSeconds().toString().padStart(2, '0');
+    return `${d}/${m}/${y} ${hh}:${mm}:${ss}`;
+  };
+
+  const BRIDGE_URL = "https://script.google.com/macros/s/AKfycbyykY6OqeAaILbv4yiG8y5ZBMV5Z-cwP8Pn2cYAtBd_uvojZoYS4y_uk76UknpX8Bk/exec";
+
+  const payload: Record<string, any> = {};
+  headers.forEach((header, index) => {
+    // Normalize key to match Apps Script: lowercase, no spaces
+    const norm = header.toString().toLowerCase().trim().replace(/ /g, '');
+    let value = targetRowData[index] ?? "";
+
+    // Priority 1: Current Submission Timestamp
+    if (timestampColIndex === index) {
+      value = formatTimestamp(new Date());
+    }
+    // Priority 2: Calculated Extension Fields
+    else if (index === activeColIndex) {
+      value = ""; // Initial Null/Empty string to trigger Apps Script email
+    } else if (index === startColIndex) {
+      value = formatDate(newStartDate);
+    } else if (index === endColIndex) {
+      value = formatDate(newEndDate);
+    } else if (index === durationColIndex) {
+      value = String(extensionMonths);
+    } else if (header === normalizeHeader("Tôi đã đọc, đồng ý và tuân thủ nội quy cozoro dorm")) {
+      value = "Có";
+    }
+
+    payload[norm] = value;
+  });
+
+  console.log(`[ContractExtension] Sending data to Bridge Script for ${email}...`);
+  
+  let rowIndex: number | null = null;
+  try {
+    const bridgeResponse = await fetch(BRIDGE_URL, {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json; charset=utf-8",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const result = await bridgeResponse.json() as any;
+    if (result.success) {
+      rowIndex = result.rowIndex;
+      console.log(`[ContractExtension] Bridge success! Row ${rowIndex} created for ${email}. Email sent.`);
+    } else {
+      console.error(`[ContractExtension] Bridge reported error:`, result.error);
+      throw new Error(result.error || "Bridge script failed");
+    }
+  } catch (err) {
+    console.error(`[ContractExtension] Failed to communicate with Bridge Script:`, err);
+    throw new Error("Could not connect to contract generation service.");
+  }
+
+  // Background activation logic:
+  // If we have the rowIndex, we use it. Otherwise, we don't proceed with activation.
+  if (rowIndex) {
+    const activationDelayMs = 15 * 1000; // 15 Seconds
+    setTimeout(async () => {
+      try {
+        console.log(`[ContractExtension] Activating row ${rowIndex} for ${email} after 15s...`);
+        const authSheets = await getAuthorizedSheetsClient();
+        const activeIdx = headers.indexOf(normalizeHeader(ACTIVE_STAYING_COLUMN));
+        const activeColLetter = columnIndexToLetter(activeIdx);
+
+        await authSheets.spreadsheets.values.update({
+          spreadsheetId,
+          range: `${sheetName}!${activeColLetter}${rowIndex}`,
+          valueInputOption: "USER_ENTERED",
+          requestBody: { values: [["1"]] }
+        });
+        
+        console.log(`[ContractExtension] Success: Activated row ${rowIndex} for ${email}. Refreshing cache...`);
+        await syncClientsFromSheet();
+      } catch (err) {
+        console.error(`[ContractExtension] Error during background activation for ${email}:`, err);
+      }
+    }, activationDelayMs);
+  }
+  
+  clientsMemoryCache = null;
+}
+

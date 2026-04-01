@@ -7,6 +7,7 @@ import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 import { LaundryController } from "./laundry-controller";
+import { ContractExtension } from "./contract-extension";
 
 type ClientRecord = Record<string, string>;
 
@@ -717,6 +718,14 @@ export function AccountOverviewClient() {
           </div>
         )}
       </section>
+
+      {client?.["Ng\u00e0y h\u1ebft h\u1ea1n h\u1ee3p \u0111\u1ed3ng"] && (
+        <ContractExtension
+          email={sessionEmail}
+          endDateStr={client["Ng\u00e0y h\u1ebft h\u1ea1n h\u1ee3p \u0111\u1ed3ng"]}
+          onExtended={() => void loadAccountData()}
+        />
+      )}
 
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">

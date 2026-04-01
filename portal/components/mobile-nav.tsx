@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 import { API_BASE_URL } from "../lib/api-base-url";
+import { isContractExpired } from "../lib/contract-utils";
 
 type NavBadges = {
   laundry: number;   // schedule button top-right
@@ -172,6 +173,26 @@ export function MobileNav() {
   const searchParams = useSearchParams();
   const { t } = usePortalLanguage();
   const { sessionRole, sessionEmail, isLoggedIn } = usePortalSession();
+  const [client, setClient] = useState<any>(null);
+
+  useEffect(() => {
+    if (isLoggedIn && sessionEmail && sessionRole === "user") {
+      fetch(`${API_BASE_URL}/clients?email=${encodeURIComponent(sessionEmail)}`)
+        .then(res => res.json())
+        .then(data => setClient(data))
+        .catch(console.error);
+    }
+  }, [isLoggedIn, sessionEmail, sessionRole]);
+
+  const isExpired = useMemo(() => {
+    if (sessionRole !== "user") return false;
+    return isContractExpired(client?.["Ngày hết hạn hợp đồng"]);
+  }, [client, sessionRole]);
+
+  const isRemoved = useMemo(() => {
+    if (sessionRole !== "user") return false;
+    return client?.["Hiện còn ở"] === "-1";
+  }, [client, sessionRole]);
 
   const isManagerWorkspace =
     (sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin") &&
@@ -184,6 +205,7 @@ export function MobileNav() {
     {
       href: "/bookings",
       label: t("booking", "Booking"),
+      disabled: isExpired,
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
           <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
@@ -198,6 +220,7 @@ export function MobileNav() {
       label: t("schedule", "Schedule"),
       badgeRight: badges.laundry,
       badgeLeft: badges.cleaning,
+      disabled: isRemoved,
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
           <path d="M9 11l3 3L22 4" />
@@ -208,6 +231,7 @@ export function MobileNav() {
     {
       href: "/controller",
       label: t("controller", "Control"),
+      disabled: isExpired || isRemoved,
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
           <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
@@ -221,6 +245,7 @@ export function MobileNav() {
       href: "/support",
       label: t("message", "Message"),
       badgeLeft: badges.message,
+      disabled: isRemoved,
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -228,10 +253,16 @@ export function MobileNav() {
       )
     },
     {
-      href: "/account-overview",
-      label: t("account", "Account"),
+      href: isRemoved ? "#" : (isExpired ? "/" : "/account-overview"),
+      label: isExpired ? t("home", "Home") : t("account", "Account"),
       badgeRight: badges.account,
-      icon: (
+      disabled: isRemoved,
+      icon: isExpired ? (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+          <polyline points="9 22 9 12 15 12 15 22" />
+        </svg>
+      ) : (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
           <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
           <circle cx="12" cy="7" r="4" />
@@ -357,12 +388,17 @@ export function MobileNav() {
 
           const badgeRight = Number(("badgeRight" in item ? (item as { badgeRight?: number }).badgeRight : undefined) ?? 0);
           const badgeLeft = Number(("badgeLeft" in item ? (item as { badgeLeft?: number }).badgeLeft : undefined) ?? 0);
+          const isDisabled = "disabled" in item && (item as any).disabled;
 
           return (
             <Link
               key={item.href}
-              href={item.href as any}
+              href={isDisabled ? "#" : (item.href as any)}
+              onClick={(e) => {
+                if (isDisabled) e.preventDefault();
+              }}
               className={`group flex flex-col items-center gap-1 transition-all duration-300 ${
+                isDisabled ? "opacity-30 cursor-not-allowed" :
                 isActive ? "scale-105 text-sky-600" : "text-slate-400 hover:text-slate-600"
               }`}
             >
@@ -374,8 +410,8 @@ export function MobileNav() {
                 }`}
               >
                 <div className="scale-75">{item.icon}</div>
-                <BadgeDot count={badgeRight} side="right" color="red" />
-                <BadgeDot count={badgeLeft} side="left" color="sky" />
+                {!isDisabled && <BadgeDot count={badgeRight} side="right" color="red" />}
+                {!isDisabled && <BadgeDot count={badgeLeft} side="left" color="sky" />}
               </div>
               <span
                 className={`text-[9px] font-bold uppercase tracking-wider transition-opacity duration-300 ${isActive ? "opacity-100" : "opacity-50"}`}

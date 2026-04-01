@@ -409,7 +409,16 @@ const translations: Record<string, { en: string; vi: string }> = {
   viewOnly: { en: "View only", vi: "Chỉ xem" },
   noAccountsAdded: { en: "No owners or employees have been added yet.", vi: "Chưa có chủ sở hữu hoặc nhân viên nào được thêm." },
   residentFeedbacks: { en: "Resident Feedbacks", vi: "Phản hồi Cư dân" },
-  reviewNotesDesc: { en: "Review notes submitted by residents via the portal.", vi: "Xem xét các ghi chú được cư dân gửi qua cổng thông tin." }
+  reviewNotesDesc: { en: "Review notes submitted by residents via the portal.", vi: "Xem xét các ghi chú được cư dân gửi qua cổng thông tin." },
+  contractExpiredWarning: { en: "Your contract has expired!", vi: "Hợp đồng của bạn đã hết hạn!" },
+  contractExpiredSub: { en: "All portal services are currently restricted. Please use the extension button below to continue living at Cozoro Home and regain access.", vi: "Tất cả các dịch vụ trên cổng thông tin đang bị hạn chế. Vui lòng nhấn nút gia hạn bên dưới để tiếp tục ở tại Cozoro Home và khôi phục quyền truy cập." },
+  removeResident: { en: "Remove Resident", vi: "Xóa Cư dân" },
+  confirmRemoveResident: { en: "Are you sure you want to remove this resident from the list? Their status will be set to -1.", vi: "Bạn có chắc chắn muốn xóa cư dân này khỏi danh sách? Trạng thái của họ sẽ được đặt thành -1." },
+  residentRemoved: { en: "Resident removed from active list.", vi: "Đã xóa cư dân khỏi danh sách hoạt động." },
+  extensionSubmitted: { en: "Extension Submitted!", vi: "Đã gửi gia hạn!" },
+  processingWait: { en: "Success! Our system is generating your new contract email now.", vi: "Thành công! Hệ thống đang khởi tạo email hợp đồng mới của bạn." },
+  checkEmailFifteenSeconds: { en: "Your contract is being processed. Please wait about 15 seconds for your account to reactivate automatically. An email will also be sent to your inbox.", vi: "Hợp đồng của bạn đang được xử lý. Vui lòng đợi khoảng 15 giây để tài khoản tự động kích hoạt lại. Một bản sao cũng sẽ được gửi đến email của bạn." },
+  gotIt: { en: "Got it!", vi: "Đã hiểu!" }
 };
 
 const PortalLanguageContext = createContext<PortalLanguageContextValue | null>(null);
