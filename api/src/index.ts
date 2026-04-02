@@ -21,16 +21,18 @@ import {
 import { getUserAirFryerContext, startAirFryerUse } from "./airfryer-controller.js";
 import {
   getGooglePortalClientConfig,
+  getManagerPermissions,
   getStaffName,
   listStaffAccess,
   removeStaffAccess,
   requirePortalRole,
   resolveGooglePortalLogin,
   resolvePortalLogin,
+  setManagerPermissions,
   updateSelfName,
   upsertStaffAccess
 } from "./staff-access.js";
-import { adminSetPortalPassword, changePortalPassword, loginWithPortalPassword, setPortalPassword } from "./portal-auth.js";
+import { adminSetPortalPassword, changePortalPassword, loginWithPortalPassword, setPortalPassword, upsertStoredPassword } from "./portal-auth.js";
 import { getClientGroupContext, getGroupMessages, markGroupRead, postGroupMessage } from "./group-support.js";
 import { VAPID_PUBLIC_KEY, savePushSubscription, deletePushSubscription } from "./push.js";
 import { 
@@ -118,6 +120,19 @@ import {
   cancelCleaningOptOut
 } from "./cleaning.js";
 import { prisma } from "./prisma.js";
+import {
+  terminateContract,
+  getTerminationByEmail,
+  getTerminationByMaHd,
+  submitCheckOut,
+  ensureCheckoutPhotosDir,
+  checkoutPhotosDirPath
+} from "./checkout.js";
+import { getShortTermConfig, updateShortTermConfig } from "./short-term-config.js";
+import { createWriteStream } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import path from "node:path";
 
 
 import {
@@ -479,10 +494,11 @@ const clientUpdateSchema = z.object({
   values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
 });
 const paidGuestBookingSyncSchema = z.object({
+  bookingId: z.string().trim().min(1),
   guestEmail: z.string().email(),
   guestName: z.string().trim().min(1),
   guestPhone: z.string().optional(),
-  bioSex: z.string().trim().min(1),
+  bioSex: z.string().trim().optional().default(""),
   branchId: z.enum(["D2", "D7"]),
   bedNumber: z.coerce.number().int().positive(),
   checkIn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -516,7 +532,9 @@ const selfAssignCleaningSchema = z.object({
 const auditCleaningSchema = z.object({
   reviewer: z.string().min(1),
   decision: z.nativeEnum(CleaningAuditDecision),
-  note: z.string().optional()
+  note: z.string().optional(),
+  createFine: z.boolean().optional(),
+  fineAmount: z.coerce.number().int().positive().optional()
 });
 const adminCleaningAvailabilitySchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -738,6 +756,7 @@ app.post("/internal/guest-bookings/import-paid", async (request, response) => {
 
   try {
     const cache = await upsertPaidGuestBookingClient({
+      bookingId: parsed.data.bookingId,
       guestEmail: parsed.data.guestEmail,
       guestName: parsed.data.guestName,
       guestPhone: parsed.data.guestPhone ?? "",
@@ -1119,6 +1138,34 @@ app.patch("/staff-access/self", async (request, response) => {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to update display name"
     });
+  }
+});
+
+app.get("/staff-access/permissions", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "");
+  const targetEmail = String(request.query.targetEmail ?? "");
+  try {
+    const permissions = await getManagerPermissions(actorEmail, targetEmail);
+    return response.json({ permissions });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to load permissions" });
+  }
+});
+
+app.put("/staff-access/permissions", async (request, response) => {
+  const { actorEmail, targetEmail, permissions } = request.body as {
+    actorEmail: string;
+    targetEmail: string;
+    permissions: import("./staff-access.js").ManagerPermissions;
+  };
+  if (!actorEmail || !targetEmail || !permissions) {
+    return response.status(400).json({ error: "actorEmail, targetEmail, and permissions are required" });
+  }
+  try {
+    await setManagerPermissions(actorEmail, targetEmail, permissions);
+    return response.json({ ok: true });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to save permissions" });
   }
 });
 
@@ -2578,6 +2625,18 @@ app.post("/admin/cleaning/tasks/:id/audit", async (request, response) => {
       decision: parsed.data.decision,
       note: parsed.data.note
     });
+
+    if (parsed.data.decision === CleaningAuditDecision.REJECT && parsed.data.createFine && parsed.data.fineAmount) {
+      await createAutomaticFineForEmail({
+        email: task.userEmail,
+        amount: parsed.data.fineAmount,
+        content: "Công việc vệ sinh không đạt tiêu chuẩn",
+        description: `Audit rejected by ${parsed.data.reviewer}. Task ID: ${task.id}. Scheduled: ${task.scheduledDate.toISOString().slice(0, 10)}.${parsed.data.note ? ` Note: ${parsed.data.note}` : ""}`,
+        location: task.branchId,
+        operator: parsed.data.reviewer
+      });
+    }
+
     return response.json(task);
   } catch (error) {
     return response.status(400).json({
@@ -3206,6 +3265,389 @@ app.post("/push/unsubscribe", async (req, res) => {
     return res.json({ success: true });
   } catch (err) {
     return res.status(500).json({ error: "Failed to remove subscription" });
+  }
+});
+
+// GET /manager/rent-paid-status — manager reads monthly rent paid flag for a client
+app.get("/manager/rent-paid-status", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim();
+  const email = String(req.query.email ?? "").trim().toLowerCase();
+  const month = String(req.query.month ?? "").trim();
+
+  if (!actorEmail || !email || !month || !/^\d{4}-\d{2}$/.test(month)) {
+    return res.status(400).json({ error: "actorEmail, email, and month (YYYY-MM) are required" });
+  }
+  if (!(await isPrivilegedSupportOperator(actorEmail))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const record = await prisma.monthlyRentStatus.findUnique({
+    where: { email_month: { email, month } }
+  });
+  return res.json({ email, month, isPaid: record?.isPaid ?? false, updatedAt: record?.updatedAt ?? null, updatedBy: record?.updatedBy ?? "" });
+});
+
+// POST /manager/rent-paid-status — manager toggles monthly rent paid flag
+app.post("/manager/rent-paid-status", async (req, res) => {
+  const actorEmail = String(req.body.actorEmail ?? "").trim();
+  const email = String(req.body.email ?? "").trim().toLowerCase();
+  const month = String(req.body.month ?? "").trim();
+  const isPaid = req.body.isPaid;
+
+  if (!actorEmail || !email || !month || typeof isPaid !== "boolean" || !/^\d{4}-\d{2}$/.test(month)) {
+    return res.status(400).json({ error: "actorEmail, email, month (YYYY-MM), and isPaid (boolean) are required" });
+  }
+  if (!(await isPrivilegedSupportOperator(actorEmail))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const record = await prisma.monthlyRentStatus.upsert({
+    where: { email_month: { email, month } },
+    create: { email, month, isPaid, updatedBy: actorEmail },
+    update: { isPaid, updatedBy: actorEmail }
+  });
+  return res.json({ email: record.email, month: record.month, isPaid: record.isPaid });
+});
+
+// GET /rent-paid-status — client reads current month rent status + breakdown if unpaid
+app.get("/rent-paid-status", async (req, res) => {
+  const email = String(req.query.email ?? "").trim().toLowerCase();
+  if (!email || !email.includes("@")) {
+    return res.status(400).json({ error: "Valid email required" });
+  }
+
+  const now = new Date();
+  const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+  try {
+    const [record, clientCache] = await Promise.all([
+      prisma.monthlyRentStatus.findUnique({ where: { email_month: { email, month } } }),
+      readCachedClients()
+    ]);
+
+    const client = clientCache?.rows.find((r) => (r["Địa chỉ email"] ?? "").toLowerCase() === email);
+    if (!client) {
+      return res.json({ email, month, isPaid: record?.isPaid ?? false, breakdown: null, onPrepaidPlan: false });
+    }
+
+    const paymentPlan = String(client["Bạn muốn thanh toán chi phí như thế nào?"] ?? "");
+    const onPrepaidPlan = paymentPlan.includes("03 tháng") || paymentPlan.includes("06 tháng");
+
+    if (onPrepaidPlan || (record?.isPaid ?? false)) {
+      return res.json({ email, month, isPaid: record?.isPaid ?? onPrepaidPlan, breakdown: null, onPrepaidPlan });
+    }
+
+    const breakdown = await calculateRentBreakdown(client, month, 0);
+    return res.json({ email, month, isPaid: false, breakdown, onPrepaidPlan: false });
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to load rent status" });
+  }
+});
+
+// ─── Short-term portal ───────────────────────────────────────────────────────
+
+// Path to the standalone booking app's bookings.json
+const STANDALONE_BOOKINGS_PATH = process.env.STANDALONE_BOOKINGS_PATH
+  ?? path.join(process.cwd(), "..", "..", "CozoroHome_vancouver_booking_Site", "data", "bookings.json");
+
+type StandaloneBooking = {
+  id: string;
+  userId?: string;
+  guestName: string;
+  email: string;
+  phone: string;
+  guests?: number;
+  checkIn: string;
+  checkOut: string;
+  message?: string;
+  pricing: {
+    nights: number;
+    nightlyRate: number;
+    cleaningFee?: number;
+    discountPercent?: number;
+    subtotal?: number;
+    discountAmount?: number;
+    total: number;
+  };
+  source?: string;
+  status: string;
+  paymentStatus: string;
+  paymentMethod?: string;
+  mainAppImported?: boolean;
+  mainAppImportedAt?: string;
+  mainAppBranch?: string;
+  mainAppBed?: string;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+async function readStandaloneBookings(): Promise<StandaloneBooking[]> {
+  try {
+    const raw = await readFile(STANDALONE_BOOKINGS_PATH, "utf8");
+    return JSON.parse(raw) as StandaloneBooking[];
+  } catch {
+    return [];
+  }
+}
+
+async function writeStandaloneBookings(bookings: StandaloneBooking[]): Promise<void> {
+  await writeFile(STANDALONE_BOOKINGS_PATH, JSON.stringify(bookings, null, 2), "utf8");
+}
+
+app.get("/manager/short-term/config", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "");
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const config = await getShortTermConfig();
+    return response.json(config);
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to load config" });
+  }
+});
+
+app.put("/manager/short-term/config", async (request, response) => {
+  const { actorEmail, ...patch } = request.body as { actorEmail: string; [key: string]: unknown };
+  if (!actorEmail) return response.status(400).json({ error: "actorEmail required" });
+  try {
+    const config = await updateShortTermConfig(actorEmail, patch as Parameters<typeof updateShortTermConfig>[1]);
+    return response.json(config);
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to update config" });
+  }
+});
+
+app.post("/internal/guest-auth/send-code", async (req, res) => {
+  if (!isAuthorizedInternalRequest(req)) {
+    return res.status(403).json({ error: "Unauthorized" });
+  }
+
+  const email = String(req.body?.email ?? "").trim().toLowerCase();
+  const code = String(req.body?.code ?? "").trim();
+  const siteTitle = String(req.body?.siteTitle ?? "CozoroHome Guest Booking").trim();
+
+  if (!email || !code) {
+    return res.status(400).json({ error: "email and code are required" });
+  }
+
+  try {
+    await sendGmailReceipt({
+      to: email,
+      subject: `[${siteTitle}] Email verification code`,
+      body: [
+        `Your verification code is: ${code}`,
+        "",
+        "Enter this code in the guest booking page to verify your email before booking.",
+        "If you did not request this code, you can ignore this email."
+      ].join("\n")
+    });
+
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to send verification code" });
+  }
+});
+
+app.get("/api/public/short-term-config", async (_request, response) => {
+  try {
+    const config = await getShortTermConfig();
+    return response.json({
+      bedPricing: config.bedPricing,
+      discounts: config.discounts,
+      minimumStay: config.minimumStay,
+      updatedAt: config.updatedAt
+    });
+  } catch (error) {
+    return response.status(500).json({ error: error instanceof Error ? error.message : "Unable to load short-term config" });
+  }
+});
+
+app.get("/manager/short-term/guests", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "");
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const all = await getManagerClients();
+    const shortTerm = all.filter((c) => {
+      const code = String(c.maHd ?? "");
+      const fee = String(c.row?.["Phí ngắn hạn"] ?? "").trim();
+      return code.startsWith("SHORTTERM") || fee !== "";
+    });
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    function parseDate(str: string): Date | null {
+      if (!str) return null;
+      if (str.includes("/")) {
+        const [d, m, y] = str.split("/");
+        return new Date(Number(y), Number(m) - 1, Number(d));
+      }
+      const d = new Date(str);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    const current = shortTerm.filter((c) => {
+      const checkIn = parseDate(String(c.row?.["Ngày bắt đầu hợp đồng"] ?? ""));
+      const checkOut = parseDate(String(c.row?.["Ngày hết hạn hợp đồng"] ?? ""));
+      if (!checkIn || !checkOut) return false;
+      return checkIn <= today && checkOut >= today;
+    });
+    const past = shortTerm.filter((c) => {
+      const checkOut = parseDate(String(c.row?.["Ngày hết hạn hợp đồng"] ?? ""));
+      return checkOut && checkOut < today;
+    });
+    return response.json({ current, past, total: shortTerm.length });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to load guests" });
+  }
+});
+
+app.get("/manager/short-term/pending-bookings", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "");
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const all = await readStandaloneBookings();
+    const pending = all.filter(
+      (b) => b.status !== "canceled" && !b.mainAppImported
+    );
+    return response.json({ bookings: pending });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to load bookings" });
+  }
+});
+
+app.post("/manager/short-term/bookings/:id/confirm", async (request, response) => {
+  const bookingId = request.params.id;
+  const { actorEmail, branch, bed } = request.body as {
+    actorEmail: string;
+    branch: "D2" | "D7";
+    bed: string;
+  };
+  if (!actorEmail || !branch || bed === undefined) {
+    return response.status(400).json({ error: "actorEmail, branch, and bed are required" });
+  }
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const all = await readStandaloneBookings();
+    const booking = all.find((b) => b.id === bookingId);
+    if (!booking) return response.status(404).json({ error: "Booking not found" });
+    if (booking.mainAppImported) return response.status(409).json({ error: "Booking already imported" });
+
+    // Upsert client into Google Sheet
+    await upsertPaidGuestBookingClient({
+      bookingId: booking.id,
+      guestEmail: booking.email,
+      guestName: booking.guestName,
+      guestPhone: booking.phone ?? "",
+      bioSex: "",
+      branchId: branch,
+      bedNumber: Number(bed),
+      checkIn: booking.checkIn,
+      checkOut: booking.checkOut,
+      pricingTotal: booking.pricing.total,
+      notes: `Imported by ${actorEmail} from booking site | Booking ID: ${booking.id}`
+    });
+
+    // Create portal auth with phone as initial password (must change on first login)
+    const initialPassword = (booking.phone ?? "").replace(/\D+/g, "") || "cozoro2024";
+    await upsertStoredPassword(booking.email.trim().toLowerCase(), initialPassword, { mustChangePassword: true });
+
+    // Mark as imported in standalone bookings.json
+    const updated = all.map((b) =>
+      b.id === bookingId
+        ? { ...b, mainAppImported: true, mainAppImportedAt: new Date().toISOString(), mainAppBranch: branch, mainAppBed: bed }
+        : b
+    );
+    await writeStandaloneBookings(updated);
+
+    return response.json({ ok: true, contractCode: `SHORTTERM-${bookingId}`, initialPassword });
+  } catch (error) {
+    return response.status(500).json({ error: error instanceof Error ? error.message : "Failed to confirm booking" });
+  }
+});
+
+// ─── Contract termination & check-out ────────────────────────────────────────
+
+app.post("/manager/terminate-contract", async (request, response) => {
+  const { actorEmail, maHd, email, name, branch, bed, depositNote } = request.body as {
+    actorEmail: string; maHd: string; email: string;
+    name: string; branch: string; bed: string; depositNote?: string;
+  };
+  if (!actorEmail || !maHd || !email) {
+    return response.status(400).json({ error: "actorEmail, maHd, and email are required" });
+  }
+  try {
+    const record = await terminateContract({ actorEmail, maHd, email, name, branch, bed, depositNote });
+    return response.json({ ok: true, record });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to terminate contract" });
+  }
+});
+
+app.get("/manager/termination-status", async (request, response) => {
+  const maHd = String(request.query.maHd ?? "");
+  const actorEmail = String(request.query.actorEmail ?? "");
+  if (!maHd) return response.status(400).json({ error: "maHd required" });
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const record = await getTerminationByMaHd(maHd);
+    return response.json({ record: record ?? null });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to load termination status" });
+  }
+});
+
+app.get("/client/termination-status", async (request, response) => {
+  const email = String(request.query.email ?? "");
+  if (!email) return response.status(400).json({ error: "email required" });
+  try {
+    const record = await getTerminationByEmail(email);
+    return response.json({ record: record ?? null });
+  } catch (error) {
+    return response.status(500).json({ error: error instanceof Error ? error.message : "Unable to load termination status" });
+  }
+});
+
+app.post("/client/checkout/upload-photo", express.raw({ type: "*/*", limit: "15mb" }), async (request, response) => {
+  const email = String(request.query.email ?? "");
+  const maHd = String(request.query.maHd ?? "");
+  const originalName = String(request.query.filename ?? "photo.jpg");
+  if (!email || !maHd) return response.status(400).json({ error: "email and maHd required" });
+  try {
+    const photosDir = await ensureCheckoutPhotosDir();
+    const ext = path.extname(originalName) || ".jpg";
+    const fileName = `checkout-${maHd.replace(/[^a-zA-Z0-9-]/g, "_")}-${randomUUID()}${ext}`;
+    const filePath = path.join(photosDir, fileName);
+    await new Promise<void>((resolve, reject) => {
+      const ws = createWriteStream(filePath);
+      ws.on("finish", resolve);
+      ws.on("error", reject);
+      ws.end(request.body as Buffer);
+    });
+    return response.json({ ok: true, fileName });
+  } catch (error) {
+    return response.status(500).json({ error: error instanceof Error ? error.message : "Upload failed" });
+  }
+});
+
+app.post("/client/checkout", express.json(), async (request, response) => {
+  const { email, maHd, steps, photos } = request.body as {
+    email: string; maHd: string;
+    steps: { luggage: boolean; bedding: boolean; keys: boolean; photoNote: string };
+    photos: string[];
+  };
+  if (!email || !maHd) return response.status(400).json({ error: "email and maHd required" });
+  try {
+    const record = await submitCheckOut({ email, maHd, steps: steps ?? { luggage: false, bedding: false, keys: false, photoNote: "" }, photos: photos ?? [] });
+    return response.json({ ok: true, record });
+  } catch (error) {
+    return response.status(400).json({ error: error instanceof Error ? error.message : "Unable to submit check-out" });
+  }
+});
+
+app.get("/checkout-photo/:filename", async (request, response) => {
+  const filename = request.params.filename.replace(/[^a-zA-Z0-9._-]/g, "");
+  const filePath = path.join(checkoutPhotosDirPath, filename);
+  try {
+    return response.sendFile(filePath);
+  } catch {
+    return response.status(404).json({ error: "Photo not found" });
   }
 });
 

@@ -40,6 +40,25 @@ type FineEntry = {
   coinPayment: { isPaid: boolean };
 };
 
+type RentBreakdown = {
+  baseRent: number;
+  parkingFeeVnd: number;
+  laundryFeeVnd: number;
+  finesVnd: number;
+  finalTotalVnd: number;
+  tenureSurchargeVnd: number;
+  professionalDiscountVnd: number;
+  planDiscountVnd: number;
+  managerDiscountVnd: number;
+};
+
+type RentStatus = {
+  month: string;
+  isPaid: boolean;
+  onPrepaidPlan: boolean;
+  breakdown: RentBreakdown | null;
+};
+
 type CoinEntry = {
   row: Record<string, string>;
   parsedTimestamp: string | null;
@@ -186,6 +205,9 @@ export function HomeDashboardClient() {
   const [feedbackSatisfaction, setFeedbackSatisfaction] = useState("satisfied");
   const [feedbackComment, setFeedbackComment] = useState("");
   const [showCoinDetail, setShowCoinDetail] = useState(false);
+  const [rentStatus, setRentStatus] = useState<RentStatus | null>(null);
+  const [showRentBreakdown, setShowRentBreakdown] = useState(false);
+  const [terminationRecord, setTerminationRecord] = useState<{ maHd: string; terminatedAt: string; depositNote: string; checkOut: { submittedAt: string } | null } | null>(null);
   const activeEmail = sessionEmail.trim().toLowerCase();
 
   const isExpired = useMemo(() => {
@@ -206,13 +228,15 @@ export function HomeDashboardClient() {
     setMessage("");
 
     try {
-      const [clientResponse, laundryResponse, cleaningResponse, finesResponse, coinsResponse, maintenanceResponse] = await Promise.all([
+      const [clientResponse, laundryResponse, cleaningResponse, finesResponse, coinsResponse, maintenanceResponse, rentStatusResponse, terminationResponse] = await Promise.all([
         fetch(`${API_BASE_URL}/clients?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/clients/laundry-bookings?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/cleaning/me?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/fines?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/coins?email=${encodeURIComponent(activeEmail)}`),
-        fetch(`${API_BASE_URL}/client/maintenance/tickets?email=${encodeURIComponent(activeEmail)}`)
+        fetch(`${API_BASE_URL}/client/maintenance/tickets?email=${encodeURIComponent(activeEmail)}`),
+        fetch(`${API_BASE_URL}/rent-paid-status?email=${encodeURIComponent(activeEmail)}`),
+        fetch(`${API_BASE_URL}/client/termination-status?email=${encodeURIComponent(activeEmail)}`)
       ]);
 
       const clientData = (await clientResponse.json()) as ClientRecord | { error?: string };
@@ -221,6 +245,8 @@ export function HomeDashboardClient() {
       const finesData = (await finesResponse.json()) as { entries?: FineEntry[]; error?: string };
       const coinsData = (await coinsResponse.json()) as { entries?: CoinEntry[]; error?: string };
       const maintenanceData = (await maintenanceResponse.json()) as { tickets?: MaintenanceTicket[]; error?: string };
+      const rentStatusData = rentStatusResponse.ok ? (await rentStatusResponse.json()) as RentStatus : null;
+      const terminationData = terminationResponse.ok ? (await terminationResponse.json()) as { record?: { maHd: string; terminatedAt: string; depositNote: string; checkOut: { submittedAt: string } | null } | null } : null;
 
       if (!clientResponse.ok) {
         setMessage(
@@ -243,6 +269,8 @@ export function HomeDashboardClient() {
       setFineEntries(finesResponse.ok ? finesData.entries ?? [] : []);
       setCoinEntries(coinsResponse.ok ? coinsData.entries ?? [] : []);
       setMaintenanceTickets(maintenanceResponse.ok ? maintenanceData.tickets ?? [] : []);
+      setRentStatus(rentStatusData);
+      setTerminationRecord(terminationData?.record ?? null);
 
       if (!laundryResponse.ok || !cleaningResponse.ok || !finesResponse.ok || !coinsResponse.ok || !maintenanceResponse.ok) {
         setMessage(t("dashboardPartialData", "Dashboard loaded with partial data."));
@@ -441,6 +469,109 @@ export function HomeDashboardClient() {
           endDateStr={client["Ngày hết hạn hợp đồng"]}
           onExtended={() => void loadDashboard()}
         />
+      )}
+
+      {terminationRecord && !terminationRecord.checkOut && !isRemoved && (
+        <section className="rounded-3xl border border-rose-300 bg-rose-50 p-5 shadow-sm sm:p-6">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-rose-100 text-rose-600 text-lg">🚪</div>
+            <div className="flex-1">
+              <p className="text-sm font-bold text-rose-800">
+                {t("contractTerminatedTitle", "Your contract has been terminated")}
+              </p>
+              <p className="mt-1 text-xs text-rose-700">
+                {t("contractTerminatedSubtext", "Please complete the check-out process before leaving.")}
+              </p>
+              {terminationRecord.depositNote && (
+                <p className="mt-2 text-xs font-medium text-rose-700">⚠️ {terminationRecord.depositNote}</p>
+              )}
+              <Link
+                href="/checkout"
+                className="mt-3 inline-block rounded-xl bg-rose-700 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-800"
+              >
+                {t("startCheckOut", "Start check-out →")}
+              </Link>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {rentStatus && !rentStatus.isPaid && !rentStatus.onPrepaidPlan && !isRemoved && (
+        <section className="rounded-3xl border border-amber-200 bg-amber-50 p-5 shadow-sm sm:p-6">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-600">
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <rect x="2" y="5" width="20" height="14" rx="2" strokeLinecap="round" strokeLinejoin="round" />
+                <line x1="2" y1="10" x2="22" y2="10" strokeLinecap="round" />
+              </svg>
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-bold text-amber-800">
+                {t("rentDueWarning", "Your rent is due for")} {rentStatus.month}
+              </p>
+              <p className="mt-1 text-xs text-amber-700">
+                {t("rentDueSubtext", "Please settle your payment as soon as possible to avoid late fees.")}
+              </p>
+              {rentStatus.breakdown && (
+                <button
+                  type="button"
+                  onClick={() => setShowRentBreakdown(true)}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 active:scale-95 transition-all"
+                >
+                  {new Intl.NumberFormat("vi-VN").format(rentStatus.breakdown.finalTotalVnd)} ₫
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {showRentBreakdown && rentStatus?.breakdown && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm sm:items-center" onClick={() => setShowRentBreakdown(false)}>
+          <div className="w-full max-w-md rounded-t-3xl bg-white p-6 shadow-2xl sm:rounded-3xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-slate-900">
+                {t("paymentDue", "Payment Due")} — {rentStatus.month}
+              </h3>
+              <button type="button" onClick={() => setShowRentBreakdown(false)} className="rounded-full p-1 text-slate-400 hover:text-slate-700">
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="space-y-3">
+              {[
+                { label: t("rent", "Rent"), value: rentStatus.breakdown.baseRent },
+                ...(rentStatus.breakdown.tenureSurchargeVnd > 0 ? [{ label: t("tenureSurcharge", "Short-term surcharge"), value: rentStatus.breakdown.tenureSurchargeVnd }] : []),
+                ...(rentStatus.breakdown.professionalDiscountVnd > 0 ? [{ label: t("professionalDiscount", "Professional discount"), value: -rentStatus.breakdown.professionalDiscountVnd }] : []),
+                ...(rentStatus.breakdown.planDiscountVnd > 0 ? [{ label: t("planDiscount", "Plan discount"), value: -rentStatus.breakdown.planDiscountVnd }] : []),
+                ...(rentStatus.breakdown.managerDiscountVnd > 0 ? [{ label: t("managerDiscount", "Manager discount"), value: -rentStatus.breakdown.managerDiscountVnd }] : []),
+                { label: t("parking", "Parking"), value: rentStatus.breakdown.parkingFeeVnd },
+                { label: t("laundryServices", "Laundry services"), value: rentStatus.breakdown.laundryFeeVnd },
+                { label: t("fines", "Fines"), value: rentStatus.breakdown.finesVnd }
+              ].filter(item => item.value !== 0).map((item) => (
+                <div key={item.label} className="flex items-center justify-between text-sm">
+                  <span className={item.value < 0 ? "text-emerald-700" : "text-slate-700"}>{item.label}</span>
+                  <span className={`font-semibold ${item.value < 0 ? "text-emerald-700" : "text-slate-900"}`}>
+                    {item.value < 0 ? "-" : ""}{new Intl.NumberFormat("vi-VN").format(Math.abs(item.value))} ₫
+                  </span>
+                </div>
+              ))}
+              <div className="border-t border-slate-200 pt-3 flex items-center justify-between">
+                <span className="font-bold text-slate-900">{t("totalDue", "Total Due")}</span>
+                <span className="text-lg font-bold text-amber-700">
+                  {new Intl.NumberFormat("vi-VN").format(rentStatus.breakdown.finalTotalVnd)} ₫
+                </span>
+              </div>
+            </div>
+            <p className="mt-4 text-xs text-slate-500">
+              {t("contactManagerForPayment", "Contact your manager to arrange payment or for any questions about this breakdown.")}
+            </p>
+          </div>
+        </div>
       )}
 
       {isRemoved ? (

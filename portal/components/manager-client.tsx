@@ -15,7 +15,7 @@ type StaffRole = "manager" | "owner" | "app_admin" | "mechanic";
 type StatsTab = "laundry" | "coins" | "payments" | "fines";
 type ClientAction = "call" | "sms" | "email" | "message" | "fine" | "coins" | "payment" | "password" | "remove" | "";
 type CoinEntryMode = "add" | "use";
-type ManagerView = "overview" | "client_list" | "owners_employees" | "support_chat" | "feedbacks" | "admin_cleaning" | "scheduling" | "controller";
+type ManagerView = "overview" | "client_list" | "owners_employees" | "support_chat" | "feedbacks" | "admin_cleaning" | "scheduling" | "controller" | "short_term";
 type StatSummaryItem = {
   label: string;
   value: string;
@@ -97,6 +97,7 @@ type StaffEntry = {
   role: StaffRole;
   name?: string;
   addedBy: string;
+  permissions?: ManagerPermissionsState;
 };
 type FeedbackEntry = {
   fileName: string;
@@ -243,6 +244,109 @@ function formatNumber(value: number) {
 
 function formatCurrency(value: number) {
   return `${formatNumber(value)} VND`;
+}
+
+function parseLooseDate(value: string | null | undefined): Date | null {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return null;
+  // dd/mm/yyyy or dd-mm-yyyy
+  const dmy = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (dmy) {
+    const [, d, m, y] = dmy;
+    const year = Number(y) < 100 ? 2000 + Number(y) : Number(y);
+    const date = new Date(year, Number(m) - 1, Number(d));
+    return isNaN(date.getTime()) ? null : date;
+  }
+  const direct = new Date(trimmed);
+  return isNaN(direct.getTime()) ? null : direct;
+}
+
+type DataCategory = "clients" | "fines" | "payments" | "cleaning" | "laundry" | "support" | "coins" | "stats";
+
+type ManagerPermissionsState = {
+  branches: string[];
+  data: Partial<Record<DataCategory, { read: boolean; write: boolean }>>;
+};
+
+const DATA_CATEGORIES: { key: DataCategory; label: string; hasWrite: boolean }[] = [
+  { key: "clients",  label: "Clients",           hasWrite: true  },
+  { key: "fines",    label: "Fines",              hasWrite: true  },
+  { key: "payments", label: "Payments",           hasWrite: true  },
+  { key: "cleaning", label: "Cleaning schedule",  hasWrite: true  },
+  { key: "laundry",  label: "Laundry",            hasWrite: true  },
+  { key: "support",  label: "Support / Messages", hasWrite: true  },
+  { key: "coins",    label: "Coins",              hasWrite: true  },
+  { key: "stats",    label: "Statistics",         hasWrite: false },
+];
+const KNOWN_BRANCHES = ["D2", "D7"];
+
+type ShortTermConfig = {
+  bedPricing: Record<string, Record<string, number>>;
+  discounts: {
+    weekly:  { enabled: boolean; minNights: number; percent: number };
+    monthly: { enabled: boolean; minNights: number; percent: number };
+  };
+  minimumStay: number;
+  updatedAt: string;
+  updatedBy: string;
+};
+
+const ST_D2_BEDS = Array.from({ length: 21 }, (_, i) => String(i + 1));
+const ST_D7_BEDS = Array.from({ length: 63 }, (_, i) => String(i + 1));
+
+type StandaloneBooking = {
+  id: string;
+  guestName: string;
+  email: string;
+  phone: string;
+  checkIn: string;
+  checkOut: string;
+  pricing: { nights: number; nightlyRate: number; total: number; cleaningFee?: number };
+  status: string;
+  paymentStatus: string;
+  paymentMethod?: string;
+  mainAppImported?: boolean;
+  mainAppBranch?: string;
+  mainAppBed?: string;
+  createdAt: string;
+};
+
+type PaymentPlanSummary = {
+  planLabel: string;           // "Monthly" | "3-month" | "6-month"
+  planType: "monthly" | "3month" | "6month";
+  packageExpiry: Date | null;  // for prepaid plans
+  nextPaymentDate: Date;
+  isDue: boolean;              // overdue or no payment recorded this month
+};
+
+function derivePaymentPlanSummary(row: Record<string, string>, rentPaidStatus: boolean | null): PaymentPlanSummary {
+  const planRaw = String(row["Bạn muốn thanh toán chi phí như thế nào?"] ?? "");
+  const expiryRaw = row["Ngày hết hạn gói đã thanh toán"] ?? "";
+  const packageExpiry = parseLooseDate(expiryRaw);
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+
+  let planType: PaymentPlanSummary["planType"] = "monthly";
+  let planLabel = "Monthly";
+  if (planRaw.includes("06 tháng")) { planType = "6month"; planLabel = "6-month plan"; }
+  else if (planRaw.includes("03 tháng")) { planType = "3month"; planLabel = "3-month plan"; }
+
+  let nextPaymentDate: Date;
+  if (planType !== "monthly" && packageExpiry) {
+    nextPaymentDate = packageExpiry;
+  } else {
+    nextPaymentDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  }
+
+  let isDue = false;
+  if (planType === "monthly") {
+    // Due if today is past the 1st and not marked paid
+    isDue = rentPaidStatus === false;
+  } else if (packageExpiry) {
+    isDue = packageExpiry.getTime() < now.getTime();
+  }
+
+  return { planLabel, planType, packageExpiry, nextPaymentDate, isDue };
 }
 
 function summarizeLaundry(entries: LaundryEntry[], t: (key: string, fallback?: string) => string): StatSummaryItem[] {
@@ -568,10 +672,19 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [selectedRoom, setSelectedRoom] = useState("");
   const [roomFilter, setRoomFilter] = useState("");
   const [search, setSearch] = useState("");
+  const [inactiveBranchFilter, setInactiveBranchFilter] = useState("");
+  const [inactiveYearFilter, setInactiveYearFilter] = useState("");
+  const [inactiveSearch, setInactiveSearch] = useState("");
   const [clientForm, setClientForm] = useState<Record<string, string>>({});
   const [isEditingClientProfile, setIsEditingClientProfile] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspacePayload | null>(null);
   const [activeTab, setActiveTab] = useState<StatsTab>("laundry");
+  const [rentPaidStatus, setRentPaidStatus] = useState<boolean | null>(null);
+  const [rentPaidMonth, setRentPaidMonth] = useState("");
+  const [rentPaidLoading, setRentPaidLoading] = useState(false);
+  const [infoRentBreakdown, setInfoRentBreakdown] = useState<RentBreakdown | null>(null);
+  const [infoManagerDiscount, setInfoManagerDiscount] = useState("0");
+  const [infoRentCalculating, setInfoRentCalculating] = useState(false);
   const [clientNewPassword, setClientNewPassword] = useState("");
   const [clientPasswordLoading, setClientPasswordLoading] = useState(false);
   const [messageDraft, setMessageDraft] = useState("");
@@ -601,6 +714,29 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [paymentDiscountAmount, setPaymentDiscountAmount] = useState("");
   const [paymentDiscountCondition, setPaymentDiscountCondition] = useState("");
   const [staffEntries, setStaffEntries] = useState<StaffEntry[]>([]);
+  const [showStaffList, setShowStaffList] = useState(false);
+  const [removeConfirmEntry, setRemoveConfirmEntry] = useState<StaffEntry | null>(null);
+  const [removeConfirmPassword, setRemoveConfirmPassword] = useState("");
+  const [removeConfirmError, setRemoveConfirmError] = useState("");
+  const [removeConfirmLoading, setRemoveConfirmLoading] = useState(false);
+  // Short-term portal state
+  const [stExpanded, setStExpanded] = useState<Record<string, boolean>>({});
+  const [stConfig, setStConfig] = useState<ShortTermConfig | null>(null);
+  const [stConfigLoading, setStConfigLoading] = useState(false);
+  const [stConfigSaving, setStConfigSaving] = useState(false);
+  const [stGuests, setStGuests] = useState<{ current: ManagerClientRecord[]; past: ManagerClientRecord[] } | null>(null);
+  const [stGuestsLoading, setStGuestsLoading] = useState(false);
+  const [stEditBedPricing, setStEditBedPricing] = useState<Record<string, Record<string, number>>>({});
+  const [stPendingBookings, setStPendingBookings] = useState<StandaloneBooking[] | null>(null);
+  const [stPendingLoading, setStPendingLoading] = useState(false);
+  const [stConfirmDialog, setStConfirmDialog] = useState<{ booking: StandaloneBooking; branch: "D2" | "D7"; bed: string; saving: boolean; result: string } | null>(null);
+  const [terminateDialog, setTerminateDialog] = useState(false);
+  const [terminateNote, setTerminateNote] = useState("");
+  const [terminateLoading, setTerminateLoading] = useState(false);
+  const [terminationStatus, setTerminationStatus] = useState<{ maHd: string; terminatedAt: string; checkOut: { submittedAt: string } | null } | null | "loading">("loading");
+  const [permissionsEntry, setPermissionsEntry] = useState<StaffEntry | null>(null);
+  const [editingPermissions, setEditingPermissions] = useState<ManagerPermissionsState | null>(null);
+  const [permissionsSaving, setPermissionsSaving] = useState(false);
   const [selfDisplayName, setSelfDisplayName] = useState("");
   const [selfDisplayNameSaving, setSelfDisplayNameSaving] = useState(false);
   const [newStaffEmail, setNewStaffEmail] = useState("");
@@ -635,6 +771,10 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [supportSubTab, setSupportSubTab] = useState<"messages" | "feedbacks" | "maintenance">("messages");
   const [clientSubTab, setClientSubTab] = useState<"list" | "details">("list");
+  const [clientTermTab, setClientTermTab] = useState<"long_term" | "short_term">(
+    initialView === "short_term" ? "short_term" : "long_term"
+  );
+  const [stPricingBranch, setStPricingBranch] = useState<"D2" | "D7">("D2");
   const [maintenanceTickets, setMaintenanceTickets] = useState<MaintenanceTicket[]>([]);
   const [maintenanceLoading, setMaintenanceLoading] = useState(false);
   const [maintenanceSort, setMaintenanceSort] = useState<{ field: keyof MaintenanceTicket; direction: "asc" | "desc" }>({
@@ -698,6 +838,44 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         .includes(keyword)
     );
   }, [clients, search]);
+  // Inactive clients (moved out = "0", left = "-1")
+  const inactiveClients = useMemo(
+    () => clients.filter((c) => c.activeStay === "-1" || c.activeStay === "0"),
+    [clients]
+  );
+  const inactiveBranches = useMemo(() => {
+    const raw = [...new Set(inactiveClients.map((c) => String(c.branch ?? "").trim()).filter(Boolean))];
+    return raw.sort();
+  }, [inactiveClients]);
+  const inactiveYears = useMemo(() => {
+    const years = new Set<string>();
+    for (const c of inactiveClients) {
+      const dateStr = String(c.row?.["Ngày bắt đầu hợp đồng"] ?? c.row?.["Ngày hết hạn hợp đồng"] ?? "");
+      const match = dateStr.match(/(\d{4})/);
+      if (match) years.add(match[1]);
+    }
+    return [...years].sort().reverse();
+  }, [inactiveClients]);
+  const filteredInactiveClients = useMemo(() => {
+    let result = inactiveClients;
+    if (inactiveBranchFilter) {
+      result = result.filter((c) => String(c.branch ?? "").trim() === inactiveBranchFilter);
+    }
+    if (inactiveYearFilter) {
+      result = result.filter((c) => {
+        const dateStr = String(c.row?.["Ngày bắt đầu hợp đồng"] ?? c.row?.["Ngày hết hạn hợp đồng"] ?? "");
+        return dateStr.includes(inactiveYearFilter);
+      });
+    }
+    if (inactiveSearch.trim()) {
+      const kw = inactiveSearch.trim().toLowerCase();
+      result = result.filter((c) =>
+        [c.name, c.email, c.maHd, c.branch, c.bed].join(" ").toLowerCase().includes(kw)
+      );
+    }
+    return result;
+  }, [inactiveClients, inactiveBranchFilter, inactiveYearFilter, inactiveSearch]);
+
   const selectedClient = useMemo(
     () => clients.find((client) => client.maHd === selectedMaHd) ?? null,
     [clients, selectedMaHd]
@@ -1039,6 +1217,74 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }
   }
 
+  async function loadRentPaidStatus(clientEmail: string) {
+    const now = new Date();
+    const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    setRentPaidMonth(month);
+    setRentPaidStatus(null);
+    setInfoRentBreakdown(null);
+    setInfoManagerDiscount("0");
+    try {
+      const [statusResponse, breakdownResponse] = await Promise.all([
+        fetch(`${API_BASE_URL}/manager/rent-paid-status?actorEmail=${encodeURIComponent(normalizedEmail)}&email=${encodeURIComponent(clientEmail)}&month=${month}`),
+        fetch(`${API_BASE_URL}/calculate-rent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: clientEmail, targetMonth: month, managerDiscountVnd: 0 })
+        })
+      ]);
+      if (statusResponse.ok) {
+        const data = (await statusResponse.json()) as { isPaid: boolean };
+        setRentPaidStatus(data.isPaid);
+      }
+      if (breakdownResponse.ok) {
+        const data = (await breakdownResponse.json()) as RentBreakdown;
+        setInfoRentBreakdown(data);
+        setInfoManagerDiscount(String(data.managerDiscountVnd || 0));
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  async function recalcInfoBreakdown(clientEmail: string, discount: string) {
+    setInfoRentCalculating(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/calculate-rent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: clientEmail, targetMonth: rentPaidMonth, managerDiscountVnd: Number(discount) || 0 })
+      });
+      if (response.ok) {
+        const data = (await response.json()) as RentBreakdown;
+        setInfoRentBreakdown(data);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setInfoRentCalculating(false);
+    }
+  }
+
+  async function toggleRentPaidStatus(clientEmail: string, newValue: boolean) {
+    setRentPaidLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/manager/rent-paid-status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorEmail: normalizedEmail, email: clientEmail, month: rentPaidMonth, isPaid: newValue })
+      });
+      if (response.ok) {
+        const data = (await response.json()) as { isPaid: boolean };
+        setRentPaidStatus(data.isPaid);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setRentPaidLoading(false);
+    }
+  }
+
   async function loadTeam() {
     if (!isStaffSession) {
       return;
@@ -1052,6 +1298,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     } else {
       setStatus(data.error ?? t("unableToLoadTeam"));
     }
+  }
+
+  async function loadPermissions(entry: StaffEntry) {
+    const res = await fetch(`${API_BASE_URL}/staff-access/permissions?actorEmail=${encodeURIComponent(normalizedEmail)}&targetEmail=${encodeURIComponent(entry.email)}`);
+    const data = (await res.json()) as { permissions?: ManagerPermissionsState };
+    const perms = data.permissions ?? { branches: [], data: {} };
+    setEditingPermissions(perms);
+    setPermissionsEntry(entry);
   }
 
   useEffect(() => {
@@ -1105,6 +1359,25 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
   useEffect(() => {
     setShowClientDetails(false);
+  }, [selectedMaHd]);
+
+  useEffect(() => {
+    if (selectedClient?.email) {
+      void loadRentPaidStatus(selectedClient.email);
+    } else {
+      setRentPaidStatus(null);
+      setRentPaidMonth("");
+      setInfoRentBreakdown(null);
+    }
+    if (selectedClient?.maHd) {
+      setTerminationStatus("loading");
+      fetch(`${API_BASE_URL}/manager/termination-status?actorEmail=${encodeURIComponent(normalizedEmail)}&maHd=${encodeURIComponent(selectedClient.maHd)}`)
+        .then((r) => r.json())
+        .then((d: { record?: { maHd: string; terminatedAt: string; checkOut: { submittedAt: string } | null } | null }) => setTerminationStatus(d.record ?? null))
+        .catch(() => setTerminationStatus(null));
+    } else {
+      setTerminationStatus(null);
+    }
   }, [selectedMaHd]);
 
   const fetchDevices = useCallback(async () => {
@@ -1355,7 +1628,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         {status ? <p className="mt-4 text-sm text-slate-700">{status}</p> : null}
       </section>
 
-      {(activeManagerView === "client_list" || activeManagerView === "overview") ? (
+      {(activeManagerView === "client_list" || activeManagerView === "overview" || activeManagerView === "short_term") ? (
         <section className="space-y-6">
           {/* Sub-tab Switcher */}
           <div className="flex border-b border-slate-200 overflow-x-auto no-scrollbar">
@@ -1387,6 +1660,24 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
           {clientSubTab === "list" ? (
             <div className="space-y-6 animate-in fade-in slide-in-from-left-4 duration-300">
+          {/* Term tabs */}
+          <div className="flex gap-1 mb-4">
+            <button
+              type="button"
+              onClick={() => setClientTermTab("long_term")}
+              className={`rounded-full px-4 py-1.5 text-sm font-semibold border transition-colors ${clientTermTab === "long_term" ? "bg-slate-900 text-white border-slate-900" : "border-slate-300 text-slate-600 hover:border-slate-500"}`}
+            >
+              Long term
+            </button>
+            <button
+              type="button"
+              onClick={() => setClientTermTab("short_term")}
+              className={`rounded-full px-4 py-1.5 text-sm font-semibold border transition-colors ${clientTermTab === "short_term" ? "bg-violet-600 text-white border-violet-600" : "border-slate-300 text-slate-600 hover:border-slate-500"}`}
+            >
+              Short term
+            </button>
+          </div>
+          {clientTermTab === "long_term" && (<>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap gap-2">
               <button
@@ -1407,6 +1698,22 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               >
                 {t("branchD7")}
               </button>
+              <button
+                type="button"
+                onClick={() => setSelectedBranch("inactive")}
+                className={`rounded-full px-4 py-2 text-sm font-medium ${
+                  selectedBranch === "inactive"
+                    ? "bg-slate-600 text-white"
+                    : "border border-slate-300 text-slate-500"
+                }`}
+              >
+                {t("inactiveClients", "Inactive")}
+                {inactiveClients.length > 0 && (
+                  <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${selectedBranch === "inactive" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"}`}>
+                    {inactiveClients.length}
+                  </span>
+                )}
+              </button>
               <Link
                 href="/support?newGroup=true"
                 className="rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-medium text-sky-700 transition-all hover:bg-sky-100"
@@ -1414,29 +1721,144 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 {t("newGroupMessage")}
               </Link>
             </div>
-            <div className="flex rounded-xl bg-slate-100 p-1 shadow-inner">
-              <button
-                type="button"
-                onClick={() => setClientListMode("diagram")}
-                className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-all ${
-                  clientListMode === "diagram" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                }`}
-              >
-                {t("diagram")}
-              </button>
-              <button
-                type="button"
-                onClick={() => setClientListMode("table")}
-                className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-all ${
-                  clientListMode === "table" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                }`}
-              >
-                {t("table")}
-              </button>
-            </div>
+            {selectedBranch !== "inactive" && (
+              <div className="flex rounded-xl bg-slate-100 p-1 shadow-inner">
+                <button
+                  type="button"
+                  onClick={() => setClientListMode("diagram")}
+                  className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-all ${
+                    clientListMode === "diagram" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  {t("diagram")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setClientListMode("table")}
+                  className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-all ${
+                    clientListMode === "table" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  {t("table")}
+                </button>
+              </div>
+            )}
           </div>
 
-          {clientListMode === "diagram" ? (
+          {selectedBranch === "inactive" ? (
+            <section className="space-y-5">
+              {/* Search */}
+              <input
+                type="text"
+                value={inactiveSearch}
+                onChange={(e) => setInactiveSearch(e.target.value)}
+                placeholder={t("searchPlaceholder", "Search by name, email, contract code…")}
+                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+              />
+
+              {/* Branch filter */}
+              {inactiveBranches.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setInactiveBranchFilter("")}
+                    className={`rounded-full px-3 py-1 text-xs font-medium ${!inactiveBranchFilter ? "bg-slate-700 text-white" : "border border-slate-300 text-slate-600"}`}
+                  >
+                    All branches
+                  </button>
+                  {inactiveBranches.map((b) => (
+                    <button
+                      key={b}
+                      type="button"
+                      onClick={() => setInactiveBranchFilter(b === inactiveBranchFilter ? "" : b)}
+                      className={`rounded-full px-3 py-1 text-xs font-medium ${inactiveBranchFilter === b ? "bg-slate-700 text-white" : "border border-slate-300 text-slate-600"}`}
+                    >
+                      {b}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Year filter */}
+              {inactiveYears.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setInactiveYearFilter("")}
+                    className={`rounded-full px-3 py-1 text-xs font-medium ${!inactiveYearFilter ? "bg-sky-600 text-white" : "border border-slate-300 text-slate-600"}`}
+                  >
+                    All years
+                  </button>
+                  {inactiveYears.map((y) => (
+                    <button
+                      key={y}
+                      type="button"
+                      onClick={() => setInactiveYearFilter(y === inactiveYearFilter ? "" : y)}
+                      className={`rounded-full px-3 py-1 text-xs font-medium ${inactiveYearFilter === y ? "bg-sky-600 text-white" : "border border-slate-300 text-slate-600"}`}
+                    >
+                      {y}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Results */}
+              <div className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                {filteredInactiveClients.length} {t("clientsLabel", "clients")}
+                {inactiveBranchFilter || inactiveYearFilter || inactiveSearch ? ` (filtered from ${inactiveClients.length})` : ""}
+              </div>
+
+              {filteredInactiveClients.length === 0 ? (
+                <div className="rounded-2xl bg-slate-50 p-8 text-center text-sm text-slate-500">
+                  {inactiveClients.length === 0
+                    ? t("noInactiveClients", "No inactive clients found — all recorded clients are currently active.")
+                    : t("noMatchingInactiveClients", "No clients match the current filters.")}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {filteredInactiveClients.map((client) => {
+                    const isSelected = client.maHd === selectedMaHd;
+                    const startDate = String(client.row?.["Ngày bắt đầu hợp đồng"] ?? "");
+                    const endDate = String(client.row?.["Ngày hết hạn hợp đồng"] ?? "");
+                    const statusLabel = client.activeStay === "-1" ? "Left" : "Moved out";
+                    return (
+                      <button
+                        key={client.maHd}
+                        type="button"
+                        onClick={() => {
+                          setSelectedMaHd(client.maHd);
+                          fillClientForm(client);
+                          setClientSubTab("details");
+                        }}
+                        className={`w-full text-left rounded-2xl border p-4 transition-all hover:shadow-sm ${isSelected ? "border-sky-400 bg-sky-50 ring-1 ring-sky-300" : "border-slate-200 bg-white hover:bg-slate-50"}`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <div className="font-medium text-slate-900">{client.name || client.email}</div>
+                            <div className="mt-0.5 text-xs text-slate-500">
+                              {client.maHd}
+                              {client.branch ? ` · Branch ${client.branch}` : ""}
+                              {client.bed ? ` · Bed ${client.bed}` : ""}
+                            </div>
+                            {(startDate || endDate) && (
+                              <div className="mt-1 text-xs text-slate-400">
+                                {startDate ? `From ${startDate}` : ""}
+                                {startDate && endDate ? " → " : ""}
+                                {endDate ? endDate : ""}
+                              </div>
+                            )}
+                          </div>
+                          <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${client.activeStay === "-1" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-600"}`}>
+                            {statusLabel}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          ) : clientListMode === "diagram" ? (
             <section className="space-y-8">
               {branchOverviewGroups.map((group) => (
                 <div key={group.label} className="space-y-4">
@@ -1476,14 +1898,16 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                       className={`relative flex h-8 items-center justify-center rounded-md border text-[10px] font-bold ${
                                         isSelected
                                           ? "border-sky-500 bg-sky-500 text-white z-10 scale-105"
-                                          : client
-                                            ? "border-emerald-100 bg-emerald-50 text-emerald-700"
-                                            : "border-dashed border-slate-200 bg-slate-25 text-slate-300"
+                                          : client && String(client.activeStay ?? "").trim() === ""
+                                            ? "border-pink-300 bg-pink-50 text-pink-700"
+                                            : client
+                                              ? "border-emerald-100 bg-emerald-50 text-emerald-700"
+                                              : "border-dashed border-slate-200 bg-slate-25 text-slate-300"
                                       }`}
-                                      title={client ? `${client.name} (${t("bedLabel")} ${slot.bedNumber})` : `${t("bedLabel")} ${slot.bedNumber} (${t("emptyLabel")})`}
+                                      title={client ? `${client.name} (${t("bedLabel")} ${slot.bedNumber})${String(client.activeStay ?? "").trim() === "" ? " — new registration, status not set" : ""}` : `${t("bedLabel")} ${slot.bedNumber} (${t("emptyLabel")})`}
                                     >
                                       {client && (
-                                        <span className="absolute left-0.5 top-0.5 text-[7px] leading-none text-emerald-600/70">
+                                        <span className={`absolute left-0.5 top-0.5 text-[7px] leading-none ${String(client.activeStay ?? "").trim() === "" ? "text-pink-500/70" : "text-emerald-600/70"}`}>
                                           {slot.bedNumber}
                                         </span>
                                       )}
@@ -1545,6 +1969,365 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               </div>
             </section>
           )}
+          </>)}
+          {clientTermTab === "short_term" && (() => {
+            function stToggle(key: string) {
+              setStExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
+            }
+            async function stLoadConfig() {
+              if (stConfig || stConfigLoading) return;
+              setStConfigLoading(true);
+              try {
+                const res = await fetch(`${API_BASE_URL}/manager/short-term/config?actorEmail=${encodeURIComponent(normalizedEmail)}`);
+                const data = (await res.json()) as ShortTermConfig;
+                setStConfig(data);
+                setStEditBedPricing(data.bedPricing ?? {});
+              } catch { /* ignore */ } finally { setStConfigLoading(false); }
+            }
+            async function stLoadGuests() {
+              if (stGuests || stGuestsLoading) return;
+              setStGuestsLoading(true);
+              try {
+                const res = await fetch(`${API_BASE_URL}/manager/short-term/guests?actorEmail=${encodeURIComponent(normalizedEmail)}`);
+                const data = (await res.json()) as { current: ManagerClientRecord[]; past: ManagerClientRecord[] };
+                setStGuests(data);
+              } catch { /* ignore */ } finally { setStGuestsLoading(false); }
+            }
+            async function stLoadPending() {
+              if (stPendingBookings || stPendingLoading) return;
+              setStPendingLoading(true);
+              try {
+                const res = await fetch(`${API_BASE_URL}/manager/short-term/pending-bookings?actorEmail=${encodeURIComponent(normalizedEmail)}`);
+                const data = (await res.json()) as { bookings: StandaloneBooking[] };
+                setStPendingBookings(data.bookings ?? []);
+              } catch { setStPendingBookings([]); } finally { setStPendingLoading(false); }
+            }
+            async function stSaveConfig(patch: Partial<Omit<ShortTermConfig, "updatedAt" | "updatedBy">>) {
+              setStConfigSaving(true);
+              try {
+                const res = await fetch(`${API_BASE_URL}/manager/short-term/config`, {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ actorEmail: normalizedEmail, ...patch })
+                });
+                const data = (await res.json()) as ShortTermConfig;
+                setStConfig(data);
+                setStEditBedPricing(data.bedPricing ?? {});
+                setStatus("Short-term config saved.");
+              } catch { setStatus("Failed to save config."); } finally { setStConfigSaving(false); }
+            }
+            function StSection({ id, title, badge, onOpen, children }: { id: string; title: string; badge?: string | number; onOpen?: () => void; children: React.ReactNode }) {
+              const open = Boolean(stExpanded[id]);
+              return (
+                <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => { stToggle(id); if (!open && onOpen) onOpen(); }}
+                    className="flex w-full items-center justify-between px-5 py-4 text-left"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-slate-900">{title}</span>
+                      {badge !== undefined && (
+                        <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700">{badge}</span>
+                      )}
+                    </div>
+                    <span className="text-slate-400 text-sm">{open ? "▲" : "▼"}</span>
+                  </button>
+                  {open && <div className="border-t border-slate-100 px-5 py-4">{children}</div>}
+                </div>
+              );
+            }
+
+            return (
+              <section className="space-y-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">Short Term Portal</h2>
+                  <p className="text-sm text-slate-500 mt-0.5">Manage short-stay guests, pricing, and discount rules.</p>
+                </div>
+
+                {/* Pending bookings from standalone app */}
+                <StSection id="pending" title="Pending bookings (from booking site)"
+                  badge={stPendingBookings?.length ?? undefined}
+                  onOpen={() => { void stLoadPending(); }}>
+                  {stPendingLoading ? (
+                    <p className="text-sm text-slate-500">Loading…</p>
+                  ) : !stPendingBookings?.length ? (
+                    <p className="text-sm text-slate-500">No pending bookings waiting to be imported.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {stPendingBookings.map((b) => (
+                        <div key={b.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="font-semibold text-slate-900 text-sm">{b.guestName}</div>
+                              <div className="text-xs text-slate-500">{b.email} · {b.phone}</div>
+                              <div className="text-xs text-slate-500 mt-0.5">{b.checkIn} → {b.checkOut} · {b.pricing.nights} night{b.pricing.nights !== 1 ? "s" : ""}</div>
+                              <div className="text-xs text-slate-400">Total: {b.pricing.total.toLocaleString()} · {b.paymentStatus} · {b.status}</div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setStConfirmDialog({ booking: b, branch: "D2", bed: "1", saving: false, result: "" })}
+                              className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-700 whitespace-nowrap"
+                            >
+                              Confirm &amp; Import
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </StSection>
+
+                {/* Current guests */}
+                <StSection id="current" title="Current guests" badge={stGuests?.current.length}
+                  onOpen={() => { void stLoadGuests(); }}>
+                  {stGuestsLoading ? (
+                    <p className="text-sm text-slate-500">Loading…</p>
+                  ) : !stGuests?.current.length ? (
+                    <p className="text-sm text-slate-500">No guests currently checked in.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {stGuests.current.map((g) => (
+                        <div key={g.maHd} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 p-3">
+                          <div>
+                            <div className="font-medium text-slate-900 text-sm">{g.name}</div>
+                            <div className="text-xs text-slate-500">{g.maHd} · Branch {g.branch} · Bed {g.bed}</div>
+                            <div className="text-xs text-slate-400">
+                              {String(g.row?.["Ngày bắt đầu hợp đồng"] ?? "")} → {String(g.row?.["Ngày hết hạn hợp đồng"] ?? "")}
+                            </div>
+                          </div>
+                          <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">Active</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </StSection>
+
+                {/* Past guests */}
+                <StSection id="past" title="Past guests" badge={stGuests?.past.length}
+                  onOpen={() => { void stLoadGuests(); }}>
+                  {stGuestsLoading ? (
+                    <p className="text-sm text-slate-500">Loading…</p>
+                  ) : !stGuests?.past.length ? (
+                    <p className="text-sm text-slate-500">No past short-stay records found.</p>
+                  ) : (
+                    <div className="space-y-2 max-h-72 overflow-y-auto">
+                      {stGuests.past.map((g) => (
+                        <div key={g.maHd} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 p-3">
+                          <div>
+                            <div className="font-medium text-slate-900 text-sm">{g.name}</div>
+                            <div className="text-xs text-slate-500">{g.maHd} · Branch {g.branch} · Bed {g.bed}</div>
+                            <div className="text-xs text-slate-400">
+                              {String(g.row?.["Ngày bắt đầu hợp đồng"] ?? "")} → {String(g.row?.["Ngày hết hạn hợp đồng"] ?? "")}
+                            </div>
+                          </div>
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">Checked out</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </StSection>
+
+                {/* Bed pricing */}
+                <StSection id="pricing" title="Bed pricing (nightly rate ₫)" onOpen={() => { void stLoadConfig(); }}>
+                  {stConfigLoading ? (
+                    <p className="text-sm text-slate-500">Loading…</p>
+                  ) : (
+                    <div className="space-y-4">
+                      {/* Branch selector */}
+                      <div className="flex gap-2">
+                        {(["D2", "D7"] as const).map((br) => (
+                          <button key={br} type="button"
+                            onClick={() => setStPricingBranch(br)}
+                            className={`rounded-full px-4 py-1.5 text-sm font-semibold border ${stPricingBranch === br ? "bg-slate-900 text-white border-slate-900" : "border-slate-300 text-slate-600"}`}
+                          >{br}</button>
+                        ))}
+                      </div>
+
+                      {/* Diagram */}
+                      {(() => {
+                        const rooms = BRANCH_LAYOUTS[stPricingBranch] ?? [];
+                        const floorMap = new Map<string, typeof rooms>();
+                        for (const room of rooms) {
+                          if (!floorMap.has(room.floor)) floorMap.set(room.floor, []);
+                          floorMap.get(room.floor)!.push(room);
+                        }
+                        return (
+                          <div className="space-y-5">
+                            {[...floorMap.entries()].map(([floor, floorRooms]) => (
+                              <div key={floor}>
+                                <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">{floor}</div>
+                                <div className="flex flex-wrap gap-3">
+                                  {floorRooms.map((room) => {
+                                    const bunks = Array.from({ length: room.bunkCount }, (_, bi) => {
+                                      const startBed = room.startBed + bi * 3;
+                                      return [startBed, startBed + 1, startBed + 2].filter(b => b <= room.endBed);
+                                    });
+                                    return (
+                                      <div key={room.room} className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
+                                        <div className="text-[10px] font-semibold text-slate-500 mb-2 text-center">Room {room.room}</div>
+                                        <div className="flex gap-1.5">
+                                          {bunks.map((bunkBeds, bi) => (
+                                            <div key={bi} className="flex flex-col gap-1">
+                                              {bunkBeds.map((bedNum) => {
+                                                const level = ((bedNum - 1) % 3) + 1;
+                                                const levelLabel = level === 1 ? "T" : level === 2 ? "M" : "B";
+                                                const isTop = level === 1;
+                                                const defaultPrice = isTop ? 150000 : 250000;
+                                                const currentVal = stEditBedPricing[stPricingBranch]?.[String(bedNum)];
+                                                const displayVal = currentVal !== undefined ? currentVal : defaultPrice;
+                                                return (
+                                                  <div key={bedNum} className={`rounded-lg border p-1.5 w-16 ${isTop ? "border-sky-200 bg-sky-50" : "border-slate-200 bg-white"}`}>
+                                                    <div className="flex items-center justify-between mb-0.5">
+                                                      <span className={`text-[9px] font-bold ${isTop ? "text-sky-600" : "text-slate-400"}`}>{levelLabel}</span>
+                                                      <span className="text-[9px] text-slate-500">#{bedNum}</span>
+                                                    </div>
+                                                    <input
+                                                      type="number"
+                                                      min={0}
+                                                      step={10000}
+                                                      value={displayVal}
+                                                      onChange={(e) => setStEditBedPricing((prev) => ({
+                                                        ...prev,
+                                                        [stPricingBranch]: { ...(prev[stPricingBranch] ?? {}), [String(bedNum)]: Number(e.target.value) }
+                                                      }))}
+                                                      className="w-full rounded border border-slate-200 px-1 py-0.5 text-center text-[10px] focus:border-sky-400 focus:outline-none bg-transparent"
+                                                    />
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          disabled={stConfigSaving}
+                          onClick={() => void stSaveConfig({ bedPricing: stEditBedPricing })}
+                          className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                        >
+                          {stConfigSaving ? "Saving…" : "Save bed prices"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const defaults: Record<string, Record<string, number>> = {};
+                            for (const br of ["D2", "D7"] as const) {
+                              defaults[br] = {};
+                              for (const room of BRANCH_LAYOUTS[br]) {
+                                for (let b = room.startBed; b <= room.endBed; b++) {
+                                  const level = ((b - 1) % 3) + 1;
+                                  defaults[br][String(b)] = level === 1 ? 150000 : 250000;
+                                }
+                              }
+                            }
+                            setStEditBedPricing(defaults);
+                          }}
+                          className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                        >
+                          Reset to defaults
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </StSection>
+
+                {/* Discounts */}
+                <StSection id="discounts" title="Discounts" onOpen={() => { void stLoadConfig(); }}>
+                  {stConfigLoading ? (
+                    <p className="text-sm text-slate-500">Loading…</p>
+                  ) : stConfig ? (
+                    <div className="space-y-4">
+                      {(["weekly", "monthly"] as const).map((type) => {
+                        const rule = stConfig.discounts[type];
+                        return (
+                          <div key={type} className="rounded-xl border border-slate-200 p-4 space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="font-medium text-slate-900 capitalize">{type} discount</span>
+                              <button
+                                type="button"
+                                onClick={() => void stSaveConfig({
+                                  discounts: { ...stConfig.discounts, [type]: { ...rule, enabled: !rule.enabled } }
+                                })}
+                                className={`relative inline-flex h-6 w-10 rounded-full transition-colors ${rule.enabled ? "bg-emerald-500" : "bg-slate-300"}`}
+                              >
+                                <span className={`inline-block h-4 w-4 m-1 rounded-full bg-white shadow transition-transform ${rule.enabled ? "translate-x-4" : "translate-x-0"}`} />
+                              </button>
+                            </div>
+                            <div className="flex gap-3">
+                              <label className="flex flex-col gap-1 flex-1">
+                                <span className="text-xs text-slate-500">Min nights</span>
+                                <input
+                                  type="number" min={1} value={rule.minNights}
+                                  onChange={(e) => setStConfig({ ...stConfig, discounts: { ...stConfig.discounts, [type]: { ...rule, minNights: Number(e.target.value) } } })}
+                                  className="rounded-lg border border-slate-200 px-2 py-1 text-sm w-full focus:outline-none focus:border-sky-400"
+                                />
+                              </label>
+                              <label className="flex flex-col gap-1 flex-1">
+                                <span className="text-xs text-slate-500">Discount %</span>
+                                <input
+                                  type="number" min={0} max={100} value={rule.percent}
+                                  onChange={(e) => setStConfig({ ...stConfig, discounts: { ...stConfig.discounts, [type]: { ...rule, percent: Number(e.target.value) } } })}
+                                  className="rounded-lg border border-slate-200 px-2 py-1 text-sm w-full focus:outline-none focus:border-sky-400"
+                                />
+                              </label>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <button
+                        type="button" disabled={stConfigSaving}
+                        onClick={() => void stSaveConfig({ discounts: stConfig.discounts })}
+                        className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                      >
+                        {stConfigSaving ? "Saving…" : "Save discounts"}
+                      </button>
+                    </div>
+                  ) : null}
+                </StSection>
+
+                {/* Minimum stay */}
+                <StSection id="minstay" title="Minimum stay requirement" onOpen={() => { void stLoadConfig(); }}>
+                  {stConfigLoading ? (
+                    <p className="text-sm text-slate-500">Loading…</p>
+                  ) : stConfig ? (
+                    <div className="flex items-center gap-4">
+                      <input
+                        type="number" min={1}
+                        value={stConfig.minimumStay}
+                        onChange={(e) => setStConfig({ ...stConfig, minimumStay: Number(e.target.value) })}
+                        className="w-24 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none"
+                      />
+                      <span className="text-sm text-slate-600">nights minimum</span>
+                      <button
+                        type="button" disabled={stConfigSaving}
+                        onClick={() => void stSaveConfig({ minimumStay: stConfig.minimumStay })}
+                        className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                      >
+                        {stConfigSaving ? "Saving…" : "Save"}
+                      </button>
+                    </div>
+                  ) : null}
+                </StSection>
+
+                {stConfig?.updatedAt && stConfig.updatedAt !== new Date(0).toISOString() && (
+                  <p className="text-xs text-slate-400 text-right">
+                    Last updated {new Date(stConfig.updatedAt).toLocaleString()} by {stConfig.updatedBy}
+                  </p>
+                )}
+              </section>
+            );
+          })()}
           </div>
         ) : (
           <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
@@ -1652,6 +2435,304 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     <div className="mt-2 text-sm text-slate-800">{selectedClientPhone || "-"}</div>
                   </div>
                 </div>
+
+                {(() => {
+                  const ps = derivePaymentPlanSummary(selectedClient.row ?? {}, rentPaidStatus);
+                  const expiryStr = ps.packageExpiry
+                    ? ps.packageExpiry.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
+                    : null;
+                  const nextStr = ps.nextPaymentDate.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+                  return (
+                    <div className={`rounded-2xl border p-4 ${ps.isDue ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-slate-50"}`}>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Payment Plan</div>
+                          <div className="flex items-center gap-2">
+                            <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                              ps.planType === "monthly" ? "bg-sky-100 text-sky-800" :
+                              ps.planType === "3month" ? "bg-violet-100 text-violet-800" :
+                              "bg-emerald-100 text-emerald-800"
+                            }`}>{ps.planLabel}</span>
+                            {ps.isDue && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-bold text-rose-700">
+                                <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
+                                Payment due
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right space-y-1">
+                          {expiryStr && (
+                            <div className="text-xs text-slate-500">
+                              Package expires: <span className="font-semibold text-slate-700">{expiryStr}</span>
+                            </div>
+                          )}
+                          <div className={`text-xs ${ps.isDue ? "text-rose-600 font-semibold" : "text-slate-500"}`}>
+                            {ps.isDue ? "Overdue since" : "Next payment:"}{" "}
+                            <span className="font-semibold">{nextStr}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {(() => {
+                  const stay = String(selectedClient.activeStay ?? "").trim();
+                  const isUnset = stay === "";
+                  const isStaying = stay === "1";
+                  const isMovedOut = stay === "0";
+                  const isLeft = stay === "-1";
+                  const stayLabel = isUnset
+                    ? "Not set — new registration"
+                    : isStaying
+                      ? "Currently staying"
+                      : isMovedOut
+                        ? "Moved out (0)"
+                        : "Left / removed (−1)";
+                  const stayColor = isUnset ? "text-pink-700" : isStaying ? "text-emerald-700" : "text-rose-700";
+                  const borderColor = isUnset ? "border-pink-300 bg-pink-50" : "border-slate-200 bg-slate-50";
+
+                  function updateStay(value: string) {
+                    setLoading(true);
+                    void postJson(
+                      `${API_BASE_URL}/staff/client-sheet-update`,
+                      { actorEmail: normalizedEmail, maHd: selectedClient!.maHd, values: { "Hiện còn ở": value } },
+                      "Stay status updated",
+                      async () => { await loadClients(false); }
+                    ).finally(() => setLoading(false));
+                  }
+
+                  return (
+                    <div className={`rounded-2xl border p-4 ${borderColor}`}>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Stay Status</div>
+                          <div className={`mt-1 text-sm font-medium ${stayColor}`}>{stayLabel}</div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            disabled={loading || isStaying}
+                            onClick={() => updateStay("1")}
+                            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${isStaying ? "bg-emerald-600 text-white" : "border border-emerald-300 text-emerald-700 hover:bg-emerald-50"} disabled:opacity-50`}
+                          >
+                            Staying (1)
+                          </button>
+                          <button
+                            type="button"
+                            disabled={loading || isMovedOut}
+                            onClick={() => updateStay("0")}
+                            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${isMovedOut ? "bg-slate-500 text-white" : "border border-slate-300 text-slate-600 hover:bg-slate-50"} disabled:opacity-50`}
+                          >
+                            Moved out (0)
+                          </button>
+                          <button
+                            type="button"
+                            disabled={loading || isLeft}
+                            onClick={() => updateStay("-1")}
+                            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${isLeft ? "bg-rose-600 text-white" : "border border-rose-300 text-rose-700 hover:bg-rose-50"} disabled:opacity-50`}
+                          >
+                            Left (−1)
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Contract Termination */}
+                {selectedClient && (() => {
+                  const isTerminated = terminationStatus && terminationStatus !== "loading";
+                  const checkedOut = isTerminated && (terminationStatus as { checkOut: { submittedAt: string } | null }).checkOut;
+                  return (
+                    <div className={`rounded-2xl border p-4 ${isTerminated ? (checkedOut ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50") : "border-slate-200 bg-slate-50"}`}>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Contract Status</div>
+                          <div className={`mt-1 text-sm font-medium ${isTerminated ? (checkedOut ? "text-emerald-700" : "text-rose-700") : "text-slate-700"}`}>
+                            {terminationStatus === "loading"
+                              ? "Loading…"
+                              : checkedOut
+                                ? `Checked out — ${new Date((terminationStatus as { checkOut: { submittedAt: string } }).checkOut.submittedAt).toLocaleDateString()}`
+                                : isTerminated
+                                  ? "Terminated — check-out pending"
+                                  : "Active"}
+                          </div>
+                          {isTerminated && !checkedOut && (terminationStatus as { terminatedAt: string }).terminatedAt && (
+                            <div className="mt-0.5 text-xs text-rose-600">
+                              Terminated {new Date((terminationStatus as { terminatedAt: string }).terminatedAt).toLocaleDateString()}
+                            </div>
+                          )}
+                        </div>
+                        {!isTerminated && terminationStatus !== "loading" && (
+                          <button
+                            type="button"
+                            onClick={() => { setTerminateNote(""); setTerminateDialog(true); }}
+                            className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50"
+                          >
+                            Terminate contract
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Terminate contract confirmation dialog */}
+                {terminateDialog && selectedClient && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                    <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-xl space-y-4">
+                      <h3 className="font-semibold text-slate-900">Terminate contract?</h3>
+                      <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800 space-y-1">
+                        <p className="font-semibold">⚠️ Important — deposit policy</p>
+                        <p>The client must find a replacement tenant to continue their contract. If they cannot find one, <strong>the deposit is not guaranteed to be refunded</strong>.</p>
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-slate-600">Deposit note (shown to client)</label>
+                        <textarea
+                          value={terminateNote}
+                          onChange={(e) => setTerminateNote(e.target.value)}
+                          rows={2}
+                          placeholder="e.g. No replacement found — deposit at risk"
+                          className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => setTerminateDialog(false)} className="flex-1 rounded-xl border border-slate-200 py-2 text-sm font-medium text-slate-700">Cancel</button>
+                        <button
+                          type="button"
+                          disabled={terminateLoading}
+                          onClick={async () => {
+                            setTerminateLoading(true);
+                            try {
+                              const res = await fetch(`${API_BASE_URL}/manager/terminate-contract`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                  actorEmail: normalizedEmail,
+                                  maHd: selectedClient.maHd,
+                                  email: selectedClient.email,
+                                  name: selectedClient.name,
+                                  branch: selectedClient.branch,
+                                  bed: selectedClient.bed,
+                                  depositNote: terminateNote.trim() || "Client must find a replacement. Deposit refund not guaranteed if no replacement is found."
+                                })
+                              });
+                              const data = (await res.json()) as { ok?: boolean; record?: { maHd: string; terminatedAt: string; checkOut: null }; error?: string };
+                              if (!res.ok) throw new Error(data.error ?? "Failed");
+                              setTerminationStatus(data.record ?? null);
+                              setTerminateDialog(false);
+                              setStatus("Contract terminated. Client will see the check-out button on their dashboard.");
+                            } catch (err) {
+                              setStatus(err instanceof Error ? err.message : "Failed to terminate contract");
+                            } finally {
+                              setTerminateLoading(false);
+                            }
+                          }}
+                          className="flex-1 rounded-xl bg-rose-600 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                        >
+                          {terminateLoading ? "Processing…" : "Confirm termination"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {selectedClient && (() => {
+                  const paymentPlan = String(selectedClient.row?.["Bạn muốn thanh toán chi phí như thế nào?"] ?? "");
+                  const isOnPrepaidPlan = paymentPlan.includes("03 tháng") || paymentPlan.includes("06 tháng");
+                  if (isOnPrepaidPlan) return null;
+                  return (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Monthly Rent</div>
+                          <div className="mt-0.5 text-sm font-medium text-slate-700">{rentPaidMonth || "This month"}</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs font-semibold ${rentPaidStatus ? "text-emerald-600" : "text-amber-600"}`}>
+                            {rentPaidStatus === null ? "—" : rentPaidStatus ? "Paid" : "Unpaid"}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={rentPaidLoading || rentPaidStatus === null}
+                            onClick={() => selectedClient && void toggleRentPaidStatus(selectedClient.email, !rentPaidStatus)}
+                            className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors disabled:opacity-50 ${rentPaidStatus ? "bg-emerald-500" : "bg-slate-300"}`}
+                          >
+                            <span className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${rentPaidStatus ? "translate-x-6" : "translate-x-1"}`} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {infoRentCalculating ? (
+                        <p className="text-xs text-slate-500 border-t border-slate-200 pt-3">Calculating…</p>
+                      ) : infoRentBreakdown ? (
+                        <div className="space-y-1.5 border-t border-slate-200 pt-3 text-sm">
+                          {[
+                            { label: "Base rent", value: infoRentBreakdown.baseRent ?? 0, color: "" },
+                            ...((infoRentBreakdown.tenureSurchargeVnd ?? 0) > 0 ? [{ label: `Short-term surcharge (+${((infoRentBreakdown.tenureSurchargeRate ?? 0) * 100).toFixed(0)}%)`, value: infoRentBreakdown.tenureSurchargeVnd ?? 0, color: "text-amber-600" }] : []),
+                            ...((infoRentBreakdown.professionalDiscountVnd ?? 0) > 0 ? [{ label: "Professional discount (−10%)", value: -(infoRentBreakdown.professionalDiscountVnd ?? 0), color: "text-emerald-600" }] : []),
+                            ...((infoRentBreakdown.planDiscountVnd ?? 0) > 0 ? [{ label: "Plan discount", value: -(infoRentBreakdown.planDiscountVnd ?? 0), color: "text-emerald-600" }] : []),
+                            ...((infoRentBreakdown.managerDiscountVnd ?? 0) > 0 ? [{ label: "Manager discount", value: -(infoRentBreakdown.managerDiscountVnd ?? 0), color: "text-emerald-600" }] : []),
+                            { label: "Parking", value: infoRentBreakdown.parkingFeeVnd ?? 0, color: "" },
+                            { label: `Laundry (${infoRentBreakdown.details?.laundryCount?.cash ?? 0} washes)`, value: infoRentBreakdown.laundryFeeVnd ?? 0, color: "" },
+                            { label: `Fines (${infoRentBreakdown.details?.unpaidFinesCount ?? 0} unpaid)`, value: infoRentBreakdown.finesVnd ?? 0, color: "" },
+                          ].filter(item => item.value !== 0).map((item) => (
+                            <div key={item.label} className={`flex justify-between ${item.color || "text-slate-700"}`}>
+                              <span>{item.label}</span>
+                              <span className="font-medium">{item.value < 0 ? "−" : ""}{Math.abs(item.value).toLocaleString()} ₫</span>
+                            </div>
+                          ))}
+                          <div className="flex items-center justify-between border-t border-slate-200 pt-2 gap-2">
+                            <span className="font-bold text-slate-900">Total due</span>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-slate-900">{(infoRentBreakdown.totalBeforeCoinsVnd ?? 0).toLocaleString()} ₫</span>
+                              {canCreatePaymentReceipt && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setTargetMonthInput(rentPaidMonth);
+                                    setManagerDiscountInput(infoManagerDiscount);
+                                    setRentBreakdown(infoRentBreakdown);
+                                    setRentPaymentMode("rent");
+                                    setActiveAction("payment");
+                                  }}
+                                  className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-700"
+                                >
+                                  Create Receipt
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500 border-t border-slate-200 pt-3">No breakdown available</p>
+                      )}
+
+                      <div className="flex gap-2 border-t border-slate-200 pt-3">
+                        <div className="flex-1">
+                          <label className="block text-xs font-medium text-slate-500 mb-1">Manager discount (₫)</label>
+                          <input
+                            type="number"
+                            value={infoManagerDiscount}
+                            onChange={(e) => setInfoManagerDiscount(e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                            min="0"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          disabled={infoRentCalculating || !selectedClient}
+                          onClick={() => void recalcInfoBreakdown(selectedClient.email, infoManagerDiscount)}
+                          className="self-end rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                        >
+                          {infoRentCalculating ? "…" : "Recalc"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {showClientDetails || isEditingClientProfile ? (
                   <div className="grid gap-4 border-t border-slate-200 pt-4 md:grid-cols-2">
@@ -2447,16 +3528,33 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
               {activeAction === "password" ? (
                 <div className="mt-4 space-y-3">
-                  <label className="block text-sm font-medium text-slate-700">
-                    {t("newPassword", "New password")}
-                    <input
-                      type="password"
-                      value={clientNewPassword}
-                      onChange={(event) => setClientNewPassword(event.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
-                      placeholder={t("mustBe4Chars", "Must be at least 4 characters")}
-                    />
-                  </label>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700">
+                      {t("newPassword", "New password")}
+                    </label>
+                    <div className="mt-1 flex gap-2">
+                      <input
+                        type="text"
+                        value={clientNewPassword}
+                        onChange={(event) => setClientNewPassword(event.target.value)}
+                        className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                        placeholder={t("mustBe4Chars", "Must be at least 4 characters")}
+                      />
+                      {selectedClientPhone && (
+                        <button
+                          type="button"
+                          onClick={() => setClientNewPassword(selectedClientPhone.replace(/\D/g, ""))}
+                          className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                          title="Reset to phone number (default)"
+                        >
+                          Use phone
+                        </button>
+                      )}
+                    </div>
+                    {selectedClientPhone && (
+                      <p className="mt-1 text-xs text-slate-400">Default: {selectedClientPhone.replace(/\D/g, "")}</p>
+                    )}
+                  </div>
                   <button
                     type="button"
                     onClick={() => {
@@ -2511,7 +3609,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           async () => {
                             setActiveAction("");
                             await loadClients(true);
-                            setSelectedClient(null);
+                            setSelectedMaHd("");
                           }
                         ).finally(() => setLoading(false));
                       }}
@@ -2939,73 +4037,327 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             </div>
           )}
 
-          <div className="mt-6 space-y-3">
-            {staffEntries.length ? (
-              staffEntries.map((entry) => (
-                <div
-                  key={entry.email}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 p-4"
-                >
-                  <div>
-                    <div className="font-medium text-slate-900">
-                      {entry.name ? `${entry.name} — ` : ""}{entry.email}
-                    </div>
-                    <div className="mt-1 text-sm text-slate-600">
-                      {t("roleLabel")}: {entry.role} | {t("addedByLabel")}: {entry.addedBy || "system"}
-                    </div>
-                  </div>
+          <div className="mt-6">
+            <button
+              type="button"
+              onClick={() => setShowStaffList((v) => !v)}
+              className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm"
+            >
+              <span>{showStaffList ? "▲" : "▼"}</span>
+              {showStaffList ? t("hideTeamList", "Hide team list") : t("showTeamList", "Show team list")}
+              {staffEntries.length > 0 && (
+                <span className="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                  {staffEntries.length}
+                </span>
+              )}
+            </button>
 
-                  {canManageOwnersEmployees ? (
-                    <div className="flex flex-wrap gap-3">
-                      <select
-                        value={entry.role}
-                        onChange={(event) =>
-                          void postJson(
-                            `${API_BASE_URL}/staff-access`,
-                            {
-                              actorEmail: normalizedEmail,
-                              targetEmail: entry.email,
-                              role: event.target.value as StaffRole
-                            },
-                            "Account role updated.",
-                            loadTeam
-                          )
-                        }
-                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            {showStaffList && (
+              <div className="mt-4 space-y-3">
+                {staffEntries.length ? (
+                  staffEntries.map((entry) => {
+                    const isOwnerEntry = entry.role === "owner" || entry.role === "app_admin";
+                    const canRemoveThis = canManageOwnersEmployees && !isOwnerEntry;
+                    return (
+                      <div
+                        key={entry.email}
+                        className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 p-4"
                       >
-                        <option value="manager">Manager</option>
-                        <option value="mechanic">Mechanic</option>
-                        {isAppAdminSession ? <option value="owner">Owner</option> : null}
-                        <option value="app_admin" disabled>
-                          App admin
-                        </option>
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void fetch(`${API_BASE_URL}/staff-access`, {
-                            method: "DELETE",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ actorEmail: normalizedEmail, targetEmail: entry.email })
-                          }).then(() => loadTeam())
-                        }
-                        disabled={entry.role === "app_admin"}
-                        className="rounded-lg border border-rose-200 px-3 py-2 text-sm text-rose-700 disabled:opacity-50"
-                      >
-                        {t("removeLabel")}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-slate-500">{t("viewOnly")}</div>
-                  )}
-                </div>
-              ))
-            ) : (
-              <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
-                {t("noAccountsAdded")}
+                        <div>
+                          <div className="font-medium text-slate-900">
+                            {entry.name ? `${entry.name} — ` : ""}{entry.email}
+                          </div>
+                          <div className="mt-1 text-sm text-slate-600">
+                            {t("roleLabel")}: {entry.role} | {t("addedByLabel")}: {entry.addedBy || "system"}
+                          </div>
+                        </div>
+
+                        {canManageOwnersEmployees ? (
+                          <div className="flex flex-wrap gap-3">
+                            <select
+                              value={entry.role}
+                              onChange={(event) =>
+                                void postJson(
+                                  `${API_BASE_URL}/staff-access`,
+                                  {
+                                    actorEmail: normalizedEmail,
+                                    targetEmail: entry.email,
+                                    role: event.target.value as StaffRole
+                                  },
+                                  "Account role updated.",
+                                  loadTeam
+                                )
+                              }
+                              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            >
+                              <option value="manager">Manager</option>
+                              <option value="mechanic">Mechanic</option>
+                              {isAppAdminSession ? <option value="owner">Owner</option> : null}
+                              <option value="app_admin" disabled>
+                                App admin
+                              </option>
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRemoveConfirmEntry(entry);
+                                setRemoveConfirmPassword("");
+                                setRemoveConfirmError("");
+                              }}
+                              disabled={!canRemoveThis}
+                              title={isOwnerEntry ? t("cannotRemoveOwner", "Managers cannot remove owner accounts") : undefined}
+                              className="rounded-lg border border-rose-200 px-3 py-2 text-sm text-rose-700 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {t("removeLabel")}
+                            </button>
+                            {/* Permissions button — owner/admin sees it for others; anyone sees it for self */}
+                            {(isOwnerSession || isAppAdminSession || entry.email === normalizedEmail) && (
+                              <button
+                                type="button"
+                                onClick={() => void loadPermissions(entry)}
+                                className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-medium text-violet-700 hover:bg-violet-100"
+                              >
+                                {entry.email === normalizedEmail ? "My permissions" : "⚙ Permissions"}
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="flex flex-wrap gap-3">
+                            {entry.email === normalizedEmail && (
+                              <button
+                                type="button"
+                                onClick={() => void loadPermissions(entry)}
+                                className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-medium text-violet-700 hover:bg-violet-100"
+                              >
+                                My permissions
+                              </button>
+                            )}
+                            <div className="text-sm text-slate-500 self-center">{t("viewOnly")}</div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
+                    {t("noAccountsAdded")}
+                  </div>
+                )}
               </div>
             )}
           </div>
+
+          {/* Remove confirmation dialog */}
+          {removeConfirmEntry && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+              <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-xl">
+                <h3 className="text-base font-semibold text-slate-900">
+                  {t("confirmRemoveTitle", "Remove account?")}
+                </h3>
+                <p className="mt-2 text-sm text-slate-600">
+                  {t("confirmRemoveDesc", "You are about to remove access for")}:{" "}
+                  <span className="font-medium text-slate-900">
+                    {removeConfirmEntry.name ? `${removeConfirmEntry.name} (${removeConfirmEntry.email})` : removeConfirmEntry.email}
+                  </span>
+                </p>
+                <p className="mt-3 text-sm text-slate-600">
+                  {t("confirmRemovePasswordPrompt", "Enter your password to confirm:")}
+                </p>
+                <input
+                  type="password"
+                  value={removeConfirmPassword}
+                  onChange={(e) => {
+                    setRemoveConfirmPassword(e.target.value);
+                    setRemoveConfirmError("");
+                  }}
+                  placeholder={t("passwordPlaceholder", "Your password")}
+                  className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                />
+                {removeConfirmError && (
+                  <p className="mt-2 text-sm text-rose-600">{removeConfirmError}</p>
+                )}
+                <div className="mt-4 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRemoveConfirmEntry(null)}
+                    className="flex-1 rounded-xl border border-slate-200 py-2 text-sm font-medium text-slate-700"
+                  >
+                    {t("cancelLabel", "Cancel")}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!removeConfirmPassword.trim() || removeConfirmLoading}
+                    onClick={async () => {
+                      setRemoveConfirmLoading(true);
+                      setRemoveConfirmError("");
+                      try {
+                        // Verify password via login endpoint
+                        const verifyRes = await fetch(`${API_BASE_URL}/auth/login`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ email: normalizedEmail, password: removeConfirmPassword.trim() })
+                        });
+                        if (!verifyRes.ok) {
+                          setRemoveConfirmError(t("incorrectPassword", "Incorrect password. Please try again."));
+                          setRemoveConfirmLoading(false);
+                          return;
+                        }
+                        await fetch(`${API_BASE_URL}/staff-access`, {
+                          method: "DELETE",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ actorEmail: normalizedEmail, targetEmail: removeConfirmEntry.email })
+                        });
+                        setRemoveConfirmEntry(null);
+                        await loadTeam();
+                      } catch {
+                        setRemoveConfirmError(t("requestFailed", "Request failed. Please try again."));
+                      } finally {
+                        setRemoveConfirmLoading(false);
+                      }
+                    }}
+                    className="flex-1 rounded-xl bg-rose-600 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  >
+                    {removeConfirmLoading ? t("calculating") : t("confirmRemoveBtn", "Remove account")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Permissions modal */}
+          {permissionsEntry && editingPermissions && (
+            <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center p-0 sm:p-4">
+              <div className="w-full max-w-lg rounded-t-3xl sm:rounded-3xl bg-white shadow-xl flex flex-col max-h-[90vh]">
+                {/* Sticky header */}
+                <div className="flex items-start justify-between gap-3 px-6 pt-6 pb-4 border-b border-slate-100 flex-shrink-0">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900">
+                      {permissionsEntry.email === normalizedEmail ? "My Permissions" : `Permissions — ${permissionsEntry.name ?? permissionsEntry.email}`}
+                    </h3>
+                    <p className="mt-1 text-xs text-slate-500">{permissionsEntry.email}</p>
+                  </div>
+                  <button type="button" onClick={() => { setPermissionsEntry(null); setEditingPermissions(null); }} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+                </div>
+
+                {/* Scrollable body */}
+                <div className="flex-1 overflow-y-auto px-6 py-4">
+                  {/* Branch access */}
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Branch access</div>
+                    <div className="flex flex-wrap gap-2">
+                      {KNOWN_BRANCHES.map(b => {
+                        const isActive = editingPermissions.branches.length === 0 || editingPermissions.branches.includes(b);
+                        const canEdit = (isOwnerSession || isAppAdminSession) && permissionsEntry.email !== normalizedEmail;
+                        return (
+                          <button
+                            key={b}
+                            type="button"
+                            disabled={!canEdit}
+                            onClick={() => {
+                              if (!canEdit) return;
+                              const current = editingPermissions.branches.length === 0 ? KNOWN_BRANCHES : [...editingPermissions.branches];
+                              const next = current.includes(b) ? current.filter(x => x !== b) : [...current, b];
+                              setEditingPermissions({ ...editingPermissions, branches: next.length === KNOWN_BRANCHES.length ? [] : next });
+                            }}
+                            className={`rounded-full px-3 py-1 text-xs font-semibold border ${isActive ? "bg-sky-600 text-white border-sky-600" : "border-slate-300 text-slate-500"} disabled:cursor-default`}
+                          >
+                            {b}
+                          </button>
+                        );
+                      })}
+                      {editingPermissions.branches.length === 0 && (
+                        <span className="text-xs text-slate-500 self-center">All branches</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Data permissions grid */}
+                  <div className="mt-5">
+                    <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 gap-y-2 items-center">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Data type</div>
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 text-center">Read</div>
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 text-center">Write</div>
+                      {DATA_CATEGORIES.map(({ key, label, hasWrite }) => {
+                        const perm = editingPermissions.data[key] ?? { read: false, write: false };
+                        const canEdit = (isOwnerSession || isAppAdminSession) && permissionsEntry.email !== normalizedEmail;
+                        const toggle = (field: "read" | "write") => {
+                          if (!canEdit) return;
+                          const cur = editingPermissions.data[key] ?? { read: false, write: false };
+                          const next = { ...cur, [field]: !cur[field] };
+                          if (field === "write" && next.write) next.read = true;
+                          if (field === "read" && !next.read) next.write = false;
+                          setEditingPermissions({ ...editingPermissions, data: { ...editingPermissions.data, [key]: next } });
+                        };
+                        return (
+                          <>
+                            <div key={`${key}-label`} className="text-sm text-slate-700">{label}</div>
+                            <div key={`${key}-read`} className="flex justify-center">
+                              <button
+                                type="button"
+                                disabled={!canEdit}
+                                onClick={() => toggle("read")}
+                                className={`h-5 w-5 rounded border-2 flex items-center justify-center ${perm.read ? "border-emerald-500 bg-emerald-500" : "border-slate-300"} disabled:cursor-default`}
+                              >
+                                {perm.read && <span className="text-white text-[10px] font-bold">✓</span>}
+                              </button>
+                            </div>
+                            <div key={`${key}-write`} className="flex justify-center">
+                              {hasWrite ? (
+                                <button
+                                  type="button"
+                                  disabled={!canEdit}
+                                  onClick={() => toggle("write")}
+                                  className={`h-5 w-5 rounded border-2 flex items-center justify-center ${perm.write ? "border-sky-500 bg-sky-500" : "border-slate-300"} disabled:cursor-default`}
+                                >
+                                  {perm.write && <span className="text-white text-[10px] font-bold">✓</span>}
+                                </button>
+                              ) : (
+                                <span className="text-slate-300 text-xs">—</span>
+                              )}
+                            </div>
+                          </>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sticky footer */}
+                <div className="flex gap-2 justify-end px-6 py-4 border-t border-slate-100 flex-shrink-0 bg-white rounded-b-3xl">
+                  <button type="button" onClick={() => { setPermissionsEntry(null); setEditingPermissions(null); }} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700">
+                    {(isOwnerSession || isAppAdminSession) && permissionsEntry.email !== normalizedEmail ? "Cancel" : "Close"}
+                  </button>
+                  {(isOwnerSession || isAppAdminSession) && permissionsEntry.email !== normalizedEmail && (
+                    <button
+                      type="button"
+                      disabled={permissionsSaving}
+                      onClick={async () => {
+                        setPermissionsSaving(true);
+                        try {
+                          const res = await fetch(`${API_BASE_URL}/staff-access/permissions`, {
+                            method: "PUT",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ actorEmail: normalizedEmail, targetEmail: permissionsEntry.email, permissions: editingPermissions })
+                          });
+                          const data = (await res.json()) as { ok?: boolean; error?: string };
+                          if (!res.ok) throw new Error(data.error ?? "Failed to save");
+                          setPermissionsEntry(null);
+                          setEditingPermissions(null);
+                        } catch (err) {
+                          setStatus(err instanceof Error ? err.message : "Failed to save permissions");
+                        } finally {
+                          setPermissionsSaving(false);
+                        }
+                      }}
+                      className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                    >
+                      {permissionsSaving ? "Saving…" : "Save permissions"}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </section>
       ) : null}
 
@@ -3360,6 +4712,87 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           </section>
         </section>
       ) : null}
+
+      {/* Short-term booking confirm & import dialog */}
+      {stConfirmDialog && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center p-0 sm:p-4">
+          <div className="w-full max-w-md rounded-t-3xl sm:rounded-3xl bg-white shadow-xl flex flex-col max-h-[90vh]">
+            <div className="px-6 pt-6 pb-4 border-b border-slate-100 flex-shrink-0">
+              <h3 className="text-base font-semibold text-slate-900">Confirm & Import Booking</h3>
+              <p className="mt-1 text-xs text-slate-500">{stConfirmDialog.booking.guestName} · {stConfirmDialog.booking.email}</p>
+              <p className="text-xs text-slate-500">{stConfirmDialog.booking.checkIn} → {stConfirmDialog.booking.checkOut}</p>
+            </div>
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Branch</label>
+                <div className="flex gap-2">
+                  {(["D2", "D7"] as const).map((br) => (
+                    <button key={br} type="button"
+                      onClick={() => setStConfirmDialog({ ...stConfirmDialog, branch: br })}
+                      className={`rounded-full px-4 py-1.5 text-sm font-semibold border ${stConfirmDialog.branch === br ? "bg-sky-600 text-white border-sky-600" : "border-slate-300 text-slate-600"}`}
+                    >{br}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Bed number</label>
+                <input
+                  type="number" min={1}
+                  value={stConfirmDialog.bed}
+                  onChange={(e) => setStConfirmDialog({ ...stConfirmDialog, bed: e.target.value })}
+                  className="w-32 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none"
+                  placeholder="e.g. 5"
+                />
+              </div>
+              <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
+                This will create a portal account for the guest. Their initial password will be their phone number. They must change it on first login.
+              </div>
+              {stConfirmDialog.result && (
+                <div className={`rounded-xl p-3 text-xs font-medium ${stConfirmDialog.result.startsWith("✓") ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                  {stConfirmDialog.result}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2 justify-end px-6 py-4 border-t border-slate-100 flex-shrink-0 bg-white rounded-b-3xl">
+              <button type="button"
+                onClick={() => setStConfirmDialog(null)}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700"
+              >Cancel</button>
+              <button type="button"
+                disabled={stConfirmDialog.saving || !stConfirmDialog.bed}
+                onClick={async () => {
+                  setStConfirmDialog({ ...stConfirmDialog, saving: true, result: "" });
+                  try {
+                    const res = await fetch(`${API_BASE_URL}/manager/short-term/bookings/${encodeURIComponent(stConfirmDialog.booking.id)}/confirm`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ actorEmail: normalizedEmail, branch: stConfirmDialog.branch, bed: stConfirmDialog.bed })
+                    });
+                    const data = (await res.json()) as { ok?: boolean; error?: string; contractCode?: string; initialPassword?: string };
+                    if (!res.ok) throw new Error(data.error ?? "Failed to import");
+                    setStConfirmDialog({ ...stConfirmDialog, saving: false, result: `✓ Imported as ${data.contractCode ?? ""}. Initial password: ${data.initialPassword ?? "phone number"}` });
+                    // Refresh pending bookings
+                    setStPendingBookings(null);
+                    void (async () => {
+                      setStPendingLoading(true);
+                      try {
+                        const r = await fetch(`${API_BASE_URL}/manager/short-term/pending-bookings?actorEmail=${encodeURIComponent(normalizedEmail)}`);
+                        const d = (await r.json()) as { bookings: StandaloneBooking[] };
+                        setStPendingBookings(d.bookings ?? []);
+                      } finally { setStPendingLoading(false); }
+                    })();
+                  } catch (err) {
+                    setStConfirmDialog({ ...stConfirmDialog, saving: false, result: err instanceof Error ? err.message : "Failed to import" });
+                  }
+                }}
+                className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {stConfirmDialog.saving ? "Importing…" : "Confirm & Import"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

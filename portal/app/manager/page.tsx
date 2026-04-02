@@ -15,7 +15,8 @@ export default async function ManagerPage({
     view === "admin_cleaning" ||
     view === "scheduling" ||
     view === "controller" ||
-    view === "overview"
+    view === "overview" ||
+    view === "short_term"
       ? view
       : "overview";
 

@@ -253,6 +253,7 @@ export type PaymentsCache = {
 };
 
 export type PaidGuestBookingClientInput = {
+  bookingId: string;
   guestEmail: string;
   guestName: string;
   guestPhone: string;
@@ -570,7 +571,15 @@ function formatClientContractDate(value: string) {
 }
 
 function mapBioSexToVietnamese(value: string) {
-  return value === "female" ? "N\u1eef" : "Nam";
+  if (value === "female") {
+    return "N\u1eef";
+  }
+
+  if (value === "male") {
+    return "Nam";
+  }
+
+  return "";
 }
 
 const CLIENT_BRANCH_COLUMN_ALIASES = [
@@ -2050,14 +2059,16 @@ export async function getLaundryBookingContextForEmail(email: string) {
   if (!client) {
     const staff = await getStaffEntryByEmail(email);
     if (staff) {
-      // For staff not in Client sheet, assume D2 as default for testing visibility
+      // For staff not in Client sheet, use D2 + bed 0 as default
       branchId = "D2";
       client = {
         [EMAIL_COLUMN]: email,
-        [CLIENT_NAME_COLUMN]: "Staff User",
+        [CLIENT_NAME_COLUMN]: staff.name ?? "Staff",
         [ACTIVE_STAYING_COLUMN]: "1",
-        "Chi nhánh": "D2"
-      } as any;
+        [CLIENT_BRANCH_COLUMN]: "2",
+        [CLIENT_BED_COLUMN]: "0",
+        [CONTRACT_CODE_COLUMN]: `STAFF-${email.split("@")[0]?.toUpperCase() ?? "USER"}`
+      } as unknown as ClientRow;
     } else {
       return null;
     }
@@ -2633,7 +2644,14 @@ export async function upsertPaidGuestBookingClient(input: PaidGuestBookingClient
     throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
   }
 
+  const bookingId = input.bookingId.trim();
   const normalizedEmail = input.guestEmail.trim().toLowerCase();
+  const contractCode = `SHORTTERM-${bookingId}`;
+
+  if (!bookingId) {
+    throw new Error("Booking id is required.");
+  }
+
   if (!normalizedEmail) {
     throw new Error("Guest email is required.");
   }
@@ -2656,7 +2674,7 @@ export async function upsertPaidGuestBookingClient(input: PaidGuestBookingClient
     }
 
     const mappedRow = mapRow(headers, row.map((value) => String(value)));
-    return mappedRow[EMAIL_COLUMN]?.trim().toLowerCase() === normalizedEmail;
+    return mappedRow[CONTRACT_CODE_COLUMN]?.trim() === contractCode;
   });
 
   const existingRow =
@@ -2666,8 +2684,7 @@ export async function upsertPaidGuestBookingClient(input: PaidGuestBookingClient
 
   const currentTimestamp = new Date().toISOString();
   const nextContractCode =
-    String(existingRow[CONTRACT_CODE_COLUMN] ?? "").trim() ||
-    `SHORTTERM${Date.now()}`;
+    String(existingRow[CONTRACT_CODE_COLUMN] ?? "").trim() || contractCode;
 
   const nextRow: Record<string, string> = {
     ...existingRow,
@@ -2675,7 +2692,8 @@ export async function upsertPaidGuestBookingClient(input: PaidGuestBookingClient
     [HIDDEN_EMAIL_COLUMN]: normalizedEmail,
     [EMAIL_COLUMN]: normalizedEmail,
     [CLIENT_NAME_COLUMN]: input.guestName.trim(),
-    [CLIENT_GENDER_COLUMN]: mapBioSexToVietnamese(input.bioSex),
+    [CLIENT_GENDER_COLUMN]:
+      mapBioSexToVietnamese(input.bioSex) || String(existingRow[CLIENT_GENDER_COLUMN] ?? "").trim(),
     [CLIENT_BRANCH_COLUMN]: input.branchId === "D7" ? "7" : "2",
     [CLIENT_PHONE_COLUMN]: input.guestPhone.trim(),
     [CLIENT_BED_COLUMN]: String(input.bedNumber),
@@ -2691,7 +2709,7 @@ export async function upsertPaidGuestBookingClient(input: PaidGuestBookingClient
     [CLIENT_NOTE_COLUMN]:
       input.notes?.trim() ||
       String(existingRow[CLIENT_NOTE_COLUMN] ?? "").trim() ||
-      "Imported from guest-booking-standalone after Stripe payment"
+      `Imported from guest-booking-standalone after Stripe payment | Booking ID: ${bookingId}`
   };
 
   const orderedRow = headers.map((header) => nextRow[header] ?? "");

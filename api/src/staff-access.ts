@@ -22,12 +22,31 @@ const googlePortalAuthClient = googleClientId ? new google.auth.OAuth2(googleCli
 
 export type StaffRole = "manager" | "owner" | "app_admin" | "mechanic";
 
+export const ALL_DATA_CATEGORIES = [
+  "clients",
+  "fines",
+  "payments",
+  "cleaning",
+  "laundry",
+  "support",
+  "coins",
+  "stats"
+] as const;
+
+export type DataCategory = (typeof ALL_DATA_CATEGORIES)[number];
+
+export type ManagerPermissions = {
+  branches: string[];  // e.g. ["D2", "D7"] — empty means access to all
+  data: Partial<Record<DataCategory, { read: boolean; write: boolean }>>;
+};
+
 type StaffAccessEntry = {
   email: string;
   role: StaffRole;
   name?: string;
   addedAt: string;
   addedBy: string;
+  permissions?: ManagerPermissions;
 };
 
 type StaffAccessFile = {
@@ -464,4 +483,40 @@ export async function removeStaffAccess(input: {
     ok: true,
     staff: (await readStaffAccessFile()).staff
   };
+}
+
+export async function getManagerPermissions(actorEmail: string, targetEmail: string): Promise<ManagerPermissions> {
+  const normalized = normalizeEmail(actorEmail);
+  const target = normalizeEmail(targetEmail);
+  // Owner/app_admin can view any; manager can only view their own
+  const actor = await resolvePortalLogin(normalized);
+  if (!actor.allowed || !actor.role || actor.role === "user") {
+    throw new Error("You do not have permission to view manager permissions.");
+  }
+  if (actor.role === "manager" && normalized !== target) {
+    throw new Error("Managers can only view their own permissions.");
+  }
+  const file = await readStaffAccessFile();
+  const entry = file.staff.find(s => normalizeEmail(s.email) === target);
+  return entry?.permissions ?? { branches: [], data: {} };
+}
+
+export async function setManagerPermissions(actorEmail: string, targetEmail: string, permissions: ManagerPermissions): Promise<void> {
+  // Only owner or app_admin can set permissions
+  const actor = await requirePortalRole(actorEmail, ["owner", "app_admin"], "Only owners or app admins can set manager permissions.");
+  const target = normalizeEmail(targetEmail);
+  const file = await readStaffAccessFile();
+  const idx = file.staff.findIndex(s => normalizeEmail(s.email) === target);
+  if (idx === -1) {
+    throw new Error("Staff member not found.");
+  }
+  // Owner cannot set permissions on other owner or app_admin
+  if (actor.role === "owner") {
+    const targetEntry = file.staff[idx];
+    if (targetEntry.role === "owner" || targetEntry.role === "app_admin") {
+      throw new Error("Owners cannot edit permissions for owner or app_admin accounts.");
+    }
+  }
+  file.staff[idx] = { ...file.staff[idx], permissions };
+  await writeStaffAccessFile(file);
 }

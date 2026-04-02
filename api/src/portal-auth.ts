@@ -97,7 +97,7 @@ async function writeAuthFile(file: PortalAuthFile) {
   await writeFile(authFilePath, JSON.stringify(file, null, 2), "utf8");
 }
 
-async function upsertStoredPassword(email: string, nextPassword: string, options?: { mustChangePassword?: boolean }) {
+export async function upsertStoredPassword(email: string, nextPassword: string, options?: { mustChangePassword?: boolean }) {
   const authFile = await ensureAuthFile();
   const existingRecord = authFile.records.find((record) => normalizeEmail(record.email) === email) ?? null;
   const now = new Date().toISOString();

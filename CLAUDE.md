@@ -163,6 +163,8 @@ const nextConfig: NextConfig = {
 
 | Version | Description |
 |---------|-------------|
+| 3.5.0 | Short-term portal merged into client list (Long term / Short term tabs); bed pricing diagram UI with T/M/B tiers (150k/250k defaults); manager permissions modal sticky footer fix; inactive tab compile fix; short-term booking confirmation (imports standalone booking app guest into main portal with auto account creation); contract termination + checkout form; manager can book services (bed 0); manager permissions data model (per-branch + per-category read/write, owner-configurable) |
+| 3.3.4 | Manager password reset, relaxed contract expiration access, optimized extension flow |
 | 3.3.0 | Auto-scheduling (15-day horizon, 60-day fairness), monthly release limit (3/month), evasion penalty (100k VND), staff names on receipts, payment sheet fix |
 | 3.2.2 | Nav badges (laundry/cleaning/message/account), cleaning self-assign fix for today + 8pm takeover, manager iMessage UI |
 | 3.1.1 | iMessage-style messaging, cleaning bonus |
