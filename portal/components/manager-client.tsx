@@ -3914,9 +3914,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     <thead className="bg-slate-50 text-left text-slate-600">
                       <tr>
                         <th className="px-4 py-3 font-medium">{t("whenLabel")}</th>
-                        <th className="px-4 py-3 font-medium">{t("detailLabel")} 1</th>
-                        <th className="px-4 py-3 font-medium">{t("detailLabel")} 2</th>
-                        <th className="px-4 py-3 font-medium">{t("detailLabel")} 3</th>
+                        <th className="px-4 py-3 font-medium">{activeTab === "fines" ? (language === "vi" ? "Nội dung vi phạm" : "Violation") : `${t("detailLabel")} 1`}</th>
+                        <th className="px-4 py-3 font-medium">{activeTab === "fines" ? (language === "vi" ? "Người lập phiếu" : "Created by") : `${t("detailLabel")} 2`}</th>
+                        <th className="px-4 py-3 font-medium">{activeTab === "fines" ? (language === "vi" ? "Chi phí" : "Amount") : `${t("detailLabel")} 3`}</th>
                         <th className="px-4 py-3 font-medium">{t("clientActions")}</th>
                       </tr>
                     </thead>
@@ -3924,12 +3924,15 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       {(activeTab === "coins" ? workspace.stats.coins : activeTab === "payments" ? workspace.stats.payments : workspace.stats.fines).map((entry) => {
                         const key = makeKey(Object.values(entry.row).slice(0, 4));
                         const preview = Object.entries(entry.row).filter(([, value]) => String(value ?? "").trim()).slice(0, 4);
+                        const fineContent = activeTab === "fines" ? findRowValue(entry.row, ["noidungvipham"]) : null;
+                        const fineCreator = activeTab === "fines" ? findRowValue(entry.row, ["nguoilapphieu"]) : null;
+                        const fineAmount = activeTab === "fines" ? findRowValue(entry.row, ["chiphi"]) : null;
                         return (
                           <tr key={`table:${key}`} className="align-top">
                             <td className="px-4 py-3 text-slate-700">{formatDateTime(entry.parsedTimestamp)}</td>
-                            <td className="px-4 py-3 text-slate-700">{preview[1] ? `${preview[1][0]}: ${preview[1][1]}` : "-"}</td>
-                            <td className="px-4 py-3 text-slate-700">{preview[2] ? `${preview[2][0]}: ${preview[2][1]}` : "-"}</td>
-                            <td className="px-4 py-3 text-slate-700">{preview[3] ? `${preview[3][0]}: ${preview[3][1]}` : "-"}</td>
+                            <td className="px-4 py-3 text-slate-700">{activeTab === "fines" ? (fineContent || "-") : preview[1] ? `${preview[1][0]}: ${preview[1][1]}` : "-"}</td>
+                            <td className="px-4 py-3 text-slate-700">{activeTab === "fines" ? (fineCreator || "-") : preview[2] ? `${preview[2][0]}: ${preview[2][1]}` : "-"}</td>
+                            <td className="px-4 py-3 text-slate-700">{activeTab === "fines" ? (fineAmount ? `${Number(fineAmount).toLocaleString()} ₫` : "-") : preview[3] ? `${preview[3][0]}: ${preview[3][1]}` : "-"}</td>
                             <td className="px-4 py-3">
                               <button type="button" onClick={() => { setEditingId(`${activeTab}:${key}`); setEditValues(entry.row); }} className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700">Edit</button>
                             </td>
@@ -3985,6 +3988,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 <span className="font-medium text-slate-900">{label}:</span> {value}
                               </div>
                             ))}
+                            {activeTab === "fines" && (() => {
+                              const creator = findRowValue(entry.row, ["nguoilapphieu"]);
+                              return creator ? (
+                                <div>
+                                  <span className="font-medium text-slate-900">{language === "vi" ? "Người lập phiếu" : "Created by"}:</span> {creator}
+                                </div>
+                              ) : null;
+                            })()}
                           </div>
                           <button type="button" onClick={() => { setEditingId(`${activeTab}:${key}`); setEditValues(entry.row); }} className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700">Edit</button>
                         </div>
