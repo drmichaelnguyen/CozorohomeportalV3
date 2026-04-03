@@ -297,3 +297,15 @@ model PushSubscription {
 
   @@index([email])
 }
+
+model MonthlyRentStatus {
+  id        Int      @id @default(autoincrement())
+  email     String
+  month     String
+  isPaid    Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+  updatedBy String   @default("")
+
+  @@unique([email, month])
+  @@index([email])
+}

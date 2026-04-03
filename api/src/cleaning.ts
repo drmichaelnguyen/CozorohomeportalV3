@@ -100,7 +100,7 @@ const cleaningRewardMap: Record<CleaningTaskType, number> = {
 };
 
 const CLEANING_FULL_FINE_AMOUNT = 10000;
-const AUTO_CLEANING_FINE_OPERATOR = "Cleaning schedule system";
+const AUTO_CLEANING_FINE_OPERATOR = "System";
 const AUTO_CLEANING_FINE_DESCRIPTION_PREFIX = "Auto-generated for missed cleaning task.";
 const FINE_CONTENT_COLUMN = "N\u1ed8I DUNG VI PH\u1ea0M";
 const FINE_DESCRIPTION_COLUMN = "M\u00d4 T\u1ea2 VI PH\u1ea0M";
@@ -357,6 +357,20 @@ function getCompletionWindow(task: { type: CleaningTaskType; scheduledDate: Date
 function canCompleteTaskNow(task: { type: CleaningTaskType; scheduledDate: Date }, now = new Date()) {
   const { windowStart, windowEnd } = getCompletionWindow(task);
   return now >= windowStart && now <= windowEnd;
+}
+
+const LATE_COMPLETION_HOURS = 10;
+const LATE_COMPLETION_REWARD_RATE = 0.5;
+
+function getLateCompletionWindow(task: { type: CleaningTaskType; scheduledDate: Date }) {
+  const { windowEnd } = getCompletionWindow(task);
+  const lateEnd = new Date(windowEnd.getTime() + LATE_COMPLETION_HOURS * 60 * 60 * 1000);
+  return { lateStart: windowEnd, lateEnd };
+}
+
+function canCompleteTaskLate(task: { type: CleaningTaskType; scheduledDate: Date }, now = new Date()) {
+  const { lateStart, lateEnd } = getLateCompletionWindow(task);
+  return now > lateStart && now <= lateEnd;
 }
 
 async function getActiveCleaningUsers() {
@@ -1800,17 +1814,28 @@ export async function completeCleaningTask(taskId: string, email: string, note?:
     throw new Error("You can only complete your own cleaning task");
   }
 
-  if (!canCompleteTaskNow(task)) {
-    throw new Error(`This task can only be marked done during ${getCompletionWindow(task).label}`);
+  const isLate = !canCompleteTaskNow(task) && canCompleteTaskLate(task);
+
+  if (!canCompleteTaskNow(task) && !isLate) {
+    const { lateEnd } = getLateCompletionWindow(task);
+    throw new Error(
+      `This task can only be marked done during ${getCompletionWindow(task).label}, or up to ${LATE_COMPLETION_HOURS} hours after the deadline (before ${lateEnd.toISOString()}).`
+    );
   }
+
+  const lateRewardCoins = isLate ? Math.round(task.rewardCoins * LATE_COMPLETION_REWARD_RATE) : task.rewardCoins;
+  const lateNote = isLate
+    ? `[Late submission — ${LATE_COMPLETION_REWARD_RATE * 100}% reward applied]${note ? ` ${note}` : ""}`
+    : note;
 
   const updated = await prisma.cleaningTask.update({
     where: { id: taskId },
     data: {
       status: CleaningTaskStatus.DONE_PENDING_AUDIT,
       completedAt: new Date(),
-      completionNote: note,
-      completionPhoto: photo
+      completionNote: lateNote,
+      completionPhoto: photo,
+      rewardCoins: lateRewardCoins
     }
   });
 
@@ -1955,7 +1980,8 @@ export async function sweepOverdueCleaningTasks(now = new Date()) {
 
   for (const task of overdueTasks) {
     const completionWindow = getCompletionWindow(task);
-    if (completionWindow.windowEnd >= now) {
+    const fineThreshold = new Date(completionWindow.windowEnd.getTime() + 12 * 60 * 60 * 1000);
+    if (fineThreshold > now) {
       continue;
     }
 

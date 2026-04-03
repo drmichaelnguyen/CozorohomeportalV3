@@ -253,6 +253,7 @@ export function ClientLoginClient() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [googleClientId, setGoogleClientId] = useState("");
+  const [notRegisteredEmail, setNotRegisteredEmail] = useState<string | null>(null);
   const [client, setClient] = useState<ClientRecord | null>(null);
   const [cacheRows, setCacheRows] = useState<ClientRecord[]>([]);
   const [selectedMaHd, setSelectedMaHd] = useState("");
@@ -460,6 +461,7 @@ export function ClientLoginClient() {
 
   function resetLoginView() {
     setMessage("");
+    setNotRegisteredEmail(null);
     setClient(null);
     setCacheRows([]);
     setSelectedMaHd("");
@@ -633,7 +635,11 @@ export function ClientLoginClient() {
       const data = (await response.json()) as LoginResolution;
 
       if (!response.ok || !data.allowed || !data.role) {
-        setMessage(data.error ?? t("onlyActiveUsersLogin", "Only active users or pre-approved Cozoro team emails can log in."));
+        if (response.ok && !data.allowed && data.email) {
+          setNotRegisteredEmail(data.email);
+        } else {
+          setMessage(data.error ?? t("onlyActiveUsersLogin", "Only active users or pre-approved Cozoro team emails can log in."));
+        }
         return;
       }
 
@@ -1036,6 +1042,41 @@ export function ClientLoginClient() {
         ) : null}
 
         {message ? <p className="mt-4 text-sm text-slate-700">{message}</p> : null}
+
+        {notRegisteredEmail ? (
+          <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4">
+            <div className="flex items-start gap-3">
+              <span className="mt-0.5 text-xl">⚠️</span>
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-amber-900">
+                  {t("googleNotRegisteredTitle", "Email not registered / Email chưa được đăng ký")}
+                </p>
+                <p className="mt-1 break-all text-sm text-amber-800">
+                  <span className="font-medium">{notRegisteredEmail}</span>
+                </p>
+                <p className="mt-2 text-sm text-amber-800">
+                  {t(
+                    "googleNotRegisteredBody",
+                    "This Google account is not linked to an active CozoroHome resident or staff account. If you are a resident, please contact management to register your email."
+                  )}
+                </p>
+                <p className="mt-1 text-sm text-amber-800">
+                  {t(
+                    "googleNotRegisteredBodyVi",
+                    "Tài khoản Google này chưa được liên kết với cư dân hoặc nhân viên CozoroHome. Nếu bạn là cư dân, vui lòng liên hệ quản lý để đăng ký email."
+                  )}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setNotRegisteredEmail(null)}
+                  className="mt-3 text-xs font-medium text-amber-700 underline"
+                >
+                  {t("dismiss", "Dismiss / Đóng")}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       {isLoggedIn ? (

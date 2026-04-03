@@ -17,7 +17,7 @@ const DEFAULT_OWNER_EMAILS = (
     "dr.trongto@gmail.com"
   ]
 ).map((email) => email.toLowerCase());
-const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim() ?? "";
+const googleClientId = process.env.GOOGLE_LOGIN_CLIENT_ID?.trim() ?? "";
 const googlePortalAuthClient = googleClientId ? new google.auth.OAuth2(googleClientId) : null;
 
 export type StaffRole = "manager" | "owner" | "app_admin" | "mechanic";

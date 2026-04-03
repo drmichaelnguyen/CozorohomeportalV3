@@ -129,6 +129,9 @@ export function AdminCleaningClient() {
   const [showAllUsers, setShowAllUsers] = useState(false);
   const [auditingTaskId, setAuditingTaskId] = useState<string | null>(null);
   const [auditNote, setAuditNote] = useState("");
+  const [rejectFineDialog, setRejectFineDialog] = useState<{ taskId: string; userEmail: string; scheduledDate: string } | null>(null);
+  const [rejectFineCreate, setRejectFineCreate] = useState(false);
+  const [rejectFineAmount, setRejectFineAmount] = useState("50000");
   const selectedCalendar =
     calendars.find((entry) => calendarKey(entry) === selectedCalendarKey) ?? calendars[0] ?? null;
   const canAssignSelectedDate = isFutureDate(selectedDate);
@@ -414,14 +417,20 @@ export function AdminCleaningClient() {
     }
   }
 
-  async function auditTask(taskId: string, decision: "APPROVE" | "REJECT") {
+  async function auditTask(taskId: string, decision: "APPROVE" | "REJECT", opts?: { createFine?: boolean; fineAmount?: number }) {
     setLoading(true);
     setMessage("");
     try {
       const response = await fetch(`${API_BASE_URL}/admin/cleaning/tasks/${taskId}/audit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reviewer: activeEmail, decision, note: auditNote.trim() || undefined })
+        body: JSON.stringify({
+          reviewer: activeEmail,
+          decision,
+          note: auditNote.trim() || undefined,
+          createFine: opts?.createFine ?? false,
+          fineAmount: opts?.fineAmount
+        })
       });
       const data = await readJsonSafely<{ error?: string }>(response);
       if (!response.ok) {
@@ -430,8 +439,14 @@ export function AdminCleaningClient() {
       }
       setAuditingTaskId(null);
       setAuditNote("");
+      setRejectFineDialog(null);
+      setRejectFineCreate(false);
       await reloadAll();
-      setMessage(decision === "APPROVE" ? "Task approved — coins granted." : "Task rejected — coins forfeited.");
+      if (decision === "APPROVE") {
+        setMessage("Task approved — coins granted.");
+      } else {
+        setMessage(opts?.createFine ? "Task rejected — coins forfeited and fine issued." : "Task rejected — coins forfeited.");
+      }
     } catch {
       setMessage("Unable to audit task.");
     } finally {
@@ -774,7 +789,7 @@ export function AdminCleaningClient() {
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => void auditTask(task.id, "REJECT")}
+                                  onClick={() => setRejectFineDialog({ taskId: task.id, userEmail: task.userEmail, scheduledDate: task.scheduledDate })}
                                   disabled={loading}
                                   className="flex-1 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
                                 >
@@ -942,6 +957,65 @@ export function AdminCleaningClient() {
           <p className="mt-4 text-sm text-slate-600">Load the admin calendars first.</p>
         )}
       </section>
+
+      {rejectFineDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl space-y-4">
+            <h3 className="text-base font-bold text-slate-900">Reject task — confirm</h3>
+            <p className="text-sm text-slate-600">
+              Rejecting for <span className="font-semibold">{rejectFineDialog.userEmail}</span> on{" "}
+              {new Date(rejectFineDialog.scheduledDate).toLocaleDateString()}.
+              Coins will be forfeited.
+            </p>
+
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={rejectFineCreate}
+                onChange={(e) => setRejectFineCreate(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-rose-600"
+              />
+              <span className="text-sm font-medium text-slate-700">Also create a fine ticket</span>
+            </label>
+
+            {rejectFineCreate && (
+              <label className="block text-sm font-medium text-slate-700">
+                Fine amount (₫)
+                <input
+                  type="number"
+                  value={rejectFineAmount}
+                  onChange={(e) => setRejectFineAmount(e.target.value)}
+                  min="1000"
+                  step="1000"
+                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                />
+              </label>
+            )}
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => void auditTask(
+                  rejectFineDialog.taskId,
+                  "REJECT",
+                  rejectFineCreate ? { createFine: true, fineAmount: Number(rejectFineAmount) } : undefined
+                )}
+                className="flex-1 rounded-xl bg-rose-600 py-2.5 text-sm font-bold text-white hover:bg-rose-700 disabled:opacity-50"
+              >
+                {loading ? "Processing…" : rejectFineCreate ? "Reject & Issue Fine" : "Reject"}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setRejectFineDialog(null); setRejectFineCreate(false); }}
+                className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
