@@ -1465,6 +1465,45 @@ export function AccountOverviewClient() {
           </select>
         </div>
       </section>
+
+      {/* About Section */}
+      <section className="mt-8 rounded-2xl bg-gradient-to-br from-sky-50 to-slate-50 p-6 shadow-sm ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">
+          {language === "vi" ? "Về ứng dụng" : "About"}
+        </h2>
+        <p className="mt-3 text-sm leading-relaxed text-slate-700">
+          {language === "vi"
+            ? "Đây là phiên bản thay thế cho ứng dụng web CozoroHome 7 năm tuổi vốn đã trở nên chậm chạp theo thời gian. Ứng dụng mới được xây dựng với hiệu suất cao, hệ thống tự động hóa tiên tiến và trải nghiệm sống hiện đại cho cư dân."
+            : "This app is the replacement for the 7-year-old CozoroHome web app, which had become slow over time. It was built for speed, high automation, and a modern living experience for residents."}
+        </p>
+        <div className="mt-5 flex items-start gap-4">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sky-700 text-xl font-bold select-none">T</div>
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Dr. Trong Nguyen</p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              {language === "vi"
+                ? "Bác sĩ tại Việt Nam · Nhà phát triển AI · Vancouver, Canada"
+                : "Doctor in Vietnam · AI-driven Developer · Vancouver, Canada"}
+            </p>
+            <p className="mt-2 text-sm leading-relaxed text-slate-600">
+              {language === "vi"
+                ? "Người sáng lập CozoroHome vào năm 2019 với tầm nhìn xây dựng hệ thống nhà ở được tự động hóa cao, hướng đến chất lượng sống hiện đại và tiên tiến cho cư dân."
+                : "Founder of CozoroHome in 2019, with a vision of a highly automated co-living system that delivers a futuristic and high-quality living experience for residents."}
+            </p>
+            <a
+              href="https://www.facebook.com/nguyentrong265"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white px-4 py-1.5 text-xs font-semibold text-sky-700 shadow-sm hover:bg-sky-50 transition-colors"
+            >
+              <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.41c0-3.025 1.792-4.697 4.533-4.697 1.312 0 2.686.235 2.686.235v2.97h-1.513c-1.491 0-1.956.93-1.956 1.886v2.268h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z"/>
+              </svg>
+              {language === "vi" ? "Kết nối với Dr. Trong" : "Connect with Dr. Trong"}
+            </a>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

@@ -163,6 +163,7 @@ const nextConfig: NextConfig = {
 
 | Version | Description |
 |---------|-------------|
+| 3.5.3 | Hide air fryer section entirely for D2 users; hide microwave section entirely for D7 users (no "branch only" message — section simply absent); About section on account page (app history, Dr. Trong Nguyen, Facebook link) |
 | 3.5.2 | D2 microwave controller: IFTTT trigger, pre-use inspection (Clean/Dirty/Damage), 5-min cooldown window, current/last user display, usage logged to Google Sheet (Name/Time/Email/Inspection columns) |
 | 3.5.1 | Hide Contract Status card for inactive clients; fix session flash (users seeing login screen on page return) by deferring login-required UI until localStorage is read |
 | 3.5.0 | Short-term portal merged into client list (Long term / Short term tabs); bed pricing diagram UI with T/M/B tiers (150k/250k defaults); manager permissions modal sticky footer fix; inactive tab compile fix; short-term booking confirmation (imports standalone booking app guest into main portal with auto account creation); contract termination + checkout form; manager can book services (bed 0); manager permissions data model (per-branch + per-category read/write, owner-configurable) |

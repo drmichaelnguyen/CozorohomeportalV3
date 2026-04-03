@@ -523,13 +523,12 @@ export function ControllerClient({
             </section>
           ) : null}
 
-          {showMicrowaveSection && microwaveContext ? (
+          {showMicrowaveSection && microwaveContext?.eligible ? (
             <section className="rounded-2xl border border-orange-200 bg-white p-6 shadow-sm">
               <h2 className="text-xl font-semibold text-slate-900">
                 {language === "vi" ? "Lò vi sóng D2" : "D2 Microwave"}
               </h2>
-              {microwaveContext.eligible ? (
-                <>
+              <>
                   <p className="mt-2 text-sm text-slate-600">
                     {language === "vi"
                       ? `Thiết bị dùng chung với thời gian chờ ${microwaveContext.cooldownMinutes} phút mỗi lượt.`
@@ -623,23 +622,15 @@ export function ControllerClient({
                     </div>
                   )}
                 </>
-              ) : (
-                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-                  {language === "vi"
-                    ? "Tính năng này chỉ dành cho người dùng chi nhánh D2."
-                    : "This feature is only available for D2 users."}
-                </div>
-              )}
             </section>
           ) : null}
 
-          {showAirFryerSection && airFryerContext ? (
+          {showAirFryerSection && airFryerContext?.eligible ? (
             <section className="rounded-2xl border border-amber-200 bg-white p-6 shadow-sm">
               <h2 className="text-xl font-semibold text-slate-900">
                 {language === "vi" ? "Nồi chiên không dầu D7" : "D7 Air Fryer"}
               </h2>
-              {airFryerContext.eligible ? (
-                <>
+              <>
                   <p className="mt-2 text-sm text-slate-600">
                     {language === "vi"
                       ? `Thiết bị dùng chung với thời gian chờ ${airFryerContext.cooldownMinutes} phút mỗi lượt.`
@@ -741,13 +732,6 @@ export function ControllerClient({
                     </button>
                   </div>
                 </>
-              ) : (
-                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-                  {language === "vi"
-                    ? "Tính năng này chỉ dành cho người dùng chi nhánh D7."
-                    : "This feature is only available for D7 users."}
-                </div>
-              )}
             </section>
           ) : null}
 
