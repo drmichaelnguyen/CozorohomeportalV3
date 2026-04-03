@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Manage Booking | CozoroHome</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <div class="hero-inner">
+        <div class="hero-copy">
+          <p class="eyebrow">Guest Booking Portal</p>
+          <h1>Log in with your account</h1>
+          <p>See your confirmed bookings, update contact details, adjust notes, change to new dates with automatic price difference handling, and cancel with the refund policy shown on each booking.</p>
+          <div class="translate-pane notranslate" data-language-switcher>
+            <label class="translate-label">
+              Language
+              <select data-language-select>
+                <option value="en">English</option>
+                <option value="vi">Tiếng Việt</option>
+                <option value="zh-CN">中文</option>
+                <option value="ja">日本語</option>
+                <option value="ko">한국어</option>
+                <option value="es">Español</option>
+                <option value="fr">Français</option>
+                <option value="ru">Русский</option>
+                <option value="ar">العربية</option>
+              </select>
+            </label>
+            <div class="translate-status" data-language-status></div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="card wide">
+        <div class="section-head">
+          <h2>Email and Password Login</h2>
+          <button id="logoutBtn" type="button" class="secondary-btn">Log out</button>
+        </div>
+        <form id="loginForm" class="login-row">
+          <label>
+            Booking email
+            <input id="loginEmail" type="email" autocomplete="email" placeholder="name@example.com" required />
+          </label>
+          <label>
+            Password
+            <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Your password" required />
+          </label>
+          <button type="submit">View my bookings</button>
+        </form>
+        <p id="loginStatus" class="status-message"></p>
+      </section>
+
+      <section class="card wide">
+        <div class="section-head">
+          <h2>My Bookings</h2>
+          <button id="refreshBtn" type="button">Refresh</button>
+        </div>
+        <div id="bookingsList" class="booking-list"></div>
+      </section>
+    </main>
+
+    <div id="google_translate_element" aria-hidden="true"></div>
+    <script src="/translate.js"></script>
+    <script src="/manage-booking.js"></script>
+  </body>
+</html>

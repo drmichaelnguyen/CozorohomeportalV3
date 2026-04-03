@@ -162,17 +162,19 @@ If the public site cannot log in while localhost works, check that `API_SERVER_O
 
 ## Chatbot Service
 
-The chatbot is intentionally separate from the main app:
+The chatbot is still a separate runtime from the main app:
 
 - `portal/` serves the web UI
 - `api/` serves the main app backend
 - `bot/` serves the Messenger chatbot
 
-The chatbot has its own Cloudflare Tunnel and should be treated as its own service. Important details:
+The public hostnames now share the main Cloudflare tunnel. Important details:
 
 - public chatbot hostname: `https://chatbot.cozorohome.com`
 - public chatbot health check: `https://chatbot.cozorohome.com/health`
 - chatbot tunnel origin: `http://127.0.0.1:4111`
+- shortterm hostname: `https://shortterm.cozorohome.com`
+- shortterm tunnel origin: `http://127.0.0.1:4115`
 - recommended Windows bot launcher: `bot/start-bot-win.ps1`
 - helper manager script: `start-bot-wsl.bat`
 
@@ -180,7 +182,7 @@ Operational note:
 
 - if you only run the bot inside WSL, the bot may be healthy locally but the Windows Cloudflare tunnel can still fail to reach it
 - when the public chatbot must work, run the bot on Windows on port `4111`
-- keep the chatbot lifecycle separate from the portal and API lifecycle
+- keep the chatbot lifecycle separate from the portal and API lifecycle, even though the tunnel is shared
 
 ## Typecheck
 

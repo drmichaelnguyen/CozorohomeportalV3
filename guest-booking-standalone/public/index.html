@@ -12,25 +12,90 @@
         <div class="hero-copy">
           <p class="eyebrow">Standalone Direct Booking</p>
           <h1 id="siteTitle">CozoroHome Guest Booking</h1>
-          <p>
-            Choose your stay, see the direct-booking price, and finish securely with Stripe checkout.
-          </p>
+          <p>Choose your stay in a guided flow, see the direct-booking price, and finish securely with Stripe checkout.</p>
         </div>
         <aside class="hero-card">
           <div class="hero-card-label">How it works</div>
           <ol>
-            <li>Pick branch and dates</li>
-            <li>See which bed is actually open</li>
-            <li>Book that bed directly</li>
+            <li>Tell us your nationality and sex</li>
+            <li>Choose dates and an eligible branch</li>
+            <li>Pick an available bed</li>
+            <li>Create your account and pay</li>
           </ol>
+          <div class="translate-pane notranslate" data-language-switcher>
+            <label class="translate-label">
+              Language
+              <select data-language-select>
+                <option value="en">English</option>
+                <option value="vi">Tiếng Việt</option>
+                <option value="zh-CN">中文</option>
+                <option value="ja">日本語</option>
+                <option value="ko">한국어</option>
+                <option value="es">Español</option>
+                <option value="fr">Français</option>
+                <option value="ru">Русский</option>
+                <option value="ar">العربية</option>
+              </select>
+            </label>
+            <div class="translate-status" data-language-status></div>
+          </div>
         </aside>
       </div>
     </header>
 
     <main class="layout">
-      <section class="card search-card">
+      <section class="card wide wizard-card">
         <div class="section-head">
-          <h2>Search Availability</h2>
+          <div>
+            <p class="eyebrow">Booking flow</p>
+            <h2>Book in 4 simple steps</h2>
+            <p class="section-note">The page unlocks each step in order so guests only see what they need next.</p>
+          </div>
+        </div>
+        <div class="wizard-steps">
+          <div class="wizard-step active" data-step="1">1. Nationality and sex</div>
+          <div class="wizard-step" data-step="2">2. Dates and branch</div>
+          <div class="wizard-step" data-step="3">3. Choose bed</div>
+          <div class="wizard-step" data-step="4">4. Account and pay</div>
+        </div>
+      </section>
+
+      <section id="stepOneCard" class="card wide step-card">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Step 1</p>
+            <h2>Tell us who is booking</h2>
+            <p class="section-note">D2 is for Vietnamese female guests only. D7 accepts female, male, and foreign guests.</p>
+          </div>
+        </div>
+        <div class="form-grid">
+          <label>
+            Are you Vietnamese?
+            <select id="isVietnamese">
+              <option value="">Select</option>
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
+          </label>
+          <label>
+            Biological sex
+            <select id="bioSex">
+              <option value="">Select</option>
+              <option value="female">Female</option>
+              <option value="male">Male</option>
+            </select>
+          </label>
+        </div>
+        <p id="profileStatus" class="status-message"></p>
+      </section>
+
+      <section id="searchCard" class="card search-card wide hidden">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Step 2</p>
+            <h2>Choose your dates and branch</h2>
+            <p class="section-note">We only show the branches you can book based on your nationality and sex.</p>
+          </div>
           <button id="refreshBtn" type="button">Refresh</button>
         </div>
         <div class="form-grid">
@@ -38,9 +103,20 @@
             Branch
             <select id="branchId">
               <option value="D7">D7</option>
-              <option value="D2">D2</option>
             </select>
           </label>
+          <div class="summary-box branch-box">
+            <div class="summary-label">Current branch</div>
+            <div id="branchLabel" class="summary-value">D7</div>
+            <div class="section-note">
+              D2: 491 Hau Giang, Ward 11, District 6.
+              D7: 7a/19 Thanh Thai, Ward 14, District 10, Ho Chi Minh City.
+              Full check-in details and the exact address are sent after the booking is confirmed and within 2 days before check-in.
+            </div>
+            <div class="section-note deposit-note">
+              A refundable 1,000,000 VND damage deposit is held on the booking and refunded within 5 to 10 days after check-out.
+            </div>
+          </div>
           <label>
             Check-in
             <input id="checkIn" type="date" />
@@ -53,8 +129,139 @@
         <p id="statusMessage" class="status-message"></p>
       </section>
 
-      <section class="card booking-card">
-        <h2>Guest Details</h2>
+      <section id="roomsCard" class="card rooms-card wide hidden">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Step 3</p>
+            <h2>Choose a bed</h2>
+            <p class="section-note">Available beds and prices appear once your branch and dates are set.</p>
+          </div>
+        </div>
+        <div id="roomsGrid" class="rooms-grid"></div>
+      </section>
+
+      <section class="card wide showcase-card">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Branch previews</p>
+            <h2>See the rooms before you book</h2>
+            <p class="section-note">Browse the D2 or D7 photos below. The carousel follows the branch you are currently viewing, so the bed selection and the gallery stay in sync.</p>
+          </div>
+          <div class="gallery-actions">
+            <button id="galleryD2Btn" type="button" class="secondary-btn">D2</button>
+            <button id="galleryD7Btn" type="button" class="secondary-btn">D7</button>
+            <button id="galleryPrevBtn" type="button" class="secondary-btn gallery-nav-btn" aria-label="Previous image">‹</button>
+            <button id="galleryNextBtn" type="button" class="secondary-btn gallery-nav-btn" aria-label="Next image">›</button>
+          </div>
+        </div>
+        <div id="galleryShell" class="carousel-shell">
+          <img id="galleryImage" class="carousel-image" alt="Gallery preview" />
+          <div class="carousel-overlay">
+            <div class="carousel-badge-row">
+              <span id="galleryBranchLabel" class="carousel-badge">D7</span>
+              <span id="galleryCounter" class="carousel-counter">1 / 1</span>
+            </div>
+            <h3 id="galleryTitle">Loading gallery...</h3>
+            <p id="galleryCaption" class="section-note">We are preparing the photo tour.</p>
+          </div>
+        </div>
+        <div id="galleryDots" class="carousel-dots" aria-label="Gallery slides"></div>
+      </section>
+
+      <section class="card wide amenities-card">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Why guests book here</p>
+            <h2>Hostel-style living with smart convenience</h2>
+            <p class="section-note">Built for shared living, short stays, and guests who want a secure, self-service experience without giving up comfort.</p>
+          </div>
+        </div>
+        <div class="amenities-grid">
+          <article class="amenity-card">
+            <h3>Self check-in</h3>
+            <p>Walk in with a smart door lock and receive check-in instructions after payment confirmation.</p>
+          </article>
+          <article class="amenity-card">
+            <h3>High security</h3>
+            <p>Outdoor and indoor cameras help support a safer, monitored shared-living environment.</p>
+          </article>
+          <article class="amenity-card">
+            <h3>Kitchen included</h3>
+            <p>Shared kitchen access with utensils and cooking gear so guests can prepare meals comfortably.</p>
+          </article>
+          <article class="amenity-card">
+            <h3>Self laundry</h3>
+            <p>Washer and dryer are available for self-service laundry at 1 USD per use per machine.</p>
+          </article>
+          <article class="amenity-card">
+            <h3>Smart app controls</h3>
+            <p>Use the application to turn on AC and manage laundry booking from your phone.</p>
+          </article>
+          <article class="amenity-card">
+            <h3>Shared living comforts</h3>
+            <p>High-speed Wi-Fi, bunk-bed privacy, lockers, study-friendly space, and guest-ready common areas.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="authCard" class="card wide auth-card hidden">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Step 4</p>
+            <h2>Create your account</h2>
+            <p class="section-note">Verify your email first, then create a password to unlock booking and future logins.</p>
+          </div>
+        </div>
+        <div class="auth-grid">
+          <label>
+            Email address
+            <input id="authEmail" type="email" autocomplete="email" placeholder="name@example.com" />
+          </label>
+          <label id="authTrapWrap" class="hidden" aria-hidden="true">
+            Website
+            <input id="authWebsite" type="text" tabindex="-1" autocomplete="off" />
+          </label>
+          <div class="auth-actions">
+            <button id="sendCodeBtn" type="button">Send verification code</button>
+          </div>
+          <label>
+            Verification code
+            <input id="authCode" type="text" inputmode="numeric" placeholder="6-digit code" />
+          </label>
+          <div class="auth-actions">
+            <button id="verifyCodeBtn" type="button" class="secondary-btn">Verify email</button>
+          </div>
+        </div>
+        <div id="accountSetupPanel" class="account-setup hidden">
+          <div class="section-head account-head">
+            <div>
+              <h3>Create your password</h3>
+              <p class="section-note">Use a password to sign in later and view or update your bookings. This keeps your account tied to your email.</p>
+            </div>
+          </div>
+          <div class="auth-grid">
+            <label>
+              Password
+              <input id="accountPassword" type="password" autocomplete="new-password" placeholder="Create a password" />
+            </label>
+            <label>
+              Confirm password
+              <input id="accountPasswordConfirm" type="password" autocomplete="new-password" placeholder="Repeat your password" />
+            </label>
+            <div class="auth-actions">
+              <button id="createAccountBtn" type="button">Create account</button>
+            </div>
+            <div class="auth-actions">
+              <button id="passwordLoginBtn" type="button" class="secondary-btn">Sign in with password</button>
+            </div>
+          </div>
+          <p id="accountStatus" class="status-message"></p>
+        </div>
+        <p id="authStatus" class="status-message"></p>
+      </section>
+
+      <section id="bookingCard" class="card booking-card wide hidden">
+        <h2>Guest details and payment</h2>
         <div class="form-grid">
           <label>
             Guest name
@@ -64,26 +271,32 @@
             Guest email
             <input id="guestEmail" type="email" />
           </label>
-          <label>
-            Biological sex
-            <select id="bioSex">
-              <option value="">Select</option>
-              <option value="female">Female</option>
-              <option value="male">Male</option>
-            </select>
+          <label id="idPhotoWrap" class="hidden">
+            Physical ID photo
+            <span class="field-hint">Required for Vietnamese guests choosing D2</span>
+            <input id="idPhoto" type="file" accept="image/*" capture="environment" />
           </label>
           <label>
             Guest phone
             <input id="guestPhone" type="text" required />
+          </label>
+          <label>
+            Cancellation option
+            <select id="cancellationPolicy">
+              <option value="cancellable">Cancellable</option>
+              <option value="non_refundable">Non-refundable</option>
+            </select>
+            <span id="cancellationPolicyNote" class="field-hint">Full refund within 24 hours of booking, or until 48 hours before check-in.</span>
           </label>
           <div class="summary-box">
             <div class="summary-label">Selected bed</div>
             <div id="selectedBedLabel" class="summary-value">None selected</div>
           </div>
           <div class="summary-box">
-            <div class="summary-label">Price</div>
+            <div class="summary-label">Stay price</div>
             <div id="priceSummary" class="summary-value">Enter dates to calculate</div>
-            <div id="priceDetails" class="section-note"></div>
+            <div id="priceDetails" class="price-breakdown" aria-live="polite"></div>
+            <div class="section-note deposit-note">Deposit is shown separately and is not included in the stay price.</div>
           </div>
         </div>
         <label>
@@ -91,19 +304,12 @@
           <textarea id="notes" rows="4" placeholder="Arrival time, room preference, or anything the host should know."></textarea>
         </label>
         <button id="bookBtn" type="button">Pay and Book with Stripe</button>
-      </section>
-
-      <section class="card rooms-card wide">
-        <div class="section-head">
-          <div>
-            <h2>Choose a Bed</h2>
-            <p class="section-note">Enter guest details, dates, and biological sex to see beds that can be booked.</p>
-          </div>
-        </div>
-        <div id="roomsGrid" class="rooms-grid"></div>
+        <p class="section-note"><a href="/manage-booking.html">Already booked? Log in with your account to see or update your booking.</a></p>
       </section>
     </main>
 
+    <div id="google_translate_element" aria-hidden="true"></div>
+    <script src="/translate.js"></script>
     <script src="/script.js"></script>
   </body>
 </html>

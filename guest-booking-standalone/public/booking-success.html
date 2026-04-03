@@ -13,6 +13,23 @@
           <p class="eyebrow">Shortterm.CozoroHome.com</p>
           <h1>Confirming Your Payment</h1>
           <p>Your booking will be confirmed as soon as Stripe reports the payment.</p>
+          <div class="translate-pane notranslate" data-language-switcher>
+            <label class="translate-label">
+              Language
+              <select data-language-select>
+                <option value="en">English</option>
+                <option value="vi">Tiếng Việt</option>
+                <option value="zh-CN">中文</option>
+                <option value="ja">日本語</option>
+                <option value="ko">한국어</option>
+                <option value="es">Español</option>
+                <option value="fr">Français</option>
+                <option value="ru">Русский</option>
+                <option value="ar">العربية</option>
+              </select>
+            </label>
+            <div class="translate-status" data-language-status></div>
+          </div>
         </div>
       </div>
     </header>
@@ -21,15 +38,55 @@
       <section class="card wide">
         <h2>Booking Status</h2>
         <p id="statusText" class="status-message">We are validating your Stripe payment now.</p>
+        <p id="exactAddress" class="section-note"></p>
+        <div class="instruction-block">
+          <h3>Refund policy</h3>
+          <p>If you booked the cancellable option, you can receive a full refund within 24 hours of booking or until 48 hours before check-in. After that, only the deposit is refunded.</p>
+          <p>If you booked the non-refundable option, you received an extra 10% stay discount. After the 24-hour grace period, only the deposit is refunded.</p>
+        </div>
         <p><a href="/">Return to booking site</a></p>
+      </section>
+
+      <section class="card wide">
+        <h2>Check-In Instruction</h2>
+        <div class="instruction-grid">
+          <div class="instruction-block">
+            <h3>Bước 1: Xác nhận và Thanh toán</h3>
+            <p>Khách gửi ảnh chụp CCCD/Passport qua tin nhắn. Hoàn tất thanh toán và tiền cọc (nếu có) qua chuyển khoản. Hệ thống gửi mã cửa chính và số giường cụ thể.</p>
+          </div>
+          <div class="instruction-block">
+            <h3>Bước 2: Di chuyển và Vào nhà</h3>
+            <p>Gửi link Google Maps chính xác kèm video/hình ảnh ngắn quay cảnh trước cửa nhà để khách không nhầm lẫn. Hướng dẫn nhập mã khóa điện tử để vào cửa chính.</p>
+          </div>
+          <div class="instruction-block">
+            <h3>Bước 3: Nhận giường và Tủ đồ (Locker)</h3>
+            <p>Hướng dẫn khách tìm đúng số giường đã được cấp. Lưu ý: Mã số tủ Locker thường trùng với số giường.</p>
+          </div>
+          <div class="instruction-block">
+            <h3>Bước 4: Kết nối và Nội quy</h3>
+            <p>Quét mã QR dán tại giường để nhận mật khẩu Wifi, nội quy phòng chung, đăng kí sử dụng thiết bị và danh sách quán ăn gần đó.</p>
+          </div>
+        </div>
+        <p class="section-note">Full check-in details and arrival instructions are sent within 2 days before check-in. The exact address for confirmed bookings is shown above.</p>
+        <p class="section-note">Face + ID capture is required within 48 hours before check-in and must be taken with the camera only. Hold your physical ID next to your face. There is no upload option.</p>
+        <p><a id="faceCaptureLink" href="/face-capture.html">Open face capture page</a></p>
+        <p><a href="/manage-booking.html">Log in with your email to manage this booking</a></p>
       </section>
     </main>
 
+    <div id="google_translate_element" aria-hidden="true"></div>
+    <script src="/translate.js"></script>
     <script>
+      const ADDRESS_MAP = {
+        D2: "491 Hau Giang, Ward 11, District 6",
+        D7: "7a/19/28 Thanh Thai, Ward 14, district 10. The alley next to CashFlow Coffee"
+      };
+
       (async function () {
         const params = new URLSearchParams(window.location.search);
         const sessionId = params.get("session_id");
         const statusText = document.getElementById("statusText");
+        const exactAddress = document.getElementById("exactAddress");
 
         if (!sessionId) {
           statusText.textContent = "Missing session id. Please contact the host.";
@@ -46,7 +103,13 @@
           }
 
           const booking = payload.booking || {};
-          statusText.textContent = `Payment complete. Your stay is confirmed for ${booking.checkIn} to ${booking.checkOut} in room ${booking.roomCode}, bed ${booking.bedNumber}. You can now log into the main app with your booking email and your phone number as the default password.`;
+          const faceCaptureLink = document.getElementById("faceCaptureLink");
+          faceCaptureLink.href = `/face-capture.html?booking_id=${encodeURIComponent(booking.id || "")}`;
+          const branchAddress = ADDRESS_MAP[booking.branchId] || "";
+          exactAddress.textContent = branchAddress
+            ? `Exact address for confirmed stay: ${branchAddress}`
+            : "";
+          statusText.textContent = `Payment complete. Your stay is confirmed for ${booking.checkIn} to ${booking.checkOut} in room ${booking.roomCode}, bed ${booking.bedNumber}. Full check-in details and the exact address will be sent within 2 days before check-in. The stay price does not include the separate refundable 1,000,000 VND damage deposit, which is returned 5 to 10 days after check-out. You can now log in with your booking email to manage your stay.`;
         } catch (error) {
           statusText.textContent = error.message || "Unable to confirm payment.";
         }

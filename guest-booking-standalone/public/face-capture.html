@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Face Capture | CozoroHome</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <div class="hero-inner">
+        <div class="hero-copy">
+          <p class="eyebrow">Shortterm.CozoroHome.com</p>
+          <h1>Face + ID Capture</h1>
+          <p>No upload option. Please capture your face while holding your physical ID next to your face when the 48-hour check-in window opens.</p>
+          <div class="translate-pane notranslate" data-language-switcher>
+            <label class="translate-label">
+              Language
+              <select data-language-select>
+                <option value="en">English</option>
+                <option value="vi">Tiếng Việt</option>
+                <option value="zh-CN">中文</option>
+                <option value="ja">日本語</option>
+                <option value="ko">한국어</option>
+                <option value="es">Español</option>
+                <option value="fr">Français</option>
+                <option value="ru">Русский</option>
+                <option value="ar">العربية</option>
+              </select>
+            </label>
+            <div class="translate-status" data-language-status></div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="card wide">
+        <h2>Check-In Instructions</h2>
+        <p id="exactAddress" class="section-note"></p>
+        <div class="instruction-grid">
+          <div class="instruction-block">
+            <h3>Bước 1: Xác nhận và Thanh toán</h3>
+            <p>Khách gửi ảnh chụp CCCD/Passport qua tin nhắn. Hoàn tất thanh toán và tiền cọc (nếu có) qua chuyển khoản. Hệ thống gửi mã cửa chính và số giường cụ thể.</p>
+          </div>
+          <div class="instruction-block">
+            <h3>Bước 2: Di chuyển và Vào nhà</h3>
+            <p>Gửi link Google Maps chính xác kèm video/hình ảnh ngắn quay cảnh trước cửa nhà để khách không nhầm lẫn. Hướng dẫn nhập mã khóa điện tử để vào cửa chính.</p>
+          </div>
+          <div class="instruction-block">
+            <h3>Bước 3: Nhận giường và Tủ đồ (Locker)</h3>
+            <p>Hướng dẫn khách tìm đúng số giường đã được cấp. Lưu ý: Mã số tủ Locker thường trùng với số giường.</p>
+          </div>
+          <div class="instruction-block">
+            <h3>Bước 4: Kết nối và Nội quy</h3>
+            <p>Quét mã QR dán tại giường để nhận mật khẩu Wifi, nội quy phòng chung, đăng kí sử dụng thiết bị và danh sách quán ăn gần đó.</p>
+          </div>
+        </div>
+        <p class="section-note">The full address and arrival details are sent within 2 days before check-in. The exact address for confirmed bookings is shown above.</p>
+      </section>
+
+      <section class="card wide">
+        <div class="section-head">
+          <div>
+            <h2>Face + ID Capture</h2>
+            <p id="captureStatus" class="status-message">Loading booking status...</p>
+          </div>
+          <a id="backLink" class="ghost-link" href="/">Return to booking site</a>
+        </div>
+
+        <div class="capture-panel">
+          <label class="checkbox-line">
+            <input id="idHeldTogether" type="checkbox" />
+            I confirm I am holding my physical ID next to my face in the camera frame.
+          </label>
+          <video id="cameraFeed" playsinline autoplay muted class="camera-feed"></video>
+          <canvas id="captureCanvas" class="hidden"></canvas>
+          <div class="capture-actions">
+            <button id="startBtn" type="button">Start Camera</button>
+            <button id="captureBtn" type="button" disabled>Capture Face</button>
+            <button id="submitBtn" type="button" disabled>Save Capture</button>
+          </div>
+          <p class="section-note">This uses your camera only. There is no file upload option. The ID must be visible next to your face in the frame.</p>
+          <img id="previewImage" alt="Captured face preview" class="preview-image hidden" />
+        </div>
+      </section>
+    </main>
+
+    <div id="google_translate_element" aria-hidden="true"></div>
+    <script src="/translate.js"></script>
+    <script src="/face-capture.js"></script>
+  </body>
+</html>

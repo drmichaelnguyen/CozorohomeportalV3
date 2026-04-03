@@ -1,4 +1,9 @@
 const state = {
+  authEmail: localStorage.getItem("guestBookingAuthEmail") || "",
+  authToken: localStorage.getItem("guestBookingAuthToken") || "",
+  authMode: localStorage.getItem("guestBookingAuthMode") || "verification",
+  wizardStep: 1,
+  isVietnamese: false,
   branchId: "D7",
   checkIn: "",
   checkOut: "",
@@ -6,15 +11,58 @@ const state = {
   selectedBed: null,
   availability: null,
   pricingConfig: null,
-  stripeConfigured: false
+  cancellationPolicy: "cancellable",
+  stripeConfigured: false,
+  gallery: null,
+  galleryIndex: 0,
+  galleryBranchId: "D7",
+  recentGuestProfileLoaded: false
 };
 
+let recentGuestProfileSaveTimer = null;
+
 const els = {
+  authEmail: document.getElementById("authEmail"),
+  authWebsite: document.getElementById("authWebsite"),
+  authCode: document.getElementById("authCode"),
+  authStatus: document.getElementById("authStatus"),
+  accountSetupPanel: document.getElementById("accountSetupPanel"),
+  accountPassword: document.getElementById("accountPassword"),
+  accountPasswordConfirm: document.getElementById("accountPasswordConfirm"),
+  accountStatus: document.getElementById("accountStatus"),
+  createAccountBtn: document.getElementById("createAccountBtn"),
+  passwordLoginBtn: document.getElementById("passwordLoginBtn"),
+  sendCodeBtn: document.getElementById("sendCodeBtn"),
+  verifyCodeBtn: document.getElementById("verifyCodeBtn"),
   siteTitle: document.getElementById("siteTitle"),
+  wizardCard: document.getElementById("wizardCard"),
+  stepOneCard: document.getElementById("stepOneCard"),
+  searchCard: document.getElementById("searchCard"),
+  roomsCard: document.getElementById("roomsCard"),
+  authCard: document.getElementById("authCard"),
+  bookingCard: document.getElementById("bookingCard"),
+  profileStatus: document.getElementById("profileStatus"),
+  wizardSteps: Array.from(document.querySelectorAll("[data-step]")),
+  galleryImage: document.getElementById("galleryImage"),
+  galleryBranchLabel: document.getElementById("galleryBranchLabel"),
+  galleryCounter: document.getElementById("galleryCounter"),
+  galleryTitle: document.getElementById("galleryTitle"),
+  galleryCaption: document.getElementById("galleryCaption"),
+  galleryDots: document.getElementById("galleryDots"),
+  galleryShell: document.getElementById("galleryShell"),
+  galleryD2Btn: document.getElementById("galleryD2Btn"),
+  galleryD7Btn: document.getElementById("galleryD7Btn"),
+  galleryPrevBtn: document.getElementById("galleryPrevBtn"),
+  galleryNextBtn: document.getElementById("galleryNextBtn"),
+  isVietnamese: document.getElementById("isVietnamese"),
   branchId: document.getElementById("branchId"),
+  branchLabel: document.getElementById("branchLabel"),
   checkIn: document.getElementById("checkIn"),
   checkOut: document.getElementById("checkOut"),
   bioSex: document.getElementById("bioSex"),
+  idPhoto: document.getElementById("idPhoto"),
+  idPhotoWrap: document.getElementById("idPhotoWrap"),
+  bioSexWrap: document.querySelector('label[for="bioSex"]') || document.getElementById("bioSex").closest("label"),
   refreshBtn: document.getElementById("refreshBtn"),
   roomsGrid: document.getElementById("roomsGrid"),
   selectedBedLabel: document.getElementById("selectedBedLabel"),
@@ -24,6 +72,8 @@ const els = {
   guestName: document.getElementById("guestName"),
   guestEmail: document.getElementById("guestEmail"),
   guestPhone: document.getElementById("guestPhone"),
+  cancellationPolicy: document.getElementById("cancellationPolicy"),
+  cancellationPolicyNote: document.getElementById("cancellationPolicyNote"),
   notes: document.getElementById("notes"),
   bookBtn: document.getElementById("bookBtn")
 };
@@ -48,6 +98,435 @@ function setMessage(message) {
   els.statusMessage.textContent = message || "";
 }
 
+function setAuthMessage(message) {
+  els.authStatus.textContent = message || "";
+}
+
+function setAccountMessage(message) {
+  if (els.accountStatus) {
+    els.accountStatus.textContent = message || "";
+  }
+}
+
+function normalizeCancellationPolicy(value) {
+  return String(value || "").trim().toLowerCase() === "non_refundable" ? "non_refundable" : "cancellable";
+}
+
+function getCancellationPolicyDiscountPercent(policy) {
+  return normalizeCancellationPolicy(policy) === "non_refundable" ? 10 : 0;
+}
+
+function updateCancellationPolicyNote() {
+  const policy = normalizeCancellationPolicy(els.cancellationPolicy.value || state.cancellationPolicy);
+  state.cancellationPolicy = policy;
+
+  if (!els.cancellationPolicyNote) {
+    return;
+  }
+
+  els.cancellationPolicyNote.textContent = policy === "non_refundable"
+    ? "Only the deposit is refunded after the 24-hour grace period, but you get an extra 10% stay discount."
+    : "Full refund within 24 hours of booking, or until 48 hours before check-in. After that, only the deposit is refunded.";
+}
+
+function getFieldWrapper(element) {
+  if (!element || typeof element.closest !== "function") {
+    return null;
+  }
+
+  return element.closest("label");
+}
+
+function clearValidationHighlights() {
+  Array.from(document.querySelectorAll(".field-invalid")).forEach((element) => {
+    element.classList.remove("field-invalid");
+  });
+  Array.from(document.querySelectorAll(".validation-target-invalid")).forEach((element) => {
+    element.classList.remove("validation-target-invalid");
+  });
+}
+
+function markInvalid(element, options = {}) {
+  if (!element) {
+    return;
+  }
+
+  const wrapper = options.wrapper || getFieldWrapper(element);
+  element.classList.add("field-invalid");
+  element.setAttribute("aria-invalid", "true");
+  if (wrapper) {
+    wrapper.classList.add("field-invalid");
+  }
+}
+
+function markInvalidTarget(element) {
+  if (!element) {
+    return;
+  }
+
+  element.classList.add("validation-target-invalid");
+}
+
+function clearFieldInvalidState(element) {
+  if (!element) {
+    return;
+  }
+
+  element.classList.remove("field-invalid");
+  element.removeAttribute("aria-invalid");
+  const wrapper = getFieldWrapper(element);
+  if (wrapper) {
+    wrapper.classList.remove("field-invalid");
+  }
+}
+
+function validateBookingBeforeCheckout() {
+  clearValidationHighlights();
+
+  const missing = [];
+  const addMissing = (element, label, options = {}) => {
+    if (options.target) {
+      markInvalidTarget(options.target);
+    } else {
+      markInvalid(element, options);
+    }
+    missing.push({ element: options.scrollElement || element || options.target, label });
+  };
+
+  if (els.isVietnamese.value === "") {
+    addMissing(els.isVietnamese, "nationality");
+  }
+
+  if (!els.bioSex.value) {
+    addMissing(els.bioSex, "biological sex", { wrapper: els.bioSexWrap });
+  }
+
+  if (!els.branchId.value) {
+    addMissing(els.branchId, "branch");
+  }
+
+  if (!els.checkIn.value) {
+    addMissing(els.checkIn, "check-in date");
+  }
+
+  if (!els.checkOut.value) {
+    addMissing(els.checkOut, "check-out date");
+  }
+
+  if (!state.selectedBed) {
+    addMissing(null, "bed selection", { target: els.roomsCard, scrollElement: els.roomsCard });
+  }
+
+  if (!String(els.guestName.value || "").trim()) {
+    addMissing(els.guestName, "guest name");
+  }
+
+  if (!String(els.guestEmail.value || "").trim()) {
+    addMissing(els.guestEmail, "guest email");
+  }
+
+  if (!String(els.guestPhone.value || "").trim()) {
+    addMissing(els.guestPhone, "guest phone");
+  }
+
+  if (state.branchId === "D2" && !els.idPhoto.files.length) {
+    addMissing(els.idPhoto, "physical ID photo", { wrapper: els.idPhotoWrap });
+  }
+
+  if (!hasValidBookingSession()) {
+    addMissing(els.authEmail, "verified account", { scrollElement: els.authCard });
+  }
+
+  if (!missing.length) {
+    return true;
+  }
+
+  const firstMissing = missing[0];
+  if (firstMissing && firstMissing.element && typeof firstMissing.element.scrollIntoView === "function") {
+    firstMissing.element.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  const labels = missing.map((entry) => entry.label);
+  setMessage(`Please complete the highlighted field${labels.length > 1 ? "s" : ""}: ${labels.join(", ")}.`);
+  return false;
+}
+
+function collectRecentGuestProfile() {
+  return {
+    guestName: String(els.guestName.value || "").trim(),
+    guestEmail: String(els.guestEmail.value || "").trim(),
+    guestPhone: String(els.guestPhone.value || "").trim(),
+    notes: String(els.notes.value || "").trim(),
+    isVietnamese: els.isVietnamese.value === "yes",
+    bioSex: String(els.bioSex.value || "").trim(),
+    branchId: String(els.branchId.value || "").trim(),
+    cancellationPolicy: normalizeCancellationPolicy(els.cancellationPolicy.value || state.cancellationPolicy)
+  };
+}
+
+function applyRecentGuestProfile(profile) {
+  if (!profile || typeof profile !== "object") {
+    state.recentGuestProfileLoaded = true;
+    return;
+  }
+
+  if (!els.guestName.value.trim() && profile.guestName) {
+    els.guestName.value = profile.guestName;
+  }
+
+  if (!els.guestEmail.value.trim() && profile.guestEmail) {
+    els.guestEmail.value = profile.guestEmail;
+  }
+
+  if (!els.guestPhone.value.trim() && profile.guestPhone) {
+    els.guestPhone.value = profile.guestPhone;
+  }
+
+  if (!els.notes.value.trim() && profile.notes) {
+    els.notes.value = profile.notes;
+  }
+
+  if (!els.authEmail.value.trim() && profile.guestEmail) {
+    els.authEmail.value = profile.guestEmail;
+  }
+
+  if (profile.cancellationPolicy) {
+    els.cancellationPolicy.value = normalizeCancellationPolicy(profile.cancellationPolicy);
+  }
+
+  if (!els.isVietnamese.value && typeof profile.isVietnamese === "boolean") {
+    els.isVietnamese.value = profile.isVietnamese ? "yes" : "no";
+  }
+
+  if (!els.bioSex.value && profile.bioSex) {
+    els.bioSex.value = profile.bioSex;
+  }
+
+  syncBranchMode();
+
+  if (!els.branchId.value && profile.branchId) {
+    els.branchId.value = profile.branchId;
+    syncBranchMode();
+  }
+
+  updateCancellationPolicyNote();
+  state.recentGuestProfileLoaded = true;
+  syncAuthUi();
+}
+
+async function loadRecentGuestProfile() {
+  try {
+    const response = await fetch("/api/recent-guest-profile");
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to load recent guest profile.");
+    }
+    applyRecentGuestProfile(data.profile || null);
+  } catch {
+    state.recentGuestProfileLoaded = true;
+  }
+}
+
+async function persistRecentGuestProfile() {
+  const profile = collectRecentGuestProfile();
+
+  try {
+    await fetch("/api/recent-guest-profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(profile)
+    });
+  } catch {
+    // Autofill is a convenience feature; ignore save failures.
+  }
+}
+
+function scheduleRecentGuestProfileSave(delay = 500) {
+  if (!state.recentGuestProfileLoaded) {
+    return;
+  }
+
+  window.clearTimeout(recentGuestProfileSaveTimer);
+  recentGuestProfileSaveTimer = window.setTimeout(() => {
+    void persistRecentGuestProfile();
+  }, delay);
+}
+
+function getAuthEmail() {
+  return String(els.authEmail.value || "").trim().toLowerCase();
+}
+
+function hasValidBookingSession() {
+  const authEmail = getAuthEmail();
+  return Boolean(
+    state.authMode === "account" &&
+    state.authToken &&
+    state.authEmail &&
+    authEmail &&
+    state.authEmail === authEmail &&
+    els.guestEmail.value.trim().toLowerCase() === authEmail
+  );
+}
+
+function syncAuthUi() {
+  if (state.authEmail && !els.authEmail.value.trim()) {
+    els.authEmail.value = state.authEmail;
+  }
+
+  if (state.authEmail && !els.guestEmail.value.trim()) {
+    els.guestEmail.value = state.authEmail;
+  }
+
+  const verified = hasValidBookingSession();
+  els.bookBtn.disabled = false;
+  els.bookBtn.title = verified ? "Proceed to Stripe checkout" : "Complete email verification and account sign-in before booking";
+  if (verified) {
+    els.authCard.classList.remove("validation-target-invalid");
+  }
+
+  const showAccountPanel = Boolean(state.authToken && state.authEmail && state.authMode === "verification");
+  if (els.accountSetupPanel) {
+    els.accountSetupPanel.classList.toggle("hidden", !showAccountPanel);
+  }
+
+  if (verified) {
+    setAuthMessage(`Signed in as ${state.authEmail}. You can now book and manage your account.`);
+    setAccountMessage("");
+  } else if (state.authToken && state.authEmail) {
+    setAuthMessage(`Verified email: ${state.authEmail}. Create your password to finish your account.`);
+    setAccountMessage("Choose a password below to create your guest account.");
+  } else if (state.authEmail) {
+    setAuthMessage(`Email ${state.authEmail} is not verified yet for booking.`);
+    setAccountMessage("");
+  } else {
+    setAuthMessage("Verify your email to unlock booking.");
+    setAccountMessage("");
+  }
+
+  updateWizardUi();
+}
+
+function persistAuthSession(email, token, mode = "verification") {
+  state.authEmail = email;
+  state.authToken = token;
+  state.authMode = mode;
+  localStorage.setItem("guestBookingAuthEmail", email);
+  localStorage.setItem("guestBookingAuthToken", token);
+  localStorage.setItem("guestBookingAuthMode", mode);
+  els.authEmail.value = email;
+  els.guestEmail.value = email;
+  syncAuthUi();
+  scheduleRecentGuestProfileSave(0);
+}
+
+function clearAuthSession() {
+  state.authEmail = "";
+  state.authToken = "";
+  state.authMode = "verification";
+  localStorage.removeItem("guestBookingAuthEmail");
+  localStorage.removeItem("guestBookingAuthToken");
+  localStorage.removeItem("guestBookingAuthMode");
+  syncAuthUi();
+  updateWizardUi();
+  scheduleRecentGuestProfileSave(0);
+}
+
+function getAllowedBranches() {
+  if (!state.isVietnamese) {
+    return ["D7"];
+  }
+
+  if (els.bioSex.value === "female") {
+    return ["D2", "D7"];
+  }
+
+  if (els.bioSex.value === "male") {
+    return ["D7"];
+  }
+
+  return [];
+}
+
+function updateBranchOptions() {
+  const allowedBranches = getAllowedBranches();
+  const currentValue = allowedBranches.includes(els.branchId.value) ? els.branchId.value : (allowedBranches[0] || "");
+
+  els.branchId.innerHTML = allowedBranches.length
+    ? allowedBranches.map((branchId) => `<option value="${branchId}">${branchId}</option>`).join("")
+    : '<option value="">Select sex first</option>';
+  els.branchId.value = currentValue;
+}
+
+function syncBranchMode() {
+  const previousGalleryBranchId = state.galleryBranchId;
+  state.isVietnamese = els.isVietnamese.value === "yes";
+  updateBranchOptions();
+  state.branchId = els.branchId.value || "D7";
+  els.branchId.value = state.branchId;
+  els.branchLabel.textContent = state.branchId;
+  els.idPhotoWrap.classList.toggle("hidden", state.branchId !== "D2");
+  state.galleryBranchId = state.branchId;
+  if (previousGalleryBranchId !== state.galleryBranchId) {
+    state.galleryIndex = 0;
+  }
+  renderGallery();
+  updateWizardUi();
+}
+
+function getWizardState() {
+  const nationalityChosen = els.isVietnamese.value !== "";
+  const sexChosen = els.bioSex.value !== "";
+  const step1Complete = nationalityChosen && sexChosen;
+  const step2Ready = step1Complete && Boolean(els.branchId.value) && Boolean(els.checkIn.value) && Boolean(els.checkOut.value);
+  const step3Complete = step2Ready && Boolean(state.selectedBed);
+  const step4Ready = step3Complete && hasValidBookingSession();
+
+  return {
+    step1Complete,
+    step2Ready,
+    step3Complete,
+    step4Ready
+  };
+}
+
+function updateWizardUi() {
+  const wizardState = getWizardState();
+
+  if (els.profileStatus) {
+    if (!els.isVietnamese.value && !els.bioSex.value) {
+      els.profileStatus.textContent = "Start by choosing your nationality and sex.";
+    } else if (els.isVietnamese.value && !els.bioSex.value) {
+      els.profileStatus.textContent = "Now choose your sex so we can show the right branch options.";
+    } else {
+      const femaleVietnamese = els.isVietnamese.value === "yes" && els.bioSex.value === "female";
+      const allowedText = femaleVietnamese ? "D2 or D7" : "D7 only";
+      els.profileStatus.textContent = `You can continue to Step 2. Eligible branch: ${allowedText}.`;
+    }
+  }
+
+  if (els.searchCard) {
+    els.searchCard.classList.toggle("hidden", !wizardState.step1Complete);
+  }
+  if (els.roomsCard) {
+    els.roomsCard.classList.toggle("hidden", !wizardState.step2Ready);
+  }
+  if (els.authCard) {
+    els.authCard.classList.toggle("hidden", !wizardState.step3Complete);
+  }
+  if (els.bookingCard) {
+    els.bookingCard.classList.toggle("hidden", !wizardState.step4Ready);
+  }
+
+  if (els.wizardSteps) {
+    const activeStep = wizardState.step4Ready ? 4 : wizardState.step3Complete ? 4 : wizardState.step2Ready ? 3 : wizardState.step1Complete ? 2 : 1;
+    els.wizardSteps.forEach((stepEl) => {
+      const stepNumber = Number(stepEl.getAttribute("data-step") || 0);
+      stepEl.classList.toggle("active", stepNumber === activeStep);
+      stepEl.classList.toggle("complete", stepNumber < activeStep);
+    });
+  }
+}
+
 function updateSelectedBedLabel() {
   if (!state.selectedBed) {
     els.selectedBedLabel.textContent = "None selected";
@@ -62,7 +541,7 @@ function updateSelectedBedLabel() {
     : null;
 
   els.selectedBedLabel.textContent = selectedBed
-    ? `Bed ${selectedBed.bedNumber} (${selectedBed.bedLevel})`
+    ? `Bed ${selectedBed.bedNumber} (${selectedBed.bedLevel}) - ${formatCurrencyVnd(selectedBed.nightlyPrice)}/night`
     : `Bed ${state.selectedBed}`;
 }
 
@@ -74,8 +553,169 @@ function formatCurrencyVnd(value) {
   }).format(value);
 }
 
-function calculatePricingPreview() {
-  if (!state.pricingConfig || !els.checkIn.value || !els.checkOut.value) {
+function getGalleryBranchData(branchId = state.galleryBranchId) {
+  if (!state.gallery || !Array.isArray(state.gallery.branches)) {
+    return null;
+  }
+
+  return state.gallery.branches.find((branch) => branch.branchId === branchId) || state.gallery.branches[0] || null;
+}
+
+function renderGalleryDots(images, activeIndex) {
+  if (!els.galleryDots) {
+    return;
+  }
+
+  els.galleryDots.innerHTML = "";
+  images.forEach((_image, index) => {
+    const dot = document.createElement("button");
+    dot.type = "button";
+    dot.className = `carousel-dot${index === activeIndex ? " active" : ""}`;
+    dot.setAttribute("aria-label", `Show gallery image ${index + 1}`);
+    dot.setAttribute("aria-pressed", index === activeIndex ? "true" : "false");
+    dot.addEventListener("click", () => {
+      state.galleryIndex = index;
+      renderGallery();
+    });
+    els.galleryDots.appendChild(dot);
+  });
+}
+
+function renderGallery() {
+  if (!els.galleryImage || !els.galleryTitle || !els.galleryCaption || !els.galleryBranchLabel || !els.galleryCounter) {
+    return;
+  }
+
+  const branchData = getGalleryBranchData();
+  const images = branchData?.images || [];
+  if (!images.length) {
+    els.galleryImage.removeAttribute("src");
+    els.galleryImage.alt = "Gallery preview";
+    els.galleryBranchLabel.textContent = state.branchId || "D7";
+    els.galleryCounter.textContent = "0 / 0";
+    els.galleryTitle.textContent = branchData ? branchData.title : "Loading gallery...";
+    els.galleryCaption.textContent = branchData ? branchData.description : "We are preparing the photo tour.";
+    renderGalleryDots([], 0);
+    return;
+  }
+
+  if (state.galleryIndex < 0 || state.galleryIndex >= images.length) {
+    state.galleryIndex = 0;
+  }
+
+  const image = images[state.galleryIndex];
+  els.galleryImage.src = image.src;
+  els.galleryImage.alt = image.alt;
+  els.galleryBranchLabel.textContent = branchData.branchId;
+  els.galleryCounter.textContent = `${state.galleryIndex + 1} / ${images.length}`;
+  els.galleryTitle.textContent = branchData.title;
+  els.galleryCaption.textContent = `${branchData.description} Photo ${state.galleryIndex + 1} of ${images.length}.`;
+  renderGalleryDots(images, state.galleryIndex);
+  if (els.galleryD2Btn && els.galleryD7Btn) {
+    els.galleryD2Btn.classList.toggle("selected", branchData.branchId === "D2");
+    els.galleryD7Btn.classList.toggle("selected", branchData.branchId === "D7");
+  }
+}
+
+function advanceGallery(step) {
+  const branchData = getGalleryBranchData();
+  const images = branchData?.images || [];
+  if (!images.length) {
+    return;
+  }
+
+  state.galleryIndex = (state.galleryIndex + step + images.length) % images.length;
+  renderGallery();
+}
+
+function setupGallerySwipe() {
+  if (!els.galleryShell || els.galleryShell.dataset.swipeReady === "true") {
+    return;
+  }
+
+  let startX = 0;
+  let startY = 0;
+  let tracking = false;
+
+  els.galleryShell.addEventListener(
+    "touchstart",
+    (event) => {
+      const touch = event.changedTouches && event.changedTouches[0];
+      if (!touch) {
+        return;
+      }
+
+      tracking = true;
+      startX = touch.clientX;
+      startY = touch.clientY;
+    },
+    { passive: true }
+  );
+
+  els.galleryShell.addEventListener(
+    "touchend",
+    (event) => {
+      if (!tracking) {
+        return;
+      }
+
+      tracking = false;
+      const touch = event.changedTouches && event.changedTouches[0];
+      if (!touch) {
+        return;
+      }
+
+      const deltaX = touch.clientX - startX;
+      const deltaY = touch.clientY - startY;
+
+      if (Math.abs(deltaX) < 50 || Math.abs(deltaX) < Math.abs(deltaY)) {
+        return;
+      }
+
+      advanceGallery(deltaX < 0 ? 1 : -1);
+    },
+    { passive: true }
+  );
+
+  els.galleryShell.dataset.swipeReady = "true";
+}
+
+function getSelectedBedDetails() {
+  if (!state.selectedBed || !state.availability) {
+    return null;
+  }
+
+  for (const room of state.availability.rooms) {
+    const match = room.beds.find((bed) => bed.bedNumber === state.selectedBed);
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+function getActiveDiscountRule(nights) {
+  if (!state.pricingConfig || !state.pricingConfig.discounts) {
+    return null;
+  }
+
+  const weekly = state.pricingConfig.discounts.weekly || {};
+  const monthly = state.pricingConfig.discounts.monthly || {};
+
+  if (monthly.enabled && nights >= Number(monthly.minNights || 30)) {
+    return { name: "monthly", percent: Number(monthly.percent || 0) };
+  }
+
+  if (weekly.enabled && nights >= Number(weekly.minNights || 7)) {
+    return { name: "weekly", percent: Number(weekly.percent || 0) };
+  }
+
+  return null;
+}
+
+function calculateBedPricingPreview(bedDetails) {
+  if (!state.pricingConfig || !els.checkIn.value || !els.checkOut.value || !bedDetails) {
     return null;
   }
 
@@ -87,48 +727,109 @@ function calculatePricingPreview() {
   }
 
   const nights = Math.round((end.getTime() - start.getTime()) / 86400000);
-  let discountRate = 0;
-
-  if (nights >= 28) {
-    discountRate = state.pricingConfig.monthlyDiscountRate;
-  } else if (nights >= 7) {
-    discountRate = state.pricingConfig.weeklyDiscountRate;
-  }
-
-  const subtotal = state.pricingConfig.baseNightlyPrice * nights;
-  const discountAmount = Math.round(subtotal * discountRate);
+  const discountRule = getActiveDiscountRule(nights);
+  const cancellationPolicy = normalizeCancellationPolicy(els.cancellationPolicy.value || state.cancellationPolicy);
+  const nightlyPrice = Number(bedDetails.nightlyPrice) || 0;
+  const subtotal = nightlyPrice * nights;
+  const stayDiscountPercent = discountRule ? discountRule.percent : 0;
+  const stayDiscountAmount = Math.round(subtotal * (stayDiscountPercent / 100));
+  const cancellationDiscountPercent = getCancellationPolicyDiscountPercent(cancellationPolicy);
+  const cancellationDiscountAmount = Math.round(subtotal * (cancellationDiscountPercent / 100));
+  const discountPercent = stayDiscountPercent + cancellationDiscountPercent;
+  const discountAmount = stayDiscountAmount + cancellationDiscountAmount;
+  const depositAmount = state.pricingConfig.depositAmount || 0;
+  const stayTotal = subtotal - discountAmount;
+  const nightlyRateAfterDiscount = nights > 0 ? Math.round(stayTotal / nights) : 0;
 
   return {
     nights,
-    baseNightlyPrice: state.pricingConfig.baseNightlyPrice,
-    discountRate,
-    total: subtotal - discountAmount
+    nightlyPrice,
+    cancellationPolicy,
+    stayDiscountPercent,
+    stayDiscountAmount,
+    cancellationDiscountPercent,
+    cancellationDiscountAmount,
+    discountPercent,
+    discountType: discountRule ? discountRule.name : "",
+    nightlyPriceSource: bedDetails.nightlyPriceSource || "configured",
+    subtotal,
+    discountAmount,
+    depositAmount,
+    stayTotal,
+    nightlyRateAfterDiscount,
+    total: stayTotal + depositAmount,
+    minimumStay: Number(state.pricingConfig.minimumStay || 1)
   };
+}
+
+function calculatePricingPreview() {
+  if (!state.selectedBed) {
+    return null;
+  }
+
+  return calculateBedPricingPreview(getSelectedBedDetails());
 }
 
 function updatePriceSummary(pricing) {
   if (!pricing) {
-    els.priceSummary.textContent = "Enter dates to calculate";
-    els.priceDetails.textContent = "";
+    els.priceSummary.textContent = state.selectedBed ? "Enter dates to calculate" : "Select a bed to calculate";
+    els.priceDetails.innerHTML = "";
     return;
   }
 
-  const discountPercent = Math.round(pricing.discountRate * 100);
-  els.priceSummary.textContent = formatCurrencyVnd(pricing.total);
-  els.priceDetails.textContent = discountPercent > 0
-    ? `${pricing.nights} nights at ${formatCurrencyVnd(pricing.baseNightlyPrice)}/night with ${discountPercent}% discount`
-    : `${pricing.nights} nights at ${formatCurrencyVnd(pricing.baseNightlyPrice)}/night`;
+  if (pricing.minimumStay && pricing.nights < pricing.minimumStay) {
+    els.priceSummary.textContent = `Minimum stay is ${pricing.minimumStay} nights`;
+    els.priceDetails.innerHTML = "";
+    return;
+  }
+
+  els.priceSummary.textContent = `Total after discount: ${formatCurrencyVnd(pricing.stayTotal)} (deposit excluded)`;
+  const rows = [
+    { label: "Total nights", value: `${pricing.nights} night${pricing.nights === 1 ? "" : "s"}` },
+    { label: "Total price", value: formatCurrencyVnd(pricing.subtotal) },
+    {
+      label: pricing.discountPercent > 0
+        ? `Discount${pricing.cancellationDiscountPercent > 0 ? " (stay + non-refundable bonus)" : ""}`
+        : "Discount",
+      value: pricing.discountPercent > 0 ? `-${formatCurrencyVnd(pricing.discountAmount)}` : formatCurrencyVnd(0)
+    },
+    { label: "Total after discount", value: formatCurrencyVnd(pricing.stayTotal) },
+    { label: "Nightly rate after discount", value: `${formatCurrencyVnd(pricing.nightlyRateAfterDiscount)}/night` }
+  ];
+
+  els.priceDetails.innerHTML = rows.map((row) => `
+    <div class="price-breakdown-row">
+      <span class="price-breakdown-label">${row.label}</span>
+      <span class="price-breakdown-value">${row.value}</span>
+    </div>
+  `).join("");
+
+  if (pricing.nightlyPriceSource === "fallback") {
+    els.priceDetails.insertAdjacentHTML("beforeend", `
+      <div class="section-note">Default nightly price applied until this bed is configured in the main app.</div>
+    `);
+  }
+
+  if (pricing.depositAmount) {
+    els.priceDetails.insertAdjacentHTML("beforeend", `
+      <div class="section-note">Refundable damage deposit (separate): ${formatCurrencyVnd(pricing.depositAmount)}</div>
+    `);
+  }
+
+  els.priceDetails.insertAdjacentHTML("beforeend", `
+    <div class="section-note">${pricing.cancellationPolicy === "non_refundable"
+      ? "Non-refundable option selected: extra 10% stay discount applied. After the 24-hour grace period, only the deposit is refunded."
+      : "Cancellable option selected: full refund within 24 hours of booking, or until 48 hours before check-in. After that, only the deposit is refunded."}</div>
+  `);
 }
 
 function hasRequiredBookingInputs() {
   return Boolean(
+    els.isVietnamese.value !== "" &&
+    els.bioSex.value &&
     els.branchId.value &&
     els.checkIn.value &&
-    els.checkOut.value &&
-    els.guestName.value.trim() &&
-    els.guestEmail.value.trim() &&
-    els.guestPhone.value.trim() &&
-    els.bioSex.value
+    els.checkOut.value
   );
 }
 
@@ -138,10 +839,192 @@ async function loadConfig() {
   document.title = data.siteTitle;
   els.siteTitle.textContent = data.siteTitle;
   state.branchId = data.defaultBranch;
+  state.isVietnamese = false;
   state.pricingConfig = data.pricing || null;
+  state.cancellationPolicy = normalizeCancellationPolicy(els.cancellationPolicy.value || "cancellable");
   state.stripeConfigured = Boolean(data.stripeConfigured);
-  els.branchId.value = data.defaultBranch;
+  els.isVietnamese.value = "";
+  els.bioSex.value = "";
+  els.cancellationPolicy.value = state.cancellationPolicy;
+  els.branchId.innerHTML = '<option value="">Select nationality and sex first</option>';
+  els.branchId.value = "";
+  syncBranchMode();
+  updateCancellationPolicyNote();
   updatePriceSummary(calculatePricingPreview());
+  syncAuthUi();
+}
+
+async function loadGallery() {
+  try {
+    const response = await fetch("/api/gallery");
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to load gallery.");
+    }
+    state.gallery = data;
+    state.galleryBranchId = state.branchId;
+    state.galleryIndex = 0;
+    renderGallery();
+  } catch (error) {
+    state.gallery = null;
+    if (els.galleryTitle && els.galleryCaption) {
+      els.galleryImage.removeAttribute("src");
+      els.galleryTitle.textContent = "Gallery unavailable";
+      els.galleryCaption.textContent = error.message || "Unable to load gallery.";
+      els.galleryBranchLabel.textContent = state.branchId || "D7";
+      els.galleryCounter.textContent = "0 / 0";
+      if (els.galleryDots) {
+        els.galleryDots.innerHTML = "";
+      }
+    }
+  }
+}
+
+async function sendVerificationCode() {
+  const email = getAuthEmail();
+  if (!email) {
+    setAuthMessage("Enter your email first.");
+    return;
+  }
+
+  setAuthMessage("Sending verification code...");
+
+  try {
+    const response = await fetch("/api/guest-auth/request-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, website: String(els.authWebsite.value || "") })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to send verification code.");
+    }
+    setAuthMessage(`Verification code sent to ${email}.`);
+  } catch (error) {
+    setAuthMessage(error.message || "Unable to send verification code.");
+  }
+}
+
+async function verifyEmailCode() {
+  const email = getAuthEmail();
+  const code = String(els.authCode.value || "").trim();
+
+  if (!email || !code) {
+    setAuthMessage("Enter the email and the code.");
+    return;
+  }
+
+  setAuthMessage("Verifying code...");
+
+  try {
+    const response = await fetch("/api/guest-auth/verify-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, code })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to verify code.");
+    }
+    persistAuthSession(data.email, data.token, "verification");
+    els.authCode.value = "";
+    setAuthMessage(`Verified ${data.email}. You can now book.`);
+  } catch (error) {
+    setAuthMessage(error.message || "Unable to verify code.");
+  }
+}
+
+async function createGuestAccountPassword() {
+  const email = getAuthEmail();
+  const password = String(els.accountPassword.value || "");
+  const confirmPassword = String(els.accountPasswordConfirm.value || "");
+
+  if (!email || !state.authToken) {
+    setAccountMessage("Verify your email first.");
+    return;
+  }
+
+  if (!password || password.length < 8) {
+    setAccountMessage("Password must be at least 8 characters.");
+    return;
+  }
+
+  if (password !== confirmPassword) {
+    setAccountMessage("Passwords do not match.");
+    return;
+  }
+
+  setAccountMessage("Creating your account...");
+
+  try {
+    const response = await fetch("/api/guest-account/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email,
+        password,
+        guestAuthToken: state.authToken
+      })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to create account.");
+    }
+    persistAuthSession(data.email, data.token, "account");
+    els.accountPassword.value = "";
+    els.accountPasswordConfirm.value = "";
+    setAccountMessage("Account created. You are signed in with your password.");
+  } catch (error) {
+    setAccountMessage(error.message || "Unable to create account.");
+  }
+}
+
+async function signInWithPassword() {
+  const email = getAuthEmail();
+  const password = String(els.accountPassword.value || "");
+
+  if (!email || !password) {
+    setAccountMessage("Enter your email and password.");
+    return;
+  }
+
+  setAccountMessage("Signing you in...");
+
+  try {
+    const response = await fetch("/api/guest-account/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to sign in.");
+    }
+    persistAuthSession(data.email, data.token, "account");
+    els.accountPasswordConfirm.value = "";
+    setAccountMessage("Signed in with your password.");
+  } catch (error) {
+    setAccountMessage(error.message || "Unable to sign in.");
+  }
+}
+
+function updateBookingInstructions() {
+  if (state.isVietnamese && els.bioSex.value === "female" && state.branchId === "D2") {
+    setMessage("Vietnamese female guests may book D2 or D7. You can choose a bed now, then enter your contact details before payment.");
+    return;
+  }
+
+  if (state.isVietnamese && els.bioSex.value === "female" && state.branchId === "D7") {
+    setMessage("Vietnamese female guests may also book D7. Choose a bed first, then complete the booking details later.");
+    return;
+  }
+
+  if (state.isVietnamese && els.bioSex.value === "male") {
+    setMessage("Vietnamese male guests are limited to D7. Choose a bed first, then complete the booking details later.");
+    return;
+  }
+
+  setMessage("Foreign guests are limited to D7. Choose a bed first, then complete the booking details later.");
 }
 
 function renderRooms() {
@@ -168,16 +1051,40 @@ function renderRooms() {
     bedsWrap.className = "beds-wrap";
 
     for (const bed of room.beds) {
+      const isSelected = state.selectedBed === bed.bedNumber;
+      const bedPricing = calculateBedPricingPreview(bed);
+      const hasPricing = Boolean(bedPricing && bedPricing.nights >= bedPricing.minimumStay);
+      const showPricingDetails = Boolean(isSelected && hasPricing);
+      const selectedPricing = showPricingDetails ? bedPricing : null;
+      const priceText = showPricingDetails
+        ? `Total after discount: ${formatCurrencyVnd(bedPricing.stayTotal)}`
+        : `${formatCurrencyVnd(bed.nightlyPrice)}/night`;
       const button = document.createElement("button");
       button.type = "button";
-      button.textContent = `Bed ${bed.bedNumber} - ${bed.bedLevel}`;
-      button.className = `bed-chip ${bed.status}${state.selectedBed === bed.bedNumber ? " selected" : ""}`;
+      button.innerHTML = `
+        <span class="bed-chip-label">Bed ${bed.bedNumber} - ${bed.bedLevel}</span>
+        <span class="bed-chip-price">${priceText}</span>
+        ${showPricingDetails ? `
+          <span class="bed-chip-breakdown">
+            <span class="bed-chip-breakdown-row"><span>Total nights</span><strong>${bedPricing.nights}</strong></span>
+            <span class="bed-chip-breakdown-row"><span>Total price</span><strong>${formatCurrencyVnd(bedPricing.subtotal)}</strong></span>
+            <span class="bed-chip-breakdown-row"><span>Discount</span><strong>${bedPricing.discountPercent > 0 ? `-${formatCurrencyVnd(bedPricing.discountAmount)}` : formatCurrencyVnd(0)}</strong></span>
+            <span class="bed-chip-breakdown-row"><span>After discount</span><strong>${formatCurrencyVnd(bedPricing.stayTotal)}</strong></span>
+            <span class="bed-chip-breakdown-row"><span>Nightly after discount</span><strong>${formatCurrencyVnd(bedPricing.nightlyRateAfterDiscount)}</strong></span>
+          </span>
+        ` : ""}
+        ${isSelected && selectedPricing ? '<span class="bed-chip-note">Deposit excluded · 1,000,000 VND deposit shown below</span>' : ""}
+      `;
+      button.className = `bed-chip ${bed.status}${isSelected ? " selected" : ""}`;
       button.disabled = bed.status !== "available";
       if (bed.status === "available") {
         button.addEventListener("click", () => {
           state.selectedBed = bed.bedNumber;
+          els.roomsCard.classList.remove("validation-target-invalid");
           updateSelectedBedLabel();
+          updatePriceSummary(calculatePricingPreview());
           renderRooms();
+          updateWizardUi();
         });
       }
       bedsWrap.appendChild(button);
@@ -190,7 +1097,7 @@ function renderRooms() {
 }
 
 async function loadAvailability() {
-  state.branchId = els.branchId.value;
+  syncBranchMode();
   state.checkIn = els.checkIn.value;
   state.checkOut = els.checkOut.value;
   state.bioSex = els.bioSex.value;
@@ -201,7 +1108,8 @@ async function loadAvailability() {
   if (!hasRequiredBookingInputs()) {
     state.availability = null;
     els.roomsGrid.innerHTML = "";
-    setMessage("Enter name, email, phone number, biological sex, branch, and dates to see available beds.");
+    updateBookingInstructions();
+    updateWizardUi();
     return;
   }
 
@@ -221,19 +1129,31 @@ async function loadAvailability() {
       throw new Error(data.error || "Unable to load availability.");
     }
     state.availability = data;
-    updatePriceSummary(data.pricing || calculatePricingPreview());
+    updatePriceSummary(calculatePricingPreview());
     renderRooms();
     setMessage(data.rooms.length ? "Select one of the available beds below." : "No beds are currently available for the information entered.");
+    updateWizardUi();
   } catch (error) {
     state.availability = null;
     els.roomsGrid.innerHTML = "";
     setMessage(error.message || "Unable to load availability.");
+    updateWizardUi();
   }
 }
 
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Unable to read the ID photo."));
+    reader.readAsDataURL(file);
+  });
+}
+
 async function bookSelectedBed() {
-  if (!state.selectedBed) {
-    setMessage("Select an available bed first.");
+  syncBranchMode();
+
+  if (!validateBookingBeforeCheckout()) {
     return;
   }
 
@@ -242,8 +1162,26 @@ async function bookSelectedBed() {
     return;
   }
 
+  if (!state.isVietnamese && state.branchId === "D2") {
+    setMessage("Foreign guests can book D7 only.");
+    return;
+  }
+
+  const pricingPreview = calculatePricingPreview();
+  if (pricingPreview && pricingPreview.minimumStay && pricingPreview.nights < pricingPreview.minimumStay) {
+    setMessage(`Minimum stay is ${pricingPreview.minimumStay} nights.`);
+    return;
+  }
+
+  if (state.branchId === "D2" && !els.idPhoto.files.length) {
+    setMessage("Please upload a physical ID photo for D2 bookings.");
+    return;
+  }
+
   const payload = {
     branchId: els.branchId.value,
+    isVietnamese: state.isVietnamese,
+    cancellationPolicy: normalizeCancellationPolicy(els.cancellationPolicy.value || state.cancellationPolicy),
     bedNumber: state.selectedBed,
     checkIn: els.checkIn.value,
     checkOut: els.checkOut.value,
@@ -251,8 +1189,17 @@ async function bookSelectedBed() {
     guestEmail: els.guestEmail.value,
     bioSex: els.bioSex.value,
     guestPhone: els.guestPhone.value,
-    notes: els.notes.value
+    notes: els.notes.value,
+    guestAuthToken: state.authToken
   };
+
+  if (state.branchId === "D2") {
+    const photoFile = els.idPhoto.files[0];
+    payload.idPhotoFileName = photoFile.name;
+    payload.idPhotoDataUrl = await readFileAsDataUrl(photoFile);
+  }
+
+  await persistRecentGuestProfile();
 
   setMessage("Creating secure Stripe checkout...");
 
@@ -277,18 +1224,100 @@ async function bookSelectedBed() {
 }
 
 els.refreshBtn.addEventListener("click", () => void loadAvailability());
-els.branchId.addEventListener("change", () => void loadAvailability());
-els.checkIn.addEventListener("change", () => void loadAvailability());
-els.checkOut.addEventListener("change", () => void loadAvailability());
-els.bioSex.addEventListener("change", () => void loadAvailability());
-els.guestName.addEventListener("input", () => void loadAvailability());
-els.guestEmail.addEventListener("input", () => void loadAvailability());
-els.guestPhone.addEventListener("input", () => void loadAvailability());
+els.galleryD2Btn.addEventListener("click", () => {
+  state.galleryBranchId = "D2";
+  state.galleryIndex = 0;
+  renderGallery();
+});
+els.galleryD7Btn.addEventListener("click", () => {
+  state.galleryBranchId = "D7";
+  state.galleryIndex = 0;
+  renderGallery();
+});
+els.galleryPrevBtn.addEventListener("click", () => advanceGallery(-1));
+els.galleryNextBtn.addEventListener("click", () => advanceGallery(1));
+els.sendCodeBtn.addEventListener("click", () => void sendVerificationCode());
+els.verifyCodeBtn.addEventListener("click", () => void verifyEmailCode());
+els.createAccountBtn.addEventListener("click", () => void createGuestAccountPassword());
+els.passwordLoginBtn.addEventListener("click", () => void signInWithPassword());
+els.authEmail.addEventListener("input", () => {
+  clearFieldInvalidState(els.authEmail);
+  const current = getAuthEmail();
+  if (state.authEmail && current !== state.authEmail) {
+    clearAuthSession();
+  } else {
+    syncAuthUi();
+  }
+  scheduleRecentGuestProfileSave();
+});
+els.guestEmail.addEventListener("input", () => {
+  clearFieldInvalidState(els.guestEmail);
+  if (!String(els.authEmail.value || "").trim()) {
+    els.authEmail.value = els.guestEmail.value.trim();
+  }
+  syncAuthUi();
+  scheduleRecentGuestProfileSave();
+});
+els.guestName.addEventListener("input", () => {
+  clearFieldInvalidState(els.guestName);
+  scheduleRecentGuestProfileSave();
+});
+els.guestPhone.addEventListener("input", () => {
+  clearFieldInvalidState(els.guestPhone);
+  scheduleRecentGuestProfileSave();
+});
+els.cancellationPolicy.addEventListener("change", () => {
+  clearFieldInvalidState(els.cancellationPolicy);
+  updateCancellationPolicyNote();
+  scheduleRecentGuestProfileSave();
+  updatePriceSummary(calculatePricingPreview());
+  renderRooms();
+});
+els.notes.addEventListener("input", () => scheduleRecentGuestProfileSave());
+els.isVietnamese.addEventListener("change", () => {
+  clearFieldInvalidState(els.isVietnamese);
+  scheduleRecentGuestProfileSave();
+  void loadAvailability();
+});
+els.branchId.addEventListener("change", () => {
+  clearFieldInvalidState(els.branchId);
+  scheduleRecentGuestProfileSave();
+  void loadAvailability();
+});
+els.checkIn.addEventListener("change", () => {
+  clearFieldInvalidState(els.checkIn);
+  void loadAvailability();
+});
+els.checkOut.addEventListener("change", () => {
+  clearFieldInvalidState(els.checkOut);
+  void loadAvailability();
+});
+els.bioSex.addEventListener("change", () => {
+  clearFieldInvalidState(els.bioSex);
+  scheduleRecentGuestProfileSave();
+  void loadAvailability();
+});
+els.idPhoto.addEventListener("change", () => {
+  clearFieldInvalidState(els.idPhoto);
+  if (els.idPhoto.files.length) {
+    setMessage(`Selected ID photo: ${els.idPhoto.files[0].name}`);
+  } else {
+    updateBookingInstructions();
+  }
+});
 els.bookBtn.addEventListener("click", () => void bookSelectedBed());
 
 (async function init() {
   await loadConfig();
+  await loadRecentGuestProfile();
+  await loadGallery();
+  syncAuthUi();
+  syncBranchMode();
+  updateCancellationPolicyNote();
+  setupGallerySwipe();
   setDefaultDates();
   updateSelectedBedLabel();
+  updateBookingInstructions();
   await loadAvailability();
 })();
+

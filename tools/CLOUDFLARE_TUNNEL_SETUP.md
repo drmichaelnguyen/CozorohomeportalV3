@@ -6,7 +6,7 @@ This is the stable version of the temporary tunnel approach.
 
 - A Cloudflare account
 - `cozorohome.com` added to Cloudflare as a zone
-- DNS for `app.cozorohome.com` managed in Cloudflare
+- DNS for `app.cozorohome.com`, `chatbot.cozorohome.com`, and `shortterm.cozorohome.com` managed in Cloudflare
 - `cloudflared.exe` already exists at:
   - `C:\Users\User\Desktop\cozorohome webapp\tools\cloudflared.exe`
 
@@ -19,7 +19,10 @@ The stable setup is:
 1. Add `cozorohome.com` to Cloudflare
 2. Change nameservers at your registrar to the Cloudflare nameservers
 3. Create a named tunnel
-4. Route `app.cozorohome.com` to `http://localhost:3000`
+4. Route the shared tunnel hostnames to the local services:
+   - `app.cozorohome.com` -> `http://localhost:3000`
+   - `chatbot.cozorohome.com` -> `http://localhost:4111`
+   - `shortterm.cozorohome.com` -> `http://localhost:4115`
 
 Official docs:
 
@@ -65,11 +68,13 @@ Then replace:
 
 with your real tunnel ID.
 
-## Create the public hostname
+## Create the public hostnames
 
 ```powershell
 cd "C:\Users\User\Desktop\cozorohome webapp\tools"
 .\cloudflared.exe tunnel route dns cozorohome-portal app.cozorohome.com
+.\cloudflared.exe tunnel route dns cozorohome-portal chatbot.cozorohome.com
+.\cloudflared.exe tunnel route dns cozorohome-portal shortterm.cozorohome.com
 ```
 
 ## Run the local app through the tunnel
@@ -89,9 +94,9 @@ cd "C:\Users\User\Desktop\cozorohome webapp\tools"
 
 ## What this gives you
 
-- Stable hostname: `https://app.cozorohome.com`
+- Stable hostnames: `https://app.cozorohome.com`, `https://chatbot.cozorohome.com`, and `https://shortterm.cozorohome.com`
 - No changing `trycloudflare.com` URL
-- Tunnel traffic goes to your local portal on `localhost:3000`
+- Tunnel traffic goes to the correct local service for each hostname
 - The portal already proxies API requests to `localhost:4000`
 
 ## Recommended next improvement

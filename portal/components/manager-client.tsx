@@ -302,6 +302,7 @@ type StandaloneBooking = {
   checkIn: string;
   checkOut: string;
   pricing: { nights: number; nightlyRate: number; total: number; cleaningFee?: number };
+  source?: string;
   status: string;
   paymentStatus: string;
   paymentMethod?: string;
@@ -734,6 +735,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [stPendingBookings, setStPendingBookings] = useState<StandaloneBooking[] | null>(null);
   const [stPendingLoading, setStPendingLoading] = useState(false);
   const [stConfirmDialog, setStConfirmDialog] = useState<{ booking: StandaloneBooking; branch: "D2" | "D7"; bed: string; saving: boolean; result: string } | null>(null);
+  const [stAddDialog, setStAddDialog] = useState<{
+    guestName: string; email: string; phone: string;
+    checkIn: string; checkOut: string; branch: "D2" | "D7"; bed: string;
+    totalAmount: string; paymentStatus: string; source: string; notes: string;
+    saving: boolean; result: string;
+  } | null>(null);
   const [terminateDialog, setTerminateDialog] = useState(false);
   const [terminateNote, setTerminateNote] = useState("");
   const [terminateLoading, setTerminateLoading] = useState(false);
@@ -1768,7 +1775,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               onClick={() => setClientTermTab("short_term")}
               className={`rounded-full px-4 py-1.5 text-sm font-semibold border transition-colors ${clientTermTab === "short_term" ? "bg-violet-600 text-white border-violet-600" : "border-slate-300 text-slate-600 hover:border-slate-500"}`}
             >
-              Short term
+              Hostel
             </button>
             <button
               type="button"
@@ -2181,12 +2188,27 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             return (
               <section className="space-y-4">
                 <div>
-                  <h2 className="text-lg font-semibold text-slate-900">Short Term Portal</h2>
-                  <p className="text-sm text-slate-500 mt-0.5">Manage short-stay guests, pricing, and discount rules.</p>
+                  <h2 className="text-lg font-semibold text-slate-900">Hostel Portal</h2>
+                  <p className="text-sm text-slate-500 mt-0.5">Manage hostel guests (hostal.cozorohome.com, Booking.com, Airbnb, direct), pricing, and discount rules.</p>
                 </div>
 
-                {/* Pending bookings from standalone app */}
-                <StSection id="pending" title="Pending bookings (from booking site)"
+                {/* Add hostel guest button */}
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setStAddDialog({
+                      guestName: "", email: "", phone: "", checkIn: "", checkOut: "",
+                      branch: "D7", bed: "", totalAmount: "", paymentStatus: "paid",
+                      source: "direct", notes: "", saving: false, result: ""
+                    })}
+                    className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700"
+                  >
+                    + Add hostel guest
+                  </button>
+                </div>
+
+                {/* Pending bookings from hostel site */}
+                <StSection id="pending" title="Pending bookings (from hostel site)"
                   badge={stPendingBookings?.length ?? undefined}
                   onOpen={() => { void stLoadPending(); }}>
                   {stPendingLoading ? (
@@ -2202,7 +2224,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               <div className="font-semibold text-slate-900 text-sm">{b.guestName}</div>
                               <div className="text-xs text-slate-500">{b.email} · {b.phone}</div>
                               <div className="text-xs text-slate-500 mt-0.5">{b.checkIn} → {b.checkOut} · {b.pricing.nights} night{b.pricing.nights !== 1 ? "s" : ""}</div>
-                              <div className="text-xs text-slate-400">Total: {b.pricing.total.toLocaleString()} · {b.paymentStatus} · {b.status}</div>
+                              <div className="text-xs text-slate-400">Total: {b.pricing.total.toLocaleString()} · {b.paymentStatus} · {b.status}{b.source ? ` · ${b.source}` : ""}</div>
                             </div>
                             <button
                               type="button"
@@ -2218,8 +2240,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   )}
                 </StSection>
 
-                {/* Current guests */}
-                <StSection id="current" title="Current guests" badge={stGuests?.current.length}
+                {/* Current hostel guests */}
+                <StSection id="current" title="Current hostel guests" badge={stGuests?.current.length}
                   onOpen={() => { void stLoadGuests(); }}>
                   {stGuestsLoading ? (
                     <p className="text-sm text-slate-500">Loading…</p>
@@ -2243,8 +2265,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   )}
                 </StSection>
 
-                {/* Past guests */}
-                <StSection id="past" title="Past guests" badge={stGuests?.past.length}
+                {/* Past hostel guests */}
+                <StSection id="past" title="Past hostel guests" badge={stGuests?.past.length}
                   onOpen={() => { void stLoadGuests(); }}>
                   {stGuestsLoading ? (
                     <p className="text-sm text-slate-500">Loading…</p>
@@ -4989,6 +5011,138 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
               >
                 {stConfirmDialog.saving ? "Importing…" : "Confirm & Import"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add hostel guest dialog */}
+      {stAddDialog && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center p-0 sm:p-4">
+          <div className="w-full max-w-md rounded-t-3xl sm:rounded-3xl bg-white shadow-xl flex flex-col max-h-[90vh]">
+            <div className="px-6 pt-6 pb-4 border-b border-slate-100 flex-shrink-0">
+              <h3 className="text-base font-semibold text-slate-900">Add hostel guest</h3>
+              <p className="mt-1 text-xs text-slate-500">Manually add a guest from Booking.com, Airbnb, or direct booking.</p>
+            </div>
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Guest name</label>
+                  <input type="text" value={stAddDialog.guestName} onChange={(e) => setStAddDialog({ ...stAddDialog, guestName: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none" placeholder="Full name" />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Email</label>
+                  <input type="email" value={stAddDialog.email} onChange={(e) => setStAddDialog({ ...stAddDialog, email: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none" placeholder="guest@email.com" />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Phone</label>
+                  <input type="text" inputMode="tel" value={stAddDialog.phone} onChange={(e) => setStAddDialog({ ...stAddDialog, phone: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none" placeholder="e.g. 0901234567" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Check-in</label>
+                  <input type="date" value={stAddDialog.checkIn} onChange={(e) => setStAddDialog({ ...stAddDialog, checkIn: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Check-out</label>
+                  <input type="date" value={stAddDialog.checkOut} onChange={(e) => setStAddDialog({ ...stAddDialog, checkOut: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Branch</label>
+                  <div className="flex gap-2">
+                    {(["D2", "D7"] as const).map((br) => (
+                      <button key={br} type="button" onClick={() => setStAddDialog({ ...stAddDialog, branch: br })}
+                        className={`rounded-full px-4 py-1.5 text-sm font-semibold border ${stAddDialog.branch === br ? "bg-sky-600 text-white border-sky-600" : "border-slate-300 text-slate-600"}`}
+                      >{br}</button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Bed number</label>
+                  <input type="number" min={1} value={stAddDialog.bed} onChange={(e) => setStAddDialog({ ...stAddDialog, bed: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none" placeholder="e.g. 5" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Total price (₫)</label>
+                  <input type="number" min={0} value={stAddDialog.totalAmount} onChange={(e) => setStAddDialog({ ...stAddDialog, totalAmount: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none" placeholder="e.g. 1500000" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Payment</label>
+                  <select value={stAddDialog.paymentStatus} onChange={(e) => setStAddDialog({ ...stAddDialog, paymentStatus: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none bg-white">
+                    <option value="paid">Paid</option>
+                    <option value="cash">Cash</option>
+                    <option value="unpaid">Unpaid</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Source</label>
+                  <select value={stAddDialog.source} onChange={(e) => setStAddDialog({ ...stAddDialog, source: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none bg-white">
+                    <option value="direct">Direct</option>
+                    <option value="booking.com">Booking.com</option>
+                    <option value="airbnb">Airbnb</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Notes (optional)</label>
+                  <textarea value={stAddDialog.notes} onChange={(e) => setStAddDialog({ ...stAddDialog, notes: e.target.value })}
+                    rows={2} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none" placeholder="Any extra info" />
+                </div>
+              </div>
+              <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
+                A portal account will be created for the guest. Initial password = phone digits. They must change it on first login.
+              </div>
+              {stAddDialog.result && (
+                <div className={`rounded-xl p-3 text-xs font-medium ${stAddDialog.result.startsWith("✓") ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                  {stAddDialog.result}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-3 px-6 py-4 border-t border-slate-100 flex-shrink-0">
+              <button type="button" onClick={() => setStAddDialog(null)}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700">Cancel</button>
+              <button type="button"
+                disabled={stAddDialog.saving || !stAddDialog.guestName || !stAddDialog.email || !stAddDialog.checkIn || !stAddDialog.checkOut || !stAddDialog.bed}
+                onClick={async () => {
+                  setStAddDialog({ ...stAddDialog, saving: true, result: "" });
+                  try {
+                    const res = await fetch(`${API_BASE_URL}/manager/short-term/bookings`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        actorEmail: normalizedEmail,
+                        guestName: stAddDialog.guestName,
+                        email: stAddDialog.email,
+                        phone: stAddDialog.phone,
+                        checkIn: stAddDialog.checkIn,
+                        checkOut: stAddDialog.checkOut,
+                        branch: stAddDialog.branch,
+                        bed: stAddDialog.bed,
+                        totalAmount: stAddDialog.totalAmount,
+                        paymentStatus: stAddDialog.paymentStatus,
+                        source: stAddDialog.source,
+                        notes: stAddDialog.notes,
+                      })
+                    });
+                    const data = (await res.json()) as { ok?: boolean; error?: string; contractCode?: string; initialPassword?: string };
+                    if (!res.ok) throw new Error(data.error ?? "Failed");
+                    setStAddDialog({ ...stAddDialog, saving: false, result: `✓ Added as ${data.contractCode ?? ""}. Initial password: ${data.initialPassword ?? "phone digits"}` });
+                    setStGuests(null);
+                  } catch (err) {
+                    setStAddDialog({ ...stAddDialog, saving: false, result: err instanceof Error ? err.message : "Failed to add guest" });
+                  }
+                }}
+                className="flex-1 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {stAddDialog.saving ? "Adding…" : "Add guest"}
               </button>
             </div>
           </div>

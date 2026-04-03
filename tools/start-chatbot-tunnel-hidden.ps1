@@ -4,7 +4,7 @@ $workspaceRoot = "C:\Users\User\Desktop\cozorohome webapp"
 $toolsDir = Join-Path $workspaceRoot "tools"
 $cloudflaredPath = Join-Path $toolsDir "cloudflared.exe"
 $chatbotConfigPath = Join-Path $toolsDir "cloudflared-config.chatbot.yml"
-$chatbotTunnelName = "cozorohome-chatbot"
+$chatbotTunnelName = "cozorohome-portal"
 $logPath = Join-Path $toolsDir "chatbot-tunnel.log"
 $errPath = Join-Path $toolsDir "chatbot-tunnel.err.log"
 
@@ -16,7 +16,7 @@ if (-not (Test-Path $chatbotConfigPath)) {
   throw "Chatbot tunnel config was not found at $chatbotConfigPath"
 }
 
-# Stop only the chatbot tunnel process, not other cloudflared tunnels.
+# Stop the shared portal tunnel before relaunching it.
 Get-CimInstance Win32_Process -Filter "Name='cloudflared.exe'" -ErrorAction SilentlyContinue |
   Where-Object { $_.CommandLine -and $_.CommandLine -match "tunnel\s+.*\s+run\s+$chatbotTunnelName" } |
   ForEach-Object {

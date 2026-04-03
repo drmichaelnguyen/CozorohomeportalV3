@@ -3590,22 +3590,22 @@ app.get("/rent-paid-status", async (req, res) => {
   }
 });
 
-// ─── Short-term portal ───────────────────────────────────────────────────────
+// ─── Short-term / Hostel portal ──────────────────────────────────────────────
 
-// Path to the standalone booking app's bookings.json
-const STANDALONE_BOOKINGS_PATH = process.env.STANDALONE_BOOKINGS_PATH
-  ?? path.join(process.cwd(), "..", "..", "CozoroHome_vancouver_booking_Site", "data", "bookings.json");
+// Tracks which hostel booking IDs have been confirmed by a manager
+const HOSTEL_IMPORTED_IDS_PATH = process.env.HOSTEL_IMPORTED_IDS_PATH
+  ?? path.join(process.cwd(), "data", "hostel-imported-ids.json");
+
+// Table name for hostel bookings in MySQL (shared DB with standalone server)
+const HOSTEL_BOOKING_TABLE = process.env.HOSTEL_BOOKING_TABLE ?? "guest_stay_bookings";
 
 type StandaloneBooking = {
   id: string;
-  userId?: string;
   guestName: string;
   email: string;
   phone: string;
-  guests?: number;
   checkIn: string;
   checkOut: string;
-  message?: string;
   pricing: {
     nights: number;
     nightlyRate: number;
@@ -3618,26 +3618,72 @@ type StandaloneBooking = {
   source?: string;
   status: string;
   paymentStatus: string;
-  paymentMethod?: string;
   mainAppImported?: boolean;
-  mainAppImportedAt?: string;
   mainAppBranch?: string;
   mainAppBed?: string;
   createdAt: string;
-  updatedAt?: string;
 };
 
-async function readStandaloneBookings(): Promise<StandaloneBooking[]> {
+async function readImportedIds(): Promise<Set<string>> {
   try {
-    const raw = await readFile(STANDALONE_BOOKINGS_PATH, "utf8");
-    return JSON.parse(raw) as StandaloneBooking[];
+    const raw = await readFile(HOSTEL_IMPORTED_IDS_PATH, "utf8");
+    return new Set(JSON.parse(raw) as string[]);
   } catch {
-    return [];
+    return new Set();
   }
 }
 
-async function writeStandaloneBookings(bookings: StandaloneBooking[]): Promise<void> {
-  await writeFile(STANDALONE_BOOKINGS_PATH, JSON.stringify(bookings, null, 2), "utf8");
+async function addImportedId(id: string): Promise<void> {
+  const ids = await readImportedIds();
+  ids.add(id);
+  await writeFile(HOSTEL_IMPORTED_IDS_PATH, JSON.stringify([...ids], null, 2), "utf8");
+}
+
+function formatDbDate(val: unknown): string {
+  if (val instanceof Date) return val.toISOString().slice(0, 10);
+  return String(val ?? "");
+}
+
+async function readHostelBookings(): Promise<StandaloneBooking[]> {
+  try {
+    const rows = await prisma.$queryRawUnsafe<Record<string, unknown>[]>(
+      `SELECT id, guest_name, guest_email, guest_phone, branch_id, bed_number,
+              check_in, check_out, nights, nightly_rate, subtotal_amount,
+              discount_percent, discount_amount, total_amount,
+              status, payment_status, source, created_at
+       FROM \`${HOSTEL_BOOKING_TABLE}\`
+       ORDER BY created_at DESC
+       LIMIT 500`
+    );
+    const importedIds = await readImportedIds();
+    return rows.map((row) => ({
+      id: String(row.id ?? ""),
+      guestName: String(row.guest_name ?? ""),
+      email: String(row.guest_email ?? ""),
+      phone: String(row.guest_phone ?? ""),
+      checkIn: formatDbDate(row.check_in),
+      checkOut: formatDbDate(row.check_out),
+      pricing: {
+        nights: Number(row.nights ?? 0),
+        nightlyRate: Number(row.nightly_rate ?? 0),
+        subtotal: Number(row.subtotal_amount ?? 0),
+        discountPercent: Number(row.discount_percent ?? 0),
+        discountAmount: Number(row.discount_amount ?? 0),
+        total: Number(row.total_amount ?? 0),
+      },
+      source: String(row.source ?? ""),
+      status: String(row.status ?? ""),
+      paymentStatus: String(row.payment_status ?? ""),
+      mainAppImported: importedIds.has(String(row.id ?? "")),
+      mainAppBranch: String(row.branch_id ?? ""),
+      mainAppBed: String(row.bed_number ?? ""),
+      createdAt: row.created_at instanceof Date
+        ? row.created_at.toISOString()
+        : String(row.created_at ?? ""),
+    }));
+  } catch {
+    return [];
+  }
 }
 
 app.get("/manager/short-term/config", async (request, response) => {
@@ -3719,11 +3765,7 @@ app.get("/manager/short-term/guests", async (request, response) => {
   try {
     await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
     const all = await getManagerClients();
-    const shortTerm = all.filter((c) => {
-      const code = String(c.maHd ?? "");
-      const fee = String(c.row?.["Phí ngắn hạn"] ?? "").trim();
-      return code.startsWith("SHORTTERM") || fee !== "";
-    });
+    const shortTerm = all.filter((c) => String(c.maHd ?? "").startsWith("SHORTTERM"));
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     function parseDate(str: string): Date | null {
@@ -3755,9 +3797,9 @@ app.get("/manager/short-term/pending-bookings", async (request, response) => {
   const actorEmail = String(request.query.actorEmail ?? "");
   try {
     await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
-    const all = await readStandaloneBookings();
+    const all = await readHostelBookings();
     const pending = all.filter(
-      (b) => b.status !== "canceled" && !b.mainAppImported
+      (b) => b.status !== "canceled" && b.status !== "CANCELLED" && !b.mainAppImported
     );
     return response.json({ bookings: pending });
   } catch (error) {
@@ -3777,12 +3819,14 @@ app.post("/manager/short-term/bookings/:id/confirm", async (request, response) =
   }
   try {
     await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
-    const all = await readStandaloneBookings();
+    const importedIds = await readImportedIds();
+    if (importedIds.has(bookingId)) return response.status(409).json({ error: "Booking already confirmed" });
+
+    const all = await readHostelBookings();
     const booking = all.find((b) => b.id === bookingId);
     if (!booking) return response.status(404).json({ error: "Booking not found" });
-    if (booking.mainAppImported) return response.status(409).json({ error: "Booking already imported" });
 
-    // Upsert client into Google Sheet
+    // Upsert client into Google Sheet (overwrites any auto-synced entry with confirmed branch/bed)
     await upsertPaidGuestBookingClient({
       bookingId: booking.id,
       guestEmail: booking.email,
@@ -3794,24 +3838,57 @@ app.post("/manager/short-term/bookings/:id/confirm", async (request, response) =
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       pricingTotal: booking.pricing.total,
-      notes: `Imported by ${actorEmail} from booking site | Booking ID: ${booking.id}`
+      notes: `Confirmed by ${actorEmail} | Source: ${booking.source ?? "hostel site"} | Booking ID: ${booking.id}`
     });
 
-    // Create portal auth with phone as initial password (must change on first login)
+    // Create portal auth with phone digits as initial password
     const initialPassword = (booking.phone ?? "").replace(/\D+/g, "") || "cozoro2024";
     await upsertStoredPassword(booking.email.trim().toLowerCase(), initialPassword, { mustChangePassword: true });
 
-    // Mark as imported in standalone bookings.json
-    const updated = all.map((b) =>
-      b.id === bookingId
-        ? { ...b, mainAppImported: true, mainAppImportedAt: new Date().toISOString(), mainAppBranch: branch, mainAppBed: bed }
-        : b
-    );
-    await writeStandaloneBookings(updated);
+    await addImportedId(bookingId);
 
     return response.json({ ok: true, contractCode: `SHORTTERM-${bookingId}`, initialPassword });
   } catch (error) {
     return response.status(500).json({ error: error instanceof Error ? error.message : "Failed to confirm booking" });
+  }
+});
+
+app.post("/manager/short-term/bookings", async (request, response) => {
+  const { actorEmail, guestName, email, phone, checkIn, checkOut, branch, bed, totalAmount, paymentStatus, source, notes } = request.body as {
+    actorEmail: string; guestName: string; email: string; phone: string;
+    checkIn: string; checkOut: string; branch: "D2" | "D7"; bed: string;
+    totalAmount: number; paymentStatus: string; source?: string; notes?: string;
+  };
+  if (!actorEmail || !guestName || !email || !checkIn || !checkOut || !branch || !bed) {
+    return response.status(400).json({ error: "actorEmail, guestName, email, checkIn, checkOut, branch, and bed are required" });
+  }
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const bookingId = `manual_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    await upsertPaidGuestBookingClient({
+      bookingId,
+      guestEmail: email.trim().toLowerCase(),
+      guestName: guestName.trim(),
+      guestPhone: phone.trim(),
+      bioSex: "",
+      branchId: branch,
+      bedNumber: Number(bed),
+      checkIn,
+      checkOut,
+      pricingTotal: Number(totalAmount) || 0,
+      notes: [
+        notes?.trim(),
+        `Added manually by ${actorEmail}`,
+        source ? `Source: ${source}` : "",
+        paymentStatus ? `Payment: ${paymentStatus}` : "",
+      ].filter(Boolean).join(" | ")
+    });
+    const initialPassword = phone.replace(/\D+/g, "") || "cozoro2024";
+    await upsertStoredPassword(email.trim().toLowerCase(), initialPassword, { mustChangePassword: true });
+    await addImportedId(bookingId);
+    return response.json({ ok: true, contractCode: `SHORTTERM-${bookingId}`, initialPassword });
+  } catch (error) {
+    return response.status(500).json({ error: error instanceof Error ? error.message : "Failed to add hostel guest" });
   }
 });
 

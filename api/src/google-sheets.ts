@@ -2705,7 +2705,7 @@ export async function upsertPaidGuestBookingClient(input: PaidGuestBookingClient
     [CLIENT_GENDER_COLUMN]:
       mapBioSexToVietnamese(input.bioSex) || String(existingRow[CLIENT_GENDER_COLUMN] ?? "").trim(),
     [CLIENT_BRANCH_COLUMN]: input.branchId === "D7" ? "7" : "2",
-    [CLIENT_PHONE_COLUMN]: input.guestPhone.trim(),
+    [CLIENT_PHONE_COLUMN]: input.guestPhone.trim() ? `'${input.guestPhone.trim()}` : "",
     [CLIENT_BED_COLUMN]: String(input.bedNumber),
     [ACTIVE_STAYING_COLUMN]: "1",
     [CLIENT_CONTRACT_START_COLUMN]: formatClientContractDate(input.checkIn),

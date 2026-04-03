@@ -2,8 +2,8 @@ $ErrorActionPreference = "Stop"
 
 $workspaceRoot = "C:\Users\User\Desktop\cozorohome webapp"
 $cloudflaredPath = Join-Path $workspaceRoot "tools\cloudflared.exe"
-$shorttermConfigPath = Join-Path $workspaceRoot "tools\cloudflared-config.chatbot.yml"
-$shorttermTunnelName = "cozorohome-chatbot"
+$shorttermConfigPath = Join-Path $workspaceRoot "tools\cloudflared-config.shortterm.yml"
+$shorttermTunnelName = "cozorohome-shortterm"
 
 if (-not (Test-Path $cloudflaredPath)) {
   throw "cloudflared.exe was not found at $cloudflaredPath"
@@ -13,7 +13,7 @@ if (-not (Test-Path $shorttermConfigPath)) {
   throw "Short-term tunnel config was not found at $shorttermConfigPath"
 }
 
-# This reuses the existing named tunnel that already serves shortterm.cozorohome.com.
+# This keeps shortterm on its own tunnel and avoids touching the main portal tunnel.
 Get-CimInstance Win32_Process -Filter "Name='cloudflared.exe'" -ErrorAction SilentlyContinue |
   Where-Object { $_.CommandLine -and $_.CommandLine -match "tunnel\s+.*\s+run\s+$shorttermTunnelName" } |
   ForEach-Object {
