@@ -128,6 +128,18 @@ function canCompleteTaskNow(task: { type: CleaningTask["type"]; scheduledDate: s
   return now >= windowStart && now <= windowEnd;
 }
 
+function canCompleteTaskLate(task: { type: CleaningTask["type"]; scheduledDate: string }) {
+  const { windowEnd } = getCompletionWindow(task);
+  const lateEnd = new Date(windowEnd.getTime() + 10 * 60 * 60 * 1000);
+  const now = new Date();
+  return now > windowEnd && now <= lateEnd;
+}
+
+function getLateDeadline(task: { type: CleaningTask["type"]; scheduledDate: string }) {
+  const { windowEnd } = getCompletionWindow(task);
+  return new Date(windowEnd.getTime() + 10 * 60 * 60 * 1000);
+}
+
 function isFutureDate(date: Date) {
   return startOfDay(date).getTime() > startOfDay(new Date()).getTime();
 }
@@ -693,7 +705,7 @@ export function CleaningScheduleClient() {
     return overview.user.floor ? (["TRASH_D7", "KITCHEN_D7"] as CleaningTask["type"][]) : (["KITCHEN_D7"] as CleaningTask["type"][]);
   }, [overview]);
 
-  // Upcoming open slots: next 90 days grouped by task type
+  // Upcoming open slots: rest of this month grouped by task type
   const upcomingOpenSlots = useMemo(() => {
     if (!overview || allowedTaskTypes.length === 0) return {} as Record<CleaningTask["type"], string[]>;
     const result: Record<string, string[]> = {};
@@ -701,7 +713,8 @@ export function CleaningScheduleClient() {
       result[type] = [];
     }
     const today = startOfDay(new Date());
-    for (let i = 0; i < 90; i++) {
+    const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    for (let i = 0; addDays(today, i) <= endOfMonth; i++) {
       const day = addDays(today, i);
       const dayStr = toApiCalendarDate(day);
       for (const type of allowedTaskTypes) {
@@ -1499,8 +1512,8 @@ export function CleaningScheduleClient() {
             <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
               <h2 className="text-lg font-semibold text-slate-900">Upcoming Tasks</h2>
               <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-                Reschedule policy: 5+ days notice has no fine, 1-4 days notice has a 50% fine, same-day notice has a
-                75% fine, and missing the work is a full fine.
+                Reschedule policy: 5+ days notice has no fine, 1–4 days notice has a 50% fine, same-day notice has a 75% fine, and missing the work is a full fine.
+                Late completion: You may mark a task done up to 10 hours after the deadline and still earn 50% of the normal coin reward. After 10 hours the task is marked missed and a fine is issued automatically.
               </div>
               <div className="mt-4 space-y-3">
                 {futureTasks.length === 0 ? <p className="text-sm text-slate-600">No upcoming tasks.</p> : null}
@@ -1538,14 +1551,20 @@ export function CleaningScheduleClient() {
                         <button
                           type="button"
                           onClick={() => void markDone(task.id)}
-                          disabled={loading || !canCompleteTaskNow(task)}
-                          className="mt-3 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-60"
+                          disabled={loading || (!canCompleteTaskNow(task) && !canCompleteTaskLate(task))}
+                          className={`mt-3 rounded-lg px-4 py-2 text-sm text-white disabled:opacity-60 ${
+                            canCompleteTaskLate(task) ? "bg-amber-600 hover:bg-amber-700" : "bg-slate-900"
+                          }`}
                         >
-                          Mark done
+                          {canCompleteTaskLate(task) ? "Mark done (late — 50% coins)" : "Mark done"}
                         </button>
-                        {!canCompleteTaskNow(task) ? (
+                        {canCompleteTaskLate(task) ? (
                           <div className="mt-2 text-sm text-amber-700">
-                            You can only mark this task done during {getCompletionWindow(task).label}.
+                            ⚠ Late submission. You will earn {Math.round(task.rewardCoins * 0.5)} coins (50%) instead of {task.rewardCoins}. Deadline: {getLateDeadline(task).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.
+                          </div>
+                        ) : !canCompleteTaskNow(task) ? (
+                          <div className="mt-2 text-sm text-rose-600">
+                            Deadline passed. You had until {getLateDeadline(task).toLocaleString()} to submit late.
                           </div>
                         ) : null}
                         <button

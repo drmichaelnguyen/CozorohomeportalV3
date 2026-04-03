@@ -73,15 +73,19 @@ import {
   readCachedPayments,
   createLaundryBooking,
   cancelLaundryBooking,
+  staffDeleteLaundryBooking,
   syncCoinsFromSheet,
   syncFinesFromSheet,
   syncPaymentsFromSheet,
   updateCoinSheetEntry,
+  deleteCoinSheetEntry,
   updateClientColumns,
   uploadFineImageToDrive,
   updateFineSheetEntry,
+  deleteFineSheetEntry,
   updateLaundryBookingEntry,
   updatePaymentSheetEntry,
+  deletePaymentSheetEntry,
   readCachedMaintenance,
   reportMaintenanceTicket,
   startMaintenanceSyncInterval,
@@ -573,6 +577,25 @@ const staffPaymentUpdateSchema = z.object({
   amount: z.string().optional(),
   purpose: z.string().optional(),
   values: z.record(z.string(), z.string())
+});
+const staffCoinDeleteSchema = z.object({
+  actorEmail: z.string().email(),
+  email: z.string().email(),
+  timestamp: z.string().min(1),
+  transactionCode: z.string().optional()
+});
+const staffPaymentDeleteSchema = z.object({
+  actorEmail: z.string().email(),
+  email: z.string().email(),
+  timestamp: z.string().min(1),
+  amount: z.string().optional(),
+  purpose: z.string().optional()
+});
+const staffFineDeleteSchema = z.object({
+  actorEmail: z.string().email(),
+  email: z.string().email(),
+  timestamp: z.string().min(1),
+  content: z.string().min(1)
 });
 const staffFineUpdateSchema = z.object({
   actorEmail: z.string().email(),
@@ -2159,6 +2182,76 @@ app.post("/staff/fines/update", async (request, response) => {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to update fine entry"
     });
+  }
+});
+
+app.post("/staff/coins/delete", async (request, response) => {
+  const parsed = staffCoinDeleteSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid staff coin delete payload" });
+  }
+  try {
+    await requirePortalRole(parsed.data.actorEmail, ["manager", "owner", "app_admin"], "Only Cozoro team members can delete coin entries.");
+    const result = await deleteCoinSheetEntry({
+      email: parsed.data.email,
+      timestamp: parsed.data.timestamp,
+      transactionCode: parsed.data.transactionCode
+    });
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({ error: error instanceof Error ? error.message : "Unable to delete coin entry" });
+  }
+});
+
+app.post("/staff/payments/delete", async (request, response) => {
+  const parsed = staffPaymentDeleteSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid staff payment delete payload" });
+  }
+  try {
+    await requirePortalRole(parsed.data.actorEmail, ["manager", "owner", "app_admin"], "Only Cozoro team members can delete payment entries.");
+    const result = await deletePaymentSheetEntry({
+      email: parsed.data.email,
+      timestamp: parsed.data.timestamp,
+      amount: parsed.data.amount,
+      purpose: parsed.data.purpose
+    });
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({ error: error instanceof Error ? error.message : "Unable to delete payment entry" });
+  }
+});
+
+app.post("/staff/fines/delete", async (request, response) => {
+  const parsed = staffFineDeleteSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid staff fine delete payload" });
+  }
+  try {
+    await requirePortalRole(parsed.data.actorEmail, ["manager", "owner", "app_admin"], "Only Cozoro team members can delete fine entries.");
+    const result = await deleteFineSheetEntry({
+      email: parsed.data.email,
+      timestamp: parsed.data.timestamp,
+      content: parsed.data.content
+    });
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({ error: error instanceof Error ? error.message : "Unable to delete fine entry" });
+  }
+});
+
+app.post("/staff/laundry/delete", async (request, response) => {
+  const schema = z.object({ actorEmail: z.string().email(), calendarId: z.string().min(1), eventId: z.string().min(1) });
+  const parsed = schema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid payload" });
+  }
+  try {
+    await requirePortalRole(parsed.data.actorEmail, ["manager", "owner", "app_admin"], "Only Cozoro team members can remove laundry entries.");
+    const result = await staffDeleteLaundryBooking({ calendarId: parsed.data.calendarId, eventId: parsed.data.eventId });
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({ error: error instanceof Error ? error.message : "Unable to delete laundry entry" });
   }
 });
 

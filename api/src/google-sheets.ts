@@ -2013,6 +2013,16 @@ export async function cancelLaundryBooking(input: {
   return { ok: true };
 }
 
+export async function staffDeleteLaundryBooking(input: {
+  calendarId: string;
+  eventId: string;
+}) {
+  const calendar = await getAuthorizedCalendarClient();
+  await calendar.events.delete({ calendarId: input.calendarId, eventId: input.eventId });
+  invalidateLaundryCalendar(input.calendarId);
+  return { ok: true };
+}
+
 export async function warmLaundryCalendarCache() {
   const calendarIds = await getLaundryCalendarIds();
   const results = await Promise.all(
@@ -2119,7 +2129,9 @@ export async function getLaundryAvailabilityForMachine(input: {
   const availability: LaundryAvailabilityDay[] = [];
   const blockedIntervals = relevantEvents.map((event) => {
     const eventStart = new Date(event.start?.dateTime ?? event.start?.date ?? "");
-    const eventEnd = new Date(event.end?.dateTime ?? event.end?.date ?? "");
+    // Always calculate end from machine duration — don't trust the calendar event's end time
+    // (legacy bookings from the old system may have incorrect end times written to the calendar)
+    const eventEnd = new Date(eventStart.getTime() + machine.durationMinutes * 60 * 1000);
     return {
       start: new Date(eventStart.getTime() - machine.durationMinutes * 60 * 1000),
       end: eventEnd
@@ -3765,6 +3777,70 @@ async function appendPaymentSheetRow(entry: Record<string, string>) {
   await syncPaymentsFromSheet();
 }
 
+async function lookupSheetTabId(targetSpreadsheetId: string, sheetName: string): Promise<number> {
+  const sheets = await getAuthorizedSheetsClient();
+  const response = await sheets.spreadsheets.get({ spreadsheetId: targetSpreadsheetId });
+  const tab = response.data.sheets?.find((s) => s.properties?.title === sheetName);
+  if (!tab?.properties?.sheetId === undefined) {
+    throw new Error(`Sheet tab "${sheetName}" not found in spreadsheet`);
+  }
+  return tab!.properties!.sheetId!;
+}
+
+async function deleteSheetRow(input: {
+  range: string;
+  rowLabel: string;
+  sheetName: string;
+  syncAfterDelete: () => Promise<unknown>;
+  findRow: (headers: string[], row: string[], index: number) => boolean;
+  targetSpreadsheetId?: string;
+}) {
+  const targetId = input.targetSpreadsheetId ?? spreadsheetId;
+  if (!targetId) {
+    throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
+  }
+
+  const sheets = await getAuthorizedSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: targetId,
+    range: input.range
+  });
+  const sheetValues = response.data.values ?? [];
+
+  if (sheetValues.length === 0) {
+    throw new Error(`The ${input.rowLabel} sheet is empty`);
+  }
+
+  const headers = (sheetValues[0] ?? []).map((value) => normalizeHeader(String(value)));
+  const rowIndex = sheetValues.findIndex((row, index) =>
+    index > 0 && input.findRow(headers, row.map((value) => String(value)), index)
+  );
+
+  if (rowIndex === -1) {
+    throw new Error(`The ${input.rowLabel} entry could not be found`);
+  }
+
+  const sheetTabId = await lookupSheetTabId(targetId, input.sheetName);
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: targetId,
+    requestBody: {
+      requests: [{
+        deleteDimension: {
+          range: {
+            sheetId: sheetTabId,
+            dimension: "ROWS",
+            startIndex: rowIndex,
+            endIndex: rowIndex + 1
+          }
+        }
+      }]
+    }
+  });
+
+  await input.syncAfterDelete();
+}
+
 async function updateSheetRowColumns(input: {
   range: string;
   rowLabel: string;
@@ -3912,6 +3988,78 @@ export async function updateFineSheetEntry(input: {
   return {
     ok: true
   };
+}
+
+export async function deleteCoinSheetEntry(input: {
+  email: string;
+  timestamp: string;
+  transactionCode?: string;
+}) {
+  const normalizedEmail = input.email.trim().toLowerCase();
+  await deleteSheetRow({
+    range: `${coinsSheetName}!A:AMJ`,
+    rowLabel: "coins",
+    sheetName: coinsSheetName,
+    syncAfterDelete: syncCoinsFromSheet,
+    findRow: (headers, row) => {
+      const mappedRow = mapRow(headers, row) as unknown as CoinRow;
+      const matchesEmail = mappedRow[EMAIL_COLUMN]?.trim().toLowerCase() === normalizedEmail;
+      const matchesTimestamp = (mappedRow[COINS_TIMESTAMP_COLUMN] ?? "").trim() === input.timestamp.trim();
+      const matchesTransactionCode = input.transactionCode?.trim()
+        ? (mappedRow[COINS_TRANSACTION_CODE_COLUMN] ?? "").trim() === input.transactionCode.trim()
+        : true;
+      return matchesEmail && matchesTimestamp && matchesTransactionCode;
+    }
+  });
+  return { ok: true };
+}
+
+export async function deletePaymentSheetEntry(input: {
+  email: string;
+  timestamp: string;
+  amount?: string;
+  purpose?: string;
+}) {
+  const normalizedEmail = input.email.trim().toLowerCase();
+  await deleteSheetRow({
+    range: `${paymentsSheetName}!A:AMJ`,
+    rowLabel: "payments",
+    sheetName: paymentsSheetName,
+    syncAfterDelete: syncPaymentsFromSheet,
+    targetSpreadsheetId: paymentsSpreadsheetId,
+    findRow: (headers, row) => {
+      const mappedRow = mapRow(headers, row) as unknown as PaymentRow;
+      const matchesEmail = mappedRow[EMAIL_COLUMN]?.trim().toLowerCase() === normalizedEmail;
+      const matchesTimestamp = (mappedRow[PAYMENT_TIMESTAMP_COLUMN] ?? "").trim() === input.timestamp.trim();
+      const matchesAmount = input.amount?.trim() ? (mappedRow[PAYMENT_AMOUNT_COLUMN] ?? "").trim() === input.amount.trim() : true;
+      const matchesPurpose = input.purpose?.trim() ? (mappedRow[PAYMENT_PURPOSE_COLUMN] ?? "").trim() === input.purpose.trim() : true;
+      return matchesEmail && matchesTimestamp && matchesAmount && matchesPurpose;
+    }
+  });
+  return { ok: true };
+}
+
+export async function deleteFineSheetEntry(input: {
+  email: string;
+  timestamp: string;
+  content: string;
+}) {
+  const normalizedEmail = input.email.trim().toLowerCase();
+  await deleteSheetRow({
+    range: `${finesSheetName}!A:AMJ`,
+    rowLabel: "fines",
+    sheetName: finesSheetName,
+    syncAfterDelete: syncFinesFromSheet,
+    findRow: (headers, row) => {
+      const mappedRow = mapRow(headers, row) as unknown as FineRow;
+      return (
+        mappedRow[FINE_EMAIL_COLUMN]?.trim().toLowerCase() === normalizedEmail &&
+        (mappedRow[FINE_TIMESTAMP_COLUMN] ?? "").trim() === input.timestamp.trim() &&
+        (mappedRow[FINE_CONTENT_COLUMN] ?? "").trim() === input.content.trim()
+      );
+    }
+  });
+  return { ok: true };
 }
 
 export async function updateLaundryBookingEntry(input: {

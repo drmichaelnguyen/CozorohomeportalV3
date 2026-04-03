@@ -163,6 +163,7 @@ const nextConfig: NextConfig = {
 
 | Version | Description |
 |---------|-------------|
+| 3.5.4 | Manager delete for coins/fines/payments/laundry entries; laundry stats table redesigned (name, start, end, machine — 1 row per entry); fix laundry overlap from old-system events with wrong end times (always use machine duration); open slots limited to current month; fine creator field shown to residents and managers; About section collapses by default |
 | 3.5.3 | Hide air fryer section entirely for D2 users; hide microwave section entirely for D7 users (no "branch only" message — section simply absent); About section on account page (app history, Dr. Trong Nguyen, Facebook link) |
 | 3.5.2 | D2 microwave controller: IFTTT trigger, pre-use inspection (Clean/Dirty/Damage), 5-min cooldown window, current/last user display, usage logged to Google Sheet (Name/Time/Email/Inspection columns) |
 | 3.5.1 | Hide Contract Status card for inactive clients; fix session flash (users seeing login screen on page return) by deferring login-required UI until localStorage is read |

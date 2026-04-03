@@ -749,6 +749,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [newStaffPassword, setNewStaffPassword] = useState("");
   const [editingId, setEditingId] = useState("");
   const [editValues, setEditValues] = useState<Record<string, string>>({});
+  const [confirmDeleteId, setConfirmDeleteId] = useState("");
   const [activeAction, setActiveAction] = useState<ClientAction>("");
   const [showAllStatsEntries, setShowAllStatsEntries] = useState(false);
   const [showClientDetails, setShowClientDetails] = useState(false);
@@ -3842,19 +3843,15 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             ) : null}
 
             {workspace && showAllStatsEntries && activeTab === "laundry" ? (
-              <div className="mt-4 space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-sm text-slate-600">
-                  {t("laundryPackingDesc")}
-                </div>
-                <div className="max-h-[28rem] overflow-auto rounded-2xl border border-slate-200 bg-white">
-                  <div className="overflow-x-auto">
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="max-h-[32rem] overflow-auto rounded-2xl border border-slate-200 bg-white">
                   <table className="min-w-full divide-y divide-slate-200 text-sm">
                     <thead className="bg-slate-50 text-left text-slate-600">
                       <tr>
-                        <th className="px-4 py-3 font-medium">{t("purpose")}</th>
-                        <th className="px-4 py-3 font-medium">{t("timestamp")}</th>
-                        <th className="px-4 py-3 font-medium">{t("timestamp")}</th>
-                        <th className="px-4 py-3 font-medium">{t("location")}</th>
+                        <th className="px-4 py-3 font-medium">{language === "vi" ? "Tên đặt lịch" : "Name"}</th>
+                        <th className="px-4 py-3 font-medium">{language === "vi" ? "Bắt đầu" : "Start"}</th>
+                        <th className="px-4 py-3 font-medium">{language === "vi" ? "Kết thúc" : "End"}</th>
+                        <th className="px-4 py-3 font-medium">{language === "vi" ? "Máy" : "Machine"}</th>
                         <th className="px-4 py-3 font-medium">{t("clientActions")}</th>
                       </tr>
                     </thead>
@@ -3862,36 +3859,61 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       {workspace.stats.laundry.map((entry) => {
                         const key = makeKey([entry.calendarId, entry.id]);
                         return (
-                          <tr key={key} className="align-top">
+                          <tr key={key} className="align-middle">
+                            <td className="px-4 py-3 text-slate-900">{entry.summary}</td>
+                            <td className="px-4 py-3 text-slate-700 whitespace-nowrap">{formatDateTime(entry.start)}</td>
+                            <td className="px-4 py-3 text-slate-700 whitespace-nowrap">{formatDateTime(entry.end)}</td>
+                            <td className="px-4 py-3 text-slate-700">{entry.calendarSummary || entry.location || "-"}</td>
                             <td className="px-4 py-3">
-                              <div className="font-medium text-slate-900">{entry.summary}</div>
-                              {entry.description ? <div className="mt-1 whitespace-pre-wrap text-slate-600">{entry.description}</div> : null}
-                            </td>
-                            <td className="px-4 py-3 text-slate-700">{formatDateTime(entry.start)}</td>
-                            <td className="px-4 py-3 text-slate-700">{formatDateTime(entry.end)}</td>
-                            <td className="px-4 py-3 text-slate-700">{entry.location || entry.calendarSummary || "-"}</td>
-                            <td className="px-4 py-3">
-                              <button type="button" onClick={() => { setEditingId(`laundry:${key}`); setEditValues({ summary: entry.summary, description: entry.description, location: entry.location, start: toDateTimeLocalValue(entry.start), end: toDateTimeLocalValue(entry.end) }); }} className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700">{t("editProfile")}</button>
+                              {confirmDeleteId === `laundry:${key}` ? (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-red-600 font-medium">Remove?</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setConfirmDeleteId("");
+                                      void postJson(
+                                        `${API_BASE_URL}/staff/laundry/delete`,
+                                        { actorEmail: normalizedEmail, calendarId: entry.calendarId, eventId: entry.id },
+                                        "Laundry entry removed.",
+                                        async () => { if (selectedClient) await loadWorkspace("laundry", selectedClient.maHd); }
+                                      );
+                                    }}
+                                    className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white"
+                                  >
+                                    Yes
+                                  </button>
+                                  <button type="button" onClick={() => setConfirmDeleteId("")} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-700">No</button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2">
+                                  <button type="button" onClick={() => { setEditingId(`laundry:${key}`); setEditValues({ summary: entry.summary, description: entry.description, location: entry.location, start: toDateTimeLocalValue(entry.start), end: toDateTimeLocalValue(entry.end) }); }} className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700">{t("editProfile")}</button>
+                                  <button type="button" onClick={() => setConfirmDeleteId(`laundry:${key}`)} className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600">Remove</button>
+                                </div>
+                              )}
                             </td>
                           </tr>
                         );
                       })}
                     </tbody>
                   </table>
-                  </div>
                 </div>
 
                 {workspace.stats.laundry.map((entry) => {
                   const key = makeKey([entry.calendarId, entry.id]);
                   const isEditing = editingId === `laundry:${key}`;
                   return isEditing ? (
-                    <div key={`edit-${key}`} className="rounded-2xl border border-slate-200 p-4">
+                    <div key={`edit-${key}`} className="mt-4 rounded-2xl border border-slate-200 p-4">
                       <div className="space-y-3">
-                        <input type="text" value={editValues.summary ?? ""} onChange={(event) => setEditValues((current) => ({ ...current, summary: event.target.value }))} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
-                        <input type="text" value={editValues.location ?? ""} onChange={(event) => setEditValues((current) => ({ ...current, location: event.target.value }))} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
-                        <input type="datetime-local" value={editValues.start ?? ""} onChange={(event) => setEditValues((current) => ({ ...current, start: event.target.value }))} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
-                        <input type="datetime-local" value={editValues.end ?? ""} onChange={(event) => setEditValues((current) => ({ ...current, end: event.target.value }))} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
-                        <textarea value={editValues.description ?? ""} onChange={(event) => setEditValues((current) => ({ ...current, description: event.target.value }))} rows={4} className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm" />
+                        <label className="block text-sm font-medium text-slate-700">{language === "vi" ? "Tên đặt lịch" : "Name"}
+                          <input type="text" value={editValues.summary ?? ""} onChange={(event) => setEditValues((current) => ({ ...current, summary: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
+                        </label>
+                        <label className="block text-sm font-medium text-slate-700">{language === "vi" ? "Bắt đầu" : "Start"}
+                          <input type="datetime-local" value={editValues.start ?? ""} onChange={(event) => setEditValues((current) => ({ ...current, start: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
+                        </label>
+                        <label className="block text-sm font-medium text-slate-700">{language === "vi" ? "Kết thúc" : "End"}
+                          <input type="datetime-local" value={editValues.end ?? ""} onChange={(event) => setEditValues((current) => ({ ...current, end: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
+                        </label>
                         <div className="flex gap-3">
                           <button type="button" onClick={() => void postJson(`${API_BASE_URL}/staff/laundry/update`, { actorEmail: normalizedEmail, calendarId: entry.calendarId, eventId: entry.id, summary: editValues.summary ?? "", description: editValues.description ?? "", location: editValues.location ?? "", start: new Date(editValues.start ?? "").toISOString(), end: new Date(editValues.end ?? "").toISOString() }, "Laundry entry updated.", async () => { if (selectedClient) await loadWorkspace("laundry", selectedClient.maHd); })} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white">{t("saveLabel")}</button>
                           <button type="button" onClick={() => setEditingId("")} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700">{t("cancelEdit")}</button>
@@ -3934,7 +3956,36 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             <td className="px-4 py-3 text-slate-700">{activeTab === "fines" ? (fineCreator || "-") : preview[2] ? `${preview[2][0]}: ${preview[2][1]}` : "-"}</td>
                             <td className="px-4 py-3 text-slate-700">{activeTab === "fines" ? (fineAmount ? `${Number(fineAmount).toLocaleString()} ₫` : "-") : preview[3] ? `${preview[3][0]}: ${preview[3][1]}` : "-"}</td>
                             <td className="px-4 py-3">
-                              <button type="button" onClick={() => { setEditingId(`${activeTab}:${key}`); setEditValues(entry.row); }} className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700">Edit</button>
+                              {confirmDeleteId === `${activeTab}:${key}` ? (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-red-600 font-medium">Remove?</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setConfirmDeleteId("");
+                                      void postJson(
+                                        `${API_BASE_URL}${activeTab === "coins" ? "/staff/coins/delete" : activeTab === "payments" ? "/staff/payments/delete" : "/staff/fines/delete"}`,
+                                        activeTab === "coins"
+                                          ? { actorEmail: normalizedEmail, email: selectedClient?.email ?? "", timestamp: entry.row["DẤU THỜI GIAN"] ?? entry.row["ĐẤU THỜI GIAN"] ?? "", transactionCode: entry.row["Mã giao dịch"] ?? "" }
+                                          : activeTab === "payments"
+                                            ? { actorEmail: normalizedEmail, email: selectedClient?.email ?? "", timestamp: entry.row["DẤU THỜI GIAN"] ?? entry.row["ĐẤU THỜI GIAN"] ?? "", amount: entry.row["SỐ TIỀN"] ?? "", purpose: entry.row["MỤC ĐÍCH"] ?? "" }
+                                            : { actorEmail: normalizedEmail, email: entry.row.EMAIL ?? selectedClient?.email ?? "", timestamp: entry.row["DẤU THỜI GIAN"] ?? entry.row["ĐẤU THỜI GIAN"] ?? "", content: entry.row["NỘI DUNG VI PHẠM"] ?? "" },
+                                        `${activeTab[0].toUpperCase() + activeTab.slice(1)} entry removed.`,
+                                        async () => { if (selectedClient) await loadWorkspace(activeTab, selectedClient.maHd); }
+                                      );
+                                    }}
+                                    className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white"
+                                  >
+                                    Yes
+                                  </button>
+                                  <button type="button" onClick={() => setConfirmDeleteId("")} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-700">No</button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2">
+                                  <button type="button" onClick={() => { setEditingId(`${activeTab}:${key}`); setEditValues(entry.row); }} className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700">Edit</button>
+                                  <button type="button" onClick={() => setConfirmDeleteId(`${activeTab}:${key}`)} className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600">Remove</button>
+                                </div>
+                              )}
                             </td>
                           </tr>
                         );
