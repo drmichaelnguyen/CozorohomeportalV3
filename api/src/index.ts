@@ -343,7 +343,7 @@ async function runAutoSchedule(trigger: "startup" | "interval" | "manual") {
     console.log(
       `[cleaning-auto-schedule] trigger=${trigger} created=${result.created} skipped=${result.skipped}`
     );
-    return { skipped: false, ...result };
+    return { ...result };
   } finally {
     autoScheduleRunning = false;
   }

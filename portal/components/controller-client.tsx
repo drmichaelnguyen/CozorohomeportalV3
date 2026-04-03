@@ -117,7 +117,7 @@ function getAccountStatus(client: Record<string, string> | null): {
   const now = new Date();
   const MS_PER_DAY = 86400000;
   const BLOCK_GRACE_DAYS = 5;
-  const WARN_DAYS_AHEAD = 7;
+  const WARN_DAYS_AHEAD = 30;
   const contractEnd = parseLooseDate(client["Ngày hết hạn hợp đồng"]);
   const paymentExpiry = parseLooseDate(client["Ngày hết hạn gói đã thanh toán"]);
   const warnings: string[] = [];
@@ -127,9 +127,10 @@ function getAccountStatus(client: Record<string, string> | null): {
     if (diffDays > BLOCK_GRACE_DAYS) {
       blockReason = `Hợp đồng đã hết hạn ${Math.floor(diffDays)} ngày. Liên hệ quản lý để gia hạn.`;
     } else if (diffDays > 0) {
-      warnings.push(`Hợp đồng đã hết hạn ${Math.floor(diffDays)} ngày — còn ${BLOCK_GRACE_DAYS - Math.floor(diffDays)} ngày ân hạn.`);
+      warnings.push(`Hợp đồng đã hết hạn ${Math.floor(diffDays)} ngày — còn ${BLOCK_GRACE_DAYS - Math.floor(diffDays)} ngày ân hạn. Vui lòng gia hạn trên trang chủ.`);
     } else if (-diffDays < WARN_DAYS_AHEAD) {
-      warnings.push(`Hợp đồng sắp hết hạn vào ngày ${contractEnd.toLocaleDateString("vi-VN")}.`);
+      const daysLeft = Math.ceil(-diffDays);
+      warnings.push(`Hợp đồng sắp hết hạn vào ngày ${contractEnd.toLocaleDateString("vi-VN")} (còn ${daysLeft} ngày). Gia hạn ngay trên trang chủ để nhận Cozoro Coins: 3 tháng +10.000 · 6 tháng +25.000 · 12 tháng +50.000.`);
     }
   }
   if (!blockReason && paymentExpiry) {

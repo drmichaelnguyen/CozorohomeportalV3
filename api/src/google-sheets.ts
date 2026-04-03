@@ -4522,6 +4522,53 @@ export async function extendClientContract(email: string, extensionMonths: numbe
     throw new Error("Could not connect to contract generation service.");
   }
 
+  // Award coins for contract extension
+  const EXTENSION_COIN_REWARDS: Record<number, number> = { 1: 0, 3: 10000, 6: 25000, 12: 50000 };
+  const coinReward = EXTENSION_COIN_REWARDS[extensionMonths] ?? 0;
+  if (coinReward > 0) {
+    try {
+      const coinsColIndex = headers.indexOf(normalizeHeader(CLIENT_CURRENT_COINS_COLUMN));
+      const currentCoins = coinsColIndex >= 0 ? parseLooseInteger(targetRowData[coinsColIndex] ?? "0") : 0;
+      const newBalance = currentCoins + coinReward;
+      const contractCodeIdx = headers.indexOf(normalizeHeader(CONTRACT_CODE_COLUMN));
+      const branchIdx = headers.indexOf(normalizeHeader("Chi nhánh Cozoro dorm"));
+      const nameIdx = headers.indexOf(normalizeHeader(CLIENT_NAME_COLUMN));
+      const bedIdx = headers.indexOf(normalizeHeader(CLIENT_BED_COLUMN));
+      const memberIdx = headers.indexOf(normalizeHeader(COINS_MEMBER_COLUMN));
+      const contractCodeVal = contractCodeIdx >= 0 ? (targetRowData[contractCodeIdx] ?? "") : "";
+      const branchVal = normalizeClientBranch(branchIdx >= 0 ? (targetRowData[branchIdx] ?? "") : "").replace("D", "");
+      const nameVal = nameIdx >= 0 ? (targetRowData[nameIdx] ?? "") : "";
+      const bedVal = bedIdx >= 0 ? (targetRowData[bedIdx] ?? "") : "";
+      const memberVal = memberIdx >= 0 ? (targetRowData[memberIdx] ?? "") : "";
+
+      await appendCoinsSheetRow({
+        [COINS_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(new Date()),
+        [CONTRACT_CODE_COLUMN]: contractCodeVal,
+        ["Chi nhánh Cozoro dorm"]: branchVal,
+        [EMAIL_COLUMN]: normalizedEmail,
+        [CLIENT_NAME_COLUMN]: nameVal,
+        [CLIENT_BED_COLUMN]: bedVal,
+        [COINS_BALANCE_COLUMN]: String(coinReward),
+        [COINS_EVENT_COLUMN]: `Gia hạn hợp đồng ${extensionMonths} tháng`,
+        [COINS_OPERATOR_COLUMN]: "system",
+        [COINS_MEMBER_COLUMN]: memberVal,
+        [COINS_CURRENT_BALANCE_COLUMN]: String(newBalance),
+        [COINS_TRANSACTION_CODE_COLUMN]: `ContractExt${extensionMonths}m${Date.now()}`
+      });
+
+      if (contractCodeVal) {
+        await updateClientColumns(contractCodeVal, {
+          [CLIENT_CURRENT_COINS_COLUMN]: String(newBalance)
+        });
+      }
+
+      console.log(`[ContractExtension] Awarded ${coinReward} coins to ${email} for ${extensionMonths}-month extension. New balance: ${newBalance}`);
+    } catch (coinErr) {
+      console.error(`[ContractExtension] Failed to award coins for ${email}:`, coinErr);
+      // Don't throw — coin award failure should not block the extension itself
+    }
+  }
+
   // Background activation logic:
   // If we have the rowIndex, we use it. Otherwise, we don't proceed with activation.
   if (rowIndex) {

@@ -787,7 +787,7 @@ async function assignTaskToUser(input: {
     scheduledDate: normalizedTaskDate,
     floor: slotFloor,
     isSelfAssigned: input.isSelfAssigned,
-    assignmentSource: input.assignmentSource ?? (input.isSelfAssigned ? CleaningAssignmentSource.SELF : null)
+    assignmentSource: input.assignmentSource ?? (input.isSelfAssigned ? CleaningAssignmentSource.SELF : undefined)
   });
 
   await invalidateCleaningOverviewCache(normalizedEmail);
@@ -846,7 +846,7 @@ async function createCleaningTaskRecord(input: {
       scheduledDate: normalizedScheduledDate,
       rewardCoins,
       isSelfAssigned: input.isSelfAssigned ?? false,
-      assignmentSource: input.assignmentSource ?? null,
+      assignmentSource: input.assignmentSource ?? undefined,
       calendarId,
       calendarEventId
     }
@@ -908,7 +908,7 @@ async function syncCalendarTasksIntoDatabase(
         });
         if (calendarUserAvailability?.type === CleaningAvailabilityType.UNAVAILABLE) {
           syncEmail = existingTask.userEmail;
-          syncName = existingTask.userName;
+          syncName = existingTask.userName ?? syncName;
         }
       }
 

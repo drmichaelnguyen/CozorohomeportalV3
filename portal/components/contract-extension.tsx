@@ -7,11 +7,13 @@ import { usePortalLanguage } from "./portal-language";
 export function ContractExtension({
   email,
   endDateStr,
-  onExtended
+  onExtended,
+  forceExpand = false
 }: {
   email: string;
   endDateStr: string;
   onExtended: () => void;
+  forceExpand?: boolean;
 }) {
   const { t } = usePortalLanguage();
   const [loading, setLoading] = useState(false);
@@ -19,7 +21,7 @@ export function ContractExtension({
   const [duration, setDuration] = useState<number>(6);
   const [agreed, setAgreed] = useState(false);
   const [fullName, setFullName] = useState("");
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(forceExpand);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [hasSignature, setHasSignature] = useState(false);
@@ -111,7 +113,7 @@ export function ContractExtension({
     return () => clearInterval(timer);
   }, [isSuccess, countdown, onExtended]);
 
-  if (!isNearingEnd && !isSuccess) {
+  if (!isNearingEnd && !isSuccess && !forceExpand) {
     return null;
   }
 
@@ -187,7 +189,7 @@ export function ContractExtension({
   }
 
   return (
-    <div className="mb-6 rounded-3xl border border-amber-300 bg-amber-50 p-5 shadow-sm sm:p-6 transition-all duration-300">
+    <div id="contract-extension-panel" className="mb-6 rounded-3xl border border-amber-300 bg-amber-50 p-5 shadow-sm sm:p-6 transition-all duration-300">
       <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700">
@@ -220,37 +222,55 @@ export function ContractExtension({
       {isExpanded && (
         <div className="mt-8 pt-6 border-t border-amber-200 animate-in fade-in slide-in-from-top-4 duration-300">
           <div className="space-y-6 max-w-2xl">
-            <div className="grid gap-6 sm:grid-cols-2">
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-amber-700 mb-2">
-                  {t("selectExtensionDuration", "Select Duration")}
-                </label>
-                <select
-                  value={duration}
-                  onChange={(e) => setDuration(Number(e.target.value))}
-                  className="w-full rounded-2xl border border-amber-300 bg-white px-4 py-3 text-sm outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-200/50 transition-all"
-                  disabled={loading}
-                >
-                  <option value={1}>{t("oneMonth", "1 Month")}</option>
-                  <option value={3}>{t("threeMonths", "3 Months")}</option>
-                  <option value={6}>{t("sixMonths", "6 Months")}</option>
-                  <option value={12}>{t("twelveMonths", "12 Months")}</option>
-                </select>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-amber-700 mb-3">
+                {t("selectExtensionDuration", "Select Duration")}
+              </label>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {([
+                  { months: 1, label: t("oneMonth", "1 Month"), labelVi: "1 tháng", coins: 0 },
+                  { months: 3, label: t("threeMonths", "3 Months"), labelVi: "3 tháng", coins: 10000 },
+                  { months: 6, label: t("sixMonths", "6 Months"), labelVi: "6 tháng", coins: 25000 },
+                  { months: 12, label: t("twelveMonths", "12 Months"), labelVi: "12 tháng", coins: 50000 },
+                ] as const).map((opt) => (
+                  <button
+                    key={opt.months}
+                    type="button"
+                    disabled={loading}
+                    onClick={() => setDuration(opt.months)}
+                    className={`rounded-2xl border-2 p-3 text-left transition-all ${
+                      duration === opt.months
+                        ? "border-amber-500 bg-amber-100 shadow-md"
+                        : "border-amber-200 bg-white hover:border-amber-400"
+                    }`}
+                  >
+                    <p className="text-sm font-bold text-amber-900">{opt.label}</p>
+                    <p className="text-xs text-amber-700">{opt.labelVi}</p>
+                    {opt.coins > 0 ? (
+                      <p className="mt-1.5 text-xs font-semibold text-emerald-700">+{opt.coins.toLocaleString()} coins 🪙</p>
+                    ) : (
+                      <p className="mt-1.5 text-xs text-slate-400">{t("noCoins", "No coins")}</p>
+                    )}
+                  </button>
+                ))}
               </div>
+              <p className="mt-3 text-xs text-amber-700">
+                🎁 {t("continuousStayBonus", "Continuous stay bonus: +30,000 coins at 6 months · +20,000 extra at 12 months — awarded by management. / Thưởng ở liên tục: +30.000 coins đủ 6 tháng · +20.000 thêm đủ 12 tháng — quản lý cộng thủ công.")}
+              </p>
+            </div>
 
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-amber-700 mb-2">
-                  {t("yourFullName", "Your Full Name")}
-                </label>
-                <input
-                  type="text"
-                  placeholder={t("fullNamePlaceholder", "Enter your legal full name")}
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  className="w-full rounded-2xl border border-amber-300 bg-white px-4 py-3 text-sm outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-200/50 transition-all font-medium"
-                  disabled={loading}
-                />
-              </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-amber-700 mb-2">
+                {t("yourFullName", "Your Full Name")}
+              </label>
+              <input
+                type="text"
+                placeholder={t("fullNamePlaceholder", "Enter your legal full name")}
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                className="w-full rounded-2xl border border-amber-300 bg-white px-4 py-3 text-sm outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-200/50 transition-all font-medium"
+                disabled={loading}
+              />
             </div>
 
             <div>
