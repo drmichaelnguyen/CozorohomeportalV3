@@ -19,6 +19,7 @@ import {
   sendAcCommandToRoom
 } from "./ac-controller.js";
 import { getUserAirFryerContext, startAirFryerUse } from "./airfryer-controller.js";
+import { getUserMicrowaveContext, startMicrowaveUse } from "./microwave-controller.js";
 import {
   getGooglePortalClientConfig,
   getManagerPermissions,
@@ -53,6 +54,7 @@ import {
   getCoinsForEmail,
   getFinesForEmail,
   getManagerClients,
+  getManagerInactiveClients,
   getManagerFines,
   disputeFine,
   managerAdjustCoins,
@@ -91,7 +93,8 @@ import {
   MAINTENANCE_SOLVED_AT_COLUMN,
   MAINTENANCE_REPAIR_TIME_COLUMN,
   MAINTENANCE_SATISFACTION_COLUMN,
-  MAINTENANCE_FEEDBACK_COLUMN
+  MAINTENANCE_FEEDBACK_COLUMN,
+  logMicrowaveUse
 } from "./google-sheets.js";
 
 
@@ -154,6 +157,11 @@ import {
 
 const app = express();
 const port = Number(process.env.PORT) || 4000; // AntiGravity: Use env PORT if available, default to 4000
+const GUEST_AUTH_RATE_PATH = path.join(process.cwd(), "data", "guest-auth-rate.json");
+const GUEST_AUTH_MIN_INTERVAL_MS = 60 * 1000;
+const GUEST_AUTH_MAX_PER_EMAIL_PER_HOUR = 3;
+const GUEST_AUTH_MAX_PER_EMAIL_PER_DAY = 10;
+const GUEST_AUTH_MAX_PER_IP_PER_HOUR = 10;
 
 const cleaningSweepIntervalMs = Number(process.env.CLEANING_SWEEP_INTERVAL_MS ?? 15 * 60 * 1000);
 const backgroundCleaningSweepEnabled = process.env.ENABLE_CLEANING_SWEEP === "true";
@@ -203,6 +211,101 @@ function isAllowedOrigin(origin: string) {
 function isLoopbackAddress(value: string | null | undefined) {
   const normalized = String(value ?? "").trim().replace(/^::ffff:/, "");
   return normalized === "127.0.0.1" || normalized === "::1";
+}
+
+function normalizeEmail(value: string) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeIp(value: string | null | undefined) {
+  return String(value ?? "").trim().split(",")[0]?.trim() || "unknown";
+}
+
+function dayKey(date = new Date()) {
+  return date.toISOString().slice(0, 10);
+}
+
+function hourKey(date = new Date()) {
+  return date.toISOString().slice(0, 13);
+}
+
+async function readGuestAuthRateFile() {
+  try {
+    const raw = await readFile(GUEST_AUTH_RATE_PATH, "utf8");
+    const parsed = JSON.parse(raw) as {
+      email?: Record<string, { lastSentAt?: string; hourly?: Record<string, number>; daily?: Record<string, number> }>;
+      ip?: Record<string, { hourly?: Record<string, number> }>;
+    };
+    return {
+      email: parsed.email ?? {},
+      ip: parsed.ip ?? {}
+    };
+  } catch {
+    return { email: {}, ip: {} };
+  }
+}
+
+async function writeGuestAuthRateFile(file: { email: Record<string, any>; ip: Record<string, any> }) {
+  await writeFile(GUEST_AUTH_RATE_PATH, JSON.stringify(file, null, 2), "utf8");
+}
+
+function getGuestAuthRateLimitError(message: string) {
+  const error = new Error(message);
+  (error as Error & { statusCode?: number }).statusCode = 429;
+  return error;
+}
+
+async function assertGuestAuthRateLimit(email: string, ip: string) {
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedIp = normalizeIp(ip);
+  if (!normalizedEmail) {
+    throw new Error("A valid email is required.");
+  }
+
+  const now = new Date();
+  const nowMs = now.getTime();
+  const hour = hourKey(now);
+  const day = dayKey(now);
+  const store = await readGuestAuthRateFile();
+  const emailEntry = store.email[normalizedEmail] ?? { hourly: {}, daily: {} };
+  const ipEntry = store.ip[normalizedIp] ?? { hourly: {} };
+
+  const lastSentAt = emailEntry.lastSentAt ? new Date(emailEntry.lastSentAt).getTime() : 0;
+  if (lastSentAt && nowMs - lastSentAt < GUEST_AUTH_MIN_INTERVAL_MS) {
+    throw getGuestAuthRateLimitError("Please wait 1 minute before requesting another code.");
+  }
+
+  const hourly = emailEntry.hourly ?? {};
+  const daily = emailEntry.daily ?? {};
+  hourly[hour] = Number(hourly[hour] || 0);
+  daily[day] = Number(daily[day] || 0);
+  const ipHourly = ipEntry.hourly ?? {};
+  ipHourly[hour] = Number(ipHourly[hour] || 0);
+
+  if (hourly[hour] >= GUEST_AUTH_MAX_PER_EMAIL_PER_HOUR) {
+    throw getGuestAuthRateLimitError("Too many verification codes requested for this email. Please try again later.");
+  }
+
+  if (daily[day] >= GUEST_AUTH_MAX_PER_EMAIL_PER_DAY) {
+    throw getGuestAuthRateLimitError("This email has reached the daily verification limit. Please try again tomorrow.");
+  }
+
+  if (ipHourly[hour] >= GUEST_AUTH_MAX_PER_IP_PER_HOUR) {
+    throw getGuestAuthRateLimitError("Too many verification requests from this network. Please try again later.");
+  }
+
+  emailEntry.lastSentAt = new Date(nowMs).toISOString();
+  emailEntry.hourly = hourly;
+  emailEntry.daily = daily;
+  ipEntry.hourly = ipHourly;
+
+  hourly[hour] += 1;
+  daily[day] += 1;
+  ipHourly[hour] += 1;
+
+  store.email[normalizedEmail] = emailEntry;
+  store.ip[normalizedIp] = ipEntry;
+  await writeGuestAuthRateFile(store);
 }
 
 function isAuthorizedInternalRequest(request: express.Request) {
@@ -1525,7 +1628,7 @@ app.post("/manager/controller/airfryer/trigger", async (request, response) => {
   try {
     const eventName = process.env.AIRFRYER_D7_IFTTT_EVENT || "webhookairfryer";
     const key = process.env.IFTTT_WEBHOOK_KEY;
-    
+
     const iftttUrl = `https://maker.ifttt.com/trigger/${eventName}/with/key/${key}`;
     const result = await fetch(iftttUrl, { method: "POST" });
 
@@ -1537,6 +1640,45 @@ app.post("/manager/controller/airfryer/trigger", async (request, response) => {
   } catch (error) {
     return response.status(500).json({
       error: error instanceof Error ? error.message : "Unable to trigger airfryer"
+    });
+  }
+});
+
+app.get("/controller/microwave/d2", async (request, response) => {
+  const email = String(request.query.email ?? "").trim().toLowerCase();
+  if (!email) return response.status(400).json({ error: "email required" });
+  try {
+    const context = await getUserMicrowaveContext(email);
+    return response.json(context);
+  } catch (error) {
+    return response.status(500).json({ error: error instanceof Error ? error.message : "Unable to load microwave status" });
+  }
+});
+
+app.post("/controller/microwave/d2/trigger", async (request, response) => {
+  const email = String(request.body?.email ?? "").trim().toLowerCase();
+  const inspection = String(request.body?.inspection ?? "").trim();
+
+  try {
+    const result = await startMicrowaveUse({ email, inspection });
+
+    // Fire IFTTT webhook
+    const eventName = process.env.MICROWAVE_D2_IFTTT_EVENT || "microwaveD2";
+    const key = process.env.IFTTT_WEBHOOK_KEY;
+    if (!key) throw new Error("IFTTT_WEBHOOK_KEY is not configured.");
+    const iftttUrl = `https://maker.ifttt.com/trigger/${eventName}/json/with/key/${key}`;
+    const iftttResult = await fetch(iftttUrl, { method: "POST" });
+    if (!iftttResult.ok) throw new Error(`IFTTT trigger failed with status ${iftttResult.status}`);
+
+    // Log to Google Sheet (best-effort)
+    logMicrowaveUse(email, result.usage.startedByName, inspection).catch((err) => {
+      console.error("[Microwave] Sheet log failed:", err);
+    });
+
+    return response.json({ ok: true, message: "Microwave triggered", cooldownMinutes: result.cooldownMinutes });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to trigger microwave"
     });
   }
 });
@@ -1814,6 +1956,17 @@ app.get("/staff/clients", async (request, response) => {
     return response.status(403).json({
       error: error instanceof Error ? error.message : "Unable to load staff clients"
     });
+  }
+});
+
+app.get("/staff/inactive-clients", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "");
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const clients = await getManagerInactiveClients();
+    return response.json({ clients });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to load inactive clients" });
   }
 });
 
@@ -3424,12 +3577,18 @@ app.post("/internal/guest-auth/send-code", async (req, res) => {
   const email = String(req.body?.email ?? "").trim().toLowerCase();
   const code = String(req.body?.code ?? "").trim();
   const siteTitle = String(req.body?.siteTitle ?? "CozoroHome Guest Booking").trim();
+  const honeypot = String(req.body?.website ?? req.body?.company ?? "").trim();
 
   if (!email || !code) {
     return res.status(400).json({ error: "email and code are required" });
   }
 
+  if (honeypot) {
+    return res.json({ ok: true });
+  }
+
   try {
+    await assertGuestAuthRateLimit(email, normalizeIp(req.get("x-forwarded-for") || req.ip || req.socket.remoteAddress || ""));
     await sendGmailReceipt({
       to: email,
       subject: `[${siteTitle}] Email verification code`,
@@ -3443,7 +3602,8 @@ app.post("/internal/guest-auth/send-code", async (req, res) => {
 
     return res.json({ ok: true });
   } catch (error) {
-    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to send verification code" });
+    const statusCode = typeof (error as { statusCode?: number })?.statusCode === "number" ? (error as { statusCode?: number }).statusCode! : 500;
+    return res.status(statusCode).json({ error: error instanceof Error ? error.message : "Unable to send verification code" });
   }
 });
 

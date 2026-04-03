@@ -59,6 +59,8 @@ type AirFryerContext = {
   };
 };
 
+type MicrowaveContext = AirFryerContext;
+
 type LaundryBooking = {
   id: string;
   calendarId: string;
@@ -160,10 +162,12 @@ function formatTimestamp(value: string | null, language: "en" | "vi") {
 export function ControllerClient({
   showAcSection = true,
   showAirFryerSection = true,
+  showMicrowaveSection = true,
   title = "Room Controller"
 }: {
   showAcSection?: boolean;
   showAirFryerSection?: boolean;
+  showMicrowaveSection?: boolean;
   title?: string;
 }) {
   const { language, t } = usePortalLanguage();
@@ -171,12 +175,15 @@ export function ControllerClient({
   const [activeEmail, setActiveEmail] = useState("");
   const [context, setContext] = useState<ControllerContext | null>(null);
   const [airFryerContext, setAirFryerContext] = useState<AirFryerContext | null>(null);
+  const [microwaveContext, setMicrowaveContext] = useState<MicrowaveContext | null>(null);
   const [loading, setLoading] = useState(false);
   const [submittingAction, setSubmittingAction] = useState<"ON" | "OFF" | null>(null);
   const [startingAirFryer, setStartingAirFryer] = useState(false);
   const [activeLaundryBooking, setActiveLaundryBooking] = useState<LaundryBooking | null>(null);
   const [nextLaundryBooking, setNextLaundryBooking] = useState<LaundryBooking | null>(null);
   const [triggeringLaundry, setTriggeringLaundry] = useState(false);
+  const [triggeringMicrowave, setTriggeringMicrowave] = useState(false);
+  const [selectedMicrowaveInspection, setSelectedMicrowaveInspection] = useState("");
   const [selectedInspection, setSelectedInspection] = useState<string>("");
   const [clientRecord, setClientRecord] = useState<Record<string, string> | null>(null);
   const [message, setMessage] = useState("");
@@ -202,6 +209,10 @@ export function ControllerClient({
         requests.push(fetchJson<AirFryerContext>(`${API_BASE_URL}/controller/airfryer?email=${encodeURIComponent(resolvedEmail)}`));
       }
 
+      if (showMicrowaveSection) {
+        requests.push(fetchJson<MicrowaveContext>(`${API_BASE_URL}/controller/microwave/d2?email=${encodeURIComponent(resolvedEmail)}`));
+      }
+
       const results = await Promise.all(requests);
       let offset = 0;
 
@@ -217,6 +228,13 @@ export function ControllerClient({
         offset += 1;
       } else {
         setAirFryerContext(null);
+      }
+
+      if (showMicrowaveSection) {
+        setMicrowaveContext(results[offset] as MicrowaveContext);
+        offset += 1;
+      } else {
+        setMicrowaveContext(null);
       }
 
       const [laundryData, clientResult] = await Promise.allSettled([
@@ -238,6 +256,7 @@ export function ControllerClient({
     } catch (error) {
       setContext(null);
       setAirFryerContext(null);
+      setMicrowaveContext(null);
       setActiveLaundryBooking(null);
       setNextLaundryBooking(null);
       setMessage(error instanceof Error ? error.message : "Unable to load controls.");
@@ -250,12 +269,13 @@ export function ControllerClient({
     if (!sessionEmail.trim()) {
       setContext(null);
       setAirFryerContext(null);
+      setMicrowaveContext(null);
       setActiveEmail("");
       return;
     }
 
     void loadControllerContext();
-  }, [sessionEmail, showAcSection, showAirFryerSection]);
+  }, [sessionEmail, showAcSection, showAirFryerSection, showMicrowaveSection]);
 
   async function sendCommand(action: "ON" | "OFF") {
     if (!activeEmail) {
@@ -336,6 +356,28 @@ export function ControllerClient({
       setMessage(error instanceof Error ? error.message : "Unable to start air fryer use.");
     } finally {
       setStartingAirFryer(false);
+    }
+  }
+
+  async function triggerMicrowave() {
+    if (!activeEmail || !selectedMicrowaveInspection) return;
+    setTriggeringMicrowave(true);
+    setMessage("");
+    try {
+      await fetchJson<{ ok: true }>(`${API_BASE_URL}/controller/microwave/d2/trigger`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: activeEmail, inspection: selectedMicrowaveInspection })
+      });
+      setSelectedMicrowaveInspection("");
+      setMessage(language === "vi" ? "Lò vi sóng đã được bật." : "Microwave turned on.");
+      // Refresh status to show cooldown
+      const updated = await fetchJson<MicrowaveContext>(`${API_BASE_URL}/controller/microwave/d2?email=${encodeURIComponent(activeEmail)}`);
+      setMicrowaveContext(updated);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to trigger microwave.");
+    } finally {
+      setTriggeringMicrowave(false);
     }
   }
 
@@ -476,6 +518,116 @@ export function ControllerClient({
                     <li>Room: {context.mappingHint.roomCode || "-"}</li>
                     <li>Contract: {context.mappingHint.contractCode || "-"}</li>
                   </ul>
+                </div>
+              )}
+            </section>
+          ) : null}
+
+          {showMicrowaveSection && microwaveContext ? (
+            <section className="rounded-2xl border border-orange-200 bg-white p-6 shadow-sm">
+              <h2 className="text-xl font-semibold text-slate-900">
+                {language === "vi" ? "Lò vi sóng D2" : "D2 Microwave"}
+              </h2>
+              {microwaveContext.eligible ? (
+                <>
+                  <p className="mt-2 text-sm text-slate-600">
+                    {language === "vi"
+                      ? `Thiết bị dùng chung với thời gian chờ ${microwaveContext.cooldownMinutes} phút mỗi lượt.`
+                      : `Shared appliance with a ${microwaveContext.cooldownMinutes}-minute cooldown per use.`}
+                  </p>
+
+                  <div className="mt-4 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
+                    <div>
+                      <span className="font-medium">{language === "vi" ? "Trạng thái" : "Status"}:</span>{" "}
+                      {microwaveContext.status.availableNow
+                        ? (language === "vi" ? "Sẵn sàng" : "Available now")
+                        : (language === "vi" ? "Đang được sử dụng" : "Currently in use")}
+                    </div>
+                    <div>
+                      <span className="font-medium">{language === "vi" ? "Có thể dùng lại lúc" : "Available again"}:</span>{" "}
+                      {formatTimestamp(microwaveContext.status.availableAt, language)}
+                    </div>
+                    <div>
+                      <span className="font-medium">{language === "vi" ? "Lượt gần nhất" : "Last use"}:</span>{" "}
+                      {formatTimestamp(microwaveContext.status.lastUse?.startedAt ?? null, language)}
+                    </div>
+                    <div>
+                      <span className="font-medium">{language === "vi" ? "Người dùng gần nhất" : "Last user"}:</span>{" "}
+                      {microwaveContext.status.lastUse?.startedByName || microwaveContext.status.lastUse?.startedByEmail || "-"}
+                    </div>
+                  </div>
+
+                  {microwaveContext.status.currentUse ? (
+                    <div className="mt-5 rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900">
+                      <p className="font-semibold">
+                        {language === "vi"
+                          ? `${microwaveContext.status.currentUse.startedByName || microwaveContext.status.currentUse.startedByEmail} đang sử dụng lò vi sóng.`
+                          : `${microwaveContext.status.currentUse.startedByName || microwaveContext.status.currentUse.startedByEmail} is currently using the microwave.`}
+                      </p>
+                      <p className="mt-1">
+                        {language === "vi" ? "Bắt đầu" : "Started"}:{" "}
+                        {formatTimestamp(microwaveContext.status.currentUse.startedAt, language)}
+                      </p>
+                      <p className="mt-1">
+                        {language === "vi" ? "Có thể dùng lại sau" : "Available again after"}:{" "}
+                        {formatTimestamp(microwaveContext.status.currentUse.availableAt, language)}
+                      </p>
+                    </div>
+                  ) : null}
+
+                  {!microwaveContext.status.currentUse && (
+                    <div className="mt-5 rounded-xl border border-orange-200 bg-orange-50 p-4">
+                      <p className="text-xs font-bold text-orange-900 uppercase tracking-tight">{language === "vi" ? "Kiểm tra trước khi dùng *" : "Pre-use Inspection *"}</p>
+                      <div className="mt-3 grid grid-cols-1 gap-2 text-sm">
+                        {[
+                          { vi: "Sạch / Clean", value: "Clean" },
+                          { vi: "Dơ / Dirty", value: "Dirty" },
+                          { vi: "Hư hỏng / Damage", value: "Damage" }
+                        ].map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => setSelectedMicrowaveInspection(opt.vi)}
+                            className={`flex items-center justify-between rounded-lg border p-3 text-left transition-all ${
+                              selectedMicrowaveInspection === opt.vi
+                                ? "border-orange-500 bg-white ring-2 ring-orange-200"
+                                : "border-orange-100 bg-white/50 hover:bg-white"
+                            }`}
+                          >
+                            <span className={selectedMicrowaveInspection === opt.vi ? "font-bold text-orange-900" : "text-slate-600"}>
+                              {opt.vi}
+                            </span>
+                            {selectedMicrowaveInspection === opt.vi && (
+                              <svg className="h-4 w-4 text-orange-600" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                              </svg>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="mt-3 text-[11px] leading-relaxed text-orange-800 font-medium">
+                        {language === "vi"
+                          ? "Bật lò vi sóng. Nhớ kiểm tra trước/sau khi sử dụng và đậy thức ăn bạn nhé. Nếu phát hiện hư hỏng hoặc bẩn, vui lòng báo ngay cho Cozoro."
+                          : "Turning on the microwave. Remember to check before/after use and cover your food. If you find damage or dirt, please report it to Cozoro immediately."}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => void triggerMicrowave()}
+                        disabled={triggeringMicrowave || !selectedMicrowaveInspection}
+                        className="mt-4 w-full rounded-xl bg-orange-500 py-3 text-sm font-bold text-white shadow-lg shadow-orange-100 hover:bg-orange-600 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {triggeringMicrowave
+                          ? (language === "vi" ? "Đang bật..." : "Turning on...")
+                          : (language === "vi" ? "BẬT LÒ VI SÓNG" : "TURN ON MICROWAVE")}
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                  {language === "vi"
+                    ? "Tính năng này chỉ dành cho người dùng chi nhánh D2."
+                    : "This feature is only available for D2 users."}
                 </div>
               )}
             </section>

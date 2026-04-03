@@ -2628,12 +2628,10 @@ export async function syncClientsFromSheet() {
   }
 
   const activeRows = rows.filter(isActiveClient);
-
   const payload: ClientCache = {
     syncedAt: new Date().toISOString(),
     rows: activeRows
   };
-
   await writeCachedJsonFile(cacheFilePath, payload);
   clientsMemoryCache = setMemoryCache(payload);
   return payload;
@@ -2785,6 +2783,7 @@ export async function readCachedClients() {
   return payload;
 }
 
+
 export async function readCachedCoins() {
   const payload = await readCachedJsonFile<CoinsCache>(coinsCacheFilePath, coinsMemoryCache);
   if (payload) {
@@ -2851,6 +2850,28 @@ export async function getManagerClients() {
   const cache = (await readCachedClients()) ?? (await syncClientsFromSheet());
   return cache.rows
     .filter((row) => row[EMAIL_COLUMN]?.trim())
+    .map((row) => sanitizeManagerClientRow(row))
+    .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
+}
+
+export async function getManagerInactiveClients() {
+  if (!spreadsheetId) throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
+  const sheets = await getAuthorizedSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetName}!A:AMJ`
+  });
+  const values = response.data.values ?? [];
+  if (values.length === 0) return [];
+  const headers = (values[0] ?? []).map((value) => normalizeHeader(String(value)));
+  return values
+    .slice(1)
+    .map((row) => mapRow(headers, row.map((value) => String(value))))
+    .filter((row) => {
+      if (!row[EMAIL_COLUMN]?.trim()) return false;
+      const status = String(row[ACTIVE_STAYING_COLUMN] ?? "").trim();
+      return status === "0" || status === "-1";
+    })
     .map((row) => sanitizeManagerClientRow(row))
     .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
 }
@@ -4380,5 +4401,21 @@ export async function extendClientContract(email: string, extensionMonths: numbe
   }
   
   clientsMemoryCache = null;
+}
+
+export async function logMicrowaveUse(email: string, name: string, inspection = "", check = "") {
+  const microwaveSpreadsheetId = process.env.GOOGLE_MICROWAVE_LOG_SPREADSHEET_ID;
+  if (!microwaveSpreadsheetId) throw new Error("GOOGLE_MICROWAVE_LOG_SPREADSHEET_ID is not configured");
+
+  const sheets = await getAuthorizedSheetsClient();
+  const now = new Date().toLocaleString("vi-VN", { timeZone: process.env.COZORO_TIMEZONE || "Asia/Ho_Chi_Minh" });
+
+  // Columns: Name | Time | Email | Inspection | Check
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: microwaveSpreadsheetId,
+    range: "Sheet1!A:E",
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [[name, now, email, inspection, check]] }
+  });
 }
 
