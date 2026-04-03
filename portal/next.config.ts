@@ -18,6 +18,7 @@ if (!process.env.API_SERVER_ORIGIN && !publicApiOrigin) {
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["app.cozorohome.com"],
+  devIndicators: { position: "top-left" },
   turbopack: {
     root: configDir
   },

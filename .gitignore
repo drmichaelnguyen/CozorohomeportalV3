@@ -20,3 +20,4 @@ api/prisma/migrations
 api/.google-oauth.json
 api/data
 guest-booking-standalone/data
+backups/

@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* Shrink the Next.js dev indicator to half size */
+nextjs-portal {
+  transform: scale(0.5);
+  transform-origin: top left;
+}
+
 :root {
   color-scheme: light;
 }
