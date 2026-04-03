@@ -14,7 +14,7 @@ import { PushSubscription } from "./push-subscription";
 
 function SiteChrome({ children }: { children: React.ReactNode }) {
   const { language, setLanguage, t } = usePortalLanguage();
-  const { sessionEmail, sessionRole, isLoggedIn, logout } = usePortalSession();
+  const { sessionEmail, sessionRole, isLoggedIn, isSessionLoaded, logout } = usePortalSession();
   const pathname = usePathname();
   const isLoginPage = pathname === "/client-login";
   const isStaffSession = isLoggedIn && !!sessionRole && ["manager", "owner", "app_admin", "mechanic"].includes(sessionRole);
@@ -102,7 +102,7 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
         </div>
       </header>
       <main className="mx-auto max-w-5xl px-4 py-6 pb-32 sm:px-6 sm:pt-10 sm:pb-40">
-        {isLoggedIn || isLoginPage ? (
+        {!isSessionLoaded ? null : isLoggedIn || isLoginPage ? (
           children
         ) : (
           <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">

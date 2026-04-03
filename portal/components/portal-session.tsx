@@ -11,6 +11,7 @@ type PortalSessionContextValue = {
   sessionEmail: string;
   sessionRole: PortalSessionRole | null;
   isLoggedIn: boolean;
+  isSessionLoaded: boolean;
   login: (email: string, role?: PortalSessionRole) => void;
   logout: () => void;
 };
@@ -24,6 +25,7 @@ function normalizeEmail(email: string) {
 export function PortalSessionProvider({ children }: { children: React.ReactNode }) {
   const [sessionEmail, setSessionEmail] = useState("");
   const [sessionRole, setSessionRole] = useState<PortalSessionRole | null>(null);
+  const [isSessionLoaded, setIsSessionLoaded] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -40,6 +42,8 @@ export function PortalSessionProvider({ children }: { children: React.ReactNode 
     if (savedRole === "user" || savedRole === "manager" || savedRole === "owner" || savedRole === "app_admin" || savedRole === "mechanic") {
       setSessionRole(savedRole);
     }
+
+    setIsSessionLoaded(true);
   }, []);
 
   useEffect(() => {
@@ -83,6 +87,7 @@ export function PortalSessionProvider({ children }: { children: React.ReactNode 
       sessionEmail,
       sessionRole,
       isLoggedIn: Boolean(sessionEmail.trim()),
+      isSessionLoaded,
       login: (email, role = "user") => {
         const normalizedEmail = normalizeEmail(email);
         setSessionEmail(normalizedEmail);
@@ -101,7 +106,7 @@ export function PortalSessionProvider({ children }: { children: React.ReactNode 
         }
       }
     }),
-    [sessionEmail, sessionRole]
+    [sessionEmail, sessionRole, isSessionLoaded]
   );
 
   return <PortalSessionContext.Provider value={value}>{children}</PortalSessionContext.Provider>;

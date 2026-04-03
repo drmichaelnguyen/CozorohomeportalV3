@@ -672,9 +672,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [selectedRoom, setSelectedRoom] = useState("");
   const [roomFilter, setRoomFilter] = useState("");
   const [search, setSearch] = useState("");
+  const [inactiveClients, setInactiveClients] = useState<ManagerClientRecord[]>([]);
+  const [inactiveClientsLoading, setInactiveClientsLoading] = useState(false);
   const [inactiveBranchFilter, setInactiveBranchFilter] = useState("");
   const [inactiveYearFilter, setInactiveYearFilter] = useState("");
   const [inactiveSearch, setInactiveSearch] = useState("");
+  const [expandedInactiveEmail, setExpandedInactiveEmail] = useState<string | null>(null);
+  const [expandedInactiveBed, setExpandedInactiveBed] = useState<string | null>(null);
   const [clientForm, setClientForm] = useState<Record<string, string>>({});
   const [isEditingClientProfile, setIsEditingClientProfile] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspacePayload | null>(null);
@@ -771,7 +775,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [supportSubTab, setSupportSubTab] = useState<"messages" | "feedbacks" | "maintenance">("messages");
   const [clientSubTab, setClientSubTab] = useState<"list" | "details">("list");
-  const [clientTermTab, setClientTermTab] = useState<"long_term" | "short_term">(
+  const [clientTermTab, setClientTermTab] = useState<"long_term" | "short_term" | "inactive">(
     initialView === "short_term" ? "short_term" : "long_term"
   );
   const [stPricingBranch, setStPricingBranch] = useState<"D2" | "D7">("D2");
@@ -839,10 +843,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     );
   }, [clients, search]);
   // Inactive clients (moved out = "0", left = "-1")
-  const inactiveClients = useMemo(
-    () => clients.filter((c) => c.activeStay === "-1" || c.activeStay === "0"),
-    [clients]
-  );
   const inactiveBranches = useMemo(() => {
     const raw = [...new Set(inactiveClients.map((c) => String(c.branch ?? "").trim()).filter(Boolean))];
     return raw.sort();
@@ -876,9 +876,85 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     return result;
   }, [inactiveClients, inactiveBranchFilter, inactiveYearFilter, inactiveSearch]);
 
+  type InactivePerson = { email: string; name: string; contracts: ManagerClientRecord[] };
+  type InactiveBed = { bed: string; bedNum: number; people: InactivePerson[] };
+  type InactiveRoom = { room: string; beds: InactiveBed[] };
+  type InactiveBranch = { branch: string; rooms: InactiveRoom[] };
+
+  // Group filtered inactive clients: Branch → Room → Bed → People (by email)
+  const groupedInactiveClients = useMemo((): InactiveBranch[] => {
+    // Step 1: collect all contracts into bed buckets keyed by "branch|bed"
+    type BedKey = string;
+    const bedMap = new Map<BedKey, Map<string, InactivePerson>>();
+    const bedMeta = new Map<BedKey, { branch: string; bed: string; bedNum: number }>();
+
+    for (const c of filteredInactiveClients) {
+      const branch = String(c.branch ?? "").trim() || "Unknown";
+      const bed = String(c.bed ?? "").trim() || "?";
+      const bedNum = parseInt(bed, 10) || 0;
+      const bk: BedKey = `${branch}|${bed}`;
+      if (!bedMap.has(bk)) {
+        bedMap.set(bk, new Map());
+        bedMeta.set(bk, { branch, bed, bedNum });
+      }
+      const personKey = (c.email || c.maHd).toLowerCase();
+      const personMap = bedMap.get(bk)!;
+      if (!personMap.has(personKey)) personMap.set(personKey, { email: c.email, name: c.name, contracts: [] });
+      personMap.get(personKey)!.contracts.push(c);
+    }
+
+    // Sort each person's contracts newest-first
+    for (const personMap of bedMap.values()) {
+      for (const person of personMap.values()) {
+        person.contracts.sort((a, b) =>
+          String(b.row?.["Ngày bắt đầu hợp đồng"] ?? "").localeCompare(String(a.row?.["Ngày bắt đầu hợp đồng"] ?? ""))
+        );
+      }
+    }
+
+    // Step 2: group beds into rooms using BRANCH_LAYOUTS for D2/D7; fallback for others
+    const branchMap = new Map<string, Map<string, InactiveBed[]>>();
+    for (const [bk, personMap] of bedMap) {
+      const meta = bedMeta.get(bk)!;
+      const { branch, bed, bedNum } = meta;
+      if (!branchMap.has(branch)) branchMap.set(branch, new Map());
+      const roomMap = branchMap.get(branch)!;
+
+      // Determine room label
+      let roomLabel = "Other";
+      const layout = BRANCH_LAYOUTS[branch as "D2" | "D7"];
+      if (layout) {
+        const found = layout.find(r => bedNum >= r.startBed && bedNum <= r.endBed);
+        if (found) roomLabel = `Room ${found.room}`;
+      }
+
+      if (!roomMap.has(roomLabel)) roomMap.set(roomLabel, []);
+      roomMap.get(roomLabel)!.push({
+        bed,
+        bedNum,
+        people: [...personMap.values()]
+      });
+    }
+
+    // Step 3: sort and flatten into array
+    return [...branchMap.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([branch, roomMap]) => ({
+        branch,
+        rooms: [...roomMap.entries()]
+          .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+          .map(([room, beds]) => ({
+            room,
+            beds: beds.sort((a, b) => a.bedNum - b.bedNum)
+          }))
+      }));
+  }, [filteredInactiveClients]);
+
   const selectedClient = useMemo(
-    () => clients.find((client) => client.maHd === selectedMaHd) ?? null,
-    [clients, selectedMaHd]
+    () => clients.find((client) => client.maHd === selectedMaHd)
+      ?? inactiveClients.find((client) => client.maHd === selectedMaHd)
+      ?? null,
+    [clients, inactiveClients, selectedMaHd]
   );
   const fineLabels = fineFieldLabels(language);
   const fineUiText = {
@@ -1097,6 +1173,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
 
   useEffect(() => {
+    // Don't auto-override the branch when the user has explicitly chosen "inactive"
+    if (selectedBranch === "inactive") return;
+
     if (filteredQuickNav.length === 0) {
       if (selectedBranch) {
         setSelectedBranch("");
@@ -1189,6 +1268,20 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       setStatus(t("unableToLoadClients"));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadInactiveClients() {
+    if (!isStaffSession || inactiveClientsLoading) return;
+    setInactiveClientsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/staff/inactive-clients?actorEmail=${encodeURIComponent(normalizedEmail)}`);
+      const data = (await res.json()) as { clients?: ManagerClientRecord[] };
+      setInactiveClients(data.clients ?? []);
+    } catch {
+      setInactiveClients([]);
+    } finally {
+      setInactiveClientsLoading(false);
     }
   }
 
@@ -1676,6 +1769,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             >
               Short term
             </button>
+            <button
+              type="button"
+              onClick={() => { setClientTermTab("inactive"); void loadInactiveClients(); }}
+              className={`rounded-full px-4 py-1.5 text-sm font-semibold border transition-colors ${clientTermTab === "inactive" ? "bg-slate-500 text-white border-slate-500" : "border-slate-300 text-slate-600 hover:border-slate-500"}`}
+            >
+              Inactive
+            </button>
           </div>
           {clientTermTab === "long_term" && (<>
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1697,22 +1797,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 }`}
               >
                 {t("branchD7")}
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelectedBranch("inactive")}
-                className={`rounded-full px-4 py-2 text-sm font-medium ${
-                  selectedBranch === "inactive"
-                    ? "bg-slate-600 text-white"
-                    : "border border-slate-300 text-slate-500"
-                }`}
-              >
-                {t("inactiveClients", "Inactive")}
-                {inactiveClients.length > 0 && (
-                  <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${selectedBranch === "inactive" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"}`}>
-                    {inactiveClients.length}
-                  </span>
-                )}
               </button>
               <Link
                 href="/support?newGroup=true"
@@ -1745,120 +1829,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             )}
           </div>
 
-          {selectedBranch === "inactive" ? (
-            <section className="space-y-5">
-              {/* Search */}
-              <input
-                type="text"
-                value={inactiveSearch}
-                onChange={(e) => setInactiveSearch(e.target.value)}
-                placeholder={t("searchPlaceholder", "Search by name, email, contract code…")}
-                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-              />
-
-              {/* Branch filter */}
-              {inactiveBranches.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setInactiveBranchFilter("")}
-                    className={`rounded-full px-3 py-1 text-xs font-medium ${!inactiveBranchFilter ? "bg-slate-700 text-white" : "border border-slate-300 text-slate-600"}`}
-                  >
-                    All branches
-                  </button>
-                  {inactiveBranches.map((b) => (
-                    <button
-                      key={b}
-                      type="button"
-                      onClick={() => setInactiveBranchFilter(b === inactiveBranchFilter ? "" : b)}
-                      className={`rounded-full px-3 py-1 text-xs font-medium ${inactiveBranchFilter === b ? "bg-slate-700 text-white" : "border border-slate-300 text-slate-600"}`}
-                    >
-                      {b}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {/* Year filter */}
-              {inactiveYears.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setInactiveYearFilter("")}
-                    className={`rounded-full px-3 py-1 text-xs font-medium ${!inactiveYearFilter ? "bg-sky-600 text-white" : "border border-slate-300 text-slate-600"}`}
-                  >
-                    All years
-                  </button>
-                  {inactiveYears.map((y) => (
-                    <button
-                      key={y}
-                      type="button"
-                      onClick={() => setInactiveYearFilter(y === inactiveYearFilter ? "" : y)}
-                      className={`rounded-full px-3 py-1 text-xs font-medium ${inactiveYearFilter === y ? "bg-sky-600 text-white" : "border border-slate-300 text-slate-600"}`}
-                    >
-                      {y}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {/* Results */}
-              <div className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-                {filteredInactiveClients.length} {t("clientsLabel", "clients")}
-                {inactiveBranchFilter || inactiveYearFilter || inactiveSearch ? ` (filtered from ${inactiveClients.length})` : ""}
-              </div>
-
-              {filteredInactiveClients.length === 0 ? (
-                <div className="rounded-2xl bg-slate-50 p-8 text-center text-sm text-slate-500">
-                  {inactiveClients.length === 0
-                    ? t("noInactiveClients", "No inactive clients found — all recorded clients are currently active.")
-                    : t("noMatchingInactiveClients", "No clients match the current filters.")}
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {filteredInactiveClients.map((client) => {
-                    const isSelected = client.maHd === selectedMaHd;
-                    const startDate = String(client.row?.["Ngày bắt đầu hợp đồng"] ?? "");
-                    const endDate = String(client.row?.["Ngày hết hạn hợp đồng"] ?? "");
-                    const statusLabel = client.activeStay === "-1" ? "Left" : "Moved out";
-                    return (
-                      <button
-                        key={client.maHd}
-                        type="button"
-                        onClick={() => {
-                          setSelectedMaHd(client.maHd);
-                          fillClientForm(client);
-                          setClientSubTab("details");
-                        }}
-                        className={`w-full text-left rounded-2xl border p-4 transition-all hover:shadow-sm ${isSelected ? "border-sky-400 bg-sky-50 ring-1 ring-sky-300" : "border-slate-200 bg-white hover:bg-slate-50"}`}
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div>
-                            <div className="font-medium text-slate-900">{client.name || client.email}</div>
-                            <div className="mt-0.5 text-xs text-slate-500">
-                              {client.maHd}
-                              {client.branch ? ` · Branch ${client.branch}` : ""}
-                              {client.bed ? ` · Bed ${client.bed}` : ""}
-                            </div>
-                            {(startDate || endDate) && (
-                              <div className="mt-1 text-xs text-slate-400">
-                                {startDate ? `From ${startDate}` : ""}
-                                {startDate && endDate ? " → " : ""}
-                                {endDate ? endDate : ""}
-                              </div>
-                            )}
-                          </div>
-                          <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${client.activeStay === "-1" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-600"}`}>
-                            {statusLabel}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-          ) : clientListMode === "diagram" ? (
+          {clientListMode === "diagram" ? (
             <section className="space-y-8">
               {branchOverviewGroups.map((group) => (
                 <div key={group.label} className="space-y-4">
@@ -1970,6 +1941,174 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             </section>
           )}
           </>)}
+          {clientTermTab === "inactive" && (
+            <section className="space-y-5">
+              {inactiveClientsLoading ? (
+                <p className="text-sm text-slate-500">Loading inactive clients…</p>
+              ) : (
+                <>
+                  <input
+                    type="text"
+                    value={inactiveSearch}
+                    onChange={(e) => setInactiveSearch(e.target.value)}
+                    placeholder={t("searchPlaceholder", "Search by name, email, contract code…")}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                  />
+                  {inactiveBranches.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" onClick={() => setInactiveBranchFilter("")}
+                        className={`rounded-full px-3 py-1 text-xs font-medium ${!inactiveBranchFilter ? "bg-slate-700 text-white" : "border border-slate-300 text-slate-600"}`}>
+                        All branches
+                      </button>
+                      {inactiveBranches.map((b) => (
+                        <button key={b} type="button" onClick={() => setInactiveBranchFilter(b === inactiveBranchFilter ? "" : b)}
+                          className={`rounded-full px-3 py-1 text-xs font-medium ${inactiveBranchFilter === b ? "bg-slate-700 text-white" : "border border-slate-300 text-slate-600"}`}>
+                          {b}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {inactiveYears.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" onClick={() => setInactiveYearFilter("")}
+                        className={`rounded-full px-3 py-1 text-xs font-medium ${!inactiveYearFilter ? "bg-sky-600 text-white" : "border border-slate-300 text-slate-600"}`}>
+                        All years
+                      </button>
+                      {inactiveYears.map((y) => (
+                        <button key={y} type="button" onClick={() => setInactiveYearFilter(y === inactiveYearFilter ? "" : y)}
+                          className={`rounded-full px-3 py-1 text-xs font-medium ${inactiveYearFilter === y ? "bg-sky-600 text-white" : "border border-slate-300 text-slate-600"}`}>
+                          {y}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                    {filteredInactiveClients.length} contracts
+                    {inactiveBranchFilter || inactiveYearFilter || inactiveSearch ? ` (filtered from ${inactiveClients.length})` : ""}
+                  </div>
+                  {groupedInactiveClients.length === 0 ? (
+                    <div className="rounded-2xl bg-slate-50 p-8 text-center text-sm text-slate-500">
+                      {inactiveClients.length === 0 ? "No inactive clients found." : "No clients match the current filters."}
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {groupedInactiveClients.map((branchGroup) => (
+                        <div key={branchGroup.branch}>
+                          {/* Branch header */}
+                          <div className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-2">
+                            Branch {branchGroup.branch}
+                          </div>
+                          <div className="space-y-2">
+                            {branchGroup.rooms.map((roomGroup) => (
+                              <div key={roomGroup.room} className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                                {/* Room header */}
+                                <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                                  {roomGroup.room}
+                                </div>
+                                {/* Beds */}
+                                <div className="divide-y divide-slate-100">
+                                  {roomGroup.beds.map((bedGroup) => {
+                                    const bedKey = `${branchGroup.branch}|${bedGroup.bed}`;
+                                    const isBedExpanded = expandedInactiveBed === bedKey;
+                                    const totalContracts = bedGroup.people.reduce((s, p) => s + p.contracts.length, 0);
+                                    return (
+                                      <div key={bedGroup.bed}>
+                                        {/* Bed row — click to expand */}
+                                        <button
+                                          type="button"
+                                          onClick={() => setExpandedInactiveBed(isBedExpanded ? null : bedKey)}
+                                          className="w-full text-left px-4 py-3 flex items-center justify-between gap-2 hover:bg-slate-50 transition-colors"
+                                        >
+                                          <div className="flex items-center gap-3">
+                                            <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-sm font-bold text-slate-700 min-w-[3rem] text-center">
+                                              Bed {bedGroup.bed}
+                                            </span>
+                                            <span className="text-sm text-slate-600">
+                                              {bedGroup.people.length} {bedGroup.people.length === 1 ? "person" : "people"}
+                                            </span>
+                                          </div>
+                                          <div className="flex items-center gap-2 flex-shrink-0">
+                                            <span className="text-xs text-slate-400">{totalContracts} contract{totalContracts !== 1 ? "s" : ""}</span>
+                                            <span className="text-slate-400 text-sm">{isBedExpanded ? "▲" : "▼"}</span>
+                                          </div>
+                                        </button>
+                                        {/* People in this bed */}
+                                        {isBedExpanded && (
+                                          <div className="border-t border-slate-100 bg-slate-50/50">
+                                            {bedGroup.people.map((person) => {
+                                              const personKey = (person.email || (person.contracts[0]?.maHd ?? "")).toLowerCase();
+                                              const isPersonExpanded = expandedInactiveEmail === personKey;
+                                              return (
+                                                <div key={personKey} className="border-b border-slate-100 last:border-0">
+                                                  {/* Person row */}
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => setExpandedInactiveEmail(isPersonExpanded ? null : personKey)}
+                                                    className="w-full text-left px-5 py-2.5 flex items-center justify-between gap-2 hover:bg-white/70 transition-colors"
+                                                  >
+                                                    <div>
+                                                      <div className="text-sm font-medium text-slate-800">{person.name || person.email}</div>
+                                                      <div className="text-xs text-slate-400">{person.email}</div>
+                                                    </div>
+                                                    <div className="flex items-center gap-2 flex-shrink-0">
+                                                      {person.contracts.length > 1 && (
+                                                        <span className="rounded-full bg-white border border-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+                                                          {person.contracts.length} contracts
+                                                        </span>
+                                                      )}
+                                                      <span className="text-slate-400 text-xs">{isPersonExpanded ? "▲" : "▼"}</span>
+                                                    </div>
+                                                  </button>
+                                                  {/* Contracts for this person */}
+                                                  {isPersonExpanded && (
+                                                    <div className="divide-y divide-slate-100 bg-white">
+                                                      {person.contracts.map((c) => {
+                                                        const isSelected = c.maHd === selectedMaHd;
+                                                        const startDate = String(c.row?.["Ngày bắt đầu hợp đồng"] ?? "");
+                                                        const endDate = String(c.row?.["Ngày hết hạn hợp đồng"] ?? "");
+                                                        return (
+                                                          <button
+                                                            key={c.maHd}
+                                                            type="button"
+                                                            onClick={() => { setSelectedMaHd(c.maHd); fillClientForm(c); setClientSubTab("details"); }}
+                                                            className={`w-full text-left px-6 py-2.5 transition-colors hover:bg-sky-50 ${isSelected ? "bg-sky-50 border-l-2 border-sky-400" : ""}`}
+                                                          >
+                                                            <div className="flex items-center justify-between gap-2">
+                                                              <div>
+                                                                <div className="text-xs font-mono text-slate-600">{c.maHd}</div>
+                                                                {(startDate || endDate) && (
+                                                                  <div className="text-xs text-slate-400">{startDate || "?"} → {endDate || "?"}</div>
+                                                                )}
+                                                              </div>
+                                                              <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold flex-shrink-0 ${c.activeStay === "-1" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-600"}`}>
+                                                                {c.activeStay === "-1" ? "Left" : "Moved out"}
+                                                              </span>
+                                                            </div>
+                                                          </button>
+                                                        );
+                                                      })}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </section>
+          )}
           {clientTermTab === "short_term" && (() => {
             function stToggle(key: string) {
               setStExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -2541,8 +2680,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   );
                 })()}
 
-                {/* Contract Termination */}
-                {selectedClient && (() => {
+                {/* Contract Termination — hidden for inactive clients */}
+                {selectedClient && selectedClient.activeStay !== "0" && selectedClient.activeStay !== "-1" && (() => {
                   const isTerminated = terminationStatus && terminationStatus !== "loading";
                   const checkedOut = isTerminated && (terminationStatus as { checkOut: { submittedAt: string } | null }).checkOut;
                   return (
