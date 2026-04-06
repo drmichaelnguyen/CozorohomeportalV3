@@ -138,7 +138,7 @@ import {
 import { getShortTermConfig, updateShortTermConfig } from "./short-term-config.js";
 import { createWriteStream } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
 
@@ -176,6 +176,9 @@ const autoScheduleIntervalMs = Number(process.env.AUTO_SCHEDULE_INTERVAL_MS ?? 6
 const autoScheduleEnabled = process.env.ENABLE_AUTO_SCHEDULE !== "false"; // enabled by default
 const autoScheduleHorizonDays = Number(process.env.AUTO_SCHEDULE_HORIZON_DAYS ?? 15);
 let autoScheduleRunning = false;
+const WRITE_GUARD_DEFAULT_WINDOW_MS = Number(process.env.WRITE_GUARD_DEFAULT_WINDOW_MS ?? 8000);
+const writeGuardInFlightKeys = new Set<string>();
+const writeGuardRecentKeys = new Map<string, number>();
 const SENSITIVE_CLIENT_FIELD_PATTERNS = [
   "ngaysinh",
   "birthday",
@@ -257,6 +260,56 @@ function getGuestAuthRateLimitError(message: string) {
   const error = new Error(message);
   (error as Error & { statusCode?: number }).statusCode = 429;
   return error;
+}
+
+function stableStringify(value: unknown): string {
+  if (value == null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringify(entry)).join(",")}]`;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+  return `{${entries.map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue)}`).join(",")}}`;
+}
+
+function createWriteGuardKey(route: string, payload: unknown) {
+  const digest = createHash("sha1").update(stableStringify(payload)).digest("hex");
+  return `${route}:${digest}`;
+}
+
+async function runWithWriteGuard<T>(input: {
+  key: string;
+  action: () => Promise<T>;
+  duplicateMessage?: string;
+  cooldownMs?: number;
+}) {
+  const now = Date.now();
+  const existingExpiry = writeGuardRecentKeys.get(input.key) ?? 0;
+  if (existingExpiry > now || writeGuardInFlightKeys.has(input.key)) {
+    throw getGuestAuthRateLimitError(
+      input.duplicateMessage ?? "Please wait a moment before repeating the same write request."
+    );
+  }
+
+  writeGuardRecentKeys.forEach((expiresAt, key) => {
+    if (expiresAt <= now) {
+      writeGuardRecentKeys.delete(key);
+    }
+  });
+
+  writeGuardInFlightKeys.add(input.key);
+  try {
+    const result = await input.action();
+    writeGuardRecentKeys.set(input.key, Date.now() + (input.cooldownMs ?? WRITE_GUARD_DEFAULT_WINDOW_MS));
+    return result;
+  } finally {
+    writeGuardInFlightKeys.delete(input.key);
+  }
 }
 
 async function assertGuestAuthRateLimit(email: string, ip: string) {
@@ -861,10 +914,15 @@ app.post("/clients/contracts/extend", async (request, response) => {
   }
 
   try {
-    await extendClientContract(parsed.data.email, parsed.data.extensionMonths);
+    await runWithWriteGuard({
+      key: createWriteGuardKey("/clients/contracts/extend", parsed.data),
+      duplicateMessage: "This contract extension request was just submitted. Please wait a few seconds.",
+      cooldownMs: 15000,
+      action: () => extendClientContract(parsed.data.email, parsed.data.extensionMonths)
+    });
     return response.json({ ok: true });
   } catch (error) {
-    return response.status(500).json({
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 500).json({
       error: error instanceof Error ? error.message : "Unable to extend contract."
     });
   }
@@ -2053,10 +2111,19 @@ app.post("/staff/client-sheet-update", async (request, response) => {
       ["manager", "owner", "app_admin"],
       "Only Cozoro team members can update client records."
     );
-    const cache = await updateClientColumns(parsed.data.maHd, normalizeSheetUpdateValues(parsed.data.values));
+    const normalizedValues = normalizeSheetUpdateValues(parsed.data.values);
+    const cache = await runWithWriteGuard({
+      key: createWriteGuardKey("/staff/client-sheet-update", {
+        actorEmail: parsed.data.actorEmail,
+        maHd: parsed.data.maHd,
+        values: normalizedValues
+      }),
+      duplicateMessage: "The same client update was just submitted. Please wait a few seconds.",
+      action: () => updateClientColumns(parsed.data.maHd, normalizedValues)
+    });
     return response.json(cache);
   } catch (error) {
-    return response.status(403).json({
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 403).json({
       error: error instanceof Error ? error.message : "Unable to update client data"
     });
   }
@@ -2116,15 +2183,19 @@ app.post("/staff/coins/update", async (request, response) => {
       ["manager", "owner", "app_admin"],
       "Only Cozoro team members can edit coin entries."
     );
-    const result = await updateCoinSheetEntry({
-      email: parsed.data.email,
-      timestamp: parsed.data.timestamp,
-      transactionCode: parsed.data.transactionCode,
-      values: parsed.data.values
+    const result = await runWithWriteGuard({
+      key: createWriteGuardKey("/staff/coins/update", parsed.data),
+      duplicateMessage: "The same coin update was just submitted. Please wait a few seconds.",
+      action: () => updateCoinSheetEntry({
+        email: parsed.data.email,
+        timestamp: parsed.data.timestamp,
+        transactionCode: parsed.data.transactionCode,
+        values: parsed.data.values
+      })
     });
     return response.json(result);
   } catch (error) {
-    return response.status(400).json({
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
       error: error instanceof Error ? error.message : "Unable to update coin entry"
     });
   }
@@ -2143,16 +2214,20 @@ app.post("/staff/payments/update", async (request, response) => {
       ["manager", "owner", "app_admin"],
       "Only Cozoro team members can edit payment entries."
     );
-    const result = await updatePaymentSheetEntry({
-      email: parsed.data.email,
-      timestamp: parsed.data.timestamp,
-      amount: parsed.data.amount,
-      purpose: parsed.data.purpose,
-      values: parsed.data.values
+    const result = await runWithWriteGuard({
+      key: createWriteGuardKey("/staff/payments/update", parsed.data),
+      duplicateMessage: "The same payment update was just submitted. Please wait a few seconds.",
+      action: () => updatePaymentSheetEntry({
+        email: parsed.data.email,
+        timestamp: parsed.data.timestamp,
+        amount: parsed.data.amount,
+        purpose: parsed.data.purpose,
+        values: parsed.data.values
+      })
     });
     return response.json(result);
   } catch (error) {
-    return response.status(400).json({
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
       error: error instanceof Error ? error.message : "Unable to update payment entry"
     });
   }
@@ -2171,15 +2246,19 @@ app.post("/staff/fines/update", async (request, response) => {
       ["manager", "owner", "app_admin"],
       "Only Cozoro team members can edit fine entries."
     );
-    const result = await updateFineSheetEntry({
-      email: parsed.data.email,
-      timestamp: parsed.data.timestamp,
-      content: parsed.data.content,
-      values: parsed.data.values
+    const result = await runWithWriteGuard({
+      key: createWriteGuardKey("/staff/fines/update", parsed.data),
+      duplicateMessage: "The same fine update was just submitted. Please wait a few seconds.",
+      action: () => updateFineSheetEntry({
+        email: parsed.data.email,
+        timestamp: parsed.data.timestamp,
+        content: parsed.data.content,
+        values: parsed.data.values
+      })
     });
     return response.json(result);
   } catch (error) {
-    return response.status(400).json({
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
       error: error instanceof Error ? error.message : "Unable to update fine entry"
     });
   }
@@ -2192,14 +2271,18 @@ app.post("/staff/coins/delete", async (request, response) => {
   }
   try {
     await requirePortalRole(parsed.data.actorEmail, ["manager", "owner", "app_admin"], "Only Cozoro team members can delete coin entries.");
-    const result = await deleteCoinSheetEntry({
-      email: parsed.data.email,
-      timestamp: parsed.data.timestamp,
-      transactionCode: parsed.data.transactionCode
+    const result = await runWithWriteGuard({
+      key: createWriteGuardKey("/staff/coins/delete", parsed.data),
+      duplicateMessage: "The same coin delete was just submitted. Please wait a few seconds.",
+      action: () => deleteCoinSheetEntry({
+        email: parsed.data.email,
+        timestamp: parsed.data.timestamp,
+        transactionCode: parsed.data.transactionCode
+      })
     });
     return response.json(result);
   } catch (error) {
-    return response.status(400).json({ error: error instanceof Error ? error.message : "Unable to delete coin entry" });
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({ error: error instanceof Error ? error.message : "Unable to delete coin entry" });
   }
 });
 
@@ -2210,15 +2293,19 @@ app.post("/staff/payments/delete", async (request, response) => {
   }
   try {
     await requirePortalRole(parsed.data.actorEmail, ["manager", "owner", "app_admin"], "Only Cozoro team members can delete payment entries.");
-    const result = await deletePaymentSheetEntry({
-      email: parsed.data.email,
-      timestamp: parsed.data.timestamp,
-      amount: parsed.data.amount,
-      purpose: parsed.data.purpose
+    const result = await runWithWriteGuard({
+      key: createWriteGuardKey("/staff/payments/delete", parsed.data),
+      duplicateMessage: "The same payment delete was just submitted. Please wait a few seconds.",
+      action: () => deletePaymentSheetEntry({
+        email: parsed.data.email,
+        timestamp: parsed.data.timestamp,
+        amount: parsed.data.amount,
+        purpose: parsed.data.purpose
+      })
     });
     return response.json(result);
   } catch (error) {
-    return response.status(400).json({ error: error instanceof Error ? error.message : "Unable to delete payment entry" });
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({ error: error instanceof Error ? error.message : "Unable to delete payment entry" });
   }
 });
 
@@ -2229,14 +2316,18 @@ app.post("/staff/fines/delete", async (request, response) => {
   }
   try {
     await requirePortalRole(parsed.data.actorEmail, ["manager", "owner", "app_admin"], "Only Cozoro team members can delete fine entries.");
-    const result = await deleteFineSheetEntry({
-      email: parsed.data.email,
-      timestamp: parsed.data.timestamp,
-      content: parsed.data.content
+    const result = await runWithWriteGuard({
+      key: createWriteGuardKey("/staff/fines/delete", parsed.data),
+      duplicateMessage: "The same fine delete was just submitted. Please wait a few seconds.",
+      action: () => deleteFineSheetEntry({
+        email: parsed.data.email,
+        timestamp: parsed.data.timestamp,
+        content: parsed.data.content
+      })
     });
     return response.json(result);
   } catch (error) {
-    return response.status(400).json({ error: error instanceof Error ? error.message : "Unable to delete fine entry" });
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({ error: error instanceof Error ? error.message : "Unable to delete fine entry" });
   }
 });
 
@@ -2307,10 +2398,14 @@ app.post("/manager/coins/adjust", async (request, response) => {
   }
 
   try {
-    const result = await managerAdjustCoins(parsed.data);
+    const result = await runWithWriteGuard({
+      key: createWriteGuardKey("/manager/coins/adjust", parsed.data),
+      duplicateMessage: "This coin adjustment was just submitted. Please wait a few seconds.",
+      action: () => managerAdjustCoins(parsed.data)
+    });
     return response.json(result);
   } catch (error) {
-    return response.status(400).json({
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
       error: error instanceof Error ? error.message : "Unable to adjust client coins"
     });
   }
@@ -2344,21 +2439,28 @@ app.post("/manager/payments/create", async (request, response) => {
       }
     }
 
-    const result = await managerCreatePaymentReceipt({
-      maHd: parsed.data.maHd,
-      amount: parsed.data.amount,
-      purpose: parsed.data.purpose,
-      details: parsed.data.details,
-      payer: parsed.data.payer,
-      receiver
-    });
-    return response.status(201).json(result);
-  } catch (error) {
-    return response.status(400).json({
-      error: error instanceof Error ? error.message : "Unable to create payment receipt"
-    });
-  }
-});
+      const result = await runWithWriteGuard({
+        key: createWriteGuardKey("/manager/payments/create", {
+          ...parsed.data,
+          receiver
+        }),
+        duplicateMessage: "This payment receipt was just submitted. Please wait a few seconds.",
+        action: () => managerCreatePaymentReceipt({
+          maHd: parsed.data.maHd,
+          amount: parsed.data.amount,
+          purpose: parsed.data.purpose,
+          details: parsed.data.details,
+          payer: parsed.data.payer,
+          receiver
+        })
+      });
+      return response.status(201).json(result);
+    } catch (error) {
+      return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
+        error: error instanceof Error ? error.message : "Unable to create payment receipt"
+      });
+    }
+  });
 
 app.post("/cozoro-member/upgrade", async (request, response) => {
   const parsed = cozoroMemberUpgradeSchema.safeParse(request.body);
@@ -2385,10 +2487,14 @@ app.post("/manager/fines", async (request, response) => {
   }
 
   try {
-    const result = await managerCreateFine(parsed.data);
+    const result = await runWithWriteGuard({
+      key: createWriteGuardKey("/manager/fines", parsed.data),
+      duplicateMessage: "This fine creation request was just submitted. Please wait a few seconds.",
+      action: () => managerCreateFine(parsed.data)
+    });
     return response.status(201).json(result);
   } catch (error) {
-    return response.status(400).json({
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
       error: error instanceof Error ? error.message : "Unable to create manager fine"
     });
   }
@@ -3108,17 +3214,25 @@ app.post("/clients/:maHd/sheet-update", async (request, response) => {
       });
     }
 
-    const normalizedValues = Object.fromEntries(
-      Object.entries(parsed.data.values).map(([key, value]) => [key, value == null ? "" : String(value)])
-    );
-    const cache = await updateClientColumns(maHd, normalizedValues);
-    return response.json(cache);
-  } catch (error) {
-    return response.status(500).json({
-      error: error instanceof Error ? error.message : "Unable to update the Google Sheet"
-    });
-  }
-});
+      const normalizedValues = Object.fromEntries(
+        Object.entries(parsed.data.values).map(([key, value]) => [key, value == null ? "" : String(value)])
+      );
+      const cache = await runWithWriteGuard({
+        key: createWriteGuardKey("/clients/:maHd/sheet-update", {
+          actorEmail: parsed.data.actorEmail,
+          maHd,
+          values: normalizedValues
+        }),
+        duplicateMessage: "The same sheet update was just submitted. Please wait a few seconds.",
+        action: () => updateClientColumns(maHd, normalizedValues)
+      });
+      return response.json(cache);
+    } catch (error) {
+      return response.status((error as Error & { statusCode?: number }).statusCode ?? 500).json({
+        error: error instanceof Error ? error.message : "Unable to update the Google Sheet"
+      });
+    }
+  });
 
 app.get("/resources", async (request, response) => {
   const branchId = request.query.branchId;

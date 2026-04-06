@@ -3879,6 +3879,7 @@ async function updateSheetRowColumns(input: {
     throw new Error(`The ${input.rowLabel} entry could not be found`);
   }
 
+  const updateData: Array<{ range: string; values: string[][] }> = [];
   for (const [column, value] of updates) {
     const columnIndex = headers.findIndex((header) => header === column);
 
@@ -3886,12 +3887,18 @@ async function updateSheetRowColumns(input: {
       throw new Error(`Column "${column}" was not found in the ${input.rowLabel} sheet`);
     }
 
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: targetId,
+    updateData.push({
       range: `${input.range.split("!")[0]}!${columnIndexToLetter(columnIndex)}${rowIndex + 1}`,
-      valueInputOption: "USER_ENTERED",
+      values: [[value]]
+    });
+  }
+
+  if (updateData.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: targetId,
       requestBody: {
-        values: [[value]]
+        valueInputOption: "USER_ENTERED",
+        data: updateData
       }
     });
   }
@@ -4202,6 +4209,7 @@ export async function updateClientColumns(maHd: string, values: Record<string, s
     throw new Error("Client row not found in Google Sheet");
   }
 
+  const updateData: Array<{ range: string; values: string[][] }> = [];
   for (const [column, value] of updates) {
     const columnIndex = headers.findIndex((header) => header === column);
 
@@ -4209,12 +4217,18 @@ export async function updateClientColumns(maHd: string, values: Record<string, s
       throw new Error(`Column "${column}" was not found in the Google Sheet`);
     }
 
-    await sheets.spreadsheets.values.update({
-      spreadsheetId,
+    updateData.push({
       range: `${sheetName}!${toSheetColumn(columnIndex + 1)}${rowIndex + 1}`,
-      valueInputOption: "USER_ENTERED",
+      values: [[value]]
+    });
+  }
+
+  if (updateData.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
       requestBody: {
-        values: [[value]]
+        valueInputOption: "USER_ENTERED",
+        data: updateData
       }
     });
   }

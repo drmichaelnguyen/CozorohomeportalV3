@@ -1,18 +1,32 @@
-function parseContractEndDate(endDateStr: string | undefined | null): Date | null {
-  if (!endDateStr) return null;
+export function parseVietnamDate(
+  value: string | undefined | null,
+  options?: { endOfDay?: boolean }
+): Date | null {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return null;
 
-  let end: Date;
-  if (endDateStr.includes("/")) {
-    const [d, m, y] = endDateStr.split("/");
-    end = new Date(Number(y), Number(m) - 1, Number(d));
+  const match = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  let parsed: Date;
+
+  if (match) {
+    const [, dayValue, monthValue, yearValue] = match;
+    const year = Number(yearValue) < 100 ? 2000 + Number(yearValue) : Number(yearValue);
+    parsed = new Date(year, Number(monthValue) - 1, Number(dayValue));
   } else {
-    end = new Date(endDateStr);
+    parsed = new Date(trimmed);
   }
 
-  if (Number.isNaN(end.getTime())) return null;
+  if (Number.isNaN(parsed.getTime())) return null;
 
-  end.setHours(23, 59, 59, 999);
-  return end;
+  if (options?.endOfDay) {
+    parsed.setHours(23, 59, 59, 999);
+  }
+
+  return parsed;
+}
+
+export function parseContractEndDate(endDateStr: string | undefined | null): Date | null {
+  return parseVietnamDate(endDateStr, { endOfDay: true });
 }
 
 /**

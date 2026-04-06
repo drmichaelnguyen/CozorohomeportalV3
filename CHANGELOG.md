@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.5.7] - 2026-04-06
+### Fixed
+- **Vietnam Date Parsing**: Standardized resident and manager contract/payment date parsing to treat `dd/mm/yyyy` and `dd-mm-yyyy` as Vietnam dates first, preventing policy locks from triggering early on ambiguous dates.
+- **Policy Lock Consistency**: Unified contract due-date checks across dashboard, bookings, controller, payments, and manager views so the same contract status is shown everywhere.
+
+### Changed
+- **Google Sheets Write Reduction**: Batched multi-column row updates into single `values.batchUpdate` calls to reduce write-request volume during staff edits.
+- **Duplicate Write Guard**: Added short server-side deduplication and cooldown protection on high-risk Google Sheets write routes to stop rapid double-submits, retries, and repeat clicks from exhausting quota.
+
 ## [3.3.4] - 2026-03-31
 ### Added
 - **Manager Password Reset**: Managers can now securely reset passwords for residents directly from the client details view in the portal.

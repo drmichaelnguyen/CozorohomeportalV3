@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
+import { parseContractEndDate } from "../lib/contract-utils";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 
@@ -102,10 +103,7 @@ async function fetchJson<T>(url: string, init?: RequestInit) {
 }
 
 function parseLooseDate(value: string | undefined): Date | null {
-  if (!value) return null;
-  const cleaned = value.trim().replace(/\//g, "-");
-  const parsed = new Date(cleaned);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  return parseContractEndDate(value);
 }
 
 function getAccountStatus(client: Record<string, string> | null): {

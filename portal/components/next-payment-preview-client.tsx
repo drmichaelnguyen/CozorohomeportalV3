@@ -2,24 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
+import { parseVietnamDate } from "../lib/contract-utils";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 
 const PACKAGE_EXPIRY_COLUMN = "Ngày hết hạn gói đã thanh toán";
 
 function parseFlexibleDate(value: string | null | undefined) {
-  const trimmed = value?.trim() ?? "";
-  if (!trimmed) return null;
-  const direct = new Date(trimmed);
-  if (!Number.isNaN(direct.getTime())) return direct;
-  const match = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
-  if (!match) return null;
-  const [, d, m, y] = match;
-  const year = Number.parseInt(y, 10) < 100 ? 2000 + Number.parseInt(y, 10) : Number.parseInt(y, 10);
-  const month = Number.parseInt(m, 10) - 1;
-  const day = Number.parseInt(d, 10);
-  const parsed = new Date(year, month, day);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  return parseVietnamDate(value);
 }
 
 function getNextMonthFirstDate() {

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
+import { parseVietnamDate } from "../lib/contract-utils";
 import { AdminCleaningClient } from "./admin-cleaning-client";
 import { ManagerSupportInbox } from "./manager-support-inbox";
 import { LaundryScheduleManager } from "./laundry-schedule-manager";
@@ -247,18 +248,7 @@ function formatCurrency(value: number) {
 }
 
 function parseLooseDate(value: string | null | undefined): Date | null {
-  const trimmed = String(value ?? "").trim();
-  if (!trimmed) return null;
-  // dd/mm/yyyy or dd-mm-yyyy
-  const dmy = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
-  if (dmy) {
-    const [, d, m, y] = dmy;
-    const year = Number(y) < 100 ? 2000 + Number(y) : Number(y);
-    const date = new Date(year, Number(m) - 1, Number(d));
-    return isNaN(date.getTime()) ? null : date;
-  }
-  const direct = new Date(trimmed);
-  return isNaN(direct.getTime()) ? null : direct;
+  return parseVietnamDate(String(value ?? ""));
 }
 
 type DataCategory = "clients" | "fines" | "payments" | "cleaning" | "laundry" | "support" | "coins" | "stats";
