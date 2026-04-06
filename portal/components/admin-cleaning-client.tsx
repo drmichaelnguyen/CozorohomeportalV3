@@ -10,6 +10,8 @@ type AdminTask = {
   id: string;
   userEmail: string;
   userName?: string | null;
+  assignedByEmail?: string | null;
+  assignedByName?: string | null;
   branchId: string;
   floor: number | null;
   type: "KITCHEN_D2" | "KITCHEN_D7" | "TRASH_D7";
@@ -53,6 +55,14 @@ type AdminAvailableUser = {
 type AutoAssignPreview = {
   date: string;
   user: AdminAvailableUser | null;
+};
+
+type AutoSchedulerConfig = {
+  enabled: boolean;
+  fillUnassignedDates: boolean;
+  horizonDays: number;
+  updatedAt: string;
+  updatedBy: string;
 };
 
 function prettyTaskType(type: AdminTask["type"]) {
@@ -107,6 +117,16 @@ function isFutureDate(date: Date) {
   return startOfDay(date).getTime() > startOfDay(new Date()).getTime();
 }
 
+function getAssignerLabel(task: Pick<AdminTask, "assignmentSource" | "isSelfAssigned" | "assignedByName" | "assignedByEmail">) {
+  if (task.assignmentSource === "SYSTEM") {
+    return "System";
+  }
+  if (task.assignmentSource === "SELF" || task.isSelfAssigned) {
+    return "Self assign";
+  }
+  return task.assignedByName?.trim() || task.assignedByEmail?.trim() || "Cozoro";
+}
+
 export function AdminCleaningClient() {
   const { sessionEmail } = usePortalSession();
   const activeEmail = sessionEmail || DEFAULT_PRIVILEGED_EMAIL;
@@ -132,6 +152,8 @@ export function AdminCleaningClient() {
   const [rejectFineDialog, setRejectFineDialog] = useState<{ taskId: string; userEmail: string; scheduledDate: string } | null>(null);
   const [rejectFineCreate, setRejectFineCreate] = useState(false);
   const [rejectFineAmount, setRejectFineAmount] = useState("50000");
+  const [autoSchedulerConfig, setAutoSchedulerConfig] = useState<AutoSchedulerConfig | null>(null);
+  const [autoSchedulerSaving, setAutoSchedulerSaving] = useState(false);
   const selectedCalendar =
     calendars.find((entry) => calendarKey(entry) === selectedCalendarKey) ?? calendars[0] ?? null;
   const canAssignSelectedDate = isFutureDate(selectedDate);
@@ -172,6 +194,44 @@ export function AdminCleaningClient() {
 
   async function reloadAll() {
     await loadCalendars();
+  }
+
+  async function loadAutoSchedulerConfig() {
+    const response = await fetch(`${API_BASE_URL}/admin/cleaning/auto-scheduler-config?actorEmail=${encodeURIComponent(activeEmail)}`);
+    const data = await readJsonSafely<AutoSchedulerConfig & { error?: string }>(response);
+    if (!response.ok) {
+      throw new Error(data.error ?? "Unable to load auto-scheduler settings.");
+    }
+    setAutoSchedulerConfig(data);
+  }
+
+  async function saveAutoSchedulerConfig() {
+    if (!autoSchedulerConfig) return;
+    setAutoSchedulerSaving(true);
+    setMessage("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/cleaning/auto-scheduler-config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actorEmail: activeEmail,
+          enabled: autoSchedulerConfig.enabled,
+          fillUnassignedDates: autoSchedulerConfig.fillUnassignedDates,
+          horizonDays: autoSchedulerConfig.horizonDays
+        })
+      });
+      const data = await readJsonSafely<AutoSchedulerConfig & { error?: string }>(response);
+      if (!response.ok) {
+        setMessage(data.error ?? "Unable to save auto-scheduler settings.");
+        return;
+      }
+      setAutoSchedulerConfig(data);
+      setMessage("Auto-scheduler settings saved.");
+    } catch {
+      setMessage("Unable to save auto-scheduler settings.");
+    } finally {
+      setAutoSchedulerSaving(false);
+    }
   }
 
   function getNextSevenOpenDates() {
@@ -279,6 +339,7 @@ export function AdminCleaningClient() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
+          actorEmail: activeEmail,
           email: selectedAssignEmail,
           date: toApiDate(selectedDate),
           type: selectedCalendar.type,
@@ -394,6 +455,7 @@ export function AdminCleaningClient() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
+          actorEmail: activeEmail,
           dates: selectedAutoAssignDates,
           type: selectedCalendar.type,
           floor: selectedCalendar.floor ?? undefined
@@ -461,6 +523,7 @@ export function AdminCleaningClient() {
 
     try {
       await loadCalendars();
+      await loadAutoSchedulerConfig();
       setMessage("Privileged cleaning view loaded.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load admin cleaning view.");
@@ -556,6 +619,77 @@ export function AdminCleaningClient() {
             </button>
           </div>
         </form>
+
+        <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">Background Auto-Scheduler</h2>
+              <p className="mt-1 text-sm text-slate-600">Control the system job that automatically fills future cleaning dates with no assigned user.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void saveAutoSchedulerConfig()}
+              disabled={!autoSchedulerConfig || autoSchedulerSaving}
+              className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-60"
+            >
+              {autoSchedulerSaving ? "Saving..." : "Save settings"}
+            </button>
+          </div>
+
+          {autoSchedulerConfig ? (
+            <div className="mt-4 grid gap-4 md:grid-cols-3">
+              <label className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
+                <div className="font-medium text-slate-900">Enable auto-scheduler</div>
+                <div className="mt-1 text-xs text-slate-500">Disable this to stop the background scheduler completely.</div>
+                <input
+                  type="checkbox"
+                  checked={autoSchedulerConfig.enabled}
+                  onChange={(event) =>
+                    setAutoSchedulerConfig((current) => current ? { ...current, enabled: event.target.checked } : current)
+                  }
+                  className="mt-3 h-4 w-4"
+                />
+              </label>
+
+              <label className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
+                <div className="font-medium text-slate-900">Fill unassigned dates</div>
+                <div className="mt-1 text-xs text-slate-500">Disable this to keep the scheduler on but stop auto-allocation into empty future dates.</div>
+                <input
+                  type="checkbox"
+                  checked={autoSchedulerConfig.fillUnassignedDates}
+                  onChange={(event) =>
+                    setAutoSchedulerConfig((current) => current ? { ...current, fillUnassignedDates: event.target.checked } : current)
+                  }
+                  className="mt-3 h-4 w-4"
+                />
+              </label>
+
+              <label className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
+                <div className="font-medium text-slate-900">Days in advance</div>
+                <div className="mt-1 text-xs text-slate-500">How far ahead the system should auto-schedule cleaning dates.</div>
+                <input
+                  type="number"
+                  min={1}
+                  max={60}
+                  value={autoSchedulerConfig.horizonDays}
+                  onChange={(event) =>
+                    setAutoSchedulerConfig((current) => current ? { ...current, horizonDays: Number(event.target.value) || 1 } : current)
+                  }
+                  className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2"
+                />
+              </label>
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-slate-500">Load the manager cleaning workspace first to view scheduler settings.</p>
+          )}
+
+          {autoSchedulerConfig ? (
+            <p className="mt-3 text-xs text-slate-500">
+              Last updated by {autoSchedulerConfig.updatedBy || "system"} at{" "}
+              {autoSchedulerConfig.updatedAt ? new Date(autoSchedulerConfig.updatedAt).toLocaleString() : "unknown"}.
+            </p>
+          ) : null}
+        </div>
 
         {message ? <p className="mt-4 text-sm text-slate-700">{message}</p> : null}
       </section>
@@ -738,6 +872,7 @@ export function AdminCleaningClient() {
                               {task.completionPhoto && (
                                 <a href={task.completionPhoto} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-xs text-sky-600 underline">View photo</a>
                               )}
+                              <p className="mt-1 text-xs text-slate-500">Assigner: {getAssignerLabel(task)}</p>
                               {task.auditorNote && (
                                 <p className="mt-1 text-xs text-rose-700 font-medium">Auditor: {task.auditorNote}</p>
                               )}

@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.5.8] - 2026-04-06
+### Added
+- **Cleaning Auto-Scheduler Controls**: Managers can now enable or disable the background cleaning auto-scheduler, choose whether it fills unassigned dates, and set how many days in advance it should plan.
+- **Cleaning Assigner Metadata**: Cleaning assignments now store who assigned them so manager views can show the real assigner while resident views keep the simplified labels `Cozoro`, `System`, and `Self assign`.
+
+### Changed
+- **Manager Cleaning Workspace**: Added an auto-scheduler settings panel to the manager cleaning screen and passed manager identity through manual assign and bulk auto-assign flows.
+- **Database Rollout**: Added a Prisma migration for the new cleaning assigner metadata columns on `CleaningTask`.
+
 ## [3.5.7] - 2026-04-06
 ### Fixed
 - **Vietnam Date Parsing**: Standardized resident and manager contract/payment date parsing to treat `dd/mm/yyyy` and `dd-mm-yyyy` as Vietnam dates first, preventing policy locks from triggering early on ambiguous dates.

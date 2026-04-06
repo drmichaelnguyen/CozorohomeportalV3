@@ -669,6 +669,8 @@ async function assignTaskToUser(input: {
   allowExistingSlotReassign?: boolean;
   isSelfAssigned?: boolean;
   assignmentSource?: CleaningAssignmentSource;
+  assignedByEmail?: string | null;
+  assignedByName?: string | null;
 }) {
   const normalizedTaskDate = normalizeCalendarDate(input.date);
   const normalizedEmail = input.user.email.trim().toLowerCase();
@@ -733,15 +735,19 @@ async function assignTaskToUser(input: {
       throw new Error("That cleaning slot is already assigned to another user");
     }
 
-    const reassignedTask = await prisma.cleaningTask.update({
-      where: { id: existingSlot.id },
-      data: {
-        userEmail: normalizedEmail,
-        userName: input.user.name,
-        branchId: input.user.branchId,
-        floor: slotFloor
-      }
-    });
+      const reassignedTask = await prisma.cleaningTask.update({
+        where: { id: existingSlot.id },
+        data: {
+          userEmail: normalizedEmail,
+          userName: input.user.name,
+          branchId: input.user.branchId,
+          floor: slotFloor,
+          isSelfAssigned: input.isSelfAssigned ?? false,
+          assignmentSource: input.assignmentSource ?? (input.isSelfAssigned ? CleaningAssignmentSource.SELF : undefined),
+          assignedByEmail: input.assignedByEmail ?? undefined,
+          assignedByName: input.assignedByName ?? undefined
+        }
+      });
 
     if (reassignedTask.calendarId && reassignedTask.calendarEventId) {
       const target = getCleaningCalendarTarget(reassignedTask.type, { floor: reassignedTask.floor });
@@ -787,7 +793,9 @@ async function assignTaskToUser(input: {
     scheduledDate: normalizedTaskDate,
     floor: slotFloor,
     isSelfAssigned: input.isSelfAssigned,
-    assignmentSource: input.assignmentSource ?? (input.isSelfAssigned ? CleaningAssignmentSource.SELF : undefined)
+    assignmentSource: input.assignmentSource ?? (input.isSelfAssigned ? CleaningAssignmentSource.SELF : undefined),
+    assignedByEmail: input.assignedByEmail ?? undefined,
+    assignedByName: input.assignedByName ?? undefined
   });
 
   await invalidateCleaningOverviewCache(normalizedEmail);
@@ -802,6 +810,8 @@ async function createCleaningTaskRecord(input: {
   floor?: number | null;
   isSelfAssigned?: boolean;
   assignmentSource?: CleaningAssignmentSource;
+  assignedByEmail?: string | null;
+  assignedByName?: string | null;
 }) {
   const normalizedScheduledDate = normalizeCalendarDate(input.scheduledDate);
   let rewardCoins = cleaningRewardMap[input.type];
@@ -844,12 +854,14 @@ async function createCleaningTaskRecord(input: {
       floor: input.floor ?? input.user.floor,
       type: input.type,
       scheduledDate: normalizedScheduledDate,
-      rewardCoins,
-      isSelfAssigned: input.isSelfAssigned ?? false,
-      assignmentSource: input.assignmentSource ?? undefined,
-      calendarId,
-      calendarEventId
-    }
+        rewardCoins,
+        isSelfAssigned: input.isSelfAssigned ?? false,
+        assignmentSource: input.assignmentSource ?? undefined,
+        assignedByEmail: input.assignedByEmail ?? undefined,
+        assignedByName: input.assignedByName ?? undefined,
+        calendarId,
+        calendarEventId
+      }
   });
 }
 
@@ -954,12 +966,13 @@ async function syncCalendarTasksIntoDatabase(
         floor,
         type: event.taskType as CleaningTaskType,
         scheduledDate,
-        calendarId: event.calendarId,
-        calendarEventId: event.id,
-        rewardCoins: cleaningRewardMap[event.taskType as CleaningTaskType],
-        assignmentSource: CleaningAssignmentSource.SYSTEM
-      }
-    });
+          calendarId: event.calendarId,
+          calendarEventId: event.id,
+          rewardCoins: cleaningRewardMap[event.taskType as CleaningTaskType],
+          assignmentSource: CleaningAssignmentSource.SYSTEM,
+          assignedByName: "System"
+        }
+      });
     importedTasks.push(createdTask);
   }
 
@@ -1138,15 +1151,18 @@ export async function selfAssignCleaningTask(input: {
     throw new CleaningSelfAssignConflictError(suggestions);
   }
 
-  return assignTaskToUser({
-    user,
-    date: normalizedTaskDate,
-    type: input.type,
-    floor: slotFloor,
-    allowExistingSlotReassign: false,
-    isSelfAssigned: true
-  });
-}
+    return assignTaskToUser({
+      user,
+      date: normalizedTaskDate,
+      type: input.type,
+      floor: slotFloor,
+      allowExistingSlotReassign: false,
+      isSelfAssigned: true,
+      assignmentSource: CleaningAssignmentSource.SELF,
+      assignedByEmail: normalizedEmail,
+      assignedByName: "Self assign"
+    });
+  }
 
 export async function checkSelfAssignCleaningTask(input: {
   email: string;
@@ -1686,6 +1702,8 @@ export async function adminAssignCleaningTask(input: {
   type: CleaningTaskType;
   floor?: number | null;
   force?: boolean;
+  actorEmail?: string;
+  actorName?: string | null;
 }) {
   if (!isFutureCalendarDate(input.date)) {
     throw new Error("Admin assignment is only available for future dates");
@@ -1712,19 +1730,24 @@ export async function adminAssignCleaningTask(input: {
     throw new Error("This user is not eligible for that cleaning task");
   }
 
-  return assignTaskToUser({
-    user,
-    date: normalizeCalendarDate(input.date),
-    type: input.type,
-    floor: input.floor ?? user.floor,
-    allowSameDayOverride: input.force
-  });
-}
+    return assignTaskToUser({
+      user,
+      date: normalizeCalendarDate(input.date),
+      type: input.type,
+      floor: input.floor ?? user.floor,
+      allowSameDayOverride: input.force,
+      assignmentSource: CleaningAssignmentSource.MANAGER,
+      assignedByEmail: input.actorEmail?.trim().toLowerCase() ?? null,
+      assignedByName: input.actorName?.trim() || "Cozoro"
+    });
+  }
 
 export async function adminAutoAssignCleaningSlots(input: {
   dates: Date[];
   type: CleaningTaskType;
   floor?: number | null;
+  actorEmail?: string;
+  actorName?: string | null;
 }) {
   const today = normalizeCalendarDate(new Date());
   const activeUsers = await getActiveCleaningUsers();
@@ -1776,13 +1799,15 @@ export async function adminAutoAssignCleaningSlots(input: {
       continue;
     }
 
-    const assignedTask = await assignTaskToUser({
-      user: selectedUser,
-      date: normalizedDate,
-      type: input.type,
-      floor: input.floor ?? selectedUser.floor,
-      assignmentSource: CleaningAssignmentSource.MANAGER
-    });
+      const assignedTask = await assignTaskToUser({
+        user: selectedUser,
+        date: normalizedDate,
+        type: input.type,
+        floor: input.floor ?? selectedUser.floor,
+        assignmentSource: CleaningAssignmentSource.MANAGER,
+        assignedByEmail: input.actorEmail?.trim().toLowerCase() ?? null,
+        assignedByName: input.actorName?.trim() || "Cozoro"
+      });
     reservedEmails.add(selectedUser.email);
     recentTaskCounts.set(selectedUser.email, (recentTaskCounts.get(selectedUser.email) ?? 0) + 1);
     results.push(assignedTask);
@@ -2305,7 +2330,14 @@ export async function autoScheduleCleaningTasks(horizonDays = 15) {
       }
 
       const user = candidates[0];
-      await assignTaskToUser({ user, date, type: def.type, floor: def.floor, assignmentSource: CleaningAssignmentSource.SYSTEM });
+      await assignTaskToUser({
+        user,
+        date,
+        type: def.type,
+        floor: def.floor,
+        assignmentSource: CleaningAssignmentSource.SYSTEM,
+        assignedByName: "System"
+      });
 
       // Update in-memory counts so the same user isn't over-assigned within this run
       const key = user.email.toLowerCase();
@@ -2377,7 +2409,14 @@ async function autoReassignReleasedUser(input: {
       continue;
     }
 
-    await assignTaskToUser({ user, date: cursor, type: input.type, floor: input.floor, assignmentSource: CleaningAssignmentSource.SYSTEM });
+    await assignTaskToUser({
+      user,
+      date: cursor,
+      type: input.type,
+      floor: input.floor,
+      assignmentSource: CleaningAssignmentSource.SYSTEM,
+      assignedByName: "System"
+    });
     await invalidateCleaningOverviewCache(normalizedEmail);
     return;
   }

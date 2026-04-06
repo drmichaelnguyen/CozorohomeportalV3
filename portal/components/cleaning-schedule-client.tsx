@@ -10,6 +10,8 @@ type CleaningTask = {
   type: "KITCHEN_D2" | "KITCHEN_D7" | "TRASH_D7";
   branchId: string;
   floor: number | null;
+  assignedByEmail?: string | null;
+  assignedByName?: string | null;
   scheduledDate: string;
   status: "ASSIGNED" | "DONE_PENDING_AUDIT" | "APPROVED" | "REJECTED" | "MISSED";
   rewardCoins: number;
@@ -150,6 +152,16 @@ function isTodayOrFuture(date: Date) {
 
 function isAfter8pm() {
   return new Date().getHours() >= 20;
+}
+
+function getResidentAssignerLabel(task: Pick<CleaningTask, "assignmentSource" | "isSelfAssigned">) {
+  if (task.assignmentSource === "SYSTEM") {
+    return "System";
+  }
+  if (task.assignmentSource === "SELF" || task.isSelfAssigned) {
+    return "Self assign";
+  }
+  return "Cozoro";
 }
 
 function canReleaseTask(task: { scheduledDate: string }) {
@@ -1497,6 +1509,9 @@ export function CleaningScheduleClient() {
                         <div className="mt-1 text-sm text-slate-600">
                           Status: {task.status} | Reward: {task.rewardCoins} coins
                         </div>
+                        <div className="mt-1 text-sm text-slate-600">
+                          Assigner: {getResidentAssignerLabel(task)}
+                        </div>
                         {task.type === "TRASH_D7" && task.floor ? (
                           <div className="mt-1 text-sm text-slate-600">Floor: {task.floor}</div>
                         ) : null}
@@ -1531,6 +1546,9 @@ export function CleaningScheduleClient() {
                     </div>
                     <div className="mt-1 text-sm text-slate-600">
                       Status: {task.status} | Reward: {task.rewardCoins} coins
+                    </div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      Assigner: {getResidentAssignerLabel(task)}
                     </div>
                     <div className="mt-1 text-sm text-slate-600">
                       Completion window: {getCompletionWindow(task).label}
@@ -1646,6 +1664,9 @@ export function CleaningScheduleClient() {
                     </div>
                     <div className="mt-1 text-sm text-slate-600">
                       Status: {task.status} | Reward: {task.rewardCoins} coins
+                    </div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      Assigner: {getResidentAssignerLabel(task)}
                     </div>
                     <div className="mt-1 text-sm text-slate-600">
                       Completion window: {getCompletionWindow(task).label}

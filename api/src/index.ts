@@ -126,6 +126,10 @@ import {
   setCleaningOptOut,
   cancelCleaningOptOut
 } from "./cleaning.js";
+import {
+  getCleaningAutoSchedulerConfig,
+  updateCleaningAutoSchedulerConfig
+} from "./cleaning-scheduler-config.js";
 import { prisma } from "./prisma.js";
 import {
   terminateContract,
@@ -173,8 +177,6 @@ const cleaningSweepOnStartup = process.env.CLEANING_SWEEP_ON_STARTUP === "true";
 let overdueCleaningSweepRunning = false;
 
 const autoScheduleIntervalMs = Number(process.env.AUTO_SCHEDULE_INTERVAL_MS ?? 60 * 60 * 1000); // default 1 hour
-const autoScheduleEnabled = process.env.ENABLE_AUTO_SCHEDULE !== "false"; // enabled by default
-const autoScheduleHorizonDays = Number(process.env.AUTO_SCHEDULE_HORIZON_DAYS ?? 15);
 let autoScheduleRunning = false;
 const WRITE_GUARD_DEFAULT_WINDOW_MS = Number(process.env.WRITE_GUARD_DEFAULT_WINDOW_MS ?? 8000);
 const writeGuardInFlightKeys = new Set<string>();
@@ -392,7 +394,15 @@ async function runAutoSchedule(trigger: "startup" | "interval" | "manual") {
   autoScheduleRunning = true;
 
   try {
-    const result = await autoScheduleCleaningTasks(autoScheduleHorizonDays);
+    const config = await getCleaningAutoSchedulerConfig();
+    if (!config.enabled) {
+      return { skipped: true, reason: "Cleaning auto-scheduler is disabled." };
+    }
+    if (!config.fillUnassignedDates) {
+      return { skipped: true, reason: "Auto-allocation for unassigned dates is disabled." };
+    }
+
+    const result = await autoScheduleCleaningTasks(config.horizonDays);
     console.log(
       `[cleaning-auto-schedule] trigger=${trigger} created=${result.created} skipped=${result.skipped}`
     );
@@ -734,6 +744,7 @@ const adminCleaningAvailabilitySchema = z.object({
     .optional()
 });
 const adminAssignCleaningSchema = z.object({
+  actorEmail: z.string().email(),
   email: z.string().email(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   type: z.enum(["KITCHEN_D2", "KITCHEN_D7", "TRASH_D7"]),
@@ -741,9 +752,19 @@ const adminAssignCleaningSchema = z.object({
   force: z.boolean().optional()
 });
 const adminBulkAutoAssignSchema = z.object({
+  actorEmail: z.string().email(),
   dates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).min(1),
   type: z.enum(["KITCHEN_D2", "KITCHEN_D7", "TRASH_D7"]),
   floor: z.number().int().positive().optional()
+});
+const cleaningAutoSchedulerConfigQuerySchema = z.object({
+  actorEmail: z.string().email()
+});
+const cleaningAutoSchedulerConfigUpdateSchema = z.object({
+  actorEmail: z.string().email(),
+  enabled: z.boolean(),
+  fillUnassignedDates: z.boolean(),
+  horizonDays: z.number().int().min(1).max(60)
 });
 const supportResidentQuerySchema = z.object({
   email: z.string().email()
@@ -2763,6 +2784,51 @@ app.get("/admin/cleaning/calendars", async (request, response) => {
   return response.json({ calendars });
 });
 
+app.get("/admin/cleaning/auto-scheduler-config", async (request, response) => {
+  const parsed = cleaningAutoSchedulerConfigQuerySchema.safeParse({
+    actorEmail: request.query.actorEmail
+  });
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "A valid actor email is required" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only managers can view cleaning auto-scheduler settings."
+    );
+    const config = await getCleaningAutoSchedulerConfig();
+    return response.json(config);
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to load cleaning auto-scheduler settings"
+    });
+  }
+});
+
+app.put("/admin/cleaning/auto-scheduler-config", async (request, response) => {
+  const parsed = cleaningAutoSchedulerConfigUpdateSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid cleaning auto-scheduler config payload" });
+  }
+
+  try {
+    const config = await updateCleaningAutoSchedulerConfig(parsed.data.actorEmail, {
+      enabled: parsed.data.enabled,
+      fillUnassignedDates: parsed.data.fillUnassignedDates,
+      horizonDays: parsed.data.horizonDays
+    });
+    return response.json(config);
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to save cleaning auto-scheduler settings"
+    });
+  }
+});
+
 app.get("/admin/cleaning/available-users", async (request, response) => {
   const parsed = adminCleaningAvailabilitySchema.safeParse({
     date: request.query.date,
@@ -2800,12 +2866,20 @@ app.post("/admin/cleaning/assign", async (request, response) => {
   }
 
   try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only managers can assign cleaning tasks."
+    );
+    const actorName = await getStaffName(parsed.data.actorEmail);
     const task = await adminAssignCleaningTask({
       email: parsed.data.email,
       date: parseCalendarDateInput(parsed.data.date),
       type: parsed.data.type,
       floor: parsed.data.floor,
-      force: parsed.data.force
+      force: parsed.data.force,
+      actorEmail: parsed.data.actorEmail,
+      actorName
     });
     return response.json(task);
   } catch (error) {
@@ -2833,10 +2907,18 @@ app.post("/admin/cleaning/auto-assign", async (request, response) => {
   }
 
   try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only managers can bulk assign cleaning tasks."
+    );
+    const actorName = await getStaffName(parsed.data.actorEmail);
     const tasks = await adminAutoAssignCleaningSlots({
       dates: parsed.data.dates.map((value) => parseCalendarDateInput(value)),
       type: parsed.data.type,
-      floor: parsed.data.floor
+      floor: parsed.data.floor,
+      actorEmail: parsed.data.actorEmail,
+      actorName
     });
     return response.json({ assigned: tasks.length, tasks });
   } catch (error) {
@@ -4124,7 +4206,6 @@ app.listen(port, "127.0.0.1", () => {
     timer.unref();
   }
 
-  if (autoScheduleEnabled) {
     void runAutoSchedule("startup").catch((error) => {
       console.error("[cleaning-auto-schedule] startup failed", error);
     });
@@ -4136,5 +4217,4 @@ app.listen(port, "127.0.0.1", () => {
     }, autoScheduleIntervalMs);
 
     scheduleTimer.unref();
-  }
-});
+  });

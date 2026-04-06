@@ -145,6 +145,8 @@ model CleaningTask {
   id               String             @id @default(cuid())
   userEmail        String
   userName         String?
+  assignedByEmail  String?
+  assignedByName   String?
   branchId         String
   floor            Int?
   type             CleaningTaskType
