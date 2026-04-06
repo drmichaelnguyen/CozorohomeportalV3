@@ -15,12 +15,14 @@ import {
   ClientRow,
   CleaningCalendarEvent,
   createAutomaticFineForEmail,
+  deleteCleaningCalendarEvent,
   getConfiguredCleaningCalendars,
   createCleaningCalendarEvent,
   getCleaningCalendarTarget,
   getManagerFines,
   listCleaningCalendarEvents,
   readCachedClients,
+  syncClientsFromSheet,
   updateCleaningCalendarEvent
 } from "./google-sheets.js";
 import { prisma } from "./prisma.js";
@@ -34,6 +36,10 @@ type ActiveCleaningUser = {
 };
 
 type CleaningTaskRecord = Prisma.CleaningTaskGetPayload<Record<string, never>>;
+type CleaningTaskDelegate = Pick<
+  typeof prisma.cleaningTask,
+  "findMany" | "findFirst" | "findUnique" | "create" | "update" | "delete"
+>;
 type CleaningOverviewPayload = Awaited<ReturnType<typeof buildCleaningOverviewForUser>>;
 type CleaningOverviewCache = {
   syncedAt: string;
@@ -92,6 +98,11 @@ export type SelfAssignCheckResult = {
 const cacheDirPath = path.join(process.cwd(), "data");
 const cleaningOverviewCacheFilePath = path.join(cacheDirPath, "cleaning-overview-cache.json");
 const cleaningOverviewMemoryCache = new Map<string, CleaningOverviewPayload>();
+const CLEANING_TASK_LEGACY_ASSIGNER_OMIT = {
+  assignedByEmail: true,
+  assignedByName: true
+} as const;
+let cleaningTaskAssignerColumnsMissing = false;
 
 const cleaningRewardMap: Record<CleaningTaskType, number> = {
   [CleaningTaskType.KITCHEN_D2]: 5000,
@@ -116,6 +127,214 @@ const dailyTaskConfigs: Array<{
   { type: CleaningTaskType.TRASH_D7, branchId: "D7", title: "Đổ rác D7" },
   { type: CleaningTaskType.KITCHEN_D7, branchId: "D7", title: "Vệ sinh bếp D7" }
 ];
+
+function isCleaningTaskAssignerColumnMissingError(error: unknown) {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2022") {
+    return false;
+  }
+
+  const column = String(error.meta?.column ?? "");
+  return (
+    column.includes("CleaningTask.assignedByEmail") ||
+    column.includes("CleaningTask.assignedByName")
+  );
+}
+
+function withLegacyCleaningTaskAssignerOmit<T extends { omit?: object | null }>(args: T): T {
+  return {
+    ...args,
+    omit: {
+      ...(args.omit ?? {}),
+      ...CLEANING_TASK_LEGACY_ASSIGNER_OMIT
+    }
+  };
+}
+
+function stripLegacyCleaningTaskAssignerFields<T extends { data: Record<string, unknown> }>(args: T): T {
+  const { assignedByEmail: _assignedByEmail, assignedByName: _assignedByName, ...data } = args.data;
+  void _assignedByEmail;
+  void _assignedByName;
+  return {
+    ...args,
+    data
+  };
+}
+
+function addLegacyCleaningTaskAssignerFields<T>(result: T): T {
+  if (Array.isArray(result)) {
+    return result.map((entry) => addLegacyCleaningTaskAssignerFields(entry)) as T;
+  }
+
+  if (result && typeof result === "object") {
+    return {
+      assignedByEmail: null,
+      assignedByName: null,
+      ...(result as Record<string, unknown>)
+    } as T;
+  }
+
+  return result;
+}
+
+async function findManyCleaningTasks<T extends Prisma.CleaningTaskFindManyArgs>(
+  args: T,
+  delegate: CleaningTaskDelegate = prisma.cleaningTask
+) {
+  if (cleaningTaskAssignerColumnsMissing) {
+    return addLegacyCleaningTaskAssignerFields(
+      await delegate.findMany(withLegacyCleaningTaskAssignerOmit(args) as Prisma.CleaningTaskFindManyArgs)
+    ) as Prisma.CleaningTaskGetPayload<T>[];
+  }
+
+  try {
+    return (await delegate.findMany(args)) as Prisma.CleaningTaskGetPayload<T>[];
+  } catch (error) {
+    if (!isCleaningTaskAssignerColumnMissingError(error)) {
+      throw error;
+    }
+
+    cleaningTaskAssignerColumnsMissing = true;
+    return addLegacyCleaningTaskAssignerFields(
+      await delegate.findMany(withLegacyCleaningTaskAssignerOmit(args) as Prisma.CleaningTaskFindManyArgs)
+    ) as Prisma.CleaningTaskGetPayload<T>[];
+  }
+}
+
+async function findFirstCleaningTask<T extends Prisma.CleaningTaskFindFirstArgs>(
+  args: T,
+  delegate: CleaningTaskDelegate = prisma.cleaningTask
+) {
+  if (cleaningTaskAssignerColumnsMissing) {
+    return addLegacyCleaningTaskAssignerFields(
+      await delegate.findFirst(withLegacyCleaningTaskAssignerOmit(args) as Prisma.CleaningTaskFindFirstArgs)
+    ) as Prisma.CleaningTaskGetPayload<T> | null;
+  }
+
+  try {
+    return (await delegate.findFirst(args)) as Prisma.CleaningTaskGetPayload<T> | null;
+  } catch (error) {
+    if (!isCleaningTaskAssignerColumnMissingError(error)) {
+      throw error;
+    }
+
+    cleaningTaskAssignerColumnsMissing = true;
+    return addLegacyCleaningTaskAssignerFields(
+      await delegate.findFirst(withLegacyCleaningTaskAssignerOmit(args) as Prisma.CleaningTaskFindFirstArgs)
+    ) as Prisma.CleaningTaskGetPayload<T> | null;
+  }
+}
+
+async function findUniqueCleaningTask<T extends Prisma.CleaningTaskFindUniqueArgs>(
+  args: T,
+  delegate: CleaningTaskDelegate = prisma.cleaningTask
+) {
+  if (cleaningTaskAssignerColumnsMissing) {
+    return addLegacyCleaningTaskAssignerFields(
+      await delegate.findUnique(withLegacyCleaningTaskAssignerOmit(args) as Prisma.CleaningTaskFindUniqueArgs)
+    ) as Prisma.CleaningTaskGetPayload<T> | null;
+  }
+
+  try {
+    return (await delegate.findUnique(args)) as Prisma.CleaningTaskGetPayload<T> | null;
+  } catch (error) {
+    if (!isCleaningTaskAssignerColumnMissingError(error)) {
+      throw error;
+    }
+
+    cleaningTaskAssignerColumnsMissing = true;
+    return addLegacyCleaningTaskAssignerFields(
+      await delegate.findUnique(withLegacyCleaningTaskAssignerOmit(args) as Prisma.CleaningTaskFindUniqueArgs)
+    ) as Prisma.CleaningTaskGetPayload<T> | null;
+  }
+}
+
+async function createCleaningTask<T extends Prisma.CleaningTaskCreateArgs>(
+  args: T,
+  delegate: CleaningTaskDelegate = prisma.cleaningTask
+) {
+  if (cleaningTaskAssignerColumnsMissing) {
+    return addLegacyCleaningTaskAssignerFields(
+      await delegate.create(
+        withLegacyCleaningTaskAssignerOmit(
+          stripLegacyCleaningTaskAssignerFields(args as T & { data: Record<string, unknown> })
+        ) as Prisma.CleaningTaskCreateArgs
+      )
+    ) as Prisma.CleaningTaskGetPayload<T>;
+  }
+
+  try {
+    return (await delegate.create(args)) as Prisma.CleaningTaskGetPayload<T>;
+  } catch (error) {
+    if (!isCleaningTaskAssignerColumnMissingError(error)) {
+      throw error;
+    }
+
+    cleaningTaskAssignerColumnsMissing = true;
+    return addLegacyCleaningTaskAssignerFields(
+      await delegate.create(
+        withLegacyCleaningTaskAssignerOmit(
+          stripLegacyCleaningTaskAssignerFields(args as T & { data: Record<string, unknown> })
+        ) as Prisma.CleaningTaskCreateArgs
+      )
+    ) as Prisma.CleaningTaskGetPayload<T>;
+  }
+}
+
+async function updateCleaningTask<T extends Prisma.CleaningTaskUpdateArgs>(
+  args: T,
+  delegate: CleaningTaskDelegate = prisma.cleaningTask
+) {
+  if (cleaningTaskAssignerColumnsMissing) {
+    return addLegacyCleaningTaskAssignerFields(
+      await delegate.update(
+        withLegacyCleaningTaskAssignerOmit(
+          stripLegacyCleaningTaskAssignerFields(args as T & { data: Record<string, unknown> })
+        ) as Prisma.CleaningTaskUpdateArgs
+      )
+    ) as Prisma.CleaningTaskGetPayload<T>;
+  }
+
+  try {
+    return (await delegate.update(args)) as Prisma.CleaningTaskGetPayload<T>;
+  } catch (error) {
+    if (!isCleaningTaskAssignerColumnMissingError(error)) {
+      throw error;
+    }
+
+    cleaningTaskAssignerColumnsMissing = true;
+    return addLegacyCleaningTaskAssignerFields(
+      await delegate.update(
+        withLegacyCleaningTaskAssignerOmit(
+          stripLegacyCleaningTaskAssignerFields(args as T & { data: Record<string, unknown> })
+        ) as Prisma.CleaningTaskUpdateArgs
+      )
+    ) as Prisma.CleaningTaskGetPayload<T>;
+  }
+}
+
+async function deleteCleaningTask<T extends Prisma.CleaningTaskDeleteArgs>(
+  args: T,
+  delegate: CleaningTaskDelegate = prisma.cleaningTask
+) {
+  if (cleaningTaskAssignerColumnsMissing) {
+    return addLegacyCleaningTaskAssignerFields(
+      await delegate.delete(withLegacyCleaningTaskAssignerOmit(args) as Prisma.CleaningTaskDeleteArgs)
+    ) as Prisma.CleaningTaskGetPayload<T>;
+  }
+
+  try {
+    return (await delegate.delete(args)) as Prisma.CleaningTaskGetPayload<T>;
+  } catch (error) {
+    if (!isCleaningTaskAssignerColumnMissingError(error)) {
+      throw error;
+    }
+
+    cleaningTaskAssignerColumnsMissing = true;
+    return addLegacyCleaningTaskAssignerFields(
+      await delegate.delete(withLegacyCleaningTaskAssignerOmit(args) as Prisma.CleaningTaskDeleteArgs)
+    ) as Prisma.CleaningTaskGetPayload<T>;
+  }
+}
 
 function normalizeBranch(value: string) {
   const normalized = value.trim().toUpperCase();
@@ -373,10 +592,7 @@ function canCompleteTaskLate(task: { type: CleaningTaskType; scheduledDate: Date
   return now > lateStart && now <= lateEnd;
 }
 
-async function getActiveCleaningUsers() {
-  const cache = await readCachedClients();
-  const rows = cache?.rows ?? [];
-
+function mapActiveCleaningUsers(rows: ClientRow[]) {
   return rows
     .map((row) => {
       const branchId = normalizeBranch(row["Chi nhánh Cozoro dorm"] ?? "");
@@ -393,6 +609,20 @@ async function getActiveCleaningUsers() {
       } satisfies ActiveCleaningUser;
     })
     .filter((row): row is ActiveCleaningUser => Boolean(row?.email));
+}
+
+async function getActiveCleaningUsers(options?: { emailHint?: string; forceRefresh?: boolean }) {
+  const normalizedEmailHint = options?.emailHint?.trim().toLowerCase();
+  const initialCache = options?.forceRefresh ? await syncClientsFromSheet() : ((await readCachedClients()) ?? await syncClientsFromSheet());
+  let users = mapActiveCleaningUsers(initialCache.rows ?? []);
+
+  if (!normalizedEmailHint || users.some((user) => user.email === normalizedEmailHint)) {
+    return users;
+  }
+
+  const refreshedCache = await syncClientsFromSheet();
+  users = mapActiveCleaningUsers(refreshedCache.rows ?? []);
+  return users;
 }
 
 async function readCleaningOverviewCacheFile() {
@@ -455,7 +685,7 @@ async function getAvailabilityMap(from: Date, to: Date) {
 }
 
 async function getExistingTaskMap(from: Date, to: Date) {
-  const tasks = await prisma.cleaningTask.findMany({
+  const tasks = await findManyCleaningTasks({
     where: {
       scheduledDate: {
         gte: calendarRangeStart(from),
@@ -514,6 +744,11 @@ function getAllowedTaskTypesForUser(user: ActiveCleaningUser): CleaningTaskType[
   return user.floor ? [CleaningTaskType.TRASH_D7, CleaningTaskType.KITCHEN_D7] : [CleaningTaskType.KITCHEN_D7];
 }
 
+function isHostelShortTermCleaningUser(user: ActiveCleaningUser) {
+  const contractCode = (user.source["MÃ HD"] ?? "").trim().toUpperCase();
+  return contractCode.startsWith("SHORTTERM-");
+}
+
 function getSlotFloor(type: CleaningTaskType, floor?: number | null) {
   return type === CleaningTaskType.TRASH_D7 ? floor ?? null : null;
 }
@@ -554,7 +789,7 @@ async function getNearestOpenDatesForUser(input: {
     availabilityEntries.map((entry) => [`${entry.userEmail}|${formatCalendarDate(entry.date)}`, entry])
   );
 
-  const userTasks = await prisma.cleaningTask.findMany({
+  const userTasks = await findManyCleaningTasks({
     where: {
       userEmail: input.user.email,
       scheduledDate: {
@@ -676,7 +911,7 @@ async function assignTaskToUser(input: {
   const normalizedEmail = input.user.email.trim().toLowerCase();
   const slotFloor = getSlotFloor(input.type, input.floor ?? input.user.floor);
 
-  const sameDayUserTasks = await prisma.cleaningTask.findMany({
+  const sameDayUserTasks = await findManyCleaningTasks({
     where: {
       userEmail: normalizedEmail,
       scheduledDate: {
@@ -711,7 +946,7 @@ async function assignTaskToUser(input: {
     );
   }
 
-  const existingSlot = await prisma.cleaningTask.findFirst({
+  const existingSlot = await findFirstCleaningTask({
     where: {
       type: input.type,
       scheduledDate: {
@@ -735,7 +970,7 @@ async function assignTaskToUser(input: {
       throw new Error("That cleaning slot is already assigned to another user");
     }
 
-      const reassignedTask = await prisma.cleaningTask.update({
+      const reassignedTask = await updateCleaningTask({
         where: { id: existingSlot.id },
         data: {
           userEmail: normalizedEmail,
@@ -846,7 +1081,7 @@ async function createCleaningTaskRecord(input: {
     }
   }
 
-  return prisma.cleaningTask.create({
+  return createCleaningTask({
     data: {
       userEmail: input.user.email,
       userName: input.user.name,
@@ -889,7 +1124,7 @@ async function syncCalendarTasksIntoDatabase(
     const branchId = matchedUser?.branchId ?? event.branchId;
     const floor = matchedUser?.floor ?? event.floor ?? null;
 
-    const slotMatches = await prisma.cleaningTask.findMany({
+    const slotMatches = await findManyCleaningTasks({
       where: {
         type: event.taskType as CleaningTaskType,
         scheduledDate: {
@@ -904,9 +1139,19 @@ async function syncCalendarTasksIntoDatabase(
     });
 
     const existingTaskByEventId = slotMatches.find((task) => task.calendarEventId === event.id) ?? null;
-    const placeholderSlotTask =
-      slotMatches.length === 1 && !slotMatches[0].calendarId && !slotMatches[0].calendarEventId ? slotMatches[0] : null;
-    const existingTask = existingTaskByEventId ?? placeholderSlotTask;
+    const existingTaskBySameUser =
+      normalizedEmail
+        ? slotMatches.find((task) => task.userEmail.trim().toLowerCase() === normalizedEmail) ?? null
+        : null;
+    const placeholderSlotTask = slotMatches.find((task) => !task.calendarId && !task.calendarEventId) ?? null;
+    const canonicalExistingTask =
+      existingTaskByEventId ??
+      existingTaskBySameUser ??
+      placeholderSlotTask ??
+      slotMatches.find((task) => task.status === CleaningTaskStatus.ASSIGNED) ??
+      slotMatches[0] ??
+      null;
+    const existingTask = canonicalExistingTask;
 
     if (existingTask) {
       // If the calendar shows a user who is UNAVAILABLE on this date, the DB assignment is
@@ -924,7 +1169,7 @@ async function syncCalendarTasksIntoDatabase(
         }
       }
 
-      const updatedTask = await prisma.cleaningTask.update({
+      const updatedTask = await updateCleaningTask({
         where: { id: existingTask.id },
         data: {
           userEmail: syncEmail,
@@ -941,7 +1186,6 @@ async function syncCalendarTasksIntoDatabase(
       const staleDuplicateIds = slotMatches
         .filter((task) => task.id !== updatedTask.id)
         .filter((task) => task.status === CleaningTaskStatus.ASSIGNED)
-        .filter((task) => !task.calendarEventId)
         .map((task) => task.id);
 
       if (staleDuplicateIds.length > 0) {
@@ -958,7 +1202,7 @@ async function syncCalendarTasksIntoDatabase(
       continue;
     }
 
-    const createdTask = await prisma.cleaningTask.create({
+    const createdTask = await createCleaningTask({
       data: {
         userEmail,
         userName,
@@ -980,7 +1224,7 @@ async function syncCalendarTasksIntoDatabase(
 }
 
 async function cleanupStaleLocalOnlyTasks(from: Date, to: Date) {
-  const tasks = await prisma.cleaningTask.findMany({
+  const tasks = await findManyCleaningTasks({
     where: {
       scheduledDate: {
         gte: calendarRangeStart(from),
@@ -1129,7 +1373,7 @@ export async function selfAssignCleaningTask(input: {
   }
 
   const slotFloor = input.type === CleaningTaskType.TRASH_D7 ? user.floor : null;
-  const existingSlot = await prisma.cleaningTask.findFirst({
+  const existingSlot = await findFirstCleaningTask({
     where: {
       type: input.type,
       scheduledDate: {
@@ -1224,7 +1468,7 @@ export async function checkSelfAssignCleaningTask(input: {
   }
 
   const slotFloor = input.type === CleaningTaskType.TRASH_D7 ? user.floor : null;
-  const existingSlot = await prisma.cleaningTask.findFirst({
+  const existingSlot = await findFirstCleaningTask({
     where: {
       type: input.type,
       scheduledDate: {
@@ -1273,7 +1517,7 @@ async function countReleasesThisMonth(email: string): Promise<number> {
 
 export async function releaseCleaningTask(taskId: string, email: string) {
   const normalizedEmail = email.trim().toLowerCase();
-  const task = await prisma.cleaningTask.findUnique({
+  const task = await findUniqueCleaningTask({
     where: { id: taskId }
   });
 
@@ -1433,7 +1677,7 @@ async function buildCleaningOverviewForUser(email: string) {
 
   await syncCleaningCalendarWindow(syncFrom, syncTo);
 
-  const tasks = await prisma.cleaningTask.findMany({
+  const tasks = await findManyCleaningTasks({
     where: {
       userEmail: normalizedEmail
     },
@@ -1451,7 +1695,7 @@ async function buildCleaningOverviewForUser(email: string) {
     }
   });
 
-  const user = (await getActiveCleaningUsers()).find((entry) => entry.email === normalizedEmail) ?? null;
+  const user = await getUserCleaningContext(normalizedEmail);
 
   // Fetch upcoming slots taken by OTHER users so the frontend can color the calendar
   const upcomingOccupiedTasks = await prisma.cleaningTask.findMany({
@@ -1555,7 +1799,7 @@ export async function getCleaningOverviewForUser(email: string, options?: { forc
 }
 
 export async function getAdminCleaningTasks(from?: Date, to?: Date) {
-  return prisma.cleaningTask.findMany({
+  return findManyCleaningTasks({
     where: {
       ...(from || to
         ? {
@@ -1609,7 +1853,7 @@ export async function getAvailableUsersForAdminSlot(input: {
   const excludedEmails = new Set((input.excludeEmails ?? []).map((email) => email.trim().toLowerCase()));
   const activeUsers = await getActiveCleaningUsers();
   const availabilityMap = await getAvailabilityMap(normalizedDate, normalizedDate);
-  const occupiedTasks = await prisma.cleaningTask.findMany({
+  const occupiedTasks = await findManyCleaningTasks({
     where: {
       scheduledDate: {
         gte: calendarRangeStart(normalizedDate),
@@ -1624,7 +1868,7 @@ export async function getAvailableUsersForAdminSlot(input: {
       }
     }
   });
-  const allTasks = await prisma.cleaningTask.findMany({});
+  const allTasks = await findManyCleaningTasks({});
   const normalizedDateKey = normalizeCalendarDate(normalizedDate).toISOString();
 
   const candidates: CleaningAvailableUser[] = [];
@@ -1750,7 +1994,7 @@ export async function adminAutoAssignCleaningSlots(input: {
   actorName?: string | null;
 }) {
   const today = normalizeCalendarDate(new Date());
-  const activeUsers = await getActiveCleaningUsers();
+  const activeUsers = (await getActiveCleaningUsers()).filter((user) => !isHostelShortTermCleaningUser(user));
   const recentTaskCounts = await getRecentTaskCounts(addDays(today, -60));
   const results: CleaningTaskRecord[] = [];
   const reservedEmails = new Set<string>();
@@ -1761,7 +2005,7 @@ export async function adminAutoAssignCleaningSlots(input: {
       continue;
     }
     const availabilityMap = await getAvailabilityMap(normalizedDate, normalizedDate);
-    const occupiedTasks = await prisma.cleaningTask.findMany({
+  const occupiedTasks = await findManyCleaningTasks({
       where: {
         scheduledDate: {
           gte: calendarRangeStart(normalizedDate),
@@ -1770,7 +2014,7 @@ export async function adminAutoAssignCleaningSlots(input: {
       }
     });
 
-    const existingSlot = await prisma.cleaningTask.findFirst({
+    const existingSlot = await findFirstCleaningTask({
       where: {
         type: input.type,
         scheduledDate: {
@@ -1817,17 +2061,25 @@ export async function adminAutoAssignCleaningSlots(input: {
 }
 
 export async function adminRemoveCleaningTask(taskId: string) {
-  const task = await prisma.cleaningTask.findUnique({ where: { id: taskId } });
+  const task = await findUniqueCleaningTask({ where: { id: taskId } });
   if (!task) {
     throw new Error("Cleaning task not found");
   }
-  await prisma.cleaningTask.delete({ where: { id: taskId } });
-  invalidateCleaningOverviewCache(task.userEmail);
+
+  if (task.calendarId && task.calendarEventId) {
+    await deleteCleaningCalendarEvent({
+      calendarId: task.calendarId,
+      eventId: task.calendarEventId
+    });
+  }
+
+  await deleteCleaningTask({ where: { id: taskId } });
+  await invalidateCleaningOverviewCache(task.userEmail);
   return { id: taskId, removed: true };
 }
 
 export async function completeCleaningTask(taskId: string, email: string, note?: string, photo?: string) {
-  const task = await prisma.cleaningTask.findUnique({
+  const task = await findUniqueCleaningTask({
     where: { id: taskId }
   });
 
@@ -1853,7 +2105,7 @@ export async function completeCleaningTask(taskId: string, email: string, note?:
     ? `[Late submission — ${LATE_COMPLETION_REWARD_RATE * 100}% reward applied]${note ? ` ${note}` : ""}`
     : note;
 
-  const updated = await prisma.cleaningTask.update({
+  const updated = await updateCleaningTask({
     where: { id: taskId },
     data: {
       status: CleaningTaskStatus.DONE_PENDING_AUDIT,
@@ -1894,7 +2146,7 @@ export async function auditCleaningTask(input: {
   decision: CleaningAuditDecision;
   note?: string;
 }) {
-  const task = await prisma.cleaningTask.findUnique({
+  const task = await findUniqueCleaningTask({
     where: { id: input.taskId }
   });
 
@@ -1987,7 +2239,7 @@ export async function auditCleaningTask(input: {
 }
 
 export async function sweepOverdueCleaningTasks(now = new Date()) {
-  const overdueTasks = await prisma.cleaningTask.findMany({
+  const overdueTasks = await findManyCleaningTasks({
     where: {
       status: CleaningTaskStatus.ASSIGNED
     },
@@ -2010,7 +2262,7 @@ export async function sweepOverdueCleaningTasks(now = new Date()) {
       continue;
     }
 
-    const currentTask = await prisma.cleaningTask.findUnique({
+    const currentTask = await findUniqueCleaningTask({
       where: { id: task.id }
     });
 
@@ -2059,7 +2311,7 @@ export async function sweepOverdueCleaningTasks(now = new Date()) {
       });
     }
 
-    const missedTask = await prisma.cleaningTask.update({
+    const missedTask = await updateCleaningTask({
       where: { id: currentTask.id },
       data: {
         status: CleaningTaskStatus.MISSED,
@@ -2154,7 +2406,7 @@ export async function sweepMonthlyEvasionPenalties(now = new Date()) {
     });
     if (releases < 1) continue;
 
-    const taskInMonth = await prisma.cleaningTask.findFirst({
+    const taskInMonth = await findFirstCleaningTask({
       where: {
         userEmail: email,
         scheduledDate: { gte: monthStart, lte: monthEnd },
@@ -2180,7 +2432,7 @@ export async function sweepMonthlyEvasionPenalties(now = new Date()) {
 
 export async function getUserCleaningContext(email: string) {
   const normalizedEmail = email.trim().toLowerCase();
-  const activeUsers = await getActiveCleaningUsers();
+  const activeUsers = await getActiveCleaningUsers({ emailHint: normalizedEmail });
   return activeUsers.find((entry) => entry.email === normalizedEmail) ?? null;
 }
 
@@ -2274,7 +2526,7 @@ export async function getOptedOutEmailsForMonth(month: string): Promise<Set<stri
 export async function autoScheduleCleaningTasks(horizonDays = 15) {
   const today = normalizeCalendarDate(new Date());
   const recentTaskCounts = await getRecentTaskCounts(addDays(today, -60));
-  const activeUsers = await getActiveCleaningUsers();
+  const activeUsers = (await getActiveCleaningUsers()).filter((user) => !isHostelShortTermCleaningUser(user));
   const calendarDefs = await getConfiguredCleaningCalendars();
 
   // Build slot definitions from calendar config (includes floor-specific TRASH_D7)
@@ -2299,7 +2551,7 @@ export async function autoScheduleCleaningTasks(horizonDays = 15) {
     const optedOut = await getOptedOut(month);
     const eligibleUsers = activeUsers.filter((u) => !optedOut.has(u.email));
 
-    const dayTasks = await prisma.cleaningTask.findMany({
+    const dayTasks = await findManyCleaningTasks({
       where: {
         scheduledDate: { gte: calendarRangeStart(date), lte: calendarRangeEnd(date) }
       }
@@ -2351,6 +2603,98 @@ export async function autoScheduleCleaningTasks(horizonDays = 15) {
   return results;
 }
 
+export async function autoScheduleCleaningTasksByJob(
+  jobs: Array<{
+    key: string;
+    type: CleaningTaskType;
+    floor: number | null;
+    enabled: boolean;
+    fillUnassignedDates: boolean;
+    horizonDays: number;
+  }>
+) {
+  const activeJobs = jobs
+    .filter((job) => job.enabled && job.fillUnassignedDates)
+    .map((job) => ({
+      ...job,
+      horizonDays: Math.max(1, Math.min(60, Number(job.horizonDays) || 1))
+    }));
+
+  if (activeJobs.length === 0) {
+    return { created: 0, skipped: 0 };
+  }
+
+  const today = normalizeCalendarDate(new Date());
+  const maxHorizonDays = Math.max(...activeJobs.map((job) => job.horizonDays));
+  const recentTaskCounts = await getRecentTaskCounts(addDays(today, -60));
+  const activeUsers = (await getActiveCleaningUsers()).filter((user) => !isHostelShortTermCleaningUser(user));
+
+  const optOutCache = new Map<string, Set<string>>();
+  const getOptedOut = async (month: string) => {
+    if (!optOutCache.has(month)) {
+      optOutCache.set(month, await getOptedOutEmailsForMonth(month));
+    }
+    return optOutCache.get(month)!;
+  };
+
+  const results = { created: 0, skipped: 0 };
+
+  for (let d = 1; d <= maxHorizonDays; d++) {
+    const date = addDays(today, d);
+    const month = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+    const optedOut = await getOptedOut(month);
+    const eligibleUsers = activeUsers.filter((u) => !optedOut.has(u.email));
+
+    const dayTasks = await findManyCleaningTasks({
+      where: {
+        scheduledDate: { gte: calendarRangeStart(date), lte: calendarRangeEnd(date) }
+      }
+    });
+    const availabilityMap = await getAvailabilityMap(date, date);
+
+    for (const job of activeJobs.filter((entry) => d <= entry.horizonDays)) {
+      const existingSlot = dayTasks.find(
+        (t) => t.type === job.type && (job.type !== CleaningTaskType.TRASH_D7 || t.floor === job.floor)
+      );
+      if (existingSlot) {
+        results.skipped++;
+        continue;
+      }
+
+      const candidates = await getAssignableCandidates(
+        eligibleUsers,
+        availabilityMap,
+        date,
+        job.type,
+        dayTasks,
+        job.floor,
+        recentTaskCounts
+      );
+
+      if (candidates.length === 0) {
+        continue;
+      }
+
+      const user = candidates[0];
+      await assignTaskToUser({
+        user,
+        date,
+        type: job.type,
+        floor: job.floor,
+        assignmentSource: CleaningAssignmentSource.SYSTEM,
+        assignedByName: "System"
+      });
+
+      const key = user.email.toLowerCase();
+      recentTaskCounts.set(key, (recentTaskCounts.get(key) ?? 0) + 1);
+      await invalidateCleaningOverviewCache(user.email);
+      results.created++;
+    }
+  }
+
+  return results;
+}
+
 // After a user releases a task, find the next open slot of the same type
 // within the 15-day horizon and assign them to it.
 async function autoReassignReleasedUser(input: {
@@ -2363,7 +2707,7 @@ async function autoReassignReleasedUser(input: {
   const horizon = addDays(today, 15);
   const normalizedEmail = input.email.toLowerCase();
   const user = await getUserCleaningContext(normalizedEmail);
-  if (!user) return;
+  if (!user || isHostelShortTermCleaningUser(user)) return;
 
   let cursor = addDays(normalizeCalendarDate(input.releasedDate), 1);
 
@@ -2376,7 +2720,7 @@ async function autoReassignReleasedUser(input: {
     }
 
     // Skip if slot already has an assignment
-    const existingSlot = await prisma.cleaningTask.findFirst({
+    const existingSlot = await findFirstCleaningTask({
       where: {
         type: input.type,
         scheduledDate: { gte: calendarRangeStart(cursor), lte: calendarRangeEnd(cursor) },
@@ -2398,7 +2742,7 @@ async function autoReassignReleasedUser(input: {
     }
 
     // Check no same-day task already
-    const sameDayTask = await prisma.cleaningTask.findFirst({
+    const sameDayTask = await findFirstCleaningTask({
       where: {
         userEmail: normalizedEmail,
         scheduledDate: { gte: calendarRangeStart(cursor), lte: calendarRangeEnd(cursor) }

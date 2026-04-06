@@ -59,10 +59,20 @@ type AutoAssignPreview = {
 
 type AutoSchedulerConfig = {
   enabled: boolean;
-  fillUnassignedDates: boolean;
-  horizonDays: number;
   updatedAt: string;
   updatedBy: string;
+  jobs: Array<{
+    key: string;
+    type: AdminTask["type"];
+    branchId: string;
+    floor: number | null;
+    title: string;
+    enabled: boolean;
+    fillUnassignedDates: boolean;
+    horizonDays: number;
+    updatedAt: string;
+    updatedBy: string;
+  }>;
 };
 
 function prettyTaskType(type: AdminTask["type"]) {
@@ -110,7 +120,7 @@ function toApiDate(date: Date) {
 }
 
 function calendarKey(calendar: Pick<AdminCalendar, "type" | "floor">) {
-  return `${calendar.type}:${calendar.floor ?? "none"}`;
+  return calendar.type === "TRASH_D7" ? `${calendar.type}:${calendar.floor ?? "none"}` : calendar.type;
 }
 
 function isFutureDate(date: Date) {
@@ -125,6 +135,10 @@ function getAssignerLabel(task: Pick<AdminTask, "assignmentSource" | "isSelfAssi
     return "Self assign";
   }
   return task.assignedByName?.trim() || task.assignedByEmail?.trim() || "Cozoro";
+}
+
+function getSchedulerJobLabel(job: AutoSchedulerConfig["jobs"][number]) {
+  return job.type === "TRASH_D7" && job.floor ? `${job.title} (${job.branchId} floor ${job.floor})` : `${job.title} (${job.branchId})`;
 }
 
 export function AdminCleaningClient() {
@@ -156,6 +170,10 @@ export function AdminCleaningClient() {
   const [autoSchedulerSaving, setAutoSchedulerSaving] = useState(false);
   const selectedCalendar =
     calendars.find((entry) => calendarKey(entry) === selectedCalendarKey) ?? calendars[0] ?? null;
+  const selectedSchedulerJob =
+    autoSchedulerConfig && selectedCalendar
+      ? autoSchedulerConfig.jobs.find((job) => job.key === calendarKey(selectedCalendar)) ?? null
+      : null;
   const canAssignSelectedDate = isFutureDate(selectedDate);
 
   const selectedDayTasks = useMemo(() => {
@@ -216,8 +234,12 @@ export function AdminCleaningClient() {
         body: JSON.stringify({
           actorEmail: activeEmail,
           enabled: autoSchedulerConfig.enabled,
-          fillUnassignedDates: autoSchedulerConfig.fillUnassignedDates,
-          horizonDays: autoSchedulerConfig.horizonDays
+          jobs: autoSchedulerConfig.jobs.map((job) => ({
+            key: job.key,
+            enabled: job.enabled,
+            fillUnassignedDates: job.fillUnassignedDates,
+            horizonDays: job.horizonDays
+          }))
         })
       });
       const data = await readJsonSafely<AutoSchedulerConfig & { error?: string }>(response);
@@ -620,77 +642,6 @@ export function AdminCleaningClient() {
           </div>
         </form>
 
-        <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-sm font-semibold text-slate-900">Background Auto-Scheduler</h2>
-              <p className="mt-1 text-sm text-slate-600">Control the system job that automatically fills future cleaning dates with no assigned user.</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => void saveAutoSchedulerConfig()}
-              disabled={!autoSchedulerConfig || autoSchedulerSaving}
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-60"
-            >
-              {autoSchedulerSaving ? "Saving..." : "Save settings"}
-            </button>
-          </div>
-
-          {autoSchedulerConfig ? (
-            <div className="mt-4 grid gap-4 md:grid-cols-3">
-              <label className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
-                <div className="font-medium text-slate-900">Enable auto-scheduler</div>
-                <div className="mt-1 text-xs text-slate-500">Disable this to stop the background scheduler completely.</div>
-                <input
-                  type="checkbox"
-                  checked={autoSchedulerConfig.enabled}
-                  onChange={(event) =>
-                    setAutoSchedulerConfig((current) => current ? { ...current, enabled: event.target.checked } : current)
-                  }
-                  className="mt-3 h-4 w-4"
-                />
-              </label>
-
-              <label className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
-                <div className="font-medium text-slate-900">Fill unassigned dates</div>
-                <div className="mt-1 text-xs text-slate-500">Disable this to keep the scheduler on but stop auto-allocation into empty future dates.</div>
-                <input
-                  type="checkbox"
-                  checked={autoSchedulerConfig.fillUnassignedDates}
-                  onChange={(event) =>
-                    setAutoSchedulerConfig((current) => current ? { ...current, fillUnassignedDates: event.target.checked } : current)
-                  }
-                  className="mt-3 h-4 w-4"
-                />
-              </label>
-
-              <label className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
-                <div className="font-medium text-slate-900">Days in advance</div>
-                <div className="mt-1 text-xs text-slate-500">How far ahead the system should auto-schedule cleaning dates.</div>
-                <input
-                  type="number"
-                  min={1}
-                  max={60}
-                  value={autoSchedulerConfig.horizonDays}
-                  onChange={(event) =>
-                    setAutoSchedulerConfig((current) => current ? { ...current, horizonDays: Number(event.target.value) || 1 } : current)
-                  }
-                  className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2"
-                />
-              </label>
-            </div>
-          ) : (
-            <p className="mt-3 text-sm text-slate-500">Load the manager cleaning workspace first to view scheduler settings.</p>
-          )}
-
-          {autoSchedulerConfig ? (
-            <p className="mt-3 text-xs text-slate-500">
-              Last updated by {autoSchedulerConfig.updatedBy || "system"} at{" "}
-              {autoSchedulerConfig.updatedAt ? new Date(autoSchedulerConfig.updatedAt).toLocaleString() : "unknown"}.
-            </p>
-          ) : null}
-        </div>
-
         {message ? <p className="mt-4 text-sm text-slate-700">{message}</p> : null}
       </section>
 
@@ -749,6 +700,106 @@ export function AdminCleaningClient() {
                   </button>
                 </div>
               </div>
+
+              {autoSchedulerConfig && selectedSchedulerJob ? (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-900">Background Auto-Scheduler</h3>
+                      <p className="mt-1 text-sm text-slate-600">Control the system job for {getSchedulerJobLabel(selectedSchedulerJob)}.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void saveAutoSchedulerConfig()}
+                      disabled={!autoSchedulerConfig || autoSchedulerSaving}
+                      className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-60"
+                    >
+                      {autoSchedulerSaving ? "Saving..." : "Save settings"}
+                    </button>
+                  </div>
+
+                  <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
+                    <div className="font-medium text-slate-900">{getSchedulerJobLabel(selectedSchedulerJob)}</div>
+                    <div className="mt-1 text-xs text-slate-500">These settings apply only to this selected calendar.</div>
+
+                    <label className="mt-4 block">
+                      <div className="font-medium text-slate-900">Enable this job</div>
+                      <div className="mt-1 text-xs text-slate-500">Turn the background scheduler on or off for this specific cleaning slot.</div>
+                      <input
+                        type="checkbox"
+                        checked={selectedSchedulerJob.enabled}
+                        onChange={(event) =>
+                          setAutoSchedulerConfig((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  enabled: current.jobs.some((entry) =>
+                                    entry.key === selectedSchedulerJob.key ? event.target.checked : entry.enabled
+                                  ),
+                                  jobs: current.jobs.map((entry) =>
+                                    entry.key === selectedSchedulerJob.key ? { ...entry, enabled: event.target.checked } : entry
+                                  )
+                                }
+                              : current
+                          )
+                        }
+                        className="mt-3 h-4 w-4"
+                      />
+                    </label>
+
+                    <label className="mt-4 block">
+                      <div className="font-medium text-slate-900">Fill unassigned dates</div>
+                      <div className="mt-1 text-xs text-slate-500">Stop automatic assignment for this slot while keeping other jobs running.</div>
+                      <input
+                        type="checkbox"
+                        checked={selectedSchedulerJob.fillUnassignedDates}
+                        onChange={(event) =>
+                          setAutoSchedulerConfig((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  jobs: current.jobs.map((entry) =>
+                                    entry.key === selectedSchedulerJob.key ? { ...entry, fillUnassignedDates: event.target.checked } : entry
+                                  )
+                                }
+                              : current
+                          )
+                        }
+                        className="mt-3 h-4 w-4"
+                      />
+                    </label>
+
+                    <label className="mt-4 block">
+                      <div className="font-medium text-slate-900">Days in advance</div>
+                      <div className="mt-1 text-xs text-slate-500">How far ahead the system should auto-schedule this specific cleaning job.</div>
+                      <input
+                        type="number"
+                        min={1}
+                        max={60}
+                        value={selectedSchedulerJob.horizonDays}
+                        onChange={(event) =>
+                          setAutoSchedulerConfig((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  jobs: current.jobs.map((entry) =>
+                                    entry.key === selectedSchedulerJob.key ? { ...entry, horizonDays: Number(event.target.value) || 1 } : entry
+                                  )
+                                }
+                              : current
+                          )
+                        }
+                        className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2"
+                      />
+                    </label>
+                  </div>
+
+                  <p className="mt-3 text-xs text-slate-500">
+                    Last updated by {autoSchedulerConfig.updatedBy || "system"} at{" "}
+                    {autoSchedulerConfig.updatedAt ? new Date(autoSchedulerConfig.updatedAt).toLocaleString() : "unknown"}.
+                  </p>
+                </div>
+              ) : null}
 
               <div className="grid grid-cols-7 gap-2 text-center text-xs font-medium uppercase tracking-wide text-slate-500">
                 {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label) => (

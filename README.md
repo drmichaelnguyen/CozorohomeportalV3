@@ -134,6 +134,13 @@ Important tabs:
 - `Feedbacks`
 - `Cleaning schedule assigning`
 
+### Cleaning Notes
+
+- cleaning auto-scheduler settings are managed from the selected calendar inside the manager cleaning workspace
+- each cleaning calendar/job now has its own enable, fill-unassigned, and horizon settings
+- automatic cleaning assignment skips short-term hostel users with `SHORTTERM-...` contract codes
+- if local Prisma errors mention missing `CleaningTask.assignedByEmail`, apply the latest migration or use the updated local fallback code in this branch
+
 The login page should stay short and only link into the manager workspace rather than duplicating long management sections.
 
 ## Environment Separation & Deployment

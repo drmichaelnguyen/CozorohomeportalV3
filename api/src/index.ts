@@ -119,7 +119,7 @@ import {
   selfAssignCleaningTask,
   sweepOverdueCleaningTasks,
   sweepMonthlyEvasionPenalties,
-  autoScheduleCleaningTasks,
+  autoScheduleCleaningTasksByJob,
   setCleaningAvailability,
   setBulkCleaningAvailability,
   getCleaningOptOutForEmail,
@@ -398,11 +398,11 @@ async function runAutoSchedule(trigger: "startup" | "interval" | "manual") {
     if (!config.enabled) {
       return { skipped: true, reason: "Cleaning auto-scheduler is disabled." };
     }
-    if (!config.fillUnassignedDates) {
-      return { skipped: true, reason: "Auto-allocation for unassigned dates is disabled." };
+    if (!config.jobs.some((job) => job.enabled && job.fillUnassignedDates)) {
+      return { skipped: true, reason: "Auto-allocation for unassigned dates is disabled for all jobs." };
     }
 
-    const result = await autoScheduleCleaningTasks(config.horizonDays);
+    const result = await autoScheduleCleaningTasksByJob(config.jobs);
     console.log(
       `[cleaning-auto-schedule] trigger=${trigger} created=${result.created} skipped=${result.skipped}`
     );
@@ -763,8 +763,14 @@ const cleaningAutoSchedulerConfigQuerySchema = z.object({
 const cleaningAutoSchedulerConfigUpdateSchema = z.object({
   actorEmail: z.string().email(),
   enabled: z.boolean(),
-  fillUnassignedDates: z.boolean(),
-  horizonDays: z.number().int().min(1).max(60)
+  jobs: z.array(
+    z.object({
+      key: z.string().min(1),
+      enabled: z.boolean(),
+      fillUnassignedDates: z.boolean(),
+      horizonDays: z.number().int().min(1).max(60)
+    })
+  )
 });
 const supportResidentQuerySchema = z.object({
   email: z.string().email()
@@ -2818,8 +2824,7 @@ app.put("/admin/cleaning/auto-scheduler-config", async (request, response) => {
   try {
     const config = await updateCleaningAutoSchedulerConfig(parsed.data.actorEmail, {
       enabled: parsed.data.enabled,
-      fillUnassignedDates: parsed.data.fillUnassignedDates,
-      horizonDays: parsed.data.horizonDays
+      jobs: parsed.data.jobs
     });
     return response.json(config);
   } catch (error) {

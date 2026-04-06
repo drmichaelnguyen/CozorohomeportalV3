@@ -2023,6 +2023,25 @@ export async function staffDeleteLaundryBooking(input: {
   return { ok: true };
 }
 
+export async function deleteCleaningCalendarEvent(input: {
+  calendarId: string;
+  eventId: string;
+}) {
+  const calendar = await getAuthorizedCalendarClient();
+  await calendar.events.delete({ calendarId: input.calendarId, eventId: input.eventId });
+
+  const cache = await readCleaningCalendarCache();
+  if (cache?.events?.length) {
+    await writeCleaningCalendarCache(
+      cache.events.filter(
+        (entry) => !(entry.calendarId === input.calendarId && entry.id === input.eventId)
+      )
+    );
+  }
+
+  return { ok: true };
+}
+
 export async function warmLaundryCalendarCache() {
   const calendarIds = await getLaundryCalendarIds();
   const results = await Promise.all(
@@ -2932,9 +2951,6 @@ async function fetchCleaningCalendarEventsFromGoogle(options?: { forceRefresh?: 
           const summary = event.summary ?? definition.title;
           const extractedEmail =
             extractFieldFromDescription(description, "Email") ??
-            (event.attendees ?? [])
-              .map((attendee) => attendee.email?.trim().toLowerCase() ?? "")
-              .find(Boolean) ??
             parseEmailFromText(summary) ??
             parseEmailFromText(description);
 

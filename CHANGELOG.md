@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.5.9] - 2026-04-06
+### Fixed
+- **Legacy Cleaning DB Compatibility**: Added fallback handling for local databases that do not yet have the new `assignedByEmail` and `assignedByName` columns, preventing cleaning read, write, and delete failures during local development.
+- **Cleaning Duplicate Recovery**: Tightened cleaning slot sync so calendar imports reconcile to a single canonical task per slot and stop re-importing owner/operator emails like `cozorohome@gmail.com` as resident assignees.
+- **Admin Cleaning Removal**: Removing a cleaning task from the manager workspace now also removes its linked Google Calendar event so the task does not reappear on the next refresh.
+
+### Changed
+- **Per-Calendar Auto-Scheduler Settings**: The manager cleaning workspace now edits auto-scheduler settings per cleaning calendar/job instead of one shared horizon for all jobs.
+- **Hostel Auto-Assign Exclusion**: Background and bulk automatic cleaning assignment now skip short-term hostel clients with `SHORTTERM-...` contract codes.
+- **Cleaning Manager UI**: Moved job-specific scheduler controls into the selected calendar view and removed the redundant global toggle from that panel.
+
 ## [3.5.8] - 2026-04-06
 ### Added
 - **Cleaning Auto-Scheduler Controls**: Managers can now enable or disable the background cleaning auto-scheduler, choose whether it fills unassigned dates, and set how many days in advance it should plan.
