@@ -1599,6 +1599,66 @@ app.post("/controller/airfryer/start", async (request, response) => {
   }
 });
 
+function resolveLaundryWebhookTarget(machineId: string) {
+  const normalizedMachineId = machineId.toLowerCase();
+  const key = process.env.IFTTT_WEBHOOK_KEY?.trim();
+
+  const buildWebhookTarget = (eventName: string) => ({
+    eventName,
+    url: key ? `https://maker.ifttt.com/trigger/${encodeURIComponent(eventName)}/with/key/${key}` : ""
+  });
+
+  if (
+    normalizedMachineId === "d7-dryer" ||
+    normalizedMachineId === "d7_dryer" ||
+    normalizedMachineId.includes("029mijq7")
+  ) {
+    return {
+      eventName: "webhookdryerd7",
+      url: "https://maker.ifttt.com/trigger/webhookdryerd7/json/with/key/cEVPzyXIMPZXbS8K5gZ2-KHWdKZgSRl_DspZFRHOvH2"
+    };
+  }
+
+  if (
+    normalizedMachineId === "d2-washer" ||
+    normalizedMachineId === "d2_laundry" ||
+    normalizedMachineId === "d2 laundry" ||
+    normalizedMachineId.includes("p5cvikf3pn8292denaig3gmed0")
+  ) {
+    return buildWebhookTarget("wehbhookd2laundry");
+  }
+
+  if (
+    normalizedMachineId === "d7-washer-horizontal" ||
+    normalizedMachineId === "d7_washer_horizontal" ||
+    normalizedMachineId === "d7_laundry" ||
+    normalizedMachineId === "d7 laundry" ||
+    normalizedMachineId.includes("iqido2c13cb85i2lsgq70qu59g")
+  ) {
+    return buildWebhookTarget(process.env.LAUNDRY_D7_WASHER_IFTTT_EVENT?.trim() || "d7washer");
+  }
+
+  if (
+    normalizedMachineId === "d7-washer-paid" ||
+    normalizedMachineId === "d7_washer_paid" ||
+    normalizedMachineId === "d7_laundry_paid" ||
+    normalizedMachineId === "d7_laundry_paid_(whirlpool)" ||
+    normalizedMachineId === "d7 laundry paid" ||
+    normalizedMachineId === "d7 laundry paid (whirlpool)" ||
+    normalizedMachineId.includes("vmtcgatmh7irp19qsmrrbjsr34")
+  ) {
+    return {
+      eventName: "webhookwasherpaidd7",
+      url: "https://maker.ifttt.com/trigger/webhookwasherpaidd7/json/with/key/cEVPzyXIMPZXbS8K5gZ2-KHWdKZgSRl_DspZFRHOvH2"
+    };
+  }
+
+  return {
+    eventName: "",
+    url: ""
+  };
+}
+
 app.post("/laundry/manual-trigger", async (request, response) => {
   const parsed = laundryTriggerSchema.safeParse(request.body);
 
@@ -1632,30 +1692,17 @@ app.post("/laundry/manual-trigger", async (request, response) => {
       });
     }
 
-    // 2. Map machineId to IFTTT Maker Event names provided by user
-    let eventName = "";
-    const mid = machineId.toLowerCase();
-    
-    // Check for D2
-    if (mid === "d2_laundry" || mid.includes("p5cvikf3pn8292denaig3gmed0")) {
-      eventName = "wehbhookd2laundry"; // User provided this specific typo
-    } 
-    // Check for any D7 machine
-    else if (mid.includes("d7") || mid.includes("iqido2c1") || mid.includes("vmtcgatm") || mid.includes("029mijq7")) {
-      eventName = "webhookgiatd7";
-    }
+    // 2. Map machineId to the correct webhook target
+    const { eventName, url: iftttUrl } = resolveLaundryWebhookTarget(machineId);
 
     if (!eventName) {
       return response.status(400).json({ error: `Unsupported machine ID: ${machineId}` });
     }
 
     // 3. Trigger IFTTT Webhook
-    const key = process.env.IFTTT_WEBHOOK_KEY;
-    if (!key) {
+    if (!iftttUrl) {
       throw new Error("IFTTT_WEBHOOK_KEY is not configured in environment.");
     }
-
-    const iftttUrl = `https://maker.ifttt.com/trigger/${eventName}/with/key/${key}`;
     const result = await fetch(iftttUrl, { method: "POST" });
 
     if (!result.ok) {
@@ -1759,27 +1806,17 @@ app.post("/manager/controller/laundry/trigger", async (request, response) => {
   }
 
   try {
-    // 1. Map machineId to IFTTT Maker Event names
-    let eventName = "";
-    const mid = machineId.toLowerCase();
-    
-    if (mid === "d2_laundry") {
-      eventName = "wehbhookd2laundry";
-    } else if (mid.includes("d7")) {
-      eventName = "webhookgiatd7";
-    }
+    // 1. Map machineId to the correct webhook target
+    const { eventName, url: iftttUrl } = resolveLaundryWebhookTarget(machineId);
 
     if (!eventName) {
       return response.status(400).json({ error: `Unsupported machine ID: ${machineId}` });
     }
 
     // 2. Trigger IFTTT Webhook (Manager bypasses booking check)
-    const key = process.env.IFTTT_WEBHOOK_KEY;
-    if (!key) {
+    if (!iftttUrl) {
       throw new Error("IFTTT_WEBHOOK_KEY is not configured.");
     }
-
-    const iftttUrl = `https://maker.ifttt.com/trigger/${eventName}/with/key/${key}`;
     const result = await fetch(iftttUrl, { method: "POST" });
 
     if (!result.ok) {

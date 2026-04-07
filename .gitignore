@@ -21,3 +21,4 @@ api/.google-oauth.json
 api/data
 guest-booking-standalone/data
 backups/
+bot/knowledge/mapping-variable.md
