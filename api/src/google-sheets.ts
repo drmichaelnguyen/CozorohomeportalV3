@@ -201,9 +201,10 @@ const blockedClientUpdateColumns = new Set([
 ]);
 
 const cozoroMemberTiers = [
-  { name: "Gold", threshold: 100000, maintainCoins: 5000, upgradeCoins: 5000 },
-  { name: "Platinum", threshold: 150000, maintainCoins: 10000, upgradeCoins: 10000 },
-  { name: "Diamond", threshold: 300000, maintainCoins: 20000, upgradeCoins: 20000 },
+  { name: "Silver", threshold: 0, maintainCoins: 0, upgradeCoins: 0 },
+  { name: "Gold", threshold: 100000, maintainCoins: 5000, upgradeCoins: 0 },
+  { name: "Platinum", threshold: 150000, maintainCoins: 10000, upgradeCoins: 0 },
+  { name: "Diamond", threshold: 300000, maintainCoins: 20000, upgradeCoins: 10000 },
   { name: "Elite", threshold: 800000, maintainCoins: 40000, upgradeCoins: 40000 }
 ] as const;
 
@@ -691,7 +692,7 @@ function calculateLiveCozoroMember(input: {
   previousMonthEarnings?: number;
 }) {
   const branchId = normalizeClientBranch(input.branchId ?? "");
-  const recordedMember = (input.recordedMember ?? "").trim() || "Standard";
+  const recordedMember = (input.recordedMember ?? "").trim() || "Silver";
 
   if (branchId !== "D2" && branchId !== "D7") {
     return recordedMember;
@@ -713,14 +714,14 @@ function calculateLiveCozoroMember(input: {
   // If the recorded tier exists, check if it's maintained
   if (recordedTier) {
     if (previousMonthEarnings < recordedTier.maintainCoins) {
-      // User lost their recorded tier! Return the next best matched tier (that they maintain) or Standard.
-      return matchedTier?.name ?? "Standard";
+      // User lost their recorded tier! Return the next best matched tier (that they maintain) or Silver.
+      return matchedTier?.name ?? "Silver";
     }
   }
 
   // If no recorded tier or recorded tier is maintained, use the higher of recorded vs matched
   if (!recordedTier) {
-    return matchedTier?.name ?? "Standard";
+    return matchedTier?.name ?? "Silver";
   }
   if (!matchedTier) {
     return recordedTier.name;
@@ -888,16 +889,16 @@ function getLaundryMemberBonus(memberValue: string) {
     return { washer: 1, dryer: 1 };
   }
   if (normalized.includes("silver")) {
-    return { washer: 0, dryer: 0 };
+    return { washer: 0, dryer: 1 };
   }
 
-  return { washer: 0, dryer: 0 };
+  return { washer: 0, dryer: 1 };
 }
 
 function getLaundryBaseAllowance(client: ClientRow, branchId: "D2" | "D7") {
   const gender = (client["Giới tính"] ?? "").trim();
   const floor = branchId === "D7" ? inferFloorFromBed(client["sá»‘ giÆ°á»ng"] ?? "") : null;
-  const recordedMember = (client["Cozoro Member"] ?? "").trim() || "Standard";
+  const recordedMember = (client["Cozoro Member"] ?? "").trim() || "Silver";
   const bonus = getLaundryMemberBonus(recordedMember);
   const normalizedBonus =
     branchId === "D2"
@@ -2636,7 +2637,7 @@ export async function syncClientsFromSheet() {
         recordedMember: row[COINS_MEMBER_COLUMN],
         previousMonthEarnings
       });
-      const currentMember = (row[COINS_MEMBER_COLUMN] ?? "").trim() || "Standard";
+      const currentMember = (row[COINS_MEMBER_COLUMN] ?? "").trim() || "Silver";
 
       if (currentMember !== calculatedMember) {
         updateData.push({
@@ -2734,7 +2735,7 @@ export async function upsertPaidGuestBookingClient(input: PaidGuestBookingClient
     [CLIENT_SHORT_TERM_FREE_COLUMN]: "FALSE",
     [CLIENT_CURRENT_COINS_COLUMN]: String(existingRow[CLIENT_CURRENT_COINS_COLUMN] ?? "").trim() || "0",
     [CLIENT_TOTAL_COINS_COLUMN]: String(existingRow[CLIENT_TOTAL_COINS_COLUMN] ?? "").trim() || "0",
-    [COINS_MEMBER_COLUMN]: String(existingRow[COINS_MEMBER_COLUMN] ?? "").trim() || "Standard",
+    [COINS_MEMBER_COLUMN]: String(existingRow[COINS_MEMBER_COLUMN] ?? "").trim() || "Silver",
     [CLIENT_NOTE_COLUMN]:
       input.notes?.trim() ||
       String(existingRow[CLIENT_NOTE_COLUMN] ?? "").trim() ||
@@ -3055,7 +3056,7 @@ export async function getFinesForEmail(email: string) {
   const client = await getActiveClientByEmail(normalizedEmail);
   const currentCoins =
     Number.parseInt(String(client?.["Cozoro coins hiện có"] ?? "0").replace(/[^0-9-]/g, ""), 10) || 0;
-  const recordedMember = (client?.["Cozoro Member"] ?? "").trim() || "Standard";
+  const recordedMember = (client?.["Cozoro Member"] ?? "").trim() || "Silver";
   const multiplier = getFineCoinMultiplier(recordedMember);
 
   return rows
@@ -3093,7 +3094,7 @@ export async function getManagerFines() {
     .map((row) => {
       const email = row[FINE_EMAIL_COLUMN]?.trim().toLowerCase() ?? "";
       const client = clientByEmail.get(email);
-      const recordedMember = (row[COINS_MEMBER_COLUMN] ?? client?.["Cozoro Member"] ?? "").trim() || "Standard";
+      const recordedMember = (row[COINS_MEMBER_COLUMN] ?? client?.["Cozoro Member"] ?? "").trim() || "Silver";
       const currentCoins =
         Number.parseInt(
           String(row[COINS_CURRENT_BALANCE_COLUMN] ?? client?.["Cozoro coins hiện có"] ?? "0").replace(/[^0-9-]/g, ""),
@@ -3305,6 +3306,7 @@ export async function managerCreatePaymentReceipt(input: {
   currentCoins?: string;
   discountAmount?: number;
   discountCondition?: string;
+  allowZeroAmount?: boolean;
 }) {
   if (!spreadsheetId) {
     throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
@@ -3318,7 +3320,7 @@ export async function managerCreatePaymentReceipt(input: {
   }
 
   const amount = Math.max(0, Math.trunc(input.amount));
-  if (!amount) {
+  if (!input.allowZeroAmount && !amount) {
     throw new Error("Payment amount must be greater than 0.");
   }
 
@@ -3333,7 +3335,7 @@ export async function managerCreatePaymentReceipt(input: {
     [PAYMENT_DETAILS_COLUMN]: input.details?.trim() ?? "",
     [PAYMENT_PAYER_COLUMN]: input.payer?.trim() || client.name || client.email,
     [PAYMENT_RECEIVER_COLUMN]: input.receiver?.trim() ?? "",
-    ["Chi nhánh Dorm"]: input.branch?.trim() ?? client.branch ?? "",
+    ["Chi nhánh Dorm"]: normalizeClientBranch(input.branch?.trim() ?? client.branch ?? "").replace("D", ""),
     ["Địa chỉ email người nhận"]: input.recipientEmail?.trim() ?? client.email,
     ["Cozoro Member"]: input.memberTier?.trim() ?? client.recordedMember ?? "",
     ["Số Coins hiện có"]: input.currentCoins?.trim() ?? String(client.currentCoins ?? ""),
@@ -3373,11 +3375,24 @@ export async function upgradeCozoroMemberByCoins(input: {
     recordedMember: client.recordedMember,
     previousMonthEarnings
   });
+  const totalAccumulatedCoins = parseLooseInteger(client.totalCoins);
   const currentTierIndex = getCozoroMemberTierIndex(currentMember);
   const targetTierIndex = getCozoroMemberTierIndex(targetTier.name);
 
   if (targetTierIndex <= currentTierIndex) {
     throw new Error("You can only upgrade to a higher Cozoro Member.");
+  }
+
+  if (totalAccumulatedCoins < targetTier.threshold) {
+    throw new Error(
+      `Not eligible for ${targetTier.name} yet. Requires ${targetTier.threshold.toLocaleString("vi-VN")} accumulated coins.`
+    );
+  }
+
+  if (previousMonthEarnings < targetTier.maintainCoins) {
+    throw new Error(
+      `Not eligible for ${targetTier.name} yet. Requires ${targetTier.maintainCoins.toLocaleString("vi-VN")} coins earned in the previous month.`
+    );
   }
 
   const upgradeCost = targetTier.upgradeCoins;

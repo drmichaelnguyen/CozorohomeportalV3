@@ -8,6 +8,11 @@ Cozorohome Portal V3 is a portal + management app with a Next.js frontend and an
 
 ## Current Important State
 
+- version `3.5.10` includes rent receipt flow fixes, member-tier rule clarification, and payment sheet branch normalization
+- Monthly Rent `Create Receipt` now writes directly to the payment sheet, then marks that month paid automatically
+- BIÊN NHẬN `Chi nhánh Dorm` now writes numeric branch values only: `2` or `7`
+- Cozoro Member ranking now uses lifetime accumulated coins, previous-month earned coins, and one-time re-upgrade fees after losing rank
+- account overview and coins pages now show a `?` explainer for how member tier is calculated
 - local manual email/password login works
 - public manual login depends on deployment rebuild and correct production API env
 - Google login is still unreliable and should be treated as a separate follow-up

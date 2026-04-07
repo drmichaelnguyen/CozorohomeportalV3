@@ -34,13 +34,13 @@ import {
   upsertStaffAccess
 } from "./staff-access.js";
 import { adminSetPortalPassword, changePortalPassword, loginWithPortalPassword, setPortalPassword, upsertStoredPassword } from "./portal-auth.js";
+import { getAccountLockOverride, setAccountLockOverride } from "./account-lock-overrides.js";
 import { getClientGroupContext, getGroupMessages, markGroupRead, postGroupMessage } from "./group-support.js";
 import { VAPID_PUBLIC_KEY, savePushSubscription, deletePushSubscription } from "./push.js";
 import { 
   calculateRentBreakdown 
 } from "./calculation-engine.js";
 import { 
-  recordPaymentReceipt,
   createAutomaticFineForEmail,
   sendGmailReceipt,
   syncClientsFromSheet,
@@ -522,6 +522,12 @@ const portalPasswordAdminSetSchema = z.object({
   targetEmail: z.string().email(),
   newPassword: z.string().trim().min(4)
 });
+const accountLockOverrideSchema = z.object({
+  actorEmail: z.string().email(),
+  targetEmail: z.string().email(),
+  unlocked: z.boolean(),
+  note: z.string().trim().optional()
+});
 const googlePortalLoginSchema = z.object({
   credential: z.string().min(1)
 });
@@ -545,9 +551,13 @@ const airFryerStartSchema = z.object({
   inspection: z.string().min(1)
 });
 const laundryTriggerSchema = z.object({
-  email: z.string().email(),
-  machineId: z.string().min(1)
-});
+  email: z.string().email().optional(),
+  machineId: z.string().min(1).optional(),
+  calendarId: z.string().min(1).optional()
+}).transform((value) => ({
+  email: value.email,
+  machineId: value.machineId ?? value.calendarId ?? ""
+}));
 const privilegedAcCommandSchema = z.object({
   roomId: z.string().min(1),
   action: z.enum(["ON", "OFF"])
@@ -576,7 +586,13 @@ const managerPaymentReceiptCreateSchema = z.object({
   purpose: z.string().trim().min(1),
   details: z.string().trim().optional(),
   payer: z.string().trim().optional(),
-  receiver: z.string().trim().optional()
+  receiver: z.string().trim().optional(),
+  branch: z.string().trim().optional(),
+  recipientEmail: z.string().trim().optional(),
+  memberTier: z.string().trim().optional(),
+  currentCoins: z.string().trim().optional(),
+  discountAmount: z.coerce.number().int().nonnegative().optional(),
+  discountCondition: z.string().trim().optional()
 });
 const cozoroMemberUpgradeSchema = z.object({
   email: z.string().email(),
@@ -1172,6 +1188,46 @@ app.post("/auth/admin-set-password", async (request, response) => {
   }
 });
 
+app.get("/account-lock-override", async (request, response) => {
+  const parsed = clientLookupSchema.safeParse({
+    email: request.query.email
+  });
+
+  if (!parsed.success) {
+    return response.status(400).json({
+      error: "A valid email query parameter is required"
+    });
+  }
+
+  try {
+    const override = await getAccountLockOverride(parsed.data.email);
+    return response.json({ override });
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to load account lock override"
+    });
+  }
+});
+
+app.post("/manager/account-lock-override", async (request, response) => {
+  const parsed = accountLockOverrideSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({
+      error: "A valid actor email, target email, and unlocked flag are required."
+    });
+  }
+
+  try {
+    const result = await setAccountLockOverride(parsed.data);
+    return response.json(result);
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
+      error: error instanceof Error ? error.message : "Unable to update account lock override"
+    });
+  }
+});
+
 app.get("/support/group-context", async (request, response) => {
   const email = typeof request.query.email === "string" ? request.query.email : "";
   if (!email) {
@@ -1551,6 +1607,12 @@ app.post("/laundry/manual-trigger", async (request, response) => {
   }
 
   const { email, machineId } = parsed.data;
+  if (!email) {
+    return response.status(400).json({ error: "Email is required for resident laundry trigger" });
+  }
+  if (!machineId) {
+    return response.status(400).json({ error: "Machine ID is required for laundry trigger" });
+  }
 
   try {
     // 1. Verify active booking window
@@ -1692,6 +1754,9 @@ app.post("/manager/controller/laundry/trigger", async (request, response) => {
   }
 
   const { machineId } = parsed.data;
+  if (!machineId) {
+    return response.status(400).json({ error: "Machine ID is required for laundry trigger" });
+  }
 
   try {
     // 1. Map machineId to IFTTT Maker Event names
@@ -2478,7 +2543,13 @@ app.post("/manager/payments/create", async (request, response) => {
           purpose: parsed.data.purpose,
           details: parsed.data.details,
           payer: parsed.data.payer,
-          receiver
+          receiver,
+          branch: parsed.data.branch,
+          recipientEmail: parsed.data.recipientEmail,
+          memberTier: parsed.data.memberTier,
+          currentCoins: parsed.data.currentCoins,
+          discountAmount: parsed.data.discountAmount,
+          discountCondition: parsed.data.discountCondition
         })
       });
       return response.status(201).json(result);
@@ -3602,7 +3673,7 @@ app.post("/client/maintenance/feedback", async (req, res) => {
 });
 
 app.post("/calculate-rent", async (req, res) => {
-  const { email, targetMonth, managerDiscountVnd } = req.body;
+  const { email, targetMonth, managerDiscountVnd, shortTermSurchargeRate, parkingFeeVnd } = req.body;
   if (!email || !targetMonth) {
     return res.status(400).json({ error: "email and targetMonth are required" });
   }
@@ -3614,7 +3685,17 @@ app.post("/calculate-rent", async (req, res) => {
       return res.status(404).json({ error: "Client not found" });
     }
 
-    const breakdown = await calculateRentBreakdown(client, targetMonth, managerDiscountVnd || 0);
+    const breakdown = await calculateRentBreakdown(client, targetMonth, {
+      managerDiscountVnd: Number(managerDiscountVnd) || 0,
+      shortTermSurchargeRate:
+        typeof shortTermSurchargeRate === "number" && Number.isFinite(shortTermSurchargeRate)
+          ? shortTermSurchargeRate
+          : undefined,
+      parkingFeeVnd:
+        typeof parkingFeeVnd === "number" && Number.isFinite(parkingFeeVnd)
+          ? parkingFeeVnd
+          : undefined
+    });
     res.json(breakdown);
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : "Calculation failed" });
@@ -3622,7 +3703,22 @@ app.post("/calculate-rent", async (req, res) => {
 });
 
 app.post("/pay-rent", async (req, res) => {
-  const { email, targetMonth, managerDiscountVnd, coinUsage, payerName, receiverName } = req.body;
+  const {
+    email,
+    targetMonth,
+    managerDiscountVnd,
+    shortTermSurchargeRate,
+    parkingFeeVnd,
+    coinUsage,
+    payerName,
+    receiverName,
+    recipientEmail,
+    branch,
+    memberTier,
+    currentCoins,
+    discountAmount,
+    discountCondition
+  } = req.body;
   if (!email || !targetMonth || !payerName) {
     return res.status(400).json({ error: "email, targetMonth, and payerName are required" });
   }
@@ -3634,23 +3730,55 @@ app.post("/pay-rent", async (req, res) => {
       return res.status(404).json({ error: "Client not found" });
     }
 
-    const breakdown = await calculateRentBreakdown(client, targetMonth, managerDiscountVnd || 0);
+    const breakdown = await calculateRentBreakdown(client, targetMonth, {
+      managerDiscountVnd: Number(managerDiscountVnd) || 0,
+      shortTermSurchargeRate:
+        typeof shortTermSurchargeRate === "number" && Number.isFinite(shortTermSurchargeRate)
+          ? shortTermSurchargeRate
+          : undefined,
+      parkingFeeVnd:
+        typeof parkingFeeVnd === "number" && Number.isFinite(parkingFeeVnd)
+          ? parkingFeeVnd
+          : undefined
+    });
     
-    // Record to Google Sheet
-    await recordPaymentReceipt({
-      email,
-      name: client["Tên"] || "",
-      amountVnd: breakdown.finalTotalVnd,
+    const maHd = client["MÃ HD"] || client["MÃ HD".normalize("NFC")] || "";
+    const resolvedDiscountAmount =
+      typeof discountAmount === "number" && Number.isFinite(discountAmount)
+        ? discountAmount
+        : breakdown.professionalDiscountVnd + breakdown.planDiscountVnd + (Number(managerDiscountVnd) || 0);
+    const resolvedCoinUsage = coinUsage || breakdown.recommendedCoinUsage;
+    const resolvedCoinValue =
+      breakdown.totalBeforeCoinsVnd > 0
+        ? Math.round(resolvedCoinUsage * (breakdown.finalTotalVnd / breakdown.totalBeforeCoinsVnd))
+        : 0;
+
+    // Record to BIEN NHAN sheet using the manager-compatible column mapping
+    await managerCreatePaymentReceipt({
+      maHd,
+      amount: breakdown.finalTotalVnd,
       purpose: `Rent Payment - ${targetMonth}`,
-      details: JSON.stringify({
-        baseRent: breakdown.baseRent,
-        surcharges: breakdown.tenureSurchargeVnd,
-        discounts: breakdown.professionalDiscountVnd + breakdown.planDiscountVnd + (managerDiscountVnd || 0),
-        coinUsage: coinUsage || breakdown.recommendedCoinUsage,
-        coinValue: Math.round((coinUsage || breakdown.recommendedCoinUsage) * (breakdown.finalTotalVnd / breakdown.totalBeforeCoinsVnd)) // Simple estimation
-      }),
+      details: [
+        `Base rent: ${breakdown.baseRent.toLocaleString("vi-VN")} VND`,
+        `Surcharge: ${breakdown.tenureSurchargeVnd.toLocaleString("vi-VN")} VND`,
+        `Monthly adjustment: ${breakdown.monthlyAdjustmentVnd.toLocaleString("vi-VN")} VND`,
+        `Parking: ${breakdown.parkingFeeVnd.toLocaleString("vi-VN")} VND`,
+        `Laundry: ${breakdown.laundryFeeVnd.toLocaleString("vi-VN")} VND`,
+        `Fines: ${breakdown.finesVnd.toLocaleString("vi-VN")} VND`,
+        `Coins used: ${resolvedCoinUsage}`,
+        `Coin value: ${resolvedCoinValue.toLocaleString("vi-VN")} VND`
+      ].join(" | "),
       payer: payerName,
-      receiver: receiverName || "Cozoro System"
+      receiver: receiverName || "Cozoro System",
+      branch: branch || client["Chi nhánh Cozoro dorm"] || "",
+      recipientEmail: recipientEmail || "",
+      memberTier: memberTier || client["Cozoro Member"] || "",
+      currentCoins: currentCoins != null ? String(currentCoins) : "",
+      discountAmount: resolvedDiscountAmount,
+      discountCondition:
+        discountCondition ||
+        `Rent payment ${targetMonth}; surcharge ${Math.round(breakdown.tenureSurchargeRate * 100)}%; manager discount ${Number(managerDiscountVnd) || 0}`,
+      allowZeroAmount: true
     });
 
     // Send Gmail Receipt
@@ -3784,7 +3912,7 @@ app.get("/rent-paid-status", async (req, res) => {
       return res.json({ email, month, isPaid: record?.isPaid ?? onPrepaidPlan, breakdown: null, onPrepaidPlan });
     }
 
-    const breakdown = await calculateRentBreakdown(client, month, 0);
+    const breakdown = await calculateRentBreakdown(client, month, { managerDiscountVnd: 0 });
     return res.json({ email, month, isPaid: false, breakdown, onPrepaidPlan: false });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to load rent status" });

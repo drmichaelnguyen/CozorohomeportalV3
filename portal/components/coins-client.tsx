@@ -3,7 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
-import { buildCozoroMemberProgram } from "../lib/cozoro-member";
+import {
+  buildCozoroMemberProgram,
+  COZORO_MEMBER_DIAMOND_EXAMPLE,
+  COZORO_MEMBER_RULE_DETAILS
+} from "../lib/cozoro-member";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 const COINS_COLUMN = "COINS";
@@ -64,6 +68,7 @@ export function CoinsClient() {
   const [sortDirection, setSortDirection] = useState<"desc" | "asc">("desc");
   const [refreshing, setRefreshing] = useState(false);
   const [showHistoryTools, setShowHistoryTools] = useState(false);
+  const [showMemberRuleHelp, setShowMemberRuleHelp] = useState(false);
   const [visibleEntriesCount, setVisibleEntriesCount] = useState(DEFAULT_VISIBLE_ENTRIES);
 
   const activeEmail = sessionEmail.trim().toLowerCase();
@@ -312,6 +317,7 @@ export function CoinsClient() {
     const previousCalendarYear = thisYear - 1;
 
     let earnedTotal = 0;
+    let earnedLastMonth = 0;
     let usedTotal = 0;
     let usedThisMonth = 0;
     let usedLastMonth = 0;
@@ -332,6 +338,9 @@ export function CoinsClient() {
         if (timestamp) {
           const monthKey = `${timestamp.getFullYear()}-${String(timestamp.getMonth() + 1).padStart(2, "0")}`;
           earnedByMonth.set(monthKey, (earnedByMonth.get(monthKey) ?? 0) + amount);
+          if (timestamp.getMonth() === lastMonth && timestamp.getFullYear() === lastMonthYear) {
+            earnedLastMonth += amount;
+          }
         }
       } else if (amount < 0) {
         const usedAmount = Math.abs(amount);
@@ -360,6 +369,7 @@ export function CoinsClient() {
       usedThisMonth,
       usedLastMonth,
       usedLastYear,
+      earnedLastMonth,
       currentCoins: earnedTotal - usedTotal,
       earnedByMonth: Array.from(earnedByMonth.entries())
         .sort((left, right) => left[0].localeCompare(right[0]))
@@ -383,9 +393,10 @@ export function CoinsClient() {
       buildCozoroMemberProgram({
         rankValue: client?.["Cozoro Member"] ?? entries[0]?.row["Cozoro Member"] ?? "",
         branchId: client?.["Chi nhánh Cozoro dorm"] ?? "",
-        totalAccumulatedCoins: client?.["Tổng Coins tích luỹ"] ?? coinStats.earnedTotal
+        totalAccumulatedCoins: client?.["Tổng Coins tích luỹ"] ?? coinStats.earnedTotal,
+        previousMonthEarnings: coinStats.earnedLastMonth
       }),
-    [client, coinStats.earnedTotal, entries]
+    [client, coinStats.earnedLastMonth, coinStats.earnedTotal, entries]
   );
 
   return (
@@ -674,7 +685,36 @@ export function CoinsClient() {
 
       {entries.length > 0 ? (
         <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-          <h2 className="text-lg font-semibold text-slate-900">Cozoro Member Status</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-slate-900">Cozoro Member Status</h2>
+            <button
+              type="button"
+              onClick={() => setShowMemberRuleHelp((current) => !current)}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-300 text-sm font-semibold text-slate-700"
+              aria-label="Show Cozoro Member ranking details"
+              title="How Cozoro Member ranking is calculated"
+            >
+              ?
+            </button>
+          </div>
+          {showMemberRuleHelp ? (
+            <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-slate-700">
+              <div className="font-semibold text-slate-900">How Cozoro calculates your member tier</div>
+              <div className="mt-3 space-y-2">
+                {COZORO_MEMBER_RULE_DETAILS.map((item) => (
+                  <p key={item}>{item}</p>
+                ))}
+              </div>
+              <div className="mt-3 rounded-lg border border-sky-100 bg-white px-3 py-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Diamond example</div>
+                <div className="mt-2 space-y-1">
+                  {COZORO_MEMBER_DIAMOND_EXAMPLE.map((item) => (
+                    <p key={item}>{item}</p>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : null}
           <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-xl border border-slate-200 p-4">
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recorded Cozoro Member</div>
@@ -684,13 +724,20 @@ export function CoinsClient() {
             <div className="rounded-xl border border-slate-200 p-4">
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Calculated Cozoro Member</div>
               <div className="mt-2 text-2xl font-semibold text-slate-900">{memberProgram.liveRank}</div>
-              <div className="mt-1 text-xs text-slate-500">Calculated from current accumulated coins</div>
+              <div className="mt-1 text-xs text-slate-500">Calculated from accumulated coins and previous month earnings</div>
             </div>
             <div className="rounded-xl border border-slate-200 p-4">
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Accumulated Coins</div>
               <div className="mt-2 text-2xl font-semibold text-slate-900">
                 {formatCoins(memberProgram.totalAccumulatedCoins)}
               </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Previous Month Earned</div>
+              <div className="mt-2 text-2xl font-semibold text-slate-900">
+                {formatCoins(memberProgram.previousMonthEarnings)}
+              </div>
+              <div className="mt-1 text-xs text-slate-500">Positive coins earned in the previous calendar month</div>
             </div>
             <div className="rounded-xl border border-slate-200 p-4">
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Coins To Next Cozoro Member</div>
@@ -729,6 +776,12 @@ export function CoinsClient() {
                     {formatCoins(memberProgram.totalAccumulatedCoins)}
                   </div>
                 </div>
+                <div className="rounded-lg bg-slate-50 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Previous Month Earned</div>
+                  <div className="mt-2 text-xl font-semibold text-slate-900">
+                    {formatCoins(memberProgram.previousMonthEarnings)}
+                  </div>
+                </div>
               </div>
 
               {(memberProgram.branchId === "D7" || memberProgram.branchId === "D2") && memberProgram.currentTier ? (
@@ -737,6 +790,7 @@ export function CoinsClient() {
                   <div className="mt-2">VND exchange rate: {memberProgram.currentTier.exchangeRate}</div>
                   <div className="mt-1">Free laundry each month: {memberProgram.currentTier.freeLaundry}</div>
                   <div className="mt-1">Monthly coins to maintain: {memberProgram.currentTier.monthlyMaintainCoins}</div>
+                  <div className="mt-1">Previous month earned: {formatCoins(memberProgram.previousMonthEarnings)}</div>
                   {memberProgram.nextTier ? (
                     <div className="mt-2 text-xs text-slate-500">
                       {formatCoins(memberProgram.nextTier.remainingCoins)} more accumulated coins to reach{" "}

@@ -17,34 +17,67 @@ Source references:
 
 ## Cozoro Member tiers
 
-- Silver: entry tier after reaching the first threshold.
+- Tier order: Silver -> Gold -> Platinum -> Diamond -> Elite.
+- Silver: base tier.
 - Gold: reached at 100,000 accumulated coins.
 - Platinum: reached at 150,000 accumulated coins.
 - Diamond: reached at 300,000 accumulated coins.
 - Elite: reached at 800,000 accumulated coins and above.
 
-Current app rules also define these tier benefits:
+Current app rules define these tier benefits:
 
 - Silver:
   - VND exchange support rate: 60%
-  - Free laundry: no extra free laundry uses
-  - Monthly maintain coins: 5,000
+  - Free laundry: 01 dryer per month
+  - Monthly maintain coins: 0
+  - Upgrade cost: free
 - Gold:
   - VND exchange support rate: 70%
   - Free laundry: 01 wash + 01 dry per month
-  - Monthly maintain coins: 10,000
+  - Monthly maintain coins: 5,000
+  - Upgrade cost: free
 - Platinum:
   - VND exchange support rate: 80%
   - Free laundry: 01 wash + 02 dry per month
-  - Monthly maintain coins: 20,000
+  - Monthly maintain coins: 10,000
+  - Upgrade cost: free
 - Diamond:
   - VND exchange support rate: 90%
   - Free laundry: 03 wash + 03 dry per month
-  - Monthly maintain coins: 40,000
+  - Monthly maintain coins: 20,000
+  - Upgrade cost: 10,000 coins if the member lost status and wants to upgrade back
 - Elite:
   - VND exchange support rate: 100%
   - Free laundry: 03 wash + 03 dry per month
-  - Monthly maintain coins: 40,000+
+  - Monthly maintain coins: 40,000
+  - Upgrade cost: 40,000 coins if the member lost status and wants to upgrade back
+  - D7 ranking note: one small locker benefit
+
+Upgrade eligibility rule:
+
+- A member must satisfy all of these to upgrade to a target tier:
+  - `Accumulated coins condition`: total lifetime accumulated coins must reach that tier threshold
+  - `Previous month condition`: previous month's earned coins must reach that tier maintenance requirement
+  - `Upgrade payment condition`: if that tier has an upgrade cost, the member must also spend that amount of current coins
+- That upgrade cost is one-time only when moving up into that tier
+- If the member stays at that tier, they do not pay that upgrade cost again
+- If the member loses that tier and later upgrades back, the upgrade cost applies again
+
+Example:
+
+- To upgrade to Diamond:
+  - accumulated coins must be at least `300,000`
+  - previous month's earned coins must be at least `20,000`
+  - current coins must cover the `10,000` coin upgrade cost
+
+Important clarification:
+
+- The first row in the ranking table, `number of coins needed to level up`, means `all-time accumulated coins`
+- It does not mean current balance
+- It does not mean only previous month's earnings
+- Previous month's earnings are a separate requirement for upgrade and maintenance
+- Upgrade cost is a third separate requirement when the target tier has a non-zero upgrade fee
+- That fee is not a monthly maintenance charge
 
 ## Typical ways to earn coins
 
@@ -70,14 +103,16 @@ Current app rules also define these tier benefits:
 - VND payment support for rent or parking: up to 10% of each bill
 - 100,000+ coins may be converted into VND support based on the member exchange rate
 - Fine payment by coins:
-  - Standard to Gold style calculation: around 1.5x the bill value in coins
+  - Silver to Gold style calculation: around 1.5x the bill value in coins
   - Platinum and above: around 2x the bill value in coins
 
 ## Important Cozoro Coins FAQ points
 
 - Member ranking is reviewed monthly.
+- Ranking depends mainly on the previous month's earned coins, while accumulated-coin thresholds determine which tiers are available.
 - A customer can be downgraded if they do not meet the monthly coin maintenance requirement for their tier.
-- If a customer is downgraded, moving back up may require earning a higher amount again in a later month.
+- If a customer is downgraded, Gold and Platinum can be upgraded back for free, while Diamond and Elite require the configured upgrade coin cost.
+- The Diamond or Elite upgrade fee is only charged when the customer upgrades back after losing that tier, not while they continue holding it.
 - If a contract expires and is not renewed in time, the customer may lose their accumulated coins.
 - Coins cannot be converted directly into cash payouts.
 - Coins cannot currently be gifted or transferred to another person.

@@ -10,8 +10,7 @@ export const RENT_COIN_RATES: Record<string, number> = {
   Diamond: 0.9,
   Platinum: 0.8,
   Gold: 0.7,
-  Silver: 0.6,
-  Standard: 0.6
+  Silver: 0.6
 };
 
 export const FINE_VND_PER_COIN: Record<string, number> = {
@@ -19,8 +18,7 @@ export const FINE_VND_PER_COIN: Record<string, number> = {
   Diamond: 1.9,
   Platinum: 1.8,
   Gold: 1.7,
-  Silver: 1.6,
-  Standard: 1.5
+  Silver: 1.6
 };
 
 export const PARKING_PRICES = {
@@ -36,6 +34,7 @@ export interface RentBreakdown {
   baseRent: number;
   tenureSurchargeVnd: number;
   tenureSurchargeRate: number;
+  monthlyAdjustmentVnd: number;
   professionalDiscountVnd: number;
   planDiscountVnd: number;
   managerDiscountVnd: number;
@@ -58,32 +57,41 @@ export interface RentBreakdown {
   };
 }
 
-/**
- * Calculates the tenure surcharge rate based on contract duration.
- * < 3 months: +10%
- * 3-5 months: +8%
- * >= 6 months: 0%
- */
-export function getTenureSurchargeRate(durationMonths: number): number {
-  if (durationMonths < 3) return 0.1;
-  if (durationMonths < 6) return 0.08;
-  return 0;
+export interface RentCalculationOptions {
+  managerDiscountVnd?: number;
+  shortTermSurchargeRate?: number | null;
+  parkingFeeVnd?: number | null;
+}
+
+function parseVndAmount(value: unknown): number {
+  const digits = String(value ?? "").replace(/[^0-9-]/g, "");
+  if (!digits || digits === "-") {
+    return 0;
+  }
+  const parsed = Number.parseInt(digits, 10);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 /**
- * Checks eligibility for 10% professional discount.
+ * Calculates the tenure surcharge rate based on contract duration.
+ * < 3 months: +12%
+ * 4-5 months: +8%
+ * otherwise: 0%
  */
-export function isProfessionalDiscountEligible(status: string, workplace: string): boolean {
-  const s = (status || "").toLowerCase();
-  const w = (workplace || "").toLowerCase();
+export function getTenureSurchargeRate(durationMonths: number): number {
+  if (durationMonths < 3) return 0.12;
+  if (durationMonths >= 4 && durationMonths <= 5) return 0.08;
+  return 0;
+}
 
-  const studentKeywords = ["sinh viên", "sau đại học", "học sinh"];
-  const medicalKeywords = ["y dược", "y khoa", "phạm ngọc thạch", "bệnh viện", "hospital"];
-
-  const isStudent = studentKeywords.some(k => s.includes(k) || w.includes(k));
-  const isMedical = medicalKeywords.some(k => w.includes(k));
-
-  return isStudent || isMedical;
+function getMonthlyAdjustmentVnd(client: ClientRow): number {
+  const rawValue =
+    client["Ưu đãi tháng"] ||
+    client["Uu dai thang"] ||
+    client["Khoản ưu đãi và chi phí tăng thêm"] ||
+    client["Khoản ưu đãi và chi phí tăng thêm nếu có"] ||
+    "";
+  return parseVndAmount(rawValue);
 }
 
 /**
@@ -92,23 +100,27 @@ export function isProfessionalDiscountEligible(status: string, workplace: string
 export async function calculateRentBreakdown(
   client: ClientRow,
   targetMonth: string, // Format: "YYYY-MM"
-  managerDiscountVnd: number = 0
+  options: RentCalculationOptions = {}
 ): Promise<RentBreakdown> {
+  const managerDiscountVnd = Number(options.managerDiscountVnd ?? 0);
   const email = client["Địa chỉ email"] || "";
-  const memberTier = client["Cozoro Member"] || "Standard";
-  const baseRentRaw = parseInt(String(client["Số tiền chia sẻ mỗi tháng"] || "0").replace(/[^0-9]/g, ""), 10);
+  const memberTier = client["Cozoro Member"] || "Silver";
+  const baseRentRaw = parseVndAmount(client["Số tiền chia sẻ mỗi tháng"]);
   const durationMonths = parseInt(String(client["Thời hạn hợp đồng (tháng)"] || "0"), 10);
-  const proStatus = client["Hiện tại bạn đang là"] || "";
-  const workplace = client["Tên trường bạn đang học hoặc nơi bạn đang làm việc"] || "";
   const paymentPlan = client["Bạn muốn thanh toán chi phí như thế nào?"] || "";
 
   // 1. Tenure Surcharge
-  const surchargeRate = getTenureSurchargeRate(durationMonths);
+  const surchargeRate =
+    typeof options.shortTermSurchargeRate === "number" && Number.isFinite(options.shortTermSurchargeRate)
+      ? options.shortTermSurchargeRate
+      : getTenureSurchargeRate(durationMonths);
   const tenureSurchargeVnd = Math.round(baseRentRaw * surchargeRate);
 
-  // 2. Professional Discount
-  const isProEligible = isProfessionalDiscountEligible(proStatus, workplace);
-  const professionalDiscountVnd = isProEligible ? Math.round(baseRentRaw * 0.1) : 0;
+  // 2. Monthly adjustment from dedicated sheet column.
+  // Negative = discount, positive = surcharge.
+  const monthlyAdjustmentVnd = getMonthlyAdjustmentVnd(client);
+  const professionalDiscountVnd = monthlyAdjustmentVnd < 0 ? Math.abs(monthlyAdjustmentVnd) : 0;
+  const monthlyAdjustmentSurchargeVnd = monthlyAdjustmentVnd > 0 ? monthlyAdjustmentVnd : 0;
 
   // 3. Plan Discounts
   let planDiscountVnd = 0;
@@ -121,7 +133,13 @@ export async function calculateRentBreakdown(
     // For simplicity, I'll apply it to every month if it's meant to be a monthly discount? 
     // No, "total" usually means once per period.
     // I'll check if the client notes mention "Giảm 500k".
-    const notes = String(client["Khoản ưu đãi và chi phí tăng thêm nếu có"] || "").toLowerCase();
+  const notes = String(
+    client["Ưu đãi tháng"] ||
+    client["Uu dai thang"] ||
+    client["Khoản ưu đãi và chi phí tăng thêm nếu có"] ||
+    client["Khoản ưu đãi và chi phí tăng thêm"] ||
+    ""
+  ).toLowerCase();
     if (notes.includes("giảm 500k")) {
        planDiscountVnd = 500000;
     }
@@ -146,10 +164,13 @@ export async function calculateRentBreakdown(
   // Motorbike: 200k, Bicycle: 100k
   // We'll look at "Biển số xe máy" or specific parking columns if available.
   // Many rows have "Phí gởi xe" already. I'll use that if present, otherwise calculate.
-  let parkingFeeVnd = parseInt(String(client["Phí gởi xe"] || "0").replace(/[^0-9]/g, ""), 10);
+  let parkingFeeVnd =
+    typeof options.parkingFeeVnd === "number" && Number.isFinite(options.parkingFeeVnd)
+      ? options.parkingFeeVnd
+      : parseVndAmount(client["Phí gởi xe"]);
   let motorbikes = 0;
   let bicycles = 0;
-  if (parkingFeeVnd === 0) {
+  if (typeof options.parkingFeeVnd !== "number" && parkingFeeVnd === 0) {
     if (client["Biển số xe máy đăng ký gởi xe"]) {
       motorbikes = 1;
       parkingFeeVnd = PARKING_PRICES.MOTORBIKE;
@@ -200,7 +221,10 @@ export async function calculateRentBreakdown(
   const rentWithSurcharges = effectiveBaseRent + tenureSurchargeVnd;
   const totalDiscounts = professionalDiscountVnd + planDiscountVnd + managerDiscountVnd;
   
-  const totalBeforeCoinsVnd = Math.max(0, rentWithSurcharges - totalDiscounts + parkingFeeVnd + laundryFeeVnd + finesVnd);
+  const totalBeforeCoinsVnd = Math.max(
+    0,
+    rentWithSurcharges + monthlyAdjustmentSurchargeVnd - totalDiscounts + parkingFeeVnd + laundryFeeVnd + finesVnd
+  );
 
   // 8. Coin Usage (Cap: 10% of rent part)
   // "Clients can use coins to cover up to 10% of the monthly rent"
@@ -225,6 +249,7 @@ export async function calculateRentBreakdown(
     baseRent: effectiveBaseRent,
     tenureSurchargeVnd,
     tenureSurchargeRate: surchargeRate,
+    monthlyAdjustmentVnd,
     professionalDiscountVnd,
     planDiscountVnd,
     managerDiscountVnd,
@@ -238,8 +263,13 @@ export async function calculateRentBreakdown(
     finalTotalVnd: Math.max(0, finalTotalVnd),
     details: {
       durationMonths,
-      professionalStatus: proStatus,
-      workplace,
+      professionalStatus:
+        client["Ưu đãi tháng"] ||
+        client["Uu dai thang"] ||
+        client["Khoản ưu đãi và chi phí tăng thêm"] ||
+        client["Khoản ưu đãi và chi phí tăng thêm nếu có"] ||
+        "",
+      workplace: "",
       memberTier,
       parkingCount: { motorbikes, bicycles },
       laundryCount: { free: laundryFreeCount, coins: laundryCoinCount, cash: laundryCashCount },

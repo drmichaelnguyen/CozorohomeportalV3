@@ -54,6 +54,7 @@ type BranchLayoutRoom = {
 
 type CoinEntry = { row: Record<string, string>; parsedTimestamp: string | null };
 type PaymentEntry = { row: Record<string, string>; parsedTimestamp: string | null };
+type PaymentCachePayload = { syncedAt?: string; rows?: Record<string, string>[]; error?: string };
 type ClientChatMessage = {
   id: string;
   senderEmail: string;
@@ -100,6 +101,13 @@ type StaffEntry = {
   addedBy: string;
   permissions?: ManagerPermissionsState;
 };
+type AccountLockOverride = {
+  email: string;
+  unlocked: boolean;
+  note?: string;
+  updatedAt: string;
+  updatedBy: string;
+};
 type FeedbackEntry = {
   fileName: string;
   email: string;
@@ -108,12 +116,26 @@ type FeedbackEntry = {
   createdAt: string;
 };
 
+const PAYMENT_COMPACT_COLUMNS = [
+  "Chi nhánh Dorm",
+  "DẤU THỜI GIAN",
+  "Địa chỉ email",
+  "Số giường",
+  "NGƯỜI NHẬN TIỀN",
+  "NGƯỜI ĐÓNG TIỀN",
+  "SỐ TIỀN",
+  "MỤC ĐÍCH",
+  "MỤC ĐÍCH - GHI RÕ",
+  "Địa chỉ email người nhận"
+] as const;
+
 type RentBreakdown = {
   email: string;
   month: string;
   baseRent: number;
   tenureSurchargeVnd: number;
   tenureSurchargeRate: number;
+  monthlyAdjustmentVnd: number;
   professionalDiscountVnd: number;
   planDiscountVnd: number;
   managerDiscountVnd: number;
@@ -136,6 +158,52 @@ type RentBreakdown = {
   };
 };
 
+function normalizeRentBreakdown(input: Partial<RentBreakdown> | null | undefined): RentBreakdown | null {
+  if (!input) {
+    return null;
+  }
+
+  return {
+    email: input.email ?? "",
+    month: input.month ?? "",
+    baseRent: Number(input.baseRent ?? 0),
+    tenureSurchargeVnd: Number(input.tenureSurchargeVnd ?? 0),
+    tenureSurchargeRate: Number(input.tenureSurchargeRate ?? 0),
+    monthlyAdjustmentVnd: Number(input.monthlyAdjustmentVnd ?? 0),
+    professionalDiscountVnd: Number(input.professionalDiscountVnd ?? 0),
+    planDiscountVnd: Number(input.planDiscountVnd ?? 0),
+    managerDiscountVnd: Number(input.managerDiscountVnd ?? 0),
+    parkingFeeVnd: Number(input.parkingFeeVnd ?? 0),
+    laundryFeeVnd: Number(input.laundryFeeVnd ?? 0),
+    finesVnd: Number(input.finesVnd ?? 0),
+    totalBeforeCoinsVnd: Number(input.totalBeforeCoinsVnd ?? 0),
+    maxCoinUsageVnd: Number(input.maxCoinUsageVnd ?? 0),
+    recommendedCoinUsage: Number(input.recommendedCoinUsage ?? 0),
+    recommendedCoinValueVnd: Number(input.recommendedCoinValueVnd ?? 0),
+    finalTotalVnd: Number(input.finalTotalVnd ?? 0),
+    details: {
+      durationMonths: Number(input.details?.durationMonths ?? 0),
+      professionalStatus: input.details?.professionalStatus ?? "",
+      workplace: input.details?.workplace ?? "",
+      memberTier: input.details?.memberTier ?? "",
+      parkingCount: {
+        motorbikes: Number(input.details?.parkingCount?.motorbikes ?? 0),
+        bicycles: Number(input.details?.parkingCount?.bicycles ?? 0)
+      },
+      laundryCount: {
+        free: Number(input.details?.laundryCount?.free ?? 0),
+        coins: Number(input.details?.laundryCount?.coins ?? 0),
+        cash: Number(input.details?.laundryCount?.cash ?? 0)
+      },
+      unpaidFinesCount: Number(input.details?.unpaidFinesCount ?? 0)
+    }
+  };
+}
+
+function formatPercentInput(rate: number | null | undefined): string {
+  return String(Math.round(Number(rate ?? 0) * 10000) / 100);
+}
+
 type WorkspacePayload = {
   client: ManagerClientRecord;
   stats: {
@@ -157,17 +225,6 @@ const COIN_EVENT_OPTIONS = [
   "Fine payment",
   "Member upgrade",
   "Manual deduction"
-];
-
-const PAYMENT_PURPOSE_OPTIONS = [
-  "Monthly rent",
-  "Deposit",
-  "Utilities",
-  "Laundry fee",
-  "Fine payment",
-  "Room transfer",
-  "Extension fee",
-  "Other"
 ];
 
 const BRANCH_LAYOUTS: Record<"D2" | "D7", BranchLayoutRoom[]> = {
@@ -233,6 +290,17 @@ function findRowValue(row: Record<string, string>, fragments: string[]) {
   return String(match?.[1] ?? "").trim();
 }
 
+function getPaymentRowValue(row: Record<string, string>, column: (typeof PAYMENT_COMPACT_COLUMNS)[number]) {
+  switch (column) {
+    case "Địa chỉ email":
+      return String(row.EMAIL ?? row["Địa chỉ email"] ?? "").trim();
+    case "Số giường":
+      return String(row["Số giường"] ?? row.BED ?? "").trim();
+    default:
+      return String(row[column] ?? "").trim();
+  }
+}
+
 function parseLooseNumber(value: string | null | undefined) {
   const cleaned = String(value ?? "").replace(/[^\d-]/g, "");
   const parsed = Number.parseInt(cleaned, 10);
@@ -249,6 +317,42 @@ function formatCurrency(value: number) {
 
 function parseLooseDate(value: string | null | undefined): Date | null {
   return parseVietnamDate(String(value ?? ""));
+}
+
+function getAutomaticFeatureLockStatus(client: ManagerClientRecord | null) {
+  if (!client) {
+    return { isBlocked: false, reason: "", kind: "" as "" | "contract" | "rent" };
+  }
+
+  const now = new Date();
+  const msPerDay = 86400000;
+  const blockGraceDays = 5;
+  const contractEnd = parseLooseDate(client.row?.["Ngày hết hạn hợp đồng"]);
+  const paymentExpiry = parseLooseDate(client.row?.["Ngày hết hạn gói đã thanh toán"]);
+
+  if (contractEnd) {
+    const diffDays = (now.getTime() - contractEnd.getTime()) / msPerDay;
+    if (diffDays > blockGraceDays) {
+      return {
+        isBlocked: true,
+        reason: `Contract expired ${Math.floor(diffDays)} days ago`,
+        kind: "contract" as const
+      };
+    }
+  }
+
+  if (paymentExpiry) {
+    const diffDays = (now.getTime() - paymentExpiry.getTime()) / msPerDay;
+    if (diffDays > blockGraceDays) {
+      return {
+        isBlocked: true,
+        reason: `Rent overdue ${Math.floor(diffDays)} days`,
+        kind: "rent" as const
+      };
+    }
+  }
+
+  return { isBlocked: false, reason: "", kind: "" as const };
 }
 
 type DataCategory = "clients" | "fines" | "payments" | "cleaning" | "laundry" | "support" | "coins" | "stats";
@@ -677,8 +781,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [rentPaidStatus, setRentPaidStatus] = useState<boolean | null>(null);
   const [rentPaidMonth, setRentPaidMonth] = useState("");
   const [rentPaidLoading, setRentPaidLoading] = useState(false);
+  const [rentSectionCollapsed, setRentSectionCollapsed] = useState(false);
   const [infoRentBreakdown, setInfoRentBreakdown] = useState<RentBreakdown | null>(null);
   const [infoManagerDiscount, setInfoManagerDiscount] = useState("0");
+  const [infoShortTermSurchargeRate, setInfoShortTermSurchargeRate] = useState("0");
+  const [infoParkingFee, setInfoParkingFee] = useState("0");
   const [infoRentCalculating, setInfoRentCalculating] = useState(false);
   const [clientNewPassword, setClientNewPassword] = useState("");
   const [clientPasswordLoading, setClientPasswordLoading] = useState(false);
@@ -697,9 +804,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [fineImageUploading, setFineImageUploading] = useState(false);
   const [fineImageFileName, setFineImageFileName] = useState("");
   const [paymentAmount, setPaymentAmount] = useState("1000000");
-  const [paymentPurpose, setPaymentPurpose] = useState("Monthly rent");
+  const [paymentPurpose, setPaymentPurpose] = useState("");
   const [paymentPurposeInput, setPaymentPurposeInput] = useState("");
-  const [paymentPurposeSelections, setPaymentPurposeSelections] = useState<string[]>(["Monthly rent"]);
+  const [paymentPurposeSelections, setPaymentPurposeSelections] = useState<string[]>([]);
+  const [paymentPurposeOpen, setPaymentPurposeOpen] = useState(false);
+  const [paymentPurposeRows, setPaymentPurposeRows] = useState<Record<string, string>[]>([]);
   const [paymentDetails, setPaymentDetails] = useState("");
   const [paymentPayer, setPaymentPayer] = useState("");
   const [paymentBranch, setPaymentBranch] = useState("");
@@ -714,6 +823,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [removeConfirmPassword, setRemoveConfirmPassword] = useState("");
   const [removeConfirmError, setRemoveConfirmError] = useState("");
   const [removeConfirmLoading, setRemoveConfirmLoading] = useState(false);
+  const [accountLockOverride, setAccountLockOverride] = useState<AccountLockOverride | null>(null);
+  const [accountLockOverrideLoading, setAccountLockOverrideLoading] = useState(false);
   // Short-term portal state
   const [stExpanded, setStExpanded] = useState<Record<string, boolean>>({});
   const [stConfig, setStConfig] = useState<ShortTermConfig | null>(null);
@@ -759,6 +870,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [rentBreakdown, setRentBreakdown] = useState<RentBreakdown | null>(null);
   const [calculatingRent, setCalculatingRent] = useState(false);
   const [managerDiscountInput, setManagerDiscountInput] = useState("0");
+  const [shortTermSurchargeRateInput, setShortTermSurchargeRateInput] = useState("0");
+  const [parkingFeeInput, setParkingFeeInput] = useState("0");
   const [targetMonthInput, setTargetMonthInput] = useState(new Date().toISOString().slice(0, 7));
   
   // New subtab states
@@ -1078,23 +1191,29 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   }, [fineContent, fineContentSuggestions]);
   const paymentPurposeSuggestions = useMemo(() => {
     const historicalPurposes =
-      workspace?.stats.payments
+      paymentPurposeRows
         .map(
-          (entry) =>
-            findRowValue(entry.row, ["mucdich"]) ||
-            findRowValue(entry.row, ["purpose"])
+          (row) =>
+            String(
+              (
+                row["MỤC ĐÍCH"] ??
+                row["MUC DICH"] ??
+                row["Mục đích"] ??
+                findRowValue(row, ["mucdich"])
+              ) || ""
+            ).trim()
         )
         .flatMap((value) =>
           String(value ?? "")
-            .split(/[,;/]+/)
+            .split(",")
             .map((part) => part.trim())
             .filter(Boolean)
         ) ?? [];
 
-    return Array.from(new Set([...PAYMENT_PURPOSE_OPTIONS, ...historicalPurposes])).sort((left, right) =>
+    return Array.from(new Set(historicalPurposes)).sort((left, right) =>
       left.localeCompare(right, undefined, { sensitivity: "base" })
     );
-  }, [workspace]);
+  }, [paymentPurposeRows]);
   const filteredPaymentPurposeSuggestions = useMemo(() => {
     const keyword = paymentPurposeInput.trim().toLowerCase();
     const availableOptions = paymentPurposeSuggestions.filter(
@@ -1283,6 +1402,61 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }
   }
 
+  async function loadPaymentPurposeRows() {
+    if (!isStaffSession) {
+      return;
+    }
+    try {
+      let response = await fetch(`${API_BASE_URL}/payments/cache`);
+      let data = (await response.json()) as PaymentCachePayload;
+      if (!response.ok || !(data.rows ?? []).length) {
+        await fetch(`${API_BASE_URL}/payments/sync`, { method: "POST" });
+        response = await fetch(`${API_BASE_URL}/payments/cache`);
+        data = (await response.json()) as PaymentCachePayload;
+      }
+      if (!response.ok) {
+        setPaymentPurposeRows([]);
+        return;
+      }
+      setPaymentPurposeRows(data.rows ?? []);
+    } catch {
+      setPaymentPurposeRows([]);
+    }
+  }
+
+  async function loadAccountLockOverride(email: string) {
+    if (!email.trim()) {
+      setAccountLockOverride(null);
+      return;
+    }
+    setAccountLockOverrideLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/account-lock-override?email=${encodeURIComponent(email.trim().toLowerCase())}`);
+      const data = (await response.json()) as { override?: AccountLockOverride | null };
+      if (!response.ok) {
+        setAccountLockOverride(null);
+        return;
+      }
+      setAccountLockOverride(data.override ?? null);
+    } catch {
+      setAccountLockOverride(null);
+    } finally {
+      setAccountLockOverrideLoading(false);
+    }
+  }
+
+  function updateClientStayStatus(client: ManagerClientRecord, value: string, successMessage = "Stay status updated") {
+    setLoading(true);
+    void postJson(
+      `${API_BASE_URL}/staff/client-sheet-update`,
+      { actorEmail: normalizedEmail, maHd: client.maHd, values: { "Hiện còn ở": value } },
+      successMessage,
+      async () => {
+        await loadClients(false);
+      }
+    ).finally(() => setLoading(false));
+  }
+
   async function loadWorkspace(tab: StatsTab, maHd = selectedMaHd) {
     if (!maHd || !isStaffSession) {
       return;
@@ -1315,6 +1489,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     setRentPaidStatus(null);
     setInfoRentBreakdown(null);
     setInfoManagerDiscount("0");
+    setInfoShortTermSurchargeRate("0");
+    setInfoParkingFee("0");
     try {
       const [statusResponse, breakdownResponse] = await Promise.all([
         fetch(`${API_BASE_URL}/manager/rent-paid-status?actorEmail=${encodeURIComponent(normalizedEmail)}&email=${encodeURIComponent(clientEmail)}&month=${month}`),
@@ -1329,26 +1505,36 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         setRentPaidStatus(data.isPaid);
       }
       if (breakdownResponse.ok) {
-        const data = (await breakdownResponse.json()) as RentBreakdown;
+        const data = normalizeRentBreakdown((await breakdownResponse.json()) as Partial<RentBreakdown>);
         setInfoRentBreakdown(data);
-        setInfoManagerDiscount(String(data.managerDiscountVnd || 0));
+        setInfoManagerDiscount(String(data?.managerDiscountVnd || 0));
+        setInfoShortTermSurchargeRate(formatPercentInput(data?.tenureSurchargeRate));
+        setInfoParkingFee(String(data?.parkingFeeVnd || 0));
       }
     } catch {
       // ignore
     }
   }
 
-  async function recalcInfoBreakdown(clientEmail: string, discount: string) {
+  async function recalcInfoBreakdown(clientEmail: string, discount: string, surchargeRatePercent: string, parkingFee: string) {
     setInfoRentCalculating(true);
     try {
       const response = await fetch(`${API_BASE_URL}/calculate-rent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: clientEmail, targetMonth: rentPaidMonth, managerDiscountVnd: Number(discount) || 0 })
+        body: JSON.stringify({
+          email: clientEmail,
+          targetMonth: rentPaidMonth,
+          managerDiscountVnd: Number(discount) || 0,
+          shortTermSurchargeRate: (Number(surchargeRatePercent) || 0) / 100,
+          parkingFeeVnd: Number(parkingFee) || 0
+        })
       });
       if (response.ok) {
-        const data = (await response.json()) as RentBreakdown;
+        const data = normalizeRentBreakdown((await response.json()) as Partial<RentBreakdown>);
         setInfoRentBreakdown(data);
+        setInfoShortTermSurchargeRate(formatPercentInput(data?.tenureSurchargeRate));
+        setInfoParkingFee(String(data?.parkingFeeVnd || 0));
       }
     } catch {
       // ignore
@@ -1373,6 +1559,80 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       // ignore
     } finally {
       setRentPaidLoading(false);
+    }
+  }
+
+  async function submitRentReceipt(options: {
+    client: ManagerClientRecord;
+    breakdown: RentBreakdown;
+    targetMonth: string;
+    managerDiscount: string;
+    shortTermSurchargeRate: string;
+    parkingFee: string;
+    payerName?: string;
+    closePaymentPanel?: boolean;
+  }) {
+    const payerName = (options.payerName ?? "").trim() || options.client.name || options.client.email;
+
+    setLoading(true);
+    try {
+      const receiptResponse = await fetch(`${API_BASE_URL}/pay-rent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: options.client.email,
+          targetMonth: options.targetMonth,
+          managerDiscountVnd: Number(options.managerDiscount) || 0,
+          shortTermSurchargeRate: (Number(options.shortTermSurchargeRate) || 0) / 100,
+          parkingFeeVnd: Number(options.parkingFee) || 0,
+          coinUsage: options.breakdown.recommendedCoinUsage,
+          payerName,
+          receiverName: selfDisplayName || normalizedEmail,
+          recipientEmail: normalizedEmail,
+          branch: paymentBranch || options.client.branch || "",
+          memberTier: paymentMemberTier || options.client.recordedMember || "",
+          currentCoins: paymentCurrentCoins || options.client.currentCoins || "",
+          discountAmount:
+            options.breakdown.professionalDiscountVnd +
+            options.breakdown.planDiscountVnd +
+            options.breakdown.managerDiscountVnd,
+          discountCondition: `Rent payment ${options.targetMonth}`
+        })
+      });
+
+      const receiptPayload = (await receiptResponse.json().catch(() => null)) as { error?: string } | null;
+      if (!receiptResponse.ok) {
+        throw new Error(receiptPayload?.error ?? "Payment recording failed");
+      }
+
+      const paidStatusResponse = await fetch(`${API_BASE_URL}/manager/rent-paid-status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actorEmail: normalizedEmail,
+          email: options.client.email,
+          month: options.targetMonth,
+          isPaid: true
+        })
+      });
+
+      const paidStatusPayload = (await paidStatusResponse.json().catch(() => null)) as { error?: string; isPaid?: boolean } | null;
+      if (!paidStatusResponse.ok) {
+        throw new Error(paidStatusPayload?.error ?? "Receipt was created, but the paid status could not be updated.");
+      }
+
+      setRentPaidStatus(true);
+      setRentSectionCollapsed(true);
+      if (options.closePaymentPanel) {
+        setActiveAction("");
+        setRentBreakdown(null);
+      }
+      await loadWorkspace("payments", options.client.maHd);
+      alert("Payment recorded, receipt sent via Gmail, and monthly rent marked as paid.");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Error");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -1404,9 +1664,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       setClients([]);
       setWorkspace(null);
       setStaffEntries([]);
+      setPaymentPurposeRows([]);
       return;
     }
     void loadClients(false);
+    void loadPaymentPurposeRows();
     if (isStaffSession) {
       void loadTeam();
     }
@@ -1416,23 +1678,45 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     setActiveAction("");
     setFineImage("");
     setFineImageFileName("");
-    setPaymentPurpose("Monthly rent");
+    setPaymentPurpose("");
     setPaymentPurposeInput("");
-    setPaymentPurposeSelections(["Monthly rent"]);
+    setPaymentPurposeSelections([]);
+    setPaymentPurposeOpen(false);
     setPaymentDiscountAmount("");
     setPaymentDiscountCondition("");
     const client = clients.find((c) => c.maHd === selectedMaHd) ?? null;
     setPaymentBranch(client ? normalizeBranchLabel(client.branch) : "");
-    setPaymentRecipientEmail(client?.email ?? "");
+    setPaymentRecipientEmail(normalizedEmail);
     setPaymentMemberTier(client?.recordedMember ?? "");
     setPaymentCurrentCoins(client?.currentCoins ?? "");
-  }, [selectedMaHd, clients]);
+  }, [selectedMaHd, clients, normalizedEmail]);
+
+  useEffect(() => {
+    if (!selectedClient?.email) {
+      setAccountLockOverride(null);
+      return;
+    }
+    void loadAccountLockOverride(selectedClient.email);
+  }, [selectedClient?.email]);
 
   useEffect(() => {
     if (activeAction === "message" && selectedClient?.email) {
       void loadClientChat(selectedClient.email);
     }
   }, [activeAction, selectedClient?.email]);
+
+  useEffect(() => {
+    setRentSectionCollapsed(rentPaidStatus === true);
+  }, [rentPaidStatus, selectedMaHd]);
+
+  useEffect(() => {
+    if (activeAction === "payment" && infoRentBreakdown && !rentBreakdown) {
+      setTargetMonthInput(rentPaidMonth || new Date().toISOString().slice(0, 7));
+      setManagerDiscountInput(infoManagerDiscount);
+      setShortTermSurchargeRateInput(infoShortTermSurchargeRate);
+      setParkingFeeInput(infoParkingFee);
+    }
+  }, [activeAction, infoManagerDiscount, infoParkingFee, infoRentBreakdown, infoShortTermSurchargeRate, rentBreakdown, rentPaidMonth]);
 
   useEffect(() => {
     if (activeManagerView === "feedbacks") {
@@ -1458,7 +1742,15 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     } else {
       setRentPaidStatus(null);
       setRentPaidMonth("");
+      setRentSectionCollapsed(false);
       setInfoRentBreakdown(null);
+      setInfoManagerDiscount("0");
+      setInfoShortTermSurchargeRate("0");
+      setInfoParkingFee("0");
+      setManagerDiscountInput("0");
+      setShortTermSurchargeRateInput("0");
+      setParkingFeeInput("0");
+      setRentBreakdown(null);
     }
     if (selectedClient?.maHd) {
       setTerminationStatus("loading");
@@ -1684,6 +1976,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
     syncPaymentPurposeSelection([...paymentPurposeSelections, trimmed]);
     setPaymentPurposeInput("");
+    setPaymentPurposeOpen(false);
   }
 
   if (!isStaffSession) {
@@ -1836,6 +2129,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     {group.rooms.map((room) => {
                       const roomGroupId = `ROOM_${selectedBranch}_${room.room}`;
                       const roomUnread = unreadCounts[roomGroupId] || 0;
+                      const pendingClients = room.clients.filter((client) => String(client.activeStay ?? "").trim() === "");
                       return (
                         <div key={room.room} className={`relative rounded-2xl border bg-white p-3 shadow-sm transition-all hover:shadow-md ${roomUnread > 0 ? "border-sky-300 ring-1 ring-sky-300" : "border-slate-200"}`}>
                           {roomUnread > 0 && (
@@ -1845,7 +2139,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           )}
                           <div className="flex items-center justify-between border-b border-slate-50 pb-2">
                             <span className="text-sm font-bold text-slate-900">{t("roomLabel")} {room.room}</span>
-                            <span className="text-[10px] font-medium text-slate-500">{room.clients.length} {t("bedsLabel")}</span>
+                            <div className="flex items-center gap-2">
+                              {pendingClients.length > 0 ? (
+                                <span className="rounded-full bg-pink-100 px-2 py-0.5 text-[10px] font-semibold text-pink-700">
+                                  {pendingClients.length} pending
+                                </span>
+                              ) : null}
+                              <span className="text-[10px] font-medium text-slate-500">{room.clients.length} {t("bedsLabel")}</span>
+                            </div>
                           </div>
                           <div className="mt-3 flex flex-wrap gap-3">
                             {room.diagram.bunks.map((bunk) => (
@@ -1887,6 +2188,58 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               </div>
                             ))}
                           </div>
+                          {pendingClients.length > 0 ? (
+                            <div className="mt-3 space-y-2 rounded-xl border border-pink-200 bg-pink-50 p-3">
+                              <div className="text-[11px] font-semibold uppercase tracking-wide text-pink-700">
+                                Pending For Add
+                              </div>
+                              {pendingClients.map((client) => (
+                                <div key={client.maHd} className="rounded-lg border border-pink-100 bg-white p-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedMaHd(client.maHd);
+                                      fillClientForm(client);
+                                      setClientSubTab("details");
+                                    }}
+                                    className="w-full text-left"
+                                  >
+                                    <div className="text-sm font-medium text-slate-900">{client.name}</div>
+                                    <div className="text-xs text-slate-500">
+                                      {client.email}
+                                      {client.bed ? ` • Bed ${client.bed}` : ""}
+                                    </div>
+                                  </button>
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    <button
+                                      type="button"
+                                      disabled={loading}
+                                      onClick={() => updateClientStayStatus(client, "1", "Pending resident marked as staying")}
+                                      className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                                    >
+                                      Set 1
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={loading}
+                                      onClick={() => updateClientStayStatus(client, "0", "Pending resident marked as moved out")}
+                                      className="rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-600 disabled:opacity-50"
+                                    >
+                                      Set 0
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={loading}
+                                      onClick={() => updateClientStayStatus(client, "-1", "Pending resident marked as removed")}
+                                      className="rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700 disabled:opacity-50"
+                                    >
+                                      Set -1
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
                       );
                     })}
@@ -2628,7 +2981,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     </div>
                   );
                 })()}
-
                 {(() => {
                   const stay = String(selectedClient.activeStay ?? "").trim();
                   const isUnset = stay === "";
@@ -2645,16 +2997,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   const stayColor = isUnset ? "text-pink-700" : isStaying ? "text-emerald-700" : "text-rose-700";
                   const borderColor = isUnset ? "border-pink-300 bg-pink-50" : "border-slate-200 bg-slate-50";
 
-                  function updateStay(value: string) {
-                    setLoading(true);
-                    void postJson(
-                      `${API_BASE_URL}/staff/client-sheet-update`,
-                      { actorEmail: normalizedEmail, maHd: selectedClient!.maHd, values: { "Hiện còn ở": value } },
-                      "Stay status updated",
-                      async () => { await loadClients(false); }
-                    ).finally(() => setLoading(false));
-                  }
-
                   return (
                     <div className={`rounded-2xl border p-4 ${borderColor}`}>
                       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2666,7 +3008,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           <button
                             type="button"
                             disabled={loading || isStaying}
-                            onClick={() => updateStay("1")}
+                            onClick={() => updateClientStayStatus(selectedClient!, "1")}
                             className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${isStaying ? "bg-emerald-600 text-white" : "border border-emerald-300 text-emerald-700 hover:bg-emerald-50"} disabled:opacity-50`}
                           >
                             Staying (1)
@@ -2674,7 +3016,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           <button
                             type="button"
                             disabled={loading || isMovedOut}
-                            onClick={() => updateStay("0")}
+                            onClick={() => updateClientStayStatus(selectedClient!, "0")}
                             className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${isMovedOut ? "bg-slate-500 text-white" : "border border-slate-300 text-slate-600 hover:bg-slate-50"} disabled:opacity-50`}
                           >
                             Moved out (0)
@@ -2682,7 +3024,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           <button
                             type="button"
                             disabled={loading || isLeft}
-                            onClick={() => updateStay("-1")}
+                            onClick={() => updateClientStayStatus(selectedClient!, "-1")}
                             className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${isLeft ? "bg-rose-600 text-white" : "border border-rose-300 text-rose-700 hover:bg-rose-50"} disabled:opacity-50`}
                           >
                             Left (−1)
@@ -2803,6 +3145,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           <div className="mt-0.5 text-sm font-medium text-slate-700">{rentPaidMonth || "This month"}</div>
                         </div>
                         <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setRentSectionCollapsed((current) => !current)}
+                            className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-white"
+                          >
+                            {rentSectionCollapsed ? "Expand" : "Collapse"}
+                          </button>
                           <span className={`text-xs font-semibold ${rentPaidStatus ? "text-emerald-600" : "text-amber-600"}`}>
                             {rentPaidStatus === null ? "—" : rentPaidStatus ? "Paid" : "Unpaid"}
                           </span>
@@ -2817,14 +3166,19 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         </div>
                       </div>
 
-                      {infoRentCalculating ? (
+                      {rentSectionCollapsed ? (
+                        <p className="text-xs text-slate-500 border-t border-slate-200 pt-3">
+                          {rentPaidStatus ? "Monthly rent details are collapsed because this month is marked paid." : "Monthly rent details are collapsed."}
+                        </p>
+                      ) : infoRentCalculating ? (
                         <p className="text-xs text-slate-500 border-t border-slate-200 pt-3">Calculating…</p>
                       ) : infoRentBreakdown ? (
                         <div className="space-y-1.5 border-t border-slate-200 pt-3 text-sm">
                           {[
                             { label: "Base rent", value: infoRentBreakdown.baseRent ?? 0, color: "" },
                             ...((infoRentBreakdown.tenureSurchargeVnd ?? 0) > 0 ? [{ label: `Short-term surcharge (+${((infoRentBreakdown.tenureSurchargeRate ?? 0) * 100).toFixed(0)}%)`, value: infoRentBreakdown.tenureSurchargeVnd ?? 0, color: "text-amber-600" }] : []),
-                            ...((infoRentBreakdown.professionalDiscountVnd ?? 0) > 0 ? [{ label: "Professional discount (−10%)", value: -(infoRentBreakdown.professionalDiscountVnd ?? 0), color: "text-emerald-600" }] : []),
+                            ...((infoRentBreakdown.monthlyAdjustmentVnd ?? 0) > 0 ? [{ label: "Monthly adjustment surcharge", value: infoRentBreakdown.monthlyAdjustmentVnd ?? 0, color: "text-amber-600" }] : []),
+                            ...((infoRentBreakdown.professionalDiscountVnd ?? 0) > 0 ? [{ label: "Monthly adjustment discount", value: -(infoRentBreakdown.professionalDiscountVnd ?? 0), color: "text-emerald-600" }] : []),
                             ...((infoRentBreakdown.planDiscountVnd ?? 0) > 0 ? [{ label: "Plan discount", value: -(infoRentBreakdown.planDiscountVnd ?? 0), color: "text-emerald-600" }] : []),
                             ...((infoRentBreakdown.managerDiscountVnd ?? 0) > 0 ? [{ label: "Manager discount", value: -(infoRentBreakdown.managerDiscountVnd ?? 0), color: "text-emerald-600" }] : []),
                             { label: "Parking", value: infoRentBreakdown.parkingFeeVnd ?? 0, color: "" },
@@ -2844,13 +3198,24 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    setTargetMonthInput(rentPaidMonth);
-                                    setManagerDiscountInput(infoManagerDiscount);
-                                    setRentBreakdown(infoRentBreakdown);
-                                    setRentPaymentMode("rent");
-                                    setActiveAction("payment");
+                                    if (!window.confirm(`Create a rent receipt for ${rentPaidMonth || "this month"}?`)) {
+                                      return;
+                                    }
+                                    if (!selectedClient || !infoRentBreakdown) {
+                                      return;
+                                    }
+                                    void submitRentReceipt({
+                                      client: selectedClient,
+                                      breakdown: infoRentBreakdown,
+                                      targetMonth: rentPaidMonth,
+                                      managerDiscount: infoManagerDiscount,
+                                      shortTermSurchargeRate: infoShortTermSurchargeRate,
+                                      parkingFee: infoParkingFee,
+                                      payerName: selectedClient.name
+                                    });
                                   }}
-                                  className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-700"
+                                  disabled={loading || !selectedClient || !infoRentBreakdown}
+                                  className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                                 >
                                   Create Receipt
                                 </button>
@@ -2862,7 +3227,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         <p className="text-xs text-slate-500 border-t border-slate-200 pt-3">No breakdown available</p>
                       )}
 
-                      <div className="flex gap-2 border-t border-slate-200 pt-3">
+                      {!rentSectionCollapsed ? (
+                      <div className="grid gap-2 border-t border-slate-200 pt-3 md:grid-cols-[1fr_1fr_1fr_auto]">
                         <div className="flex-1">
                           <label className="block text-xs font-medium text-slate-500 mb-1">Manager discount (₫)</label>
                           <input
@@ -2873,15 +3239,37 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             min="0"
                           />
                         </div>
+                        <div className="flex-1">
+                          <label className="block text-xs font-medium text-slate-500 mb-1">Short-term surcharge (%)</label>
+                          <input
+                            type="number"
+                            value={infoShortTermSurchargeRate}
+                            onChange={(e) => setInfoShortTermSurchargeRate(e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                            min="0"
+                            step="0.01"
+                          />
+                        </div>
+                        <div className="flex-1">
+                          <label className="block text-xs font-medium text-slate-500 mb-1">Parking fee (₫)</label>
+                          <input
+                            type="number"
+                            value={infoParkingFee}
+                            onChange={(e) => setInfoParkingFee(e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                            min="0"
+                          />
+                        </div>
                         <button
                           type="button"
                           disabled={infoRentCalculating || !selectedClient}
-                          onClick={() => void recalcInfoBreakdown(selectedClient.email, infoManagerDiscount)}
+                          onClick={() => void recalcInfoBreakdown(selectedClient.email, infoManagerDiscount, infoShortTermSurchargeRate, infoParkingFee)}
                           className="self-end rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                         >
                           {infoRentCalculating ? "…" : "Recalc"}
                         </button>
                       </div>
+                      ) : null}
                     </div>
                   );
                 })()}
@@ -2922,8 +3310,60 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 <div>Email: {selectedClient?.email || "-"}</div>
                 <div>Phone: {selectedClientPhone || "-"}</div>
               </div>
-            </div>
-              <div className="mt-4 flex flex-wrap gap-3">
+	            </div>
+	              <div className="mt-4 flex flex-wrap gap-3">
+                  {(() => {
+                    const autoLock = selectedClient ? getAutomaticFeatureLockStatus(selectedClient) : null;
+                    const isUnlocked = accountLockOverride?.unlocked === true;
+                    const canToggle = !!selectedClient?.email && (sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin");
+                    const isUnavailable = !autoLock || (!autoLock.isBlocked && !isUnlocked);
+                    const label = accountLockOverrideLoading
+                      ? "Loading…"
+                      : isUnlocked
+                        ? "Feature Lock: Off"
+                        : autoLock?.isBlocked
+                          ? "Feature Lock: On"
+                          : "Feature Lock";
+
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!selectedClient?.email || !autoLock || isUnavailable) return;
+                          void postJson(
+                            `${API_BASE_URL}/manager/account-lock-override`,
+                            {
+                              actorEmail: normalizedEmail,
+                              targetEmail: selectedClient.email,
+                              unlocked: !isUnlocked,
+                              note: !isUnlocked ? "Manual unlock for overdue rent or expired contract restrictions." : ""
+                            },
+                            !isUnlocked ? "Account functions unlocked." : "Account returned to automatic lock rules.",
+                            async () => {
+                              await loadAccountLockOverride(selectedClient.email);
+                            }
+                          );
+                        }}
+                        disabled={!canToggle || accountLockOverrideLoading || !selectedClient?.email || isUnavailable}
+                        className={`rounded-lg px-4 py-2 text-sm font-medium ${
+                          isUnlocked
+                            ? "border border-amber-300 text-amber-700"
+                            : autoLock?.isBlocked
+                              ? "bg-rose-600 text-white"
+                              : "border border-slate-300 text-slate-400"
+                        } disabled:opacity-60`}
+                        title={
+                          autoLock?.isBlocked
+                            ? isUnlocked
+                              ? `Override by ${accountLockOverride?.updatedBy ?? "manager"}`
+                              : autoLock.reason
+                            : "Laundry booking and controller access follow the normal automatic rules."
+                        }
+                      >
+                        {label}
+                      </button>
+                    );
+                  })()}
                   {[
                     ["call", t("callClient")],
                     ["sms", t("textClient")],
@@ -3181,6 +3621,29 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             />
                           </label>
                         </div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <label className="block text-sm font-medium text-slate-700">
+                            Short-term surcharge (%)
+                            <input
+                              type="number"
+                              value={shortTermSurchargeRateInput}
+                              onChange={(e) => setShortTermSurchargeRateInput(e.target.value)}
+                              className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                              min="0"
+                              step="0.01"
+                            />
+                          </label>
+                          <label className="block text-sm font-medium text-slate-700">
+                            Parking fee (₫)
+                            <input
+                              type="number"
+                              value={parkingFeeInput}
+                              onChange={(e) => setParkingFeeInput(e.target.value)}
+                              className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                              min="0"
+                            />
+                          </label>
+                        </div>
 
                         <button
                           type="button"
@@ -3193,11 +3656,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 body: JSON.stringify({
                                   email: selectedClient?.email,
                                   targetMonth: targetMonthInput,
-                                  managerDiscountVnd: Number(managerDiscountInput)
+                                  managerDiscountVnd: Number(managerDiscountInput),
+                                  shortTermSurchargeRate: (Number(shortTermSurchargeRateInput) || 0) / 100,
+                                  parkingFeeVnd: Number(parkingFeeInput) || 0
                                 })
                               });
                               if (!response.ok) throw new Error(t("requestFailed"));
-                              const data = await response.json();
+                              const data = normalizeRentBreakdown((await response.json()) as Partial<RentBreakdown>);
                               setRentBreakdown(data);
                             } catch (err) {
                               alert(err instanceof Error ? err.message : t("requestFailed"));
@@ -3228,9 +3693,16 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 </div>
                               )}
 
+                              {rentBreakdown.monthlyAdjustmentVnd > 0 && (
+                                <div className="flex justify-between text-amber-600">
+                                  <span>Monthly adjustment surcharge</span>
+                                  <span>+{rentBreakdown.monthlyAdjustmentVnd.toLocaleString()} VND</span>
+                                </div>
+                              )}
+
                               {rentBreakdown.professionalDiscountVnd > 0 && (
                                 <div className="flex justify-between text-emerald-600">
-                                  <span>{t("professionalDiscount")} (10%)</span>
+                                  <span>Monthly adjustment discount</span>
                                   <span>-{rentBreakdown.professionalDiscountVnd.toLocaleString()} VND</span>
                                 </div>
                               )}
@@ -3255,7 +3727,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               </div>
 
                               <div className="flex justify-between">
-                                <span className="text-slate-600">{t("laundryFeeLabel").replace("{count}", rentBreakdown.details.laundryCount.cash.toString())}</span>
+                                <span className="text-slate-600">{t("laundryFeeLabel").replace("{count}", String(rentBreakdown.details?.laundryCount?.cash ?? 0))}</span>
                                 <span className="font-medium">{rentBreakdown.laundryFeeVnd.toLocaleString()} VND</span>
                               </div>
 
@@ -3270,7 +3742,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               </div>
 
                               <div className="flex justify-between text-sky-600">
-                                <span>{t("coinUsageLabel").replace("{count}", rentBreakdown.recommendedCoinUsage.toString())}</span>
+                                <span>{t("coinUsageLabel").replace("{count}", String(rentBreakdown.recommendedCoinUsage ?? 0))}</span>
                                 <span>-{rentBreakdown.recommendedCoinValueVnd.toLocaleString()} VND</span>
                               </div>
 
@@ -3294,33 +3766,22 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
                               <button
                                 type="button"
-                                onClick={async () => {
-                                  setLoading(true);
-                                  try {
-                                    const response = await fetch(`${API_BASE_URL}/pay-rent`, {
-                                      method: "POST",
-                                      headers: { "Content-Type": "application/json" },
-                                      body: JSON.stringify({
-                                        email: selectedClient?.email,
-                                        targetMonth: targetMonthInput,
-                                        managerDiscountVnd: Number(managerDiscountInput),
-                                        coinUsage: rentBreakdown.recommendedCoinUsage,
-                                        payerName: paymentPayer || selectedClient?.name,
-                                        receiverName: normalizedEmail
-                                      })
-                                    });
-                                    if (!response.ok) throw new Error("Payment recording failed");
-                                    alert("Payment recorded and receipt sent via Gmail!");
-                                    setActiveAction("");
-                                    setRentBreakdown(null);
-                                    if (selectedClient) await loadWorkspace("payments", selectedClient.maHd);
-                                  } catch (err) {
-                                    alert(err instanceof Error ? err.message : "Error");
-                                  } finally {
-                                    setLoading(false);
+                                onClick={() => {
+                                  if (!selectedClient || !rentBreakdown) {
+                                    return;
                                   }
+                                  void submitRentReceipt({
+                                    client: selectedClient,
+                                    breakdown: rentBreakdown,
+                                    targetMonth: targetMonthInput,
+                                    managerDiscount: managerDiscountInput,
+                                    shortTermSurchargeRate: shortTermSurchargeRateInput,
+                                    parkingFee: parkingFeeInput,
+                                    payerName: paymentPayer || selectedClient.name,
+                                    closePaymentPanel: true
+                                  });
                                 }}
-                                disabled={loading}
+                                disabled={loading || !selectedClient || !rentBreakdown}
                                 className="w-full rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white transition-all hover:bg-emerald-700 shadow-lg shadow-emerald-200"
                               >
                                 {loading ? "Processing..." : "Confirm & Send Receipt"}
@@ -3331,96 +3792,194 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       </div>
                     ) : (
                       <div className="space-y-3">
+                        <div className="rounded-2xl border border-slate-200 bg-white p-4 text-xs text-slate-600">
+                          BIEN NHAN columns below match the Google Sheet. Some values are filled automatically from the selected client and manager account.
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <label className="block text-sm font-medium text-slate-700">
+                            Chi nhánh Dorm
+                            <input
+                              type="text"
+                              value={paymentBranch}
+                              onChange={(event) => setPaymentBranch(event.target.value)}
+                              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                            />
+                          </label>
+                          <label className="block text-sm font-medium text-slate-700">
+                            Dấu thời gian
+                            <input
+                              type="text"
+                              value="Auto when saved"
+                              readOnly
+                              className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500"
+                            />
+                          </label>
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <label className="block text-sm font-medium text-slate-700">
+                            Địa chỉ email
+                            <input
+                              type="text"
+                              value={selectedClient?.email ?? ""}
+                              readOnly
+                              className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500"
+                            />
+                          </label>
+                          <label className="block text-sm font-medium text-slate-700">
+                            Số giường
+                            <input
+                              type="text"
+                              value={selectedClient?.bed ?? ""}
+                              readOnly
+                              className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500"
+                            />
+                          </label>
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <label className="block text-sm font-medium text-slate-700">
+                            NGƯỜI NHẬN TIỀN
+                            <input
+                              type="text"
+                              value={selfDisplayName || normalizedEmail}
+                              readOnly
+                              className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500"
+                            />
+                          </label>
+                          <label className="block text-sm font-medium text-slate-700">
+                            NGƯỜI ĐÓNG TIỀN
+                            <input
+                              type="text"
+                              value={paymentPayer}
+                              onChange={(event) => setPaymentPayer(event.target.value)}
+                              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+                              placeholder={selectedClient?.name || selectedClient?.email || ""}
+                            />
+                          </label>
+                        </div>
                         <label className="block text-sm font-medium text-slate-700">
-                          {t("amountLabel")}
+                          SỐ TIỀN
                           <input type="number" min="1" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2" />
                         </label>
                         <div className="block text-sm font-medium text-slate-700">
-                          {t("purposeLabel")}
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            {paymentPurposeSuggestions.map((option) => {
-                              const isSelected = paymentPurposeSelections.some((s) => s.toLowerCase() === option.toLowerCase());
-                              return (
+                          MỤC ĐÍCH
+                          <div className="relative mt-2 rounded-2xl border border-slate-300 bg-white p-3">
+                            <div className="flex flex-wrap gap-2">
+                              {paymentPurposeSelections.map((option) => (
                                 <button
                                   key={option}
                                   type="button"
                                   onClick={() =>
-                                    isSelected
-                                      ? syncPaymentPurposeSelection(paymentPurposeSelections.filter((s) => s.toLowerCase() !== option.toLowerCase()))
-                                      : syncPaymentPurposeSelection([...paymentPurposeSelections, option])
+                                    syncPaymentPurposeSelection(
+                                      paymentPurposeSelections.filter((selection) => selection.toLowerCase() !== option.toLowerCase())
+                                    )
                                   }
-                                  className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                                    isSelected
-                                      ? "border-sky-400 bg-sky-500 text-white"
-                                      : "border-slate-300 bg-white text-slate-700 hover:border-sky-300 hover:bg-sky-50"
-                                  }`}
+                                  className="rounded-full border border-sky-400 bg-sky-500 px-3 py-1 text-xs font-medium text-white transition-colors"
                                 >
-                                  {option}
+                                  {option} ×
                                 </button>
-                              );
-                            })}
-                          </div>
-                          <div className="mt-2 flex gap-2">
-                            <input
-                              type="text"
-                              value={paymentPurposeInput}
-                              onChange={(event) => setPaymentPurposeInput(event.target.value)}
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter" || event.key === ",") {
-                                  event.preventDefault();
-                                  addPaymentPurposeOption(paymentPurposeInput);
-                                }
-                              }}
-                              className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                              placeholder={t("otherPurposePlaceholder")}
-                            />
-                            <button
-                              type="button"
-                              onClick={() => addPaymentPurposeOption(paymentPurposeInput)}
-                              disabled={!paymentPurposeInput.trim()}
-                              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 disabled:opacity-40 hover:bg-slate-50"
-                            >
-                              Thêm
-                            </button>
+                              ))}
+                              <input
+                                type="text"
+                                value={paymentPurposeInput}
+                                onFocus={() => {
+                                  setPaymentPurposeOpen(true);
+                                  if (!paymentPurposeRows.length) {
+                                    void loadPaymentPurposeRows();
+                                  }
+                                }}
+                                onChange={(event) => {
+                                  setPaymentPurposeInput(event.target.value);
+                                  setPaymentPurposeOpen(true);
+                                }}
+                                onBlur={() => {
+                                  window.setTimeout(() => setPaymentPurposeOpen(false), 150);
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter" || event.key === ",") {
+                                    event.preventDefault();
+                                    const exactMatch = filteredPaymentPurposeSuggestions.find(
+                                      (option) => option.toLowerCase() === paymentPurposeInput.trim().toLowerCase()
+                                    );
+                                    addPaymentPurposeOption(exactMatch ?? paymentPurposeInput);
+                                  }
+                                  if (event.key === "Backspace" && !paymentPurposeInput.trim() && paymentPurposeSelections.length > 0) {
+                                    event.preventDefault();
+                                    syncPaymentPurposeSelection(paymentPurposeSelections.slice(0, -1));
+                                  }
+                                }}
+                                className="min-w-[14rem] flex-1 border-0 bg-transparent px-1 py-1 text-sm outline-none"
+                                placeholder={paymentPurposeSelections.length ? "Search or type new" : "Select existing or type new"}
+                              />
+                            </div>
+                            {paymentPurposeOpen ? (
+                              <div className="absolute left-0 right-0 top-full z-20 mt-2 max-h-60 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-xl">
+                                {paymentPurposeInput.trim() && !paymentPurposeSuggestions.some((option) => option.toLowerCase() === paymentPurposeInput.trim().toLowerCase()) ? (
+                                  <button
+                                    type="button"
+                                    onMouseDown={(event) => event.preventDefault()}
+                                    onClick={() => addPaymentPurposeOption(paymentPurposeInput)}
+                                    className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-sky-50"
+                                  >
+                                    <span>{paymentPurposeInput.trim()}</span>
+                                    <span className="text-xs text-sky-600">Add new</span>
+                                  </button>
+                                ) : null}
+                                {filteredPaymentPurposeSuggestions.map((option) => (
+                                  <button
+                                    key={option}
+                                    type="button"
+                                    onMouseDown={(event) => event.preventDefault()}
+                                    onClick={() => addPaymentPurposeOption(option)}
+                                    className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                                  >
+                                    <span>{option}</span>
+                                    <span className="text-xs text-slate-400">Select</span>
+                                  </button>
+                                ))}
+                                {!filteredPaymentPurposeSuggestions.length && !paymentPurposeInput.trim() ? (
+                                  <div className="px-3 py-2 text-sm text-slate-400">No existing values yet</div>
+                                ) : null}
+                              </div>
+                            ) : null}
                           </div>
                         </div>
                         <label className="block text-sm font-medium text-slate-700">
-                          {t("detailsLabel")}
+                          MỤC ĐÍCH - GHI RÕ
                           <textarea value={paymentDetails} onChange={(event) => setPaymentDetails(event.target.value)} rows={2} className="mt-1 w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm" />
                         </label>
                         <div className="grid grid-cols-2 gap-3">
                           <label className="block text-sm font-medium text-slate-700">
-                            {t("dormBranch")}
-                            <input type="text" value={paymentBranch} onChange={(event) => setPaymentBranch(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
+                            Cozoro Member
+                            <input
+                              type="text"
+                              value={paymentMemberTier}
+                              readOnly
+                              className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500"
+                            />
                           </label>
                           <label className="block text-sm font-medium text-slate-700">
-                            {t("cozoroMember")}
-                            <input type="text" value={paymentMemberTier} onChange={(event) => setPaymentMemberTier(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
-                          </label>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <label className="block text-sm font-medium text-slate-700">
-                            {t("currentCoins")}
+                            Số Coins hiện có
                             <input type="text" value={paymentCurrentCoins} onChange={(event) => setPaymentCurrentCoins(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
                           </label>
-                          <label className="block text-sm font-medium text-slate-700">
-                            {t("receiverEmail")}
-                            <input type="text" value={paymentRecipientEmail} onChange={(event) => setPaymentRecipientEmail(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" placeholder={selectedClient?.email ?? ""} />
-                          </label>
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                           <label className="block text-sm font-medium text-slate-700">
-                            {t("discountAmount")}
-                            <input type="number" min="0" value={paymentDiscountAmount} onChange={(event) => setPaymentDiscountAmount(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" placeholder="0" />
+                            Địa chỉ email người nhận
+                            <input
+                              type="text"
+                              value={paymentRecipientEmail}
+                              readOnly
+                              className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500"
+                            />
                           </label>
                           <label className="block text-sm font-medium text-slate-700">
-                            {t("discountCondition")}
-                            <input type="text" value={paymentDiscountCondition} onChange={(event) => setPaymentDiscountCondition(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" placeholder="VD: Member Gold" />
+                            Số tiền hưởng ưu đãi
+                            <input type="number" min="0" value={paymentDiscountAmount} onChange={(event) => setPaymentDiscountAmount(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" placeholder="0" />
                           </label>
                         </div>
                         <label className="block text-sm font-medium text-slate-700">
-                          {t("payerName")}
-                          <input type="text" value={paymentPayer} onChange={(event) => setPaymentPayer(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2" placeholder={selectedClient?.name || selectedClient?.email || ""} />
+                          Điều kiện hưởng ưu đãi
+                          <input type="text" value={paymentDiscountCondition} onChange={(event) => setPaymentDiscountCondition(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" placeholder="VD: Member Gold" />
                         </label>
                         <button
                           type="button"
@@ -3450,8 +4009,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               t("paymentReceiptCreated"),
                               async () => {
                                 if (selectedClient) await loadWorkspace("payments", selectedClient.maHd);
+                                await loadPaymentPurposeRows();
+                                setPaymentPurpose("");
                                 setPaymentPurposeInput("");
-                                syncPaymentPurposeSelection(["Monthly rent"]);
+                                syncPaymentPurposeSelection([]);
+                                setPaymentPurposeOpen(false);
                               }
                             );
                           }}
@@ -3947,10 +4509,18 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   <table className="min-w-full divide-y divide-slate-200 text-sm">
                     <thead className="bg-slate-50 text-left text-slate-600">
                       <tr>
-                        <th className="px-4 py-3 font-medium">{t("whenLabel")}</th>
-                        <th className="px-4 py-3 font-medium">{activeTab === "fines" ? (language === "vi" ? "Nội dung vi phạm" : "Violation") : `${t("detailLabel")} 1`}</th>
-                        <th className="px-4 py-3 font-medium">{activeTab === "fines" ? (language === "vi" ? "Người lập phiếu" : "Created by") : `${t("detailLabel")} 2`}</th>
-                        <th className="px-4 py-3 font-medium">{activeTab === "fines" ? (language === "vi" ? "Chi phí" : "Amount") : `${t("detailLabel")} 3`}</th>
+                        {activeTab === "payments" ? (
+                          PAYMENT_COMPACT_COLUMNS.map((column) => (
+                            <th key={column} className="px-4 py-3 font-medium whitespace-nowrap">{column}</th>
+                          ))
+                        ) : (
+                          <>
+                            <th className="px-4 py-3 font-medium">{t("whenLabel")}</th>
+                            <th className="px-4 py-3 font-medium">{activeTab === "fines" ? (language === "vi" ? "Nội dung vi phạm" : "Violation") : `${t("detailLabel")} 1`}</th>
+                            <th className="px-4 py-3 font-medium">{activeTab === "fines" ? (language === "vi" ? "Người lập phiếu" : "Created by") : `${t("detailLabel")} 2`}</th>
+                            <th className="px-4 py-3 font-medium">{activeTab === "fines" ? (language === "vi" ? "Chi phí" : "Amount") : `${t("detailLabel")} 3`}</th>
+                          </>
+                        )}
                         <th className="px-4 py-3 font-medium">{t("clientActions")}</th>
                       </tr>
                     </thead>
@@ -3963,10 +4533,26 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         const fineAmount = activeTab === "fines" ? findRowValue(entry.row, ["chiphi"]) : null;
                         return (
                           <tr key={`table:${key}`} className="align-top">
-                            <td className="px-4 py-3 text-slate-700">{formatDateTime(entry.parsedTimestamp)}</td>
-                            <td className="px-4 py-3 text-slate-700">{activeTab === "fines" ? (fineContent || "-") : preview[1] ? `${preview[1][0]}: ${preview[1][1]}` : "-"}</td>
-                            <td className="px-4 py-3 text-slate-700">{activeTab === "fines" ? (fineCreator || "-") : preview[2] ? `${preview[2][0]}: ${preview[2][1]}` : "-"}</td>
-                            <td className="px-4 py-3 text-slate-700">{activeTab === "fines" ? (fineAmount ? `${Number(fineAmount).toLocaleString()} ₫` : "-") : preview[3] ? `${preview[3][0]}: ${preview[3][1]}` : "-"}</td>
+                            {activeTab === "payments" ? (
+                              PAYMENT_COMPACT_COLUMNS.map((column) => {
+                                const value = getPaymentRowValue(entry.row, column);
+                                const renderedValue = column === "SỐ TIỀN" && value
+                                  ? `${parseLooseNumber(value).toLocaleString()} ₫`
+                                  : value || "-";
+                                return (
+                                  <td key={`${key}:${column}`} className="px-4 py-3 text-slate-700 whitespace-nowrap">
+                                    {renderedValue}
+                                  </td>
+                                );
+                              })
+                            ) : (
+                              <>
+                                <td className="px-4 py-3 text-slate-700">{formatDateTime(entry.parsedTimestamp)}</td>
+                                <td className="px-4 py-3 text-slate-700">{activeTab === "fines" ? (fineContent || "-") : preview[1] ? `${preview[1][0]}: ${preview[1][1]}` : "-"}</td>
+                                <td className="px-4 py-3 text-slate-700">{activeTab === "fines" ? (fineCreator || "-") : preview[2] ? `${preview[2][0]}: ${preview[2][1]}` : "-"}</td>
+                                <td className="px-4 py-3 text-slate-700">{activeTab === "fines" ? (fineAmount ? `${Number(fineAmount).toLocaleString()} ₫` : "-") : preview[3] ? `${preview[3][0]}: ${preview[3][1]}` : "-"}</td>
+                              </>
+                            )}
                             <td className="px-4 py-3">
                               {confirmDeleteId === `${activeTab}:${key}` ? (
                                 <div className="flex items-center gap-2">
