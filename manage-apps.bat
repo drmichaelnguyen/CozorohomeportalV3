@@ -20,6 +20,10 @@ echo.
 echo Production app:
 echo   Portal http://localhost:3000
 echo   API    http://localhost:4000
+echo   Bot    http://localhost:4111
+echo   Guest  http://localhost:4115
+echo   Backup backup.ps1 loop
+echo   Tunnel managed separately
 echo.
 echo Public domains:
 echo   https://app.cozorohome.com
@@ -41,6 +45,8 @@ echo 13. Roll back production one commit
 echo 14. Recreate production worktree
 echo 15. Migrate local app to production
 echo 16. Back up production
+echo 17. Restart production portal + API + bot + guest booking
+echo 18. Restart production tunnel only
 echo 0. Exit
 echo.
 set /p "choice=Choose an option: "
@@ -61,6 +67,8 @@ if "%choice%"=="13" call :rollback_prod_one
 if "%choice%"=="14" call :recreate_prod_worktree
 if "%choice%"=="15" call :migrate_local_to_prod
 if "%choice%"=="16" call :backup_prod
+if "%choice%"=="17" call :restart_prod_full_stack
+if "%choice%"=="18" call :restart_prod_tunnel
 if "%choice%"=="0" goto :eof
 
 echo.
@@ -118,6 +126,7 @@ if /I "%STACK_NAME%"=="LOCAL" (
   start "%STACK_NAME% API :%API_PORT%" "%LOCAL_ROOT%\start-prod-desktop-api.cmd"
   timeout /t 3 /nobreak >nul
   start "%STACK_NAME% Portal :%PORTAL_PORT%" "%LOCAL_ROOT%\start-prod-desktop-portal.cmd"
+  call :start_backup_worker
 )
 echo [%STACK_NAME%] Start commands launched.
 goto :eof
@@ -132,6 +141,7 @@ for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":%PORTAL_PORT%" ^| findstr "
 for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":%API_PORT%" ^| findstr "LISTENING"') do taskkill /PID %%P /F >nul 2>&1
 taskkill /FI "WINDOWTITLE eq %STACK_NAME% API :%API_PORT%*" /F >nul 2>&1
 taskkill /FI "WINDOWTITLE eq %STACK_NAME% Portal :%PORTAL_PORT%*" /F >nul 2>&1
+if /I "%STACK_NAME%"=="PROD" call :stop_backup_worker
 echo [%STACK_NAME%] Stop commands completed.
 goto :eof
 
@@ -266,6 +276,75 @@ if %ROBOCODE% GEQ 8 (
 )
 echo [BACKUP] Production backup created at:
 echo [BACKUP] %TARGET_BACKUP%
+goto :eof
+
+:restart_prod_full_stack
+echo.
+echo [PROD] Restarting portal, API, backup, bot chat, and guest booking only...
+echo [PROD] Tunnel is managed separately and will not be touched.
+call :stop_stack "PROD" 3000 4000
+call :stop_bot_chat
+call :stop_guest_booking
+call :start_stack "PROD" 3000 4000 "%PROD_ROOT%"
+call :start_bot_chat
+call :start_guest_booking
+echo [PROD] Full production restart commands launched.
+goto :eof
+
+:restart_prod_tunnel
+echo.
+echo [PROD] Restarting tunnel only...
+if not exist "%PROD_ROOT%\tools\refresh-tunnel.cmd" (
+  echo [PROD] Tunnel refresh script not found.
+  goto :eof
+)
+start "PROD Tunnel Refresh" cmd /c "cd /d "%PROD_ROOT%\tools" && call refresh-tunnel.cmd"
+echo [PROD] Tunnel restart command launched.
+goto :eof
+
+:start_bot_chat
+echo [PROD] Starting bot chat from %PROD_ROOT%\bot
+if not exist "%PROD_ROOT%\bot\run-bot-win.cmd" (
+  echo [PROD] Bot run script not found.
+  goto :eof
+)
+start "PROD Bot Chat :4111" cmd /c "cd /d "%PROD_ROOT%\bot" && call run-bot-win.cmd"
+goto :eof
+
+:stop_bot_chat
+echo [PROD] Stopping bot chat on 4111...
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":4111" ^| findstr "LISTENING"') do taskkill /PID %%P /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq PROD Bot Chat :4111*" /F >nul 2>&1
+goto :eof
+
+:start_guest_booking
+echo [PROD] Starting guest booking on 4115...
+if not exist "%PROD_ROOT%\guest-booking-standalone\package.json" (
+  echo [PROD] Guest booking folder not found.
+  goto :eof
+)
+start "PROD Guest Booking :4115" cmd /k "cd /d "%PROD_ROOT%\guest-booking-standalone" && if not exist node_modules\express (npm install) && node server.js"
+goto :eof
+
+:stop_guest_booking
+echo [PROD] Stopping guest booking on 4115...
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":4115" ^| findstr "LISTENING"') do taskkill /PID %%P /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq PROD Guest Booking :4115*" /F >nul 2>&1
+goto :eof
+
+:start_backup_worker
+echo [PROD] Starting backup worker from %LOCAL_ROOT%\backup.ps1
+if not exist "%LOCAL_ROOT%\backup.ps1" (
+  echo [PROD] Backup script not found.
+  goto :eof
+)
+taskkill /FI "WINDOWTITLE eq PROD Data Backup*" /F >nul 2>&1
+start "PROD Data Backup" powershell -ExecutionPolicy Bypass -File "%LOCAL_ROOT%\backup.ps1"
+goto :eof
+
+:stop_backup_worker
+echo [PROD] Stopping backup worker...
+taskkill /FI "WINDOWTITLE eq PROD Data Backup*" /F >nul 2>&1
 goto :eof
 
 :git_failed

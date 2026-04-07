@@ -45,6 +45,20 @@ type SmartDevice = {
   lastRequestedAction?: string;
 };
 
+type ControllerHistoryEntry = {
+  id: string;
+  timestamp: string;
+  actorRole: "manager" | "resident";
+  actorEmail: string | null;
+  actorName: string;
+  deviceType: "ac" | "laundry" | "airfryer" | "microwave";
+  deviceId: string;
+  deviceLabel: string;
+  branchId: string;
+  action: string;
+  details?: string;
+};
+
 type BranchLayoutRoom = {
   room: string;
   floor: string;
@@ -895,6 +909,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [laundryMachines, setLaundryMachines] = useState<any[]>([]);
   const [airfryers, setAirfryers] = useState<SmartDevice[]>([]);
   const [controllerLoading, setControllerLoading] = useState(false);
+  const [showControllerHistory, setShowControllerHistory] = useState(false);
+  const [controllerHistoryLoading, setControllerHistoryLoading] = useState(false);
+  const [controllerHistory, setControllerHistory] = useState<ControllerHistoryEntry[]>([]);
+  const [controllerActionPending, setControllerActionPending] = useState<Record<string, string>>({});
+  const [controllerActionFeedback, setControllerActionFeedback] = useState<Record<string, { tone: "success" | "error"; message: string }>>({});
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [supportSubTab, setSupportSubTab] = useState<"messages" | "feedbacks" | "maintenance">("messages");
   const [clientSubTab, setClientSubTab] = useState<"list" | "details">("list");
@@ -1792,7 +1811,45 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }
   }, []);
 
+  const fetchControllerHistory = useCallback(async () => {
+    setControllerHistoryLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/manager/controller/history?limit=50`);
+      if (response.ok) {
+        const data = await response.json();
+        setControllerHistory(data.entries || []);
+      }
+    } catch (err) {
+      console.error("Failed to fetch controller history", err);
+    } finally {
+      setControllerHistoryLoading(false);
+    }
+  }, []);
+
+  const setControllerFeedback = useCallback(
+    (key: string, feedback: { tone: "success" | "error"; message: string }) => {
+      setControllerActionFeedback((current) => ({ ...current, [key]: feedback }));
+      window.setTimeout(() => {
+        setControllerActionFeedback((current) => {
+          if (!(key in current)) {
+            return current;
+          }
+          const next = { ...current };
+          delete next[key];
+          return next;
+        });
+      }, 4000);
+    },
+    []
+  );
+
   const handleAcControl = async (roomId: string, action: "ON" | "OFF") => {
+    const actionKey = `ac:${roomId}`;
+    if (!window.confirm(t("manualOverrideWarning").replace("{id}", `${roomId} ${action}`))) {
+      return;
+    }
+
+    setControllerActionPending((current) => ({ ...current, [actionKey]: action }));
     try {
       const response = await fetch(`${API_BASE_URL}/controller/ac/rooms/command`, {
         method: "POST",
@@ -1801,20 +1858,41 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       });
       if (response.ok) {
         void fetchDevices();
+        if (showControllerHistory) {
+          void fetchControllerHistory();
+        }
+        setControllerFeedback(actionKey, {
+          tone: "success",
+          message: `${roomId} ${action} sent successfully.`
+        });
       } else {
         const data = await response.json();
-        alert(data.error || t("failedControlAc"));
+        setControllerFeedback(actionKey, {
+          tone: "error",
+          message: data.error || t("failedControlAc")
+        });
       }
     } catch (err) {
-      alert(t("networkErrorAc"));
+      setControllerFeedback(actionKey, {
+        tone: "error",
+        message: t("networkErrorAc")
+      });
+    } finally {
+      setControllerActionPending((current) => {
+        const next = { ...current };
+        delete next[actionKey];
+        return next;
+      });
     }
   };
 
   const handleMachineTrigger = async (machineId: string, deviceType: "laundry" | "airfryer") => {
+    const actionKey = `${deviceType}:${machineId}`;
     // AntiGravity: Manager manual override warning
     if (!window.confirm(t("manualOverrideWarning").replace("{id}", machineId))) {
       return;
     }
+    setControllerActionPending((current) => ({ ...current, [actionKey]: "TRIGGER" }));
     try {
       const endpoint = deviceType === "laundry"
         ? `${API_BASE_URL}/manager/controller/laundry/trigger`
@@ -1826,13 +1904,31 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         body: JSON.stringify({ machineId })
       });
       if (response.ok) {
-        alert(t("triggeredSuccess").replace("{id}", machineId));
+        setControllerFeedback(actionKey, {
+          tone: "success",
+          message: t("triggeredSuccess").replace("{id}", machineId)
+        });
+        if (showControllerHistory) {
+          void fetchControllerHistory();
+        }
       } else {
         const data = await response.json();
-        alert(data.error || t("failedToTrigger").replace("{type}", deviceType));
+        setControllerFeedback(actionKey, {
+          tone: "error",
+          message: data.error || t("failedToTrigger").replace("{type}", deviceType)
+        });
       }
     } catch (err) {
-      alert(t("networkErrorTrigger").replace("{type}", deviceType));
+      setControllerFeedback(actionKey, {
+        tone: "error",
+        message: t("networkErrorTrigger").replace("{type}", deviceType)
+      });
+    } finally {
+      setControllerActionPending((current) => {
+        const next = { ...current };
+        delete next[actionKey];
+        return next;
+      });
     }
   };
 
@@ -1841,6 +1937,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       void fetchDevices();
     }
   }, [activeManagerView, fetchDevices]);
+
+  useEffect(() => {
+    if (activeManagerView === "controller" && showControllerHistory) {
+      void fetchControllerHistory();
+    }
+  }, [activeManagerView, showControllerHistory, fetchControllerHistory]);
 
   async function postJson(url: string, body: Record<string, unknown>, successMessage: string, after?: () => Promise<void>) {
     setLoading(true);
@@ -5412,15 +5514,24 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 <h2 className="text-xl font-bold text-slate-900 tracking-tight">Real-time Device Control</h2>
                 <p className="mt-1 text-sm text-slate-500">Centralized override for all IoT devices across branches.</p>
               </div>
-              <button 
-                onClick={() => void fetchDevices()} 
-                className="p-2 rounded-full hover:bg-slate-100 text-slate-500 transition-colors"
-                title="Refresh Status"
-              >
-                <svg className={`h-5 w-5 ${controllerLoading ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowControllerHistory((current) => !current)}
+                  className="rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                >
+                  {showControllerHistory ? "Hide Controller History" : "View Controller History"}
+                </button>
+                <button 
+                  onClick={() => void fetchDevices()} 
+                  className="p-2 rounded-full hover:bg-slate-100 text-slate-500 transition-colors"
+                  title="Refresh Status"
+                >
+                  <svg className={`h-5 w-5 ${controllerLoading ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                </button>
+              </div>
             </div>
 
             <div className="space-y-8">
@@ -5433,6 +5544,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {acRooms.filter(r => r.branchId === "D7").map(room => (
                     <div key={room.id} className="group relative rounded-2xl border border-slate-100 bg-slate-50/50 p-4 transition-all hover:bg-white hover:shadow-md">
+                      {(() => {
+                        const actionKey = `ac:${room.id}`;
+                        const pendingAction = controllerActionPending[actionKey];
+                        const feedback = controllerActionFeedback[actionKey];
+                        return (
+                          <>
                       <div className="flex justify-between items-start">
                         <div>
                           <div className="font-bold text-slate-900">{room.label}</div>
@@ -5444,17 +5561,27 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       <div className="mt-4 flex gap-2">
                         <button 
                           onClick={() => handleAcControl(room.id, "ON")}
-                          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all ${room.lastRequestedAction === "ON" ? "bg-emerald-600 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-emerald-500 hover:text-emerald-600"}`}
+                          disabled={Boolean(pendingAction)}
+                          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-60 ${room.lastRequestedAction === "ON" ? "bg-emerald-600 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-emerald-500 hover:text-emerald-600"}`}
                         >
-                          ON
+                          {pendingAction === "ON" ? "SENDING..." : "ON"}
                         </button>
                         <button 
                           onClick={() => handleAcControl(room.id, "OFF")}
-                          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all ${room.lastRequestedAction === "OFF" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-slate-400"}`}
+                          disabled={Boolean(pendingAction)}
+                          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-60 ${room.lastRequestedAction === "OFF" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-slate-400"}`}
                         >
-                          OFF
+                          {pendingAction === "OFF" ? "SENDING..." : "OFF"}
                         </button>
                       </div>
+                      {feedback ? (
+                        <div className={`mt-3 text-xs font-medium ${feedback.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}>
+                          {feedback.message}
+                        </div>
+                      ) : null}
+                          </>
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>
@@ -5469,6 +5596,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {acRooms.filter(r => r.branchId === "D2").map(room => (
                     <div key={room.id} className="group relative rounded-2xl border border-slate-100 bg-slate-50/50 p-4 transition-all hover:bg-white hover:shadow-md">
+                      {(() => {
+                        const actionKey = `ac:${room.id}`;
+                        const pendingAction = controllerActionPending[actionKey];
+                        const feedback = controllerActionFeedback[actionKey];
+                        return (
+                          <>
                       <div className="flex justify-between items-start">
                         <div>
                           <div className="font-bold text-slate-900">{room.label}</div>
@@ -5480,17 +5613,27 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       <div className="mt-4 flex gap-2">
                         <button 
                           onClick={() => handleAcControl(room.id, "ON")}
-                          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all ${room.lastRequestedAction === "ON" ? "bg-emerald-600 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-emerald-500 hover:text-emerald-600"}`}
+                          disabled={Boolean(pendingAction)}
+                          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-60 ${room.lastRequestedAction === "ON" ? "bg-emerald-600 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-emerald-500 hover:text-emerald-600"}`}
                         >
-                          ON
+                          {pendingAction === "ON" ? "SENDING..." : "ON"}
                         </button>
                         <button 
                           onClick={() => handleAcControl(room.id, "OFF")}
-                          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all ${room.lastRequestedAction === "OFF" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-slate-400"}`}
+                          disabled={Boolean(pendingAction)}
+                          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-60 ${room.lastRequestedAction === "OFF" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-slate-400"}`}
                         >
-                          OFF
+                          {pendingAction === "OFF" ? "SENDING..." : "OFF"}
                         </button>
                       </div>
+                      {feedback ? (
+                        <div className={`mt-3 text-xs font-medium ${feedback.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}>
+                          {feedback.message}
+                        </div>
+                      ) : null}
+                          </>
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>
@@ -5506,28 +5649,58 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                    {/* Airfryers */}
                    {airfryers.map(af => (
                      <div key={af.id} className="rounded-2xl border border-amber-100 bg-amber-50/30 p-4">
+                        {(() => {
+                          const actionKey = `airfryer:${af.id}`;
+                          const pendingAction = controllerActionPending[actionKey];
+                          const feedback = controllerActionFeedback[actionKey];
+                          return (
+                            <>
                         <div className="font-bold text-amber-900">{af.label}</div>
                         <div className="text-[10px] text-amber-500 font-bold uppercase mt-0.5">Branch {af.branchId} Appliance</div>
                         <button 
                           onClick={() => handleMachineTrigger(af.id, "airfryer")}
-                          className="mt-4 w-full rounded-xl bg-amber-600 py-2.5 text-xs font-black text-white shadow-lg shadow-amber-200 hover:bg-amber-700 active:scale-95 transition-all"
+                          disabled={Boolean(pendingAction)}
+                          className="mt-4 w-full rounded-xl bg-amber-600 py-2.5 text-xs font-black text-white shadow-lg shadow-amber-200 hover:bg-amber-700 active:scale-95 transition-all disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                          TRIGGER {af.label.toUpperCase()}
+                          {pendingAction ? "TRIGGERING..." : `TRIGGER ${af.label.toUpperCase()}`}
                         </button>
+                        {feedback ? (
+                          <div className={`mt-3 text-xs font-medium ${feedback.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}>
+                            {feedback.message}
+                          </div>
+                        ) : null}
+                            </>
+                          );
+                        })()}
                      </div>
                    ))}
 
                    {/* Laundry Machines */}
                    {laundryMachines.map(machine => (
                     <div key={machine.id} className="rounded-2xl border border-sky-100 bg-sky-50/30 p-4">
+                      {(() => {
+                        const actionKey = `laundry:${machine.id}`;
+                        const pendingAction = controllerActionPending[actionKey];
+                        const feedback = controllerActionFeedback[actionKey];
+                        return (
+                          <>
                       <div className="font-bold text-sky-900">{machine.label}</div>
                       <div className="text-[10px] text-sky-400 font-bold uppercase mt-0.5">Branch {machine.branchId} Unit</div>
                       <button 
                         onClick={() => handleMachineTrigger(machine.id, "laundry")}
-                        className="mt-4 w-full rounded-xl bg-sky-600 py-2.5 text-xs font-black text-white shadow-lg shadow-sky-200 hover:bg-sky-700 active:scale-95 transition-all"
+                        disabled={Boolean(pendingAction)}
+                        className="mt-4 w-full rounded-xl bg-sky-600 py-2.5 text-xs font-black text-white shadow-lg shadow-sky-200 hover:bg-sky-700 active:scale-95 transition-all disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        TRIGGER {machine.label.toUpperCase()}
+                        {pendingAction ? "TRIGGERING..." : `TRIGGER ${machine.label.toUpperCase()}`}
                       </button>
+                      {feedback ? (
+                        <div className={`mt-3 text-xs font-medium ${feedback.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}>
+                          {feedback.message}
+                        </div>
+                      ) : null}
+                          </>
+                        );
+                      })()}
                     </div>
                    ))}
                 </div>
@@ -5535,27 +5708,47 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             </div>
           </section>
 
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-slate-900">Usage History</h2>
-              <button type="button" className="text-sm font-medium text-sky-600 hover:underline">View All History</button>
-            </div>
-            <div className="mt-6 space-y-3">
-              {[
-                { time: "2 hours ago", device: "Washer 1 (D7)", user: "John Doe", duration: "45 mins" },
-                { time: "4 hours ago", device: "AC Unit 1 (D7)", user: "Jane Smith", duration: "2 hours" },
-                { time: "Yesterday", device: "Airfryer (D2)", user: "Bob Wilson", duration: "20 mins" }
-              ].map((entry, idx) => (
-                <div key={idx} className="flex items-center justify-between rounded-xl border border-slate-100 p-3 text-sm">
-                  <div>
-                    <div className="font-medium text-slate-900">{entry.device}</div>
-                    <div className="text-xs text-slate-500">{entry.user} · {entry.time}</div>
-                  </div>
-                  <div className="font-semibold text-slate-900">{entry.duration}</div>
+          {showControllerHistory ? (
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">Controller History</h2>
+                  <p className="mt-1 text-sm text-slate-500">Recent AC, laundry, airfryer, and microwave actions across the app.</p>
                 </div>
-              ))}
-            </div>
-          </section>
+                <button
+                  type="button"
+                  onClick={() => void fetchControllerHistory()}
+                  className="rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Refresh History
+                </button>
+              </div>
+
+              {controllerHistoryLoading ? (
+                <div className="mt-6 text-sm text-slate-500">Loading controller history...</div>
+              ) : controllerHistory.length === 0 ? (
+                <div className="mt-6 text-sm text-slate-500">No controller actions have been logged yet.</div>
+              ) : (
+                <div className="mt-6 space-y-3">
+                  {controllerHistory.map((entry) => (
+                    <div key={entry.id} className="flex flex-col gap-2 rounded-2xl border border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <div className="font-medium text-slate-900">{entry.deviceLabel}</div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {entry.branchId} · {entry.deviceType.toUpperCase()} · {entry.action} · {entry.actorRole === "manager" ? "Manager" : entry.actorName}
+                        </div>
+                        {entry.details ? (
+                          <div className="mt-1 text-xs text-slate-400">{entry.details}</div>
+                        ) : null}
+                      </div>
+                      <div className="text-sm font-medium text-slate-600">{formatDateTime(entry.timestamp)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          ) : null}
+
         </section>
       ) : null}
 

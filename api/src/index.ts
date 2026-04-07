@@ -18,6 +18,7 @@ import {
   sendAcCommand,
   sendAcCommandToRoom
 } from "./ac-controller.js";
+import { appendControllerHistoryEntry, listControllerHistory } from "./controller-history.js";
 import { getUserAirFryerContext, startAirFryerUse } from "./airfryer-controller.js";
 import { getUserMicrowaveContext, startMicrowaveUse } from "./microwave-controller.js";
 import {
@@ -1466,6 +1467,18 @@ app.post("/controller/ac/command", async (request, response) => {
 
   try {
     const result = await sendAcCommand(parsed.data);
+    const client = await getActiveClientByEmail(parsed.data.email);
+    await appendControllerHistoryEntry({
+      actorRole: "resident",
+      actorEmail: parsed.data.email.trim().toLowerCase(),
+      actorName: getResidentHistoryName(client, parsed.data.email),
+      deviceType: "ac",
+      deviceId: result.room.id,
+      deviceLabel: result.room.label,
+      branchId: result.room.id.toUpperCase().includes("D7") ? "D7" : "D2",
+      action: result.action,
+      timestamp: result.requestedAt
+    });
     return response.json(result);
   } catch (error) {
     return response.status(400).json({
@@ -1540,6 +1553,17 @@ app.post("/controller/ac/rooms/command", async (request, response) => {
 
   try {
     const result = await sendAcCommandToRoom(parsed.data);
+    await appendControllerHistoryEntry({
+      actorRole: "manager",
+      actorEmail: null,
+      actorName: "Manager",
+      deviceType: "ac",
+      deviceId: result.room.id,
+      deviceLabel: result.room.label,
+      branchId: result.room.id.toUpperCase().includes("D7") ? "D7" : "D2",
+      action: result.action,
+      timestamp: result.requestedAt
+    });
     return response.json(result);
   } catch (error) {
     return response.status(400).json({
@@ -1591,10 +1615,35 @@ app.post("/controller/airfryer/start", async (request, response) => {
 
   try {
     const result = await startAirFryerUse(parsed.data);
+    const client = await getActiveClientByEmail(parsed.data.email);
+    await appendControllerHistoryEntry({
+      actorRole: "resident",
+      actorEmail: parsed.data.email.trim().toLowerCase(),
+      actorName: getResidentHistoryName(client, parsed.data.email),
+      deviceType: "airfryer",
+      deviceId: "d7-airfryer",
+      deviceLabel: "Airfryer D7",
+      branchId: "D7",
+      action: "TRIGGER",
+      details: parsed.data.inspection,
+      timestamp: result.usage.startedAt
+    });
     return response.json(result);
   } catch (error) {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to start air fryer use"
+    });
+  }
+});
+
+app.get("/manager/controller/history", async (request, response) => {
+  const limit = Number.parseInt(String(request.query.limit ?? "50"), 10);
+  try {
+    const entries = await listControllerHistory(limit);
+    return response.json({ entries });
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to load controller history"
     });
   }
 });
@@ -1659,6 +1708,58 @@ function resolveLaundryWebhookTarget(machineId: string) {
   };
 }
 
+function getLaundryMachinePresentation(machineId: string) {
+  const normalizedMachineId = machineId.trim().toLowerCase();
+
+  if (
+    normalizedMachineId === "d7-dryer" ||
+    normalizedMachineId === "d7_dryer" ||
+    normalizedMachineId.includes("029mijq7")
+  ) {
+    return { label: "Máy sấy D7", branchId: "D7" };
+  }
+
+  if (
+    normalizedMachineId === "d7-washer-paid" ||
+    normalizedMachineId === "d7_washer_paid" ||
+    normalizedMachineId === "d7_laundry_paid" ||
+    normalizedMachineId === "d7_laundry_paid_(whirlpool)" ||
+    normalizedMachineId.includes("vmtcgatmh7irp19qsmrrbjsr34")
+  ) {
+    return { label: "Giặt D7 trả phí (Whirlpool)", branchId: "D7" };
+  }
+
+  if (
+    normalizedMachineId === "d7-washer-horizontal" ||
+    normalizedMachineId === "d7_washer_horizontal" ||
+    normalizedMachineId === "d7_laundry" ||
+    normalizedMachineId.includes("iqido2c13cb85i2lsgq70qu59g")
+  ) {
+    return { label: "Giặt lồng đứng D7", branchId: "D7" };
+  }
+
+  if (
+    normalizedMachineId === "d2-washer" ||
+    normalizedMachineId === "d2_laundry" ||
+    normalizedMachineId.includes("p5cvikf3pn8292denaig3gmed0")
+  ) {
+    return { label: "Máy giặt D2", branchId: "D2" };
+  }
+
+  return { label: machineId, branchId: normalizedMachineId.includes("d7") ? "D7" : "D2" };
+}
+
+function getResidentHistoryName(client: Record<string, string> | null, fallbackEmail: string) {
+  const candidate =
+    client?.["Tên"] ??
+    client?.["TÃªn"] ??
+    client?.["Họ và tên"] ??
+    client?.["Ho va ten"] ??
+    "";
+
+  return String(candidate).trim() || fallbackEmail.trim().toLowerCase();
+}
+
 app.post("/laundry/manual-trigger", async (request, response) => {
   const parsed = laundryTriggerSchema.safeParse(request.body);
 
@@ -1675,6 +1776,7 @@ app.post("/laundry/manual-trigger", async (request, response) => {
   }
 
   try {
+    const client = await getActiveClientByEmail(email);
     // 1. Verify active booking window
     const bookings = await getLaundryBookingsForEmail(email);
     const now = new Date();
@@ -1708,6 +1810,19 @@ app.post("/laundry/manual-trigger", async (request, response) => {
     if (!result.ok) {
       throw new Error(`IFTTT trigger failed with status ${result.status}`);
     }
+
+    const machinePresentation = getLaundryMachinePresentation(machineId);
+    await appendControllerHistoryEntry({
+      actorRole: "resident",
+      actorEmail: email,
+      actorName: getResidentHistoryName(client, email),
+      deviceType: "laundry",
+      deviceId: machineId,
+      deviceLabel: machinePresentation.label,
+      branchId: machinePresentation.branchId,
+      action: "TRIGGER",
+      details: eventName
+    });
 
     return response.json({
       ok: true,
@@ -1823,6 +1938,19 @@ app.post("/manager/controller/laundry/trigger", async (request, response) => {
       throw new Error(`IFTTT trigger failed with status ${result.status}`);
     }
 
+    const machinePresentation = getLaundryMachinePresentation(machineId);
+    await appendControllerHistoryEntry({
+      actorRole: "manager",
+      actorEmail: null,
+      actorName: "Manager",
+      deviceType: "laundry",
+      deviceId: machineId,
+      deviceLabel: machinePresentation.label,
+      branchId: machinePresentation.branchId,
+      action: "TRIGGER",
+      details: eventName
+    });
+
     return response.json({
       ok: true,
       message: `Manager triggered ${eventName} for ${machineId}`
@@ -1845,6 +1973,19 @@ app.post("/manager/controller/airfryer/trigger", async (request, response) => {
     if (!result.ok) {
        throw new Error(`IFTTT trigger failed with status ${result.status}`);
     }
+
+    const machineId = String(request.body?.machineId ?? "d7-airfryer").trim() || "d7-airfryer";
+    await appendControllerHistoryEntry({
+      actorRole: "manager",
+      actorEmail: null,
+      actorName: "Manager",
+      deviceType: "airfryer",
+      deviceId: machineId,
+      deviceLabel: "Airfryer D7",
+      branchId: "D7",
+      action: "TRIGGER",
+      details: eventName
+    });
 
     return response.json({ ok: true, message: "Airfryer triggered" });
   } catch (error) {
@@ -1871,6 +2012,7 @@ app.post("/controller/microwave/d2/trigger", async (request, response) => {
 
   try {
     const result = await startMicrowaveUse({ email, inspection });
+    const client = await getActiveClientByEmail(email);
 
     // Fire IFTTT webhook
     const eventName = process.env.MICROWAVE_D2_IFTTT_EVENT || "microwaveD2";
@@ -1879,6 +2021,19 @@ app.post("/controller/microwave/d2/trigger", async (request, response) => {
     const iftttUrl = `https://maker.ifttt.com/trigger/${eventName}/json/with/key/${key}`;
     const iftttResult = await fetch(iftttUrl, { method: "POST" });
     if (!iftttResult.ok) throw new Error(`IFTTT trigger failed with status ${iftttResult.status}`);
+
+    await appendControllerHistoryEntry({
+      actorRole: "resident",
+      actorEmail: email,
+      actorName: getResidentHistoryName(client, email),
+      deviceType: "microwave",
+      deviceId: "d2-microwave",
+      deviceLabel: "Microwave D2",
+      branchId: "D2",
+      action: "TRIGGER",
+      details: inspection,
+      timestamp: result.usage.startedAt
+    });
 
     // Log to Google Sheet (best-effort)
     logMicrowaveUse(email, result.usage.startedByName, inspection).catch((err) => {
