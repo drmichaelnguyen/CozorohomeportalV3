@@ -6,6 +6,7 @@ import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 import Link from "next/link";
 import { ContractExtension } from "./contract-extension";
+import { InlineHelp } from "./inline-help";
 import { isContractExpired, daysUntilContractEnd } from "../lib/contract-utils";
 
 type ClientRecord = Record<string, string>;
@@ -114,6 +115,26 @@ const quickLinks = [
     descriptionKey: "fineTicketsDesc"
   }
 ];
+
+const QUICK_LINK_HELP: Record<string, string> = {
+  "/service/laundry":
+    "Laundry booking lets residents reserve machine time in advance so usage stays orderly and fair.\n\nThis aligns with Cozorohome policy by limiting use to valid booking windows and respecting automatic feature locks when rent or contract rules are not met.",
+  "/cleaning-schedule":
+    "Cleaning Schedule shows assigned cleaning duties and upcoming dates.\n\nThis aligns with Cozorohome policy by making shared-house responsibilities visible and helping residents complete required tasks on time.",
+  "/support":
+    "Support Center is the official place to message staff about room issues, billing questions, or general help.\n\nThis aligns with Cozorohome policy by keeping support communication traceable and tied to the resident account.",
+  "/billings/fine":
+    "Fine Tickets shows active fines and their payment status.\n\nThis aligns with Cozorohome policy by making violations, charges, and outstanding balances transparent before they affect account access."
+};
+
+const DASHBOARD_HELP = {
+  rent:
+    "Monthly Rent shows the current unpaid month and the calculated breakdown for rent, parking, laundry, and fines.\n\nThis aligns with Cozorohome policy by showing what is due before payment and asking residents to work with their manager for final receipt creation.",
+  nextLaundry:
+    "Next Laundry shows the resident's upcoming booked laundry slot.\n\nThis aligns with Cozorohome policy by encouraging residents to use machines only during their reserved time.",
+  support:
+    "Support Center is for maintenance, dorm questions, and follow-up with staff.\n\nThis aligns with Cozorohome policy by centralizing requests instead of relying on untracked side conversations."
+} as const;
 
 function normalizeBranch(value: string | undefined): "D2" | "D7" | null {
   const normalized = (value || "").trim().toUpperCase();
@@ -566,16 +587,23 @@ export function HomeDashboardClient() {
                 {t("rentDueSubtext", "Please settle your payment as soon as possible to avoid late fees.")}
               </p>
               {rentStatus.breakdown && (
-                <button
-                  type="button"
-                  onClick={() => setShowRentBreakdown(true)}
-                  className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 active:scale-95 transition-all"
-                >
-                  {new Intl.NumberFormat("vi-VN").format(rentStatus.breakdown.finalTotalVnd)} ₫
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                  </svg>
-                </button>
+                <div className="mt-3 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowRentBreakdown(true)}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 active:scale-95 transition-all"
+                  >
+                    {new Intl.NumberFormat("vi-VN").format(rentStatus.breakdown.finalTotalVnd)} ₫
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                  <InlineHelp
+                    label="How monthly rent works"
+                    title="Monthly Rent"
+                    body={DASHBOARD_HELP.rent}
+                  />
+                </div>
               )}
             </div>
           </div>
@@ -645,14 +673,23 @@ export function HomeDashboardClient() {
             <section className="-mx-4 overflow-x-auto px-4 pb-1 hide-scrollbar sm:mx-0 sm:px-0">
               <div className="flex min-w-max gap-3">
                 {quickLinks.map((link) => (
-                  <Link
+                  <div
                     key={link.href}
-                    href={link.href}
                     className="w-48 shrink-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
                   >
-                    <div className="text-sm font-semibold text-slate-900">{t(link.labelKey, link.label)}</div>
+                    <div className="flex items-start justify-between gap-2">
+                      <Link href={link.href} className="text-sm font-semibold text-slate-900">
+                        {t(link.labelKey, link.label)}
+                      </Link>
+                      <InlineHelp
+                        label={`How ${link.label} works`}
+                        title={link.label}
+                        body={QUICK_LINK_HELP[link.href] ?? ""}
+                        panelClassName="right-0"
+                      />
+                    </div>
                     <div className="mt-2 text-xs leading-5 text-slate-600">{t(link.descriptionKey, link.description)}</div>
-                  </Link>
+                  </div>
                 ))}
               </div>
             </section>
@@ -740,12 +777,19 @@ export function HomeDashboardClient() {
             <div className="space-y-6">
               {!isExpired && (
                 <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
-                  <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
                     <h2 className="text-lg font-semibold text-slate-900">{t("nextLaundry", "Next Laundry")}</h2>
-                    <Link href="/service/laundry" className="text-sm font-medium text-sky-800">
-                      {t("openLaundry", "Open laundry")}
-                    </Link>
+                    <InlineHelp
+                      label="How next laundry works"
+                      title="Next Laundry"
+                      body={DASHBOARD_HELP.nextLaundry}
+                    />
                   </div>
+                  <Link href="/service/laundry" className="text-sm font-medium text-sky-800">
+                    {t("openLaundry", "Open laundry")}
+                  </Link>
+                </div>
 
                   {!nextLaundry ? (
                     <p className="mt-4 text-sm text-slate-600">{t("noUpcomingLaundry", "No upcoming laundry booking is scheduled.")}</p>
@@ -763,7 +807,14 @@ export function HomeDashboardClient() {
 
               <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
                 <div className="flex items-center justify-between gap-3">
-                  <h2 className="text-lg font-semibold text-slate-900">{t("supportCenter", "Support Center")}</h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-lg font-semibold text-slate-900">{t("supportCenter", "Support Center")}</h2>
+                    <InlineHelp
+                      label="How support center works"
+                      title="Support Center"
+                      body={DASHBOARD_HELP.support}
+                    />
+                  </div>
                   <Link href="/support" className="text-sm font-medium text-sky-800">
                     {t("openSupport", "Open support")}
                   </Link>

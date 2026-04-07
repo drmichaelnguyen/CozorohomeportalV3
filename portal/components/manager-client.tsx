@@ -10,6 +10,7 @@ import { LaundryScheduleManager } from "./laundry-schedule-manager";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 import Link from "next/link";
+import { InlineHelp } from "./inline-help";
 
 
 type StaffRole = "manager" | "owner" | "app_admin" | "mechanic";
@@ -128,6 +129,17 @@ const PAYMENT_COMPACT_COLUMNS = [
   "MỤC ĐÍCH - GHI RÕ",
   "Địa chỉ email người nhận"
 ] as const;
+
+const MANAGER_FUNCTION_HELP = {
+  contractStatus:
+    "Contract Status lets a manager see whether the resident is active, terminated, or already checked out.\n\nThis aligns with Cozorohome policy by making termination and check-out steps explicit before access or deposit decisions are changed.",
+  monthlyRent:
+    "Monthly Rent shows the current month's breakdown, lets the manager adjust approved inputs, and creates the receipt.\n\nThis aligns with Cozorohome policy by keeping the final receipt based on the sheet-backed rent calculation and recording the paid status when the receipt is created.",
+  featureLock:
+    "Feature Lock controls whether the resident follows the normal automatic restriction rules or has a temporary manager override.\n\nThis aligns with Cozorohome policy by keeping overdue-rent and expired-contract restrictions automatic unless a manager intentionally unlocks access.",
+  clientActions:
+    "Client Actions are the manager-side tools for calling, messaging, fines, coins, password support, and receipt creation.\n\nThis aligns with Cozorohome policy by keeping resident support actions inside tracked manager workflows instead of unrecorded side actions."
+} as const;
 
 type RentBreakdown = {
   email: string;
@@ -3043,7 +3055,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     <div className={`rounded-2xl border p-4 ${isTerminated ? (checkedOut ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50") : "border-slate-200 bg-slate-50"}`}>
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Contract Status</div>
+                          <div className="flex items-center gap-2">
+                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Contract Status</div>
+                            <InlineHelp
+                              label="How contract status works"
+                              title="Contract Status"
+                              body={MANAGER_FUNCTION_HELP.contractStatus}
+                            />
+                          </div>
                           <div className={`mt-1 text-sm font-medium ${isTerminated ? (checkedOut ? "text-emerald-700" : "text-rose-700") : "text-slate-700"}`}>
                             {terminationStatus === "loading"
                               ? "Loading…"
@@ -3141,7 +3160,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
                       <div className="flex items-center justify-between">
                         <div>
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Monthly Rent</div>
+                          <div className="flex items-center gap-2">
+                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Monthly Rent</div>
+                            <InlineHelp
+                              label="How monthly rent works"
+                              title="Monthly Rent"
+                              body={MANAGER_FUNCTION_HELP.monthlyRent}
+                            />
+                          </div>
                           <div className="mt-0.5 text-sm font-medium text-slate-700">{rentPaidMonth || "This month"}</div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -3301,7 +3327,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">{t("clientActions")}</h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-semibold text-slate-900">{t("clientActions")}</h2>
+                  <InlineHelp
+                    label="How client actions work"
+                    title="Client Actions"
+                    body={MANAGER_FUNCTION_HELP.clientActions}
+                  />
+                </div>
                 <p className="mt-1 text-sm text-slate-600">
                   {t("chooseActionPrompt")}
                 </p>
@@ -3326,42 +3359,49 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           : "Feature Lock";
 
                     return (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!selectedClient?.email || !autoLock || isUnavailable) return;
-                          void postJson(
-                            `${API_BASE_URL}/manager/account-lock-override`,
-                            {
-                              actorEmail: normalizedEmail,
-                              targetEmail: selectedClient.email,
-                              unlocked: !isUnlocked,
-                              note: !isUnlocked ? "Manual unlock for overdue rent or expired contract restrictions." : ""
-                            },
-                            !isUnlocked ? "Account functions unlocked." : "Account returned to automatic lock rules.",
-                            async () => {
-                              await loadAccountLockOverride(selectedClient.email);
-                            }
-                          );
-                        }}
-                        disabled={!canToggle || accountLockOverrideLoading || !selectedClient?.email || isUnavailable}
-                        className={`rounded-lg px-4 py-2 text-sm font-medium ${
-                          isUnlocked
-                            ? "border border-amber-300 text-amber-700"
-                            : autoLock?.isBlocked
-                              ? "bg-rose-600 text-white"
-                              : "border border-slate-300 text-slate-400"
-                        } disabled:opacity-60`}
-                        title={
-                          autoLock?.isBlocked
-                            ? isUnlocked
-                              ? `Override by ${accountLockOverride?.updatedBy ?? "manager"}`
-                              : autoLock.reason
-                            : "Laundry booking and controller access follow the normal automatic rules."
-                        }
-                      >
-                        {label}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!selectedClient?.email || !autoLock || isUnavailable) return;
+                            void postJson(
+                              `${API_BASE_URL}/manager/account-lock-override`,
+                              {
+                                actorEmail: normalizedEmail,
+                                targetEmail: selectedClient.email,
+                                unlocked: !isUnlocked,
+                                note: !isUnlocked ? "Manual unlock for overdue rent or expired contract restrictions." : ""
+                              },
+                              !isUnlocked ? "Account functions unlocked." : "Account returned to automatic lock rules.",
+                              async () => {
+                                await loadAccountLockOverride(selectedClient.email);
+                              }
+                            );
+                          }}
+                          disabled={!canToggle || accountLockOverrideLoading || !selectedClient?.email || isUnavailable}
+                          className={`rounded-lg px-4 py-2 text-sm font-medium ${
+                            isUnlocked
+                              ? "border border-amber-300 text-amber-700"
+                              : autoLock?.isBlocked
+                                ? "bg-rose-600 text-white"
+                                : "border border-slate-300 text-slate-400"
+                          } disabled:opacity-60`}
+                          title={
+                            autoLock?.isBlocked
+                              ? isUnlocked
+                                ? `Override by ${accountLockOverride?.updatedBy ?? "manager"}`
+                                : autoLock.reason
+                              : "Laundry booking and controller access follow the normal automatic rules."
+                          }
+                        >
+                          {label}
+                        </button>
+                        <InlineHelp
+                          label="How feature lock works"
+                          title="Feature Lock"
+                          body={MANAGER_FUNCTION_HELP.featureLock}
+                        />
+                      </div>
                     );
                   })()}
                   {[
@@ -3393,23 +3433,30 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             {activeAction ? (
               <div className="mt-5 rounded-3xl border border-slate-200 bg-slate-50 p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h3 className="text-base font-semibold text-slate-900">
-                    {activeAction === "call"
-                      ? t("callClient")
-                      : activeAction === "sms"
-                        ? t("textClient")
-                        : activeAction === "email"
-                          ? t("emailClient")
-                          : activeAction === "message"
-                            ? t("clientChatTitle")
-                            : activeAction === "payment"
-                                ? t("createPaymentReceipt")
-                              : activeAction === "fine"
-                                ? t("createFineTicket")
-                                : activeAction === "password"
-                                  ? t("changePassword", "Change password")
-                                  : t("createCoinsEntry")}
-                  </h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-semibold text-slate-900">
+                      {activeAction === "call"
+                        ? t("callClient")
+                        : activeAction === "sms"
+                          ? t("textClient")
+                          : activeAction === "email"
+                            ? t("emailClient")
+                            : activeAction === "message"
+                              ? t("clientChatTitle")
+                              : activeAction === "payment"
+                                  ? t("createPaymentReceipt")
+                                : activeAction === "fine"
+                                  ? t("createFineTicket")
+                                  : activeAction === "password"
+                                    ? t("changePassword", "Change password")
+                                    : t("createCoinsEntry")}
+                    </h3>
+                    <InlineHelp
+                      label="How client actions work"
+                      title="Client Actions"
+                      body={MANAGER_FUNCTION_HELP.clientActions}
+                    />
+                  </div>
                   <button
                     type="button"
                     onClick={() => setActiveAction("")}

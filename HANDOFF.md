@@ -8,6 +8,8 @@ Cozorohome Portal V3 is a portal + management app with a Next.js frontend and an
 
 ## Current Important State
 
+- version `3.5.11` adds inline `?` help buttons for key resident and manager functions
+- user dashboard and manager workspace now include policy-aligned help popovers for rent, support, laundry, feature lock, contract status, and client actions
 - version `3.5.10` includes rent receipt flow fixes, member-tier rule clarification, and payment sheet branch normalization
 - Monthly Rent `Create Receipt` now writes directly to the payment sheet, then marks that month paid automatically
 - BIÊN NHẬN `Chi nhánh Dorm` now writes numeric branch values only: `2` or `7`
