@@ -8,7 +8,7 @@ set "TOOLS_DIR=%REPO_DIR%\tools"
 set "SHORTTERM_TUNNEL_SCRIPT=%TOOLS_DIR%\restart-shortterm-tunnel.ps1"
 
 set "GUEST_PORT=4115"
-set "GUEST_ONLINE_URL=https://shortterm.cozorohome.com"
+set "GUEST_ONLINE_URL=https://hostel.cozorohome.com"
 set "PORTAL_PORT=3001"
 set "PORTAL_LOCAL_URL=http://localhost:3001"
 set "PORTAL_WINDOW_TITLE=Guest Booking Standalone"

@@ -180,10 +180,25 @@ The public hostnames now share the main Cloudflare tunnel. Important details:
 - public chatbot hostname: `https://chatbot.cozorohome.com`
 - public chatbot health check: `https://chatbot.cozorohome.com/health`
 - chatbot tunnel origin: `http://127.0.0.1:4111`
-- shortterm hostname: `https://shortterm.cozorohome.com`
-- shortterm tunnel origin: `http://127.0.0.1:4115`
+- hostel hostname: `https://hostel.cozorohome.com`
+- hostel tunnel origin: `http://127.0.0.1:4115`
 - recommended Windows bot launcher: `bot/start-bot-win.ps1`
 - helper manager script: `start-bot-wsl.bat`
+
+### `manage-apps.bat` production actions
+
+- `15. Deploy local workspace to production and restart`
+  This copies the current local repo contents into the production worktree, keeps the production env files, creates a backup first, and then restarts the production stack.
+- `19. Reset production to origin/main and restart`
+  This discards production worktree drift, resets the production worktree to `origin/main`, creates a backup first, and then restarts the production stack.
+- `20. Restore production from backup`
+  This lets the operator choose an existing backup folder and restore production from it.
+
+Operational note:
+
+- production start/restart now prepares Prisma and build artifacts before launch
+- the production stack start path includes the main portal, API, backup worker, bot, and hostel guest booking service
+- the Cloudflare tunnel is still managed separately from the app-manager restart flow
 
 Operational note:
 

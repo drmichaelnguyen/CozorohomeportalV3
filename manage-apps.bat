@@ -43,10 +43,12 @@ echo 11. Roll back local to origin/sandboxing
 echo 12. Roll back production to origin/main
 echo 13. Roll back production one commit
 echo 14. Recreate production worktree
-echo 15. Migrate local app to production
+echo 15. Deploy local workspace to production and restart
 echo 16. Back up production
 echo 17. Restart production portal + API + bot + guest booking
 echo 18. Restart production tunnel only
+echo 19. Reset production to origin/main and restart
+echo 20. Restore production from backup
 echo 0. Exit
 echo.
 set /p "choice=Choose an option: "
@@ -55,11 +57,11 @@ if "%choice%"=="1" call :check_stack "LOCAL" 3002 4002 "%LOCAL_ROOT%"
 if "%choice%"=="2" call :check_stack "PROD" 3000 4000 "%PROD_ROOT%"
 if "%choice%"=="3" call :check_public
 if "%choice%"=="4" call :start_stack "LOCAL" 3002 4002 "%LOCAL_ROOT%"
-if "%choice%"=="5" call :start_stack "PROD" 3000 4000 "%PROD_ROOT%"
+if "%choice%"=="5" call :start_prod_full_stack
 if "%choice%"=="6" call :stop_stack "LOCAL" 3002 4002
-if "%choice%"=="7" call :stop_stack "PROD" 3000 4000
+if "%choice%"=="7" call :stop_prod_full_stack
 if "%choice%"=="8" call :stop_stack "LOCAL" 3002 4002 & call :start_stack "LOCAL" 3002 4002 "%LOCAL_ROOT%"
-if "%choice%"=="9" call :stop_stack "PROD" 3000 4000 & call :start_stack "PROD" 3000 4000 "%PROD_ROOT%"
+if "%choice%"=="9" call :restart_prod_full_stack
 if "%choice%"=="10" call :check_stack "LOCAL" 3002 4002 "%LOCAL_ROOT%" & call :check_stack "PROD" 3000 4000 "%PROD_ROOT%" & call :check_public
 if "%choice%"=="11" call :rollback_local
 if "%choice%"=="12" call :rollback_prod_remote
@@ -69,6 +71,8 @@ if "%choice%"=="15" call :migrate_local_to_prod
 if "%choice%"=="16" call :backup_prod
 if "%choice%"=="17" call :restart_prod_full_stack
 if "%choice%"=="18" call :restart_prod_tunnel
+if "%choice%"=="19" call :deploy_prod_from_main
+if "%choice%"=="20" call :restore_prod_from_backup
 if "%choice%"=="0" goto :eof
 
 echo.
@@ -118,18 +122,78 @@ if not exist "%STACK_ROOT%\portal" (
   goto :eof
 )
 
+call :prepare_stack "%STACK_NAME%" "%STACK_ROOT%"
+if errorlevel 1 (
+  echo [%STACK_NAME%] Preparation failed. Stack was not started.
+  goto :eof
+)
+
 if /I "%STACK_NAME%"=="LOCAL" (
-  start "%STACK_NAME% API :%API_PORT%" "%LOCAL_ROOT%\start-local-api.cmd"
+  start "%STACK_NAME% API :%API_PORT%" cmd /k "cd /d ""%STACK_ROOT%\api"" && corepack pnpm dev"
   timeout /t 3 /nobreak >nul
-  start "%STACK_NAME% Portal :%PORTAL_PORT%" "%LOCAL_ROOT%\start-local-portal.cmd"
+  start "%STACK_NAME% Portal :%PORTAL_PORT%" cmd /k "cd /d ""%STACK_ROOT%\portal"" && corepack pnpm dev"
 ) else (
-  start "%STACK_NAME% API :%API_PORT%" "%LOCAL_ROOT%\start-prod-desktop-api.cmd"
+  start "%STACK_NAME% API :%API_PORT%" cmd /k "cd /d ""%STACK_ROOT%\api"" && corepack pnpm start"
   timeout /t 3 /nobreak >nul
-  start "%STACK_NAME% Portal :%PORTAL_PORT%" "%LOCAL_ROOT%\start-prod-desktop-portal.cmd"
+  start "%STACK_NAME% Portal :%PORTAL_PORT%" cmd /k "cd /d ""%STACK_ROOT%\portal"" && corepack pnpm start"
   call :start_backup_worker
 )
 echo [%STACK_NAME%] Start commands launched.
 goto :eof
+
+:prepare_stack
+set "STACK_NAME=%~1"
+set "STACK_ROOT=%~2"
+echo [%STACK_NAME%] Preparing dependencies and build artifacts...
+
+if /I "%STACK_NAME%"=="LOCAL" (
+  call :run_pnpm "%STACK_ROOT%" "install --no-frozen-lockfile"
+) else (
+  call :run_pnpm "%STACK_ROOT%" "install --no-frozen-lockfile"
+)
+if errorlevel 1 exit /b 1
+
+call :run_pnpm "%STACK_ROOT%\api" "prisma:generate"
+if errorlevel 1 exit /b 1
+
+call :run_pnpm "%STACK_ROOT%\api" "exec prisma migrate deploy"
+if errorlevel 1 exit /b 1
+
+if /I "%STACK_NAME%"=="PROD" (
+  call :run_pnpm "%STACK_ROOT%\api" "build"
+  if errorlevel 1 exit /b 1
+  call :run_pnpm "%STACK_ROOT%\portal" "build"
+  if errorlevel 1 exit /b 1
+  call :prepare_guest_booking "%STACK_ROOT%"
+  if errorlevel 1 exit /b 1
+)
+
+exit /b 0
+
+:run_pnpm
+set "RUN_DIR=%~1"
+set "RUN_ARGS=%~2"
+echo [PNPM] %RUN_DIR% :: %RUN_ARGS%
+pushd "%RUN_DIR%"
+call corepack pnpm %RUN_ARGS%
+set "PNPM_EXIT=%ERRORLEVEL%"
+popd
+exit /b %PNPM_EXIT%
+
+:prepare_guest_booking
+set "STACK_ROOT=%~1"
+if not exist "%STACK_ROOT%\guest-booking-standalone\package.json" exit /b 0
+echo [GUEST] Preparing hostel guest booking dependencies...
+pushd "%STACK_ROOT%\guest-booking-standalone"
+if not exist node_modules\express (
+  call npm install
+  if errorlevel 1 (
+    popd
+    exit /b 1
+  )
+)
+popd
+exit /b 0
 
 :stop_stack
 set "STACK_NAME=%~1"
@@ -143,6 +207,26 @@ taskkill /FI "WINDOWTITLE eq %STACK_NAME% API :%API_PORT%*" /F >nul 2>&1
 taskkill /FI "WINDOWTITLE eq %STACK_NAME% Portal :%PORTAL_PORT%*" /F >nul 2>&1
 if /I "%STACK_NAME%"=="PROD" call :stop_backup_worker
 echo [%STACK_NAME%] Stop commands completed.
+goto :eof
+
+:start_prod_full_stack
+echo.
+echo [PROD] Starting portal, API, backup, bot chat, and hostel guest booking...
+echo [PROD] Tunnel is managed separately and will not be touched.
+call :start_stack "PROD" 3000 4000 "%PROD_ROOT%"
+if errorlevel 1 goto :eof
+call :start_bot_chat
+call :start_guest_booking
+echo [PROD] Full production start commands launched.
+goto :eof
+
+:stop_prod_full_stack
+echo.
+echo [PROD] Stopping portal, API, backup, bot chat, and hostel guest booking...
+call :stop_stack "PROD" 3000 4000
+call :stop_bot_chat
+call :stop_guest_booking
+echo [PROD] Full production stop commands completed.
 goto :eof
 
 :print_port_status
@@ -226,25 +310,31 @@ goto :eof
 
 :migrate_local_to_prod
 echo.
-echo [MIGRATE] Copying local app into production worktree...
+echo [DEPLOY-LOCAL] Deploying local workspace to production...
+call :backup_prod_internal
+if errorlevel 1 (
+  echo [DEPLOY-LOCAL] Backup failed. Deployment cancelled.
+  goto :eof
+)
+echo [DEPLOY-LOCAL] Backup created at %TARGET_BACKUP%
 call :stop_stack "LOCAL" 3002 4002
-call :stop_stack "PROD" 3000 4000
+call :stop_prod_full_stack
 if not exist "%PROD_ROOT%" (
-  echo [MIGRATE] Production folder not found.
+  echo [DEPLOY-LOCAL] Production folder not found.
   goto :eof
 )
 robocopy "%LOCAL_ROOT%" "%PROD_ROOT%" /MIR /XD ".git" "node_modules" ".next" ".codex-logs" ".stversions" "cozorohome-prod" /XF ".env.local"
 set "ROBOCODE=%ERRORLEVEL%"
 if %ROBOCODE% GEQ 8 (
-  echo [MIGRATE] Robocopy failed with code %ROBOCODE%.
+  echo [DEPLOY-LOCAL] Robocopy failed with code %ROBOCODE%.
   goto :eof
 )
 if not exist "%PROD_ROOT%\portal" (
-  echo [MIGRATE] Production portal folder missing after copy.
+  echo [DEPLOY-LOCAL] Production portal folder missing after copy.
   goto :eof
 )
 if not exist "%PROD_ROOT%\api" (
-  echo [MIGRATE] Production API folder missing after copy.
+  echo [DEPLOY-LOCAL] Production API folder missing after copy.
   goto :eof
 )
 (
@@ -255,15 +345,22 @@ echo API_SERVER_ORIGIN=http://localhost:4000
 if exist "%LOCAL_ROOT%\api\.env" (
   powershell -NoProfile -Command "$content = Get-Content '%LOCAL_ROOT%\api\.env' -Raw; $content = $content -replace 'PORT=4002','PORT=4000'; $content = $content -replace 'http://localhost:4002/integrations/google/oauth/callback','http://localhost:4000/integrations/google/oauth/callback'; Set-Content '%PROD_ROOT%\api\.env' $content"
 )
-echo [MIGRATE] Local app copied to production. Prod env reset to 3000/4000.
+echo [DEPLOY-LOCAL] Local workspace copied to production. Prod env reset to 3000/4000.
 goto :eof
 
 :backup_prod
 echo.
 echo [BACKUP] Creating production backup...
+call :backup_prod_internal
+if errorlevel 1 goto :eof
+echo [BACKUP] Production backup created at:
+echo [BACKUP] %TARGET_BACKUP%
+goto :eof
+
+:backup_prod_internal
 if not exist "%PROD_ROOT%" (
   echo [BACKUP] Production folder not found.
-  goto :eof
+  exit /b 1
 )
 if not exist "%BACKUP_ROOT%" mkdir "%BACKUP_ROOT%"
 for /f %%I in ('powershell -NoProfile -Command "Get-Date -Format ''yyyyMMdd-HHmmss''"') do set "STAMP=%%I"
@@ -272,20 +369,20 @@ robocopy "%PROD_ROOT%" "%TARGET_BACKUP%" /MIR /XD ".git" "node_modules" ".next" 
 set "ROBOCODE=%ERRORLEVEL%"
 if %ROBOCODE% GEQ 8 (
   echo [BACKUP] Backup failed with code %ROBOCODE%.
-  goto :eof
+  exit /b 1
 )
-echo [BACKUP] Production backup created at:
-echo [BACKUP] %TARGET_BACKUP%
-goto :eof
+exit /b 0
 
 :restart_prod_full_stack
 echo.
-echo [PROD] Restarting portal, API, backup, bot chat, and guest booking only...
+echo [PROD] Restarting portal, API, backup, bot chat, and hostel guest booking...
 echo [PROD] Tunnel is managed separately and will not be touched.
-call :stop_stack "PROD" 3000 4000
-call :stop_bot_chat
-call :stop_guest_booking
+call :stop_prod_full_stack
+echo.
+echo [PROD] Starting portal, API, backup, bot chat, and hostel guest booking...
+echo [PROD] Tunnel is managed separately and will not be touched.
 call :start_stack "PROD" 3000 4000 "%PROD_ROOT%"
+if errorlevel 1 goto :eof
 call :start_bot_chat
 call :start_guest_booking
 echo [PROD] Full production restart commands launched.
@@ -302,13 +399,98 @@ start "PROD Tunnel Refresh" cmd /c "cd /d "%PROD_ROOT%\tools" && call refresh-tu
 echo [PROD] Tunnel restart command launched.
 goto :eof
 
+:deploy_prod_from_main
+echo.
+echo [PROD-MAIN] Resetting production to origin/main...
+call :backup_prod_internal
+if errorlevel 1 (
+  echo [PROD-MAIN] Backup failed. Reset cancelled.
+  goto :eof
+)
+echo [PROD-MAIN] Backup created at %TARGET_BACKUP%
+call :stop_prod_full_stack
+if not exist "%PROD_ROOT%" (
+  echo [PROD-MAIN] Folder not found.
+  goto :eof
+)
+cd /d "%PROD_ROOT%"
+git fetch origin
+if errorlevel 1 goto :git_failed
+git reset --hard origin/main
+if errorlevel 1 goto :git_failed
+git clean -fd
+if errorlevel 1 goto :git_failed
+echo.
+echo [PROD] Starting portal, API, backup, bot chat, and hostel guest booking...
+echo [PROD] Tunnel is managed separately and will not be touched.
+call :start_stack "PROD" 3000 4000 "%PROD_ROOT%"
+if errorlevel 1 goto :eof
+call :start_bot_chat
+call :start_guest_booking
+echo [PROD-MAIN] Production reset to origin/main and restart commands launched.
+goto :eof
+
+:restore_prod_from_backup
+echo.
+echo [RESTORE] Available production backups:
+if not exist "%BACKUP_ROOT%" (
+  echo [RESTORE] Backup folder not found.
+  goto :eof
+)
+set "BACKUP_COUNT=0"
+for /f "delims=" %%D in ('dir "%BACKUP_ROOT%\cozorohome-prod-*" /b /ad /o-n 2^>nul') do (
+  set /a BACKUP_COUNT+=1
+  set "BACKUP_!BACKUP_COUNT!=%%D"
+  echo   !BACKUP_COUNT!. %%D
+)
+if "%BACKUP_COUNT%"=="0" (
+  echo [RESTORE] No production backups were found.
+  goto :eof
+)
+echo.
+set "RESTORE_CHOICE="
+set /p "RESTORE_CHOICE=Enter backup number to restore: "
+if not defined RESTORE_CHOICE (
+  echo [RESTORE] No backup selected.
+  goto :eof
+)
+set "SELECTED_BACKUP=!BACKUP_%RESTORE_CHOICE%!"
+if not defined SELECTED_BACKUP (
+  echo [RESTORE] Invalid backup number.
+  goto :eof
+)
+set "RESTORE_SOURCE=%BACKUP_ROOT%\%SELECTED_BACKUP%"
+echo [RESTORE] Restoring from %RESTORE_SOURCE%
+call :stop_stack "PROD" 3000 4000
+call :stop_bot_chat
+call :stop_guest_booking
+if not exist "%PROD_ROOT%" (
+  echo [RESTORE] Production folder not found.
+  goto :eof
+)
+robocopy "%RESTORE_SOURCE%" "%PROD_ROOT%" /MIR /XD ".git" "node_modules" ".next" ".codex-logs" ".stversions"
+set "ROBOCODE=%ERRORLEVEL%"
+if %ROBOCODE% GEQ 8 (
+  echo [RESTORE] Restore failed with code %ROBOCODE%.
+  goto :eof
+)
+echo.
+echo [PROD] Starting portal, API, backup, bot chat, and hostel guest booking...
+echo [PROD] Tunnel is managed separately and will not be touched.
+call :start_stack "PROD" 3000 4000 "%PROD_ROOT%"
+if errorlevel 1 goto :eof
+call :start_bot_chat
+call :start_guest_booking
+echo [RESTORE] Production restored from %SELECTED_BACKUP%.
+goto :eof
+
 :start_bot_chat
 echo [PROD] Starting bot chat from %PROD_ROOT%\bot
 if not exist "%PROD_ROOT%\bot\run-bot-win.cmd" (
   echo [PROD] Bot run script not found.
   goto :eof
 )
-start "PROD Bot Chat :4111" cmd /c "cd /d "%PROD_ROOT%\bot" && call run-bot-win.cmd"
+start "PROD Bot Chat :4111" cmd /c "cd /d ""%PROD_ROOT%\bot"" && call run-bot-win.cmd"
 goto :eof
 
 :stop_bot_chat
@@ -323,7 +505,7 @@ if not exist "%PROD_ROOT%\guest-booking-standalone\package.json" (
   echo [PROD] Guest booking folder not found.
   goto :eof
 )
-start "PROD Guest Booking :4115" cmd /k "cd /d "%PROD_ROOT%\guest-booking-standalone" && if not exist node_modules\express (npm install) && node server.js"
+start "PROD Guest Booking :4115" cmd /k "cd /d ""%PROD_ROOT%\guest-booking-standalone"" && node server.js"
 goto :eof
 
 :stop_guest_booking

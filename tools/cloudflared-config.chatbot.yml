@@ -6,6 +6,6 @@ ingress:
     service: http://localhost:3000
   - hostname: chatbot.cozorohome.com
     service: http://127.0.0.1:4111
-  - hostname: shortterm.cozorohome.com
+  - hostname: hostel.cozorohome.com
     service: http://127.0.0.1:4115
   - service: http_status:404

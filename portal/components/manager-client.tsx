@@ -2646,7 +2646,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               <section className="space-y-4">
                 <div>
                   <h2 className="text-lg font-semibold text-slate-900">Hostel Portal</h2>
-                  <p className="text-sm text-slate-500 mt-0.5">Manage hostel guests (hostal.cozorohome.com, Booking.com, Airbnb, direct), pricing, and discount rules.</p>
+                  <p className="text-sm text-slate-500 mt-0.5">Manage hostel guests (hostel.cozorohome.com, Booking.com, Airbnb, direct), pricing, and discount rules.</p>
                 </div>
 
                 {/* Add hostel guest button */}

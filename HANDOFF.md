@@ -10,6 +10,16 @@ Cozorohome Portal V3 is a portal + management app with a Next.js frontend and an
 
 - version `3.5.11` adds inline `?` help buttons for key resident and manager functions
 - user dashboard and manager workspace now include policy-aligned help popovers for rent, support, laundry, feature lock, contract status, and client actions
+- branch policy is now: `sandboxing` for active dev, `main` for release / production
+- release and production refresh should use `manage-apps.bat` only
+- future agents should not deploy from a dirty local workspace; production should be refreshed from a clean `main` source
+- if a release adds a newly imported file, confirm it is tracked in git before pushing or refreshing production
+- production app-manager meanings are now:
+  - option `15` = deploy local workspace to production
+  - option `19` = reset production to `origin/main`
+  - option `20` = restore production from backup
+- production restart/start should bring up portal, API, backup worker, bot chat, and the hostel guest-booking site together
+- hostel public hostname is now `https://hostel.cozorohome.com`
 - version `3.5.10` includes rent receipt flow fixes, member-tier rule clarification, and payment sheet branch normalization
 - Monthly Rent `Create Receipt` now writes directly to the payment sheet, then marks that month paid automatically
 - BIÊN NHẬN `Chi nhánh Dorm` now writes numeric branch values only: `2` or `7`
@@ -110,6 +120,20 @@ If the public API drops intermittently (showing `502 Bad Gateway` on preflights)
 Portal production proxy behavior is controlled in:
 
 - `portal/next.config.ts`
+
+Release / production guideline:
+
+- commit feature work on `sandboxing`
+- promote approved work to `main`
+- refresh production from `main`
+- use `manage-apps.bat` for backup, recreate, restart, and rollback
+- `manage-apps.bat` creates a backup automatically before local-to-production deploys and before resets to `origin/main`
+- do not rely on legacy deploy scripts for the normal flow
+- after a clean production sync, restore runtime files that are not part of the normal tracked code release:
+  - `api/.env`
+  - `api/.google-oauth.json`
+  - important `api/data/*` files
+- if Google integrations fail after deploy with `Google OAuth tokens are missing`, check `api/.google-oauth.json` first
 
 If production login fails, verify:
 

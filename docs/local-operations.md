@@ -35,6 +35,26 @@ This starts:
 - API script: `api/refresh-api.cmd`
 - tunnel script: `tools/refresh-tunnel.cmd`
 
+## `manage-apps.bat`
+
+Use `manage-apps.bat` for normal Windows release and production operations.
+
+Important production actions:
+
+- `15. Deploy local workspace to production and restart`
+  Use this when the current local workspace is the version you want to publish to production.
+- `19. Reset production to origin/main and restart`
+  Use this when production should exactly match the tracked `origin/main` branch.
+- `20. Restore production from backup`
+  Use this to roll production back to a previous backup snapshot.
+
+Current production behavior:
+
+- the script creates a backup automatically before option `15` and option `19`
+- production start/restart prepares dependencies, regenerates Prisma, applies migrations, builds portal/API, and then starts the stack
+- production stack startup includes the portal, API, backup worker, bot chat, and hostel guest-booking service on `:4115`
+- the tunnel is still restarted separately
+
 ## What Each Script Does
 
 ### `portal/refresh-portal.cmd`
@@ -97,6 +117,7 @@ Check:
 - deployment rebuilt from latest `main`
 - portal env points to real production API
 - Google Cloud origins match the public hostname
+- hostel guest booking public hostname is `https://hostel.cozorohome.com`
 
 ### Intermittent 502s on Public API
 If the Cloudflare tunnel (`app.cozorohome.com` or `api.cozorohome.com`) randomly returns `502 Bad Gateway`, check if `cloudflared` is running on a backup computer or another terminal using the same tunnel token. Cloudflare automatically load-balances traffic across all connected instances of the same tunnel. If the backup machine isn't running the API server on port 4000, half of the requests will fail with 502. Ensure the tunnel is only active on the primary instance.
