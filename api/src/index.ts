@@ -68,6 +68,7 @@ import {
   getLaundryBookingsForEmailWithOptions,
   getActiveLaundryBooking,
   listLaundryCalendarsWithEvents,
+  getConfiguredLaundryMachines,
   upgradeCozoroMemberByCoins,
   readCachedCoins,
   readCachedFines,
@@ -85,6 +86,7 @@ import {
   updateFineSheetEntry,
   deleteFineSheetEntry,
   updateLaundryBookingEntry,
+  updateLaundryMachineSettings,
   updatePaymentSheetEntry,
   deletePaymentSheetEntry,
   readCachedMaintenance,
@@ -693,6 +695,12 @@ const staffLaundryUpdateSchema = z.object({
   location: z.string(),
   start: z.string().datetime(),
   end: z.string().datetime()
+});
+const laundryMachineSettingsUpdateSchema = z.object({
+  actorEmail: z.string().email(),
+  machineId: z.string().min(1),
+  durationMinutes: z.coerce.number().int().min(10).max(24 * 60),
+  cooldownMinutes: z.coerce.number().int().min(0).max(24 * 60)
 });
 
 const clientUpdateSchema = z.object({
@@ -1511,10 +1519,17 @@ app.get("/manager/controller/devices", async (_request, response) => {
 
 app.get("/manager/laundry/schedule", async (_request, response) => {
   try {
-    const calendars = await listLaundryCalendarsWithEvents();
+    const [calendars, machines] = await Promise.all([
+      listLaundryCalendarsWithEvents(),
+      getConfiguredLaundryMachines()
+    ]);
     const now = new Date();
+    const machineByCalendarId = new Map<string, (typeof machines)[number]>(
+      machines.map((machine) => [machine.calendarId, machine])
+    );
     
     const schedule = calendars.map(cal => {
+      const machine = machineByCalendarId.get(cal.id) ?? null;
       // Sort events by start date
       const sortedEvents = [...cal.events].sort((a, b) => 
         new Date(a.start).getTime() - new Date(b.start).getTime()
@@ -1531,6 +1546,14 @@ app.get("/manager/laundry/schedule", async (_request, response) => {
       return {
         id: cal.id,
         summary: cal.summary,
+        machineId: machine?.id ?? cal.id,
+        label: machine?.label ?? cal.summary,
+        branchId: machine?.branchId ?? null,
+        type: machine?.type ?? null,
+        durationMinutes: machine?.durationMinutes ?? null,
+        cooldownMinutes: machine?.cooldownMinutes ?? 0,
+        updatedAt: machine?.updatedAt ?? null,
+        updatedBy: machine?.updatedBy ?? null,
         previous,
         upcoming
       };
@@ -1589,6 +1612,27 @@ app.get("/controller/airfryer", async (request, response) => {
   } catch (error) {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to load air fryer status"
+    });
+  }
+});
+
+app.post("/manager/laundry/machines/settings", async (request, response) => {
+  const parsed = laundryMachineSettingsUpdateSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid laundry machine settings payload" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only Cozoro team members can update laundry machine settings."
+    );
+    const machine = await updateLaundryMachineSettings(parsed.data);
+    return response.json({ machine });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to update laundry machine settings"
     });
   }
 });

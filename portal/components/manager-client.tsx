@@ -5501,7 +5501,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           {schedulingTab === "cleaning" ? (
             <AdminCleaningClient />
           ) : (
-            <LaundryScheduleManager />
+            <LaundryScheduleManager actorEmail={normalizedEmail} />
           )}
         </section>
       ) : null}

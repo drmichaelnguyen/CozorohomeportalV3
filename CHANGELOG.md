@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.5.12] - 2026-04-08
+### Added
+- **Laundry Timing Help**: Added a manager-side `?` help popup in the laundry schedule area that explains how booking duration and cooldown combine, with a concrete calendar example.
+
+### Changed
+- **Editable Laundry Machine Timing**: Managers can now configure each machine's booking duration and cooldown separately from the laundry schedule view.
+- **Laundry Availability Rule**: Next available laundry slots now follow `booking start + duration + cooldown`, so the post-booking gap is explicit and machine-specific instead of being implied by the old overlap rule.
+
 ## [3.5.9] - 2026-04-06
 ### Fixed
 - **Legacy Cleaning DB Compatibility**: Added fallback handling for local databases that do not yet have the new `assignedByEmail` and `assignedByName` columns, preventing cleaning read, write, and delete failures during local development.

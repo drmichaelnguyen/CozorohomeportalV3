@@ -49,6 +49,7 @@ const paymentsCacheFilePath = path.join(cacheDirPath, "payments-cache.json");
 const finesCacheFilePath = path.join(cacheDirPath, "fines-cache.json");
 const cleaningCalendarCacheFilePath = path.join(cacheDirPath, "cleaning-calendars-cache.json");
 const laundryCouponsFilePath = path.join(cacheDirPath, "laundry-coupons.json");
+const laundryMachineSettingsFilePath = path.join(cacheDirPath, "laundry-machine-settings.json");
 const staffAccessFilePath = path.join(cacheDirPath, "portal-staff-access.json");
 
 async function getStaffEntryByEmail(email: string) {
@@ -114,6 +115,7 @@ export const laundryMachines = [
     branchId: "D2",
     type: "WASHER",
     durationMinutes: 75,
+    defaultCooldownMinutes: 75,
     coinPrice: 7000,
     allowsFreeLaundry: true
   },
@@ -124,6 +126,7 @@ export const laundryMachines = [
     branchId: "D7",
     type: "WASHER",
     durationMinutes: 90,
+    defaultCooldownMinutes: 90,
     coinPrice: 7000,
     allowsFreeLaundry: true
   },
@@ -134,6 +137,7 @@ export const laundryMachines = [
     branchId: "D7",
     type: "WASHER",
     durationMinutes: 90,
+    defaultCooldownMinutes: 90,
     coinPrice: 7000,
     allowsFreeLaundry: false
   },
@@ -144,6 +148,7 @@ export const laundryMachines = [
     branchId: "D7",
     type: "DRYER",
     durationMinutes: 120,
+    defaultCooldownMinutes: 120,
     coinPrice: 7000,
     allowsFreeLaundry: true
   }
@@ -373,6 +378,15 @@ async function ensureDataFile<T>(filePath: string, fallback: T) {
 
 async function readLaundryCoupons() {
   return ensureDataFile<LaundryCoupon[]>(laundryCouponsFilePath, []);
+}
+
+async function readLaundryMachineSettings() {
+  return ensureDataFile<LaundryMachineSettingsEntry[]>(laundryMachineSettingsFilePath, []);
+}
+
+async function writeLaundryMachineSettings(settings: LaundryMachineSettingsEntry[]) {
+  await mkdir(path.dirname(laundryMachineSettingsFilePath), { recursive: true });
+  await writeFile(laundryMachineSettingsFilePath, JSON.stringify(settings, null, 2), "utf8");
 }
 
 async function readLaundryCouponRedemptions() {
@@ -1291,7 +1305,29 @@ export type LaundryCalendarEvent = {
   syncWarnings?: string[];
 };
 
-export type LaundryMachine = (typeof laundryMachines)[number];
+type BaseLaundryMachine = (typeof laundryMachines)[number];
+
+type LaundryMachineSettingsEntry = {
+  machineId: string;
+  durationMinutes: number;
+  cooldownMinutes: number;
+  updatedAt: string;
+  updatedBy?: string | null;
+};
+
+export type LaundryMachine = {
+  id: string;
+  calendarId: string;
+  label: string;
+  branchId: "D2" | "D7";
+  type: "WASHER" | "DRYER";
+  durationMinutes: number;
+  coinPrice: number;
+  allowsFreeLaundry: boolean;
+  cooldownMinutes: number;
+  updatedAt?: string;
+  updatedBy?: string | null;
+};
 
 export type LaundryAvailabilityDay = {
   date: string;
@@ -1442,6 +1478,73 @@ function invalidateLaundryCalendar(calendarId: string) {
 
 function getLaundryMachineById(machineId: string) {
   return laundryMachines.find((machine) => machine.id === machineId) ?? null;
+}
+
+function mergeLaundryMachineSettings(
+  machine: BaseLaundryMachine,
+  settingsMap: Map<string, LaundryMachineSettingsEntry>
+): LaundryMachine {
+  const setting = settingsMap.get(machine.id);
+  return {
+    id: machine.id,
+    calendarId: machine.calendarId,
+    label: machine.label,
+    branchId: machine.branchId,
+    type: machine.type,
+    durationMinutes: setting?.durationMinutes ?? machine.durationMinutes,
+    coinPrice: machine.coinPrice,
+    allowsFreeLaundry: machine.allowsFreeLaundry,
+    cooldownMinutes: setting?.cooldownMinutes ?? machine.defaultCooldownMinutes,
+    ...(setting?.updatedAt ? { updatedAt: setting.updatedAt } : {}),
+    ...(setting?.updatedBy ? { updatedBy: setting.updatedBy } : {})
+  };
+}
+
+async function getLaundryMachineSettingsMap() {
+  const settings = await readLaundryMachineSettings();
+  return new Map(settings.map((entry) => [entry.machineId, entry]));
+}
+
+async function getLaundryMachineByIdWithSettings(machineId: string) {
+  const machine = getLaundryMachineById(machineId);
+  if (!machine) {
+    return null;
+  }
+  const settingsMap = await getLaundryMachineSettingsMap();
+  return mergeLaundryMachineSettings(machine, settingsMap);
+}
+
+export async function getConfiguredLaundryMachines() {
+  const settingsMap = await getLaundryMachineSettingsMap();
+  return laundryMachines.map((machine) => mergeLaundryMachineSettings(machine, settingsMap));
+}
+
+export async function updateLaundryMachineSettings(input: {
+  actorEmail: string;
+  machineId: string;
+  durationMinutes: number;
+  cooldownMinutes: number;
+}) {
+  const machine = getLaundryMachineById(input.machineId);
+  if (!machine) {
+    throw new Error("Laundry machine not found.");
+  }
+
+  const normalizedDuration = Math.max(10, Math.round(input.durationMinutes));
+  const normalizedCooldown = Math.max(0, Math.round(input.cooldownMinutes));
+  const settings = await readLaundryMachineSettings();
+  const nextSettings = settings.filter((entry) => entry.machineId !== input.machineId);
+  nextSettings.push({
+    machineId: input.machineId,
+    durationMinutes: normalizedDuration,
+    cooldownMinutes: normalizedCooldown,
+    updatedAt: new Date().toISOString(),
+    updatedBy: input.actorEmail.trim().toLowerCase()
+  });
+  await writeLaundryMachineSettings(nextSettings);
+
+  const settingsMap = new Map(nextSettings.map((entry) => [entry.machineId, entry]));
+  return mergeLaundryMachineSettings(machine, settingsMap);
 }
 
 function roundUpToNextTenMinutes(date: Date) {
@@ -1754,7 +1857,7 @@ export async function createLaundryBooking(input: {
     throw new Error("No active client found for that email");
   }
 
-  const machine = getLaundryMachineById(input.machineId);
+  const machine = await getLaundryMachineByIdWithSettings(input.machineId);
   if (!machine || machine.branchId !== context.branchId) {
     throw new Error("This machine is not available for your branch");
   }
@@ -2078,8 +2181,9 @@ export async function warmLaundryCalendarCache() {
   return results.flat().filter((event: LaundryCalendarEvent) => event.id && event.start);
 }
 
-export function getLaundryMachinesForBranch(branchId: string) {
-  return laundryMachines.filter((machine) => machine.branchId === branchId);
+export async function getLaundryMachinesForBranch(branchId: string) {
+  const machines = await getConfiguredLaundryMachines();
+  return machines.filter((machine) => machine.branchId === branchId);
 }
 
 export async function getLaundryBookingContextForEmail(email: string) {
@@ -2110,7 +2214,7 @@ export async function getLaundryBookingContextForEmail(email: string) {
   return {
     client,
     branchId,
-    machines: getLaundryMachinesForBranch(branchId),
+    machines: await getLaundryMachinesForBranch(branchId),
     allowance,
     timeZone: COZORO_TIMEZONE
   };
@@ -2127,7 +2231,7 @@ export async function getLaundryAvailabilityForMachine(input: {
     throw new Error("No active client found for that email");
   }
 
-  const machine = getLaundryMachineById(input.machineId);
+  const machine = await getLaundryMachineByIdWithSettings(input.machineId);
   if (!machine || machine.branchId !== context.branchId) {
     throw new Error("This machine is not available for your branch");
   }
@@ -2147,16 +2251,8 @@ export async function getLaundryAvailabilityForMachine(input: {
   const now = new Date();
   const todayParts = getTimeZoneParts(now, COZORO_TIMEZONE);
   const availability: LaundryAvailabilityDay[] = [];
-  const blockedIntervals = relevantEvents.map((event) => {
-    const eventStart = new Date(event.start?.dateTime ?? event.start?.date ?? "");
     // Always calculate end from machine duration — don't trust the calendar event's end time
     // (legacy bookings from the old system may have incorrect end times written to the calendar)
-    const eventEnd = new Date(eventStart.getTime() + machine.durationMinutes * 60 * 1000);
-    return {
-      start: new Date(eventStart.getTime() - machine.durationMinutes * 60 * 1000),
-      end: eventEnd
-    };
-  });
 
   for (let dayOffset = 0; dayOffset < totalDays; dayOffset += 1) {
     const dayStart = zonedDateTimeToUtc(
@@ -2187,8 +2283,12 @@ export async function getLaundryAvailabilityForMachine(input: {
       slotStart = new Date(slotStart.getTime() + 10 * 60 * 1000)
     ) {
       const slotEnd = new Date(slotStart.getTime() + machine.durationMinutes * 60 * 1000);
-      const overlaps = blockedIntervals.some((interval) => {
-        return interval.start.getTime() < slotEnd.getTime() && interval.end.getTime() > slotStart.getTime();
+      const overlaps = relevantEvents.some((event) => {
+        const eventStart = new Date(event.start?.dateTime ?? event.start?.date ?? "");
+        // Use the configured machine duration instead of the stored event end, so old calendar data cannot shift availability.
+        const eventEnd = new Date(eventStart.getTime() + machine.durationMinutes * 60 * 1000);
+        const cooldownEnd = new Date(eventEnd.getTime() + machine.cooldownMinutes * 60 * 1000);
+        return slotStart.getTime() < cooldownEnd.getTime() && slotEnd.getTime() > eventStart.getTime();
       });
 
       if (!overlaps) {
@@ -2202,7 +2302,7 @@ export async function getLaundryAvailabilityForMachine(input: {
     });
   }
 
-  return { availability };
+  return { machine, availability };
 }
 
 export function getConfiguredCleaningCalendars() {

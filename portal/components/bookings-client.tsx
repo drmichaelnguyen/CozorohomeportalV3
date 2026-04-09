@@ -14,6 +14,7 @@ type LaundryMachine = {
   branchId: "D2" | "D7";
   type: "WASHER" | "DRYER";
   durationMinutes: number;
+  cooldownMinutes: number;
   coinPrice: number;
   allowsFreeLaundry: boolean;
 };
@@ -55,6 +56,13 @@ type LaundryBooking = {
   end: string;
   htmlLink: string;
   syncWarnings?: string[];
+};
+
+type AccountLockOverride = {
+  unlocked?: boolean;
+  updatedBy?: string;
+  updatedAt?: string;
+  note?: string;
 };
 
 function getTimeZoneLabel(timeZone: string) {
@@ -168,7 +176,7 @@ function parseLooseDate(value: string | undefined): Date | null {
   return parseContractEndDate(value);
 }
 
-function getAccountStatus(client: Record<string, string> | null): {
+function getAccountStatus(client: Record<string, string> | null, override: AccountLockOverride | null): {
   isBlocked: boolean;
   blockReason: string | null;
   warnings: string[];
@@ -209,6 +217,15 @@ function getAccountStatus(client: Record<string, string> | null): {
     }
   }
 
+  if (blockReason && override?.unlocked) {
+    warnings.unshift(
+      override.updatedBy
+        ? `Tài khoản đã được mở khoá thủ công bởi ${override.updatedBy}.`
+        : "Tài khoản đã được mở khoá thủ công bởi quản lý."
+    );
+    return { isBlocked: false, blockReason: null, warnings };
+  }
+
   return { isBlocked: blockReason !== null, blockReason, warnings };
 }
 
@@ -221,6 +238,7 @@ export function BookingsClient() {
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
   const [clientRecord, setClientRecord] = useState<Record<string, string> | null>(null);
+  const [accountLockOverride, setAccountLockOverride] = useState<AccountLockOverride | null>(null);
   const [branchId, setBranchId] = useState<"D2" | "D7" | "">("");
   const [coins, setCoins] = useState("");
   const [timeZone, setTimeZone] = useState("Asia/Ho_Chi_Minh");
@@ -404,8 +422,8 @@ export function BookingsClient() {
     [filteredBookings, showAllBookings]
   );
   const { isBlocked, blockReason, warnings } = useMemo(
-    () => getAccountStatus(clientRecord),
-    [clientRecord]
+    () => getAccountStatus(clientRecord, accountLockOverride),
+    [accountLockOverride, clientRecord]
   );
 
   async function loadBookings(emailValue?: string, shouldRefresh = false) {
@@ -481,14 +499,18 @@ export function BookingsClient() {
       setBookingDayFilter("all");
       setBookingPaymentFilter("all");
       setBookingSortDirection("desc");
-      const [bookingsResult, availabilityResult, clientResult] = await Promise.allSettled([
+      const [bookingsResult, availabilityResult, clientResult, overrideResult] = await Promise.allSettled([
         loadBookings(trimmedEmail),
         nextMachineId ? loadAvailability(nextMachineId, trimmedEmail, true) : Promise.resolve(),
-        fetchJson<Record<string, string>>(`${API_BASE_URL}/clients?email=${encodeURIComponent(trimmedEmail)}`)
+        fetchJson<Record<string, string>>(`${API_BASE_URL}/clients?email=${encodeURIComponent(trimmedEmail)}`),
+        fetchJson<{ override?: AccountLockOverride | null }>(`${API_BASE_URL}/account-lock-override?email=${encodeURIComponent(trimmedEmail)}`)
       ]);
 
       if (clientResult.status === "fulfilled") {
         setClientRecord(clientResult.value);
+      }
+      if (overrideResult.status === "fulfilled") {
+        setAccountLockOverride(overrideResult.value.override ?? null);
       }
 
       if (bookingsResult.status === "rejected" || availabilityResult.status === "rejected") {
@@ -513,6 +535,7 @@ export function BookingsClient() {
       setSelectedMachineId("");
       setAvailability([]);
       setBookings([]);
+      setAccountLockOverride(null);
       setMessage(error instanceof Error ? error.message : "Unable to load laundry booking options.");
     } finally {
       setLoading(false);
@@ -924,6 +947,9 @@ export function BookingsClient() {
               <div className="mt-1">
                 Duration: {selectedMachine ? formatDuration(selectedMachine.durationMinutes) : "-"}
               </div>
+              <div className="mt-1">
+                Cooldown after booking: {selectedMachine ? formatDuration(selectedMachine.cooldownMinutes) : "-"}
+              </div>
               <div className="mt-1">Payment: {selectedPaymentMethod || automaticPaymentMethod}</div>
               <div className="mt-1">Coupon: {couponCode || "-"}</div>
               <div className="mt-1">
@@ -995,7 +1021,7 @@ export function BookingsClient() {
                 <div key={machine.id} className="rounded-xl border border-slate-200 p-4">
                   <div className="font-medium text-slate-900">{machine.label}</div>
                   <div className="mt-1 text-sm text-slate-600">
-                      {machine.branchId} | {machine.type} | {formatDuration(machine.durationMinutes)}
+                      {machine.branchId} | {machine.type} | {formatDuration(machine.durationMinutes)} cycle | {formatDuration(machine.cooldownMinutes)} cooldown
                   </div>
                 </div>
               ))}
@@ -1197,4 +1223,3 @@ export function BookingsClient() {
     </div>
   );
 }
-
