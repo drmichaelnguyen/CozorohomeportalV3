@@ -1,5 +1,8 @@
 # Changelog
 
+## [3.6.3] - 2026-04-10
+- **Collapsed Pricing Settings**: Manager and owner settings menus in the pricing area now start collapsed and expand only on demand, making the settings view easier to scan.
+
 ## [3.5.12] - 2026-04-08
 ### Added
 - **Laundry Timing Help**: Added a manager-side `?` help popup in the laundry schedule area that explains how booking duration and cooldown combine, with a concrete calendar example.

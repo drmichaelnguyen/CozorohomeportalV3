@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
 import { parseVietnamDate } from "../lib/contract-utils";
@@ -131,6 +131,45 @@ type FeedbackEntry = {
   message: string;
   createdAt: string;
 };
+
+type PricingSettingsSectionKey =
+  | "branch_fees"
+  | "bed_prices"
+  | "long_term_discounts"
+  | "nightly_bed_prices"
+  | "stay_discounts"
+  | "staff_accounts";
+
+function CollapsibleSettingsSection({
+  title,
+  description,
+  expanded,
+  onToggle,
+  children
+}: {
+  title: string;
+  description: string;
+  expanded: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between gap-4 px-6 py-5 text-left transition-colors hover:bg-slate-50"
+      >
+        <div>
+          <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+          <p className="mt-1 text-sm text-slate-500">{description}</p>
+        </div>
+        <span className="text-xl text-slate-400">{expanded ? "▲" : "▼"}</span>
+      </button>
+      {expanded ? <div className="border-t border-slate-100 p-6">{children}</div> : null}
+    </div>
+  );
+}
 
 const PAYMENT_COMPACT_COLUMNS = [
   "Chi nhánh Dorm",
@@ -901,6 +940,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [pricingConfigLoading, setPricingConfigLoading] = useState(false);
   const [pricingSettingsTab, setPricingSettingsTab] = useState<"long_term" | "short_term" | "staff">("long_term");
   const [bedPricingExpanded, setBedPricingExpanded] = useState(false);
+  const [pricingSettingsExpanded, setPricingSettingsExpanded] = useState<Record<PricingSettingsSectionKey, boolean>>({
+    branch_fees: false,
+    bed_prices: false,
+    long_term_discounts: false,
+    nightly_bed_prices: false,
+    stay_discounts: false,
+    staff_accounts: false
+  });
   const [branchSettingsEdit, setBranchSettingsEdit] = useState<{
     branchId: string; cleaningOptOutFeeVnd: string; parkingFeeVnd: string; saving: boolean; result: string;
   } | null>(null);
@@ -948,6 +995,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [activeManagerView, setActiveManagerView] = useState<ManagerView>(initialView);
   const [feedbackEntries, setFeedbackEntries] = useState<FeedbackEntry[]>([]);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
+
+  const togglePricingSettingsSection = useCallback((section: PricingSettingsSectionKey) => {
+    setPricingSettingsExpanded((current) => ({
+      ...current,
+      [section]: !current[section]
+    }));
+  }, []);
 
   // v3.1.0 Rent States
   const [rentPaymentMode, setRentPaymentMode] = useState<"simple" | "rent">("rent");
@@ -5064,11 +5118,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               ) : (
                 <>
                   {/* ── Branch pricing settings (cleaning opt-out fee, parking fee) ── */}
-                  <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
-                    <div>
-                      <h3 className="text-base font-semibold text-slate-900">Branch Fee Settings</h3>
-                      <p className="mt-1 text-sm text-slate-500">Set the cleaning opt-out fee (monthly surcharge for residents who pay instead of doing cleaning duty) and the default parking fee per branch. Per-bed parking overrides can be set in the bed diagram below.</p>
-                    </div>
+                  <CollapsibleSettingsSection
+                    title="Branch Fee Settings"
+                    description="Set the cleaning opt-out fee and default parking fee per branch. Open this only when you need to edit it."
+                    expanded={pricingSettingsExpanded.branch_fees}
+                    onToggle={() => togglePricingSettingsSection("branch_fees")}
+                  >
                     {pricingConfigLoading ? <p className="text-sm text-slate-500">Loading…</p> : (
                       <div className="grid gap-4 sm:grid-cols-2">
                         {(["D2", "D7"] as const).map((branchId) => {
@@ -5127,7 +5182,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         })}
                       </div>
                     )}
-                  </div>
+                  </CollapsibleSettingsSection>
 
                   {/* ── Bed pricing diagram (collapsible) ── */}
                   <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
@@ -5466,11 +5521,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   </div>
 
                   {/* ── Long-term discounts ── */}
-                  <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
-                    <div>
-                      <h3 className="text-base font-semibold text-slate-900">Registration Discounts</h3>
-                      <p className="mt-1 text-sm text-slate-500">Shown on the registration form. All eligibility rules must match for the discount to apply.</p>
-                    </div>
+                  <CollapsibleSettingsSection
+                    title="Registration Discounts"
+                    description="Registration discount rules stay collapsed until you open them to review or edit."
+                    expanded={pricingSettingsExpanded.long_term_discounts}
+                    onToggle={() => togglePricingSettingsSection("long_term_discounts")}
+                  >
                     {pricingConfigLoading ? <p className="text-sm text-slate-500">Loading…</p> : (
                       <>
                         {(pricingData?.discounts ?? []).filter((d) => d.termType === "long_term").length > 0 ? (
@@ -5628,7 +5684,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         )}
                       </>
                     )}
-                  </div>
+                  </CollapsibleSettingsSection>
                 </>
               )}
             </section>
@@ -5644,11 +5700,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               ) : (
                 <>
                   {/* Short-term nightly bed overrides */}
-                  <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
-                    <div>
-                      <h3 className="text-base font-semibold text-slate-900">Nightly Bed Prices</h3>
-                      <p className="mt-1 text-sm text-slate-500">Override the nightly rate for a specific bed. Falls back to the short-term config default if not set.</p>
-                    </div>
+                  <CollapsibleSettingsSection
+                    title="Nightly Bed Prices"
+                    description="Nightly price overrides stay collapsed until you expand this section."
+                    expanded={pricingSettingsExpanded.nightly_bed_prices}
+                    onToggle={() => togglePricingSettingsSection("nightly_bed_prices")}
+                  >
                     {pricingConfigLoading ? <p className="text-sm text-slate-500">Loading…</p> : (
                       <>
                         {(pricingData?.bedOverrides ?? []).filter((b) => b.termType === "short_term").length > 0 ? (
@@ -5710,14 +5767,15 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         )}
                       </>
                     )}
-                  </div>
+                  </CollapsibleSettingsSection>
 
                   {/* Short-term stay discounts */}
-                  <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
-                    <div>
-                      <h3 className="text-base font-semibold text-slate-900">Stay Discounts</h3>
-                      <p className="mt-1 text-sm text-slate-500">Automatic percent discounts for guests who stay longer (e.g. weekly, monthly).</p>
-                    </div>
+                  <CollapsibleSettingsSection
+                    title="Stay Discounts"
+                    description="Automatic short-stay discount rules are collapsed by default and expand on demand."
+                    expanded={pricingSettingsExpanded.stay_discounts}
+                    onToggle={() => togglePricingSettingsSection("stay_discounts")}
+                  >
                     {pricingConfigLoading ? <p className="text-sm text-slate-500">Loading…</p> : (
                       <>
                         {(pricingData?.discounts ?? []).filter((d) => d.termType === "short_term").length > 0 ? (
@@ -5799,12 +5857,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             </div>
                           </div>
                         ) : (
-                          <button type="button" onClick={() => setDiscountEdit({ id: "", termType: "short_term", label: "", labelVi: "", description: "", descriptionVi: "", amountVnd: "", percentOff: "10", minNights: "7", durationMonths: "", eligibility: [], stackMode: "stackable", enabled: true, saving: false, result: "" })}
+                          <button type="button" onClick={() => setDiscountEdit({ id: "", termType: "short_term", label: "", labelVi: "", description: "", descriptionVi: "", amountVnd: "", percentOff: "10", minNights: "7", durationMonths: "", eligibility: [], selectionMode: "automatic", stackMode: "stackable", enabled: true, saving: false, result: "" })}
                             className="rounded-xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 hover:border-violet-400 hover:text-violet-700">+ Add stay discount</button>
                         )}
                       </>
                     )}
-                  </div>
+                  </CollapsibleSettingsSection>
                 </>
               )}
             </section>
@@ -5812,21 +5870,22 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
           {/* ── Staff tab ── */}
           {pricingSettingsTab === "staff" ? (
-            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-base font-semibold text-slate-900">{t("ownersEmployees")}</h3>
-                  <p className="mt-1 text-sm text-slate-600">{t("ownersEmployeesDesc")}</p>
-                </div>
+            <CollapsibleSettingsSection
+              title={t("ownersEmployees")}
+              description={t("ownersEmployeesDesc")}
+              expanded={pricingSettingsExpanded.staff_accounts}
+              onToggle={() => togglePricingSettingsSection("staff_accounts")}
+            >
+              <div className="mb-4 flex justify-end">
                 <button type="button" onClick={() => void loadTeam()} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700">{t("refreshAccounts")}</button>
               </div>
-              <div className="mt-4">
+              <div>
                 <p className="text-sm text-slate-500">
                   Staff account management is available in the{" "}
                   <button type="button" onClick={() => setActiveManagerView("owners_employees")} className="font-medium text-sky-600 underline underline-offset-2">Staff Accounts view</button>.
                 </p>
               </div>
-            </section>
+            </CollapsibleSettingsSection>
           ) : null}
         </section>
       ) : null}
