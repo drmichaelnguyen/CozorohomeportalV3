@@ -4903,6 +4903,18 @@ export async function extendClientContract(email: string, extensionMonths: numbe
 
   const BRIDGE_URL = "https://script.google.com/macros/s/AKfycbyykY6OqeAaILbv4yiG8y5ZBMV5Z-cwP8Pn2cYAtBd_uvojZoYS4y_uk76UknpX8Bk/exec";
 
+  // Generate a unique MÃ HD for the new extension row
+  const now = new Date();
+  const branchRaw = targetRowData[headers.indexOf(normalizeHeader(CLIENT_BRANCH_COLUMN))] ?? "";
+  const bedRaw = targetRowData[headers.indexOf(normalizeHeader(CLIENT_BED_COLUMN))] ?? "";
+  const branchId = normalizeClientBranch(branchRaw);
+  const bedNumber = parseInt(bedRaw.replace(/[^0-9]/g, ""), 10) || 0;
+  const newContractCode = createRegistrationContractCode(branchId, bedNumber, now);
+  const contractCodeColIndex = headers.indexOf(normalizeHeader(CONTRACT_CODE_COLUMN));
+  if (contractCodeColIndex !== -1) {
+    targetRowData[contractCodeColIndex] = newContractCode;
+  }
+
   const payload: Record<string, any> = {};
   headers.forEach((header, index) => {
     // Normalize key to match Apps Script: lowercase, no spaces
@@ -4911,7 +4923,7 @@ export async function extendClientContract(email: string, extensionMonths: numbe
 
     // Priority 1: Current Submission Timestamp
     if (timestampColIndex === index) {
-      value = formatTimestamp(new Date());
+      value = formatTimestamp(now);
     }
     // Priority 2: Calculated Extension Fields
     else if (index === activeColIndex) {
