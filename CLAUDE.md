@@ -176,6 +176,31 @@ const nextConfig: NextConfig = {
 | `POST /manager/support/messages` | Send reply as manager |
 | `POST /manager/support/conversations/:id/read` | Mark conversation read |
 | `GET /clients/laundry-bookings?email=` | Resident laundry bookings |
+| `GET /staff/clients/duplicates?actorEmail=` | List clients with multiple active rows in the sheet |
+| `POST /staff/clients/set-inactive` | Set a specific contract row (by maHd) to Hiện còn ở = −1 |
+
+---
+
+## Google Sheet — Client Row Schema
+
+The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contract registration. Key columns:
+
+| Column | Notes |
+|--------|-------|
+| `DẤU THỜI GIAN` | Form submission timestamp — format `dd/mm/yyyy hh:mm:ss`. **This is the tiebreaker** when a client has multiple active rows: the row with the latest `DẤU THỜI GIAN` is treated as the current contract by `getActiveClientByEmail`. |
+| `Địa chỉ email` | Resident email (primary lookup key) |
+| `Hiện còn ở` | Active status: `1` = currently staying, `0` = moved out, `-1` = left/removed/inactive, blank = new registration not yet confirmed |
+| `MÃ HD` | Contract code — unique identifier for a row (used by `updateClientColumns`) |
+| `Ngày bắt đầu hợp đồng` | Contract start date (`dd/mm/yyyy`) |
+| `Ngày hết hạn hợp đồng` | Contract end date (`dd/mm/yyyy`) |
+| `Thời hạn hợp đồng (tháng)` | Contract duration in months |
+| `số giường` | Bed number |
+| `Chi nhánh Cozoro dorm` | Branch — `2` or `7` (normalized to `D2`/`D7`) |
+| `Phí gởi xe` | Parking fee (VND) |
+| `Biển số xe máy đăng ký gởi xe` | Motorbike licence plate |
+| `Ảnh đính kèm CMND hoặc căn cước công dân` | ID scan URL |
+
+**Duplicate row rule:** A client extending their contract gets a new row appended; the old row should be set to `Hiện còn ở = -1`. If both rows remain active (non -1), the app uses the one with the latest `DẤU THỜI GIAN`. Managers can detect and resolve duplicates from the bed diagram (amber highlight) → client detail panel → "Mark Inactive (−1)" button.
 
 ---
 

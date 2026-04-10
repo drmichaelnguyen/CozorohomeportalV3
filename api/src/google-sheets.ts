@@ -155,6 +155,7 @@ export const laundryMachines = [
   }
 ] as const;
 
+const CLIENT_SUBMISSION_TIMESTAMP_COLUMN = "D\u1ea4U TH\u1edcI GIAN";
 const EMAIL_COLUMN = "\u0110\u1ecba ch\u1ec9 email";
 const HIDDEN_EMAIL_COLUMN = "\u0110\u1ecba ch\u1ec9 email - Hidden";
 const ACTIVE_STAYING_COLUMN = "Hi\u1ec7n c\u00f2n \u1edf";
@@ -3328,26 +3329,28 @@ export async function getActiveClientByEmail(email: string) {
   if (matches.length === 0) return null;
   if (matches.length === 1) return matches[0]!;
 
-  // Multiple active rows for same email — pick the one with the latest contract start date
+  // Multiple active rows for same email — pick the one with the latest DẤU THỜI GIAN (submission timestamp)
   return matches.reduce((best, row) => {
-    const bestDate = parseClientContractDate(best[CLIENT_CONTRACT_START_COLUMN] ?? "");
-    const rowDate = parseClientContractDate(row[CLIENT_CONTRACT_START_COLUMN] ?? "");
+    const bestDate = parseSubmissionTimestamp(best[CLIENT_SUBMISSION_TIMESTAMP_COLUMN] ?? "");
+    const rowDate = parseSubmissionTimestamp(row[CLIENT_SUBMISSION_TIMESTAMP_COLUMN] ?? "");
     if (!bestDate) return row;
     if (!rowDate) return best;
     return rowDate > bestDate ? row : best;
   });
 }
 
-function parseClientContractDate(value: string): Date | null {
+// Parses "dd/mm/yyyy hh:mm:ss" (the DẤU THỜI GIAN column format)
+function parseSubmissionTimestamp(value: string): Date | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
-  // Handles "DD/MM/YYYY" and ISO formats
-  const parts = trimmed.split("/");
-  if (parts.length === 3) {
-    const [d, m, y] = parts;
-    const date = new Date(`${y}-${m!.padStart(2, "0")}-${d!.padStart(2, "0")}`);
+  // "dd/mm/yyyy hh:mm:ss"
+  const match = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})$/);
+  if (match) {
+    const [, d, m, y, h, min, s] = match;
+    const date = new Date(`${y}-${m!.padStart(2, "0")}-${d!.padStart(2, "0")}T${h!.padStart(2, "0")}:${min}:${s}`);
     return isNaN(date.getTime()) ? null : date;
   }
+  // Fallback: ISO or other formats
   const date = new Date(trimmed);
   return isNaN(date.getTime()) ? null : date;
 }
@@ -3355,7 +3358,7 @@ function parseClientContractDate(value: string): Date | null {
 export async function getDuplicateActiveClients(): Promise<Array<{
   email: string;
   name: string;
-  rows: Array<{ maHd: string; contractStart: string; contractEnd: string; activeStay: string; bed: string; branch: string }>;
+  rows: Array<{ maHd: string; submissionTimestamp: string; contractStart: string; contractEnd: string; activeStay: string; bed: string; branch: string }>;
 }>> {
   if (!spreadsheetId) throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
   const sheets = await getAuthorizedSheetsClient();
@@ -3387,6 +3390,7 @@ export async function getDuplicateActiveClients(): Promise<Array<{
       name: rows[0]![CLIENT_NAME_COLUMN] ?? "",
       rows: rows.map((row) => ({
         maHd: row[CONTRACT_CODE_COLUMN] ?? "",
+        submissionTimestamp: row[CLIENT_SUBMISSION_TIMESTAMP_COLUMN] ?? "",
         contractStart: row[CLIENT_CONTRACT_START_COLUMN] ?? "",
         contractEnd: row[CLIENT_CONTRACT_END_COLUMN] ?? "",
         activeStay: row[ACTIVE_STAYING_COLUMN] ?? "",

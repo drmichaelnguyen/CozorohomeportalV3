@@ -99,7 +99,7 @@ type FineEntry = {
   parsedTimestamp: string | null;
   parsedDueDate: string | null;
 };
-type DuplicateEntry = { email: string; name: string; rows: Array<{ maHd: string; contractStart: string; contractEnd: string; activeStay: string; bed: string; branch: string }> };
+type DuplicateEntry = { email: string; name: string; rows: Array<{ maHd: string; submissionTimestamp: string; contractStart: string; contractEnd: string; activeStay: string; bed: string; branch: string }> };
 type LaundryEntry = {
   id: string;
   calendarId: string;
@@ -3278,7 +3278,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         return (
                           <div key={row.maHd} className={`flex items-center justify-between rounded-xl border px-3 py-2 text-xs ${isCurrentRow ? "border-amber-400 bg-amber-100" : "border-amber-200 bg-white"}`}>
                             <div className="space-y-0.5">
-                              <div className="font-semibold text-slate-800">{row.maHd} {isCurrentRow && <span className="ml-1 rounded-full bg-amber-400 px-1.5 py-0.5 text-[9px] font-bold text-white">ACTIVE (latest)</span>}</div>
+                              <div className="font-semibold text-slate-800">{row.maHd} {isCurrentRow && <span className="ml-1 rounded-full bg-amber-400 px-1.5 py-0.5 text-[9px] font-bold text-white">USING THIS (latest timestamp)</span>}</div>
+                              {row.submissionTimestamp && <div className="text-slate-400">Submitted: {row.submissionTimestamp}</div>}
                               <div className="text-slate-500">{row.branch} · Bed {row.bed} · {row.contractStart} → {row.contractEnd}</div>
                               <div className="text-slate-500">Status: <span className={row.activeStay === "1" ? "text-emerald-700 font-semibold" : "text-rose-700"}>{row.activeStay || "not set"}</span></div>
                             </div>
