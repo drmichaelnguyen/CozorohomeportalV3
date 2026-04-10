@@ -155,7 +155,6 @@ export const laundryMachines = [
   }
 ] as const;
 
-const CLIENT_SUBMISSION_TIMESTAMP_COLUMN = "D\u1ea4U TH\u1edcI GIAN";
 const EMAIL_COLUMN = "\u0110\u1ecba ch\u1ec9 email";
 const HIDDEN_EMAIL_COLUMN = "\u0110\u1ecba ch\u1ec9 email - Hidden";
 const ACTIVE_STAYING_COLUMN = "Hi\u1ec7n c\u00f2n \u1edf";
@@ -3331,8 +3330,8 @@ export async function getActiveClientByEmail(email: string) {
 
   // Multiple active rows for same email — pick the one with the latest DẤU THỜI GIAN (submission timestamp)
   return matches.reduce((best, row) => {
-    const bestDate = parseSubmissionTimestamp(best[CLIENT_SUBMISSION_TIMESTAMP_COLUMN] ?? "");
-    const rowDate = parseSubmissionTimestamp(row[CLIENT_SUBMISSION_TIMESTAMP_COLUMN] ?? "");
+    const bestDate = parseSubmissionTimestamp(best[COINS_TIMESTAMP_COLUMN] ?? "");
+    const rowDate = parseSubmissionTimestamp(row[COINS_TIMESTAMP_COLUMN] ?? "");
     if (!bestDate) return row;
     if (!rowDate) return best;
     return rowDate > bestDate ? row : best;
@@ -3390,7 +3389,7 @@ export async function getDuplicateActiveClients(): Promise<Array<{
       name: rows[0]![CLIENT_NAME_COLUMN] ?? "",
       rows: rows.map((row) => ({
         maHd: row[CONTRACT_CODE_COLUMN] ?? "",
-        submissionTimestamp: row[CLIENT_SUBMISSION_TIMESTAMP_COLUMN] ?? "",
+        submissionTimestamp: row[COINS_TIMESTAMP_COLUMN] ?? "",
         contractStart: row[CLIENT_CONTRACT_START_COLUMN] ?? "",
         contractEnd: row[CLIENT_CONTRACT_END_COLUMN] ?? "",
         activeStay: row[ACTIVE_STAYING_COLUMN] ?? "",
