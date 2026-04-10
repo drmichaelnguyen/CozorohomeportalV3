@@ -42,6 +42,8 @@ export type PricingDiscount = {
   minNights: number | null;
   durationMonths: number | null;
   eligibility: EligibilityRule[];
+  selectionMode: "manual" | "automatic";
+  stackMode: "stackable" | "exclusive";
   enabled: boolean;
   updatedBy: string;
   updatedAt: string;
@@ -70,6 +72,8 @@ function sheetDiscountToPricingDiscount(d: SheetDiscount): PricingDiscount {
     minNights: d.minNights,
     durationMonths: d.durationMonths,
     eligibility: (d.eligibility as EligibilityRule[]) ?? [],
+    selectionMode: d.selectionMode ?? (d.termType === "short_term" ? "automatic" : "manual"),
+    stackMode: d.stackMode ?? "stackable",
     enabled: d.enabled,
     updatedBy: d.updatedBy,
     updatedAt: d.updatedAt,
@@ -174,12 +178,120 @@ export async function upsertDiscount(
     minNights: input.minNights ?? null,
     durationMonths: input.durationMonths ?? null,
     eligibility: input.eligibility as object[],
+    selectionMode: input.selectionMode ?? (input.termType === "short_term" ? "automatic" : "manual"),
+    stackMode: input.stackMode ?? "stackable",
     enabled: input.enabled,
     updatedBy: actorEmail.trim().toLowerCase(),
     updatedAt: new Date().toISOString(),
   };
   queueDiscountUpsert(sheetRow, actorEmail);
   return sheetDiscountToPricingDiscount(sheetRow);
+}
+
+// ── Branch pricing settings ────────────────────────────────────────────────────
+
+export type BranchPricingSettings = {
+  branchId: string;
+  cleaningOptOutFeeVnd: number;
+  parkingFeeVnd: number;
+  updatedBy: string;
+  updatedAt: Date;
+};
+
+export type BedParkingFeeOverride = {
+  id: number;
+  branchId: string;
+  bedNumber: number;
+  parkingFeeVnd: number;
+  updatedBy: string;
+  updatedAt: Date;
+};
+
+const BRANCH_DEFAULTS: BranchPricingSettings = {
+  branchId: "",
+  cleaningOptOutFeeVnd: 100000,
+  parkingFeeVnd: 0,
+  updatedBy: "system",
+  updatedAt: new Date(0)
+};
+
+export async function getBranchPricingSettings(branchId: string): Promise<BranchPricingSettings> {
+  const row = await prisma.branchPricingSettings.findUnique({ where: { branchId } });
+  if (!row) return { ...BRANCH_DEFAULTS, branchId };
+  return { branchId: row.branchId, cleaningOptOutFeeVnd: row.cleaningOptOutFeeVnd, parkingFeeVnd: row.parkingFeeVnd, updatedBy: row.updatedBy, updatedAt: row.updatedAt };
+}
+
+export async function getAllBranchPricingSettings(): Promise<BranchPricingSettings[]> {
+  const rows = await prisma.branchPricingSettings.findMany();
+  // Ensure both branches are represented
+  const branches = ["D2", "D7"];
+  return branches.map((branchId) => {
+    const row = rows.find((r) => r.branchId === branchId);
+    if (!row) return { ...BRANCH_DEFAULTS, branchId };
+    return { branchId: row.branchId, cleaningOptOutFeeVnd: row.cleaningOptOutFeeVnd, parkingFeeVnd: row.parkingFeeVnd, updatedBy: row.updatedBy, updatedAt: row.updatedAt };
+  });
+}
+
+export async function upsertBranchPricingSettings(
+  actorEmail: string,
+  input: { branchId: string; cleaningOptOutFeeVnd?: number; parkingFeeVnd?: number }
+): Promise<BranchPricingSettings> {
+  await requirePortalRole(actorEmail, ["owner", "app_admin"], "Only owners can edit branch pricing settings.");
+  const row = await prisma.branchPricingSettings.upsert({
+    where: { branchId: input.branchId },
+    create: {
+      branchId: input.branchId,
+      cleaningOptOutFeeVnd: input.cleaningOptOutFeeVnd ?? 100000,
+      parkingFeeVnd: input.parkingFeeVnd ?? 0,
+      updatedBy: actorEmail.trim().toLowerCase()
+    },
+    update: {
+      ...(input.cleaningOptOutFeeVnd != null ? { cleaningOptOutFeeVnd: input.cleaningOptOutFeeVnd } : {}),
+      ...(input.parkingFeeVnd != null ? { parkingFeeVnd: input.parkingFeeVnd } : {}),
+      updatedBy: actorEmail.trim().toLowerCase()
+    }
+  });
+  return { branchId: row.branchId, cleaningOptOutFeeVnd: row.cleaningOptOutFeeVnd, parkingFeeVnd: row.parkingFeeVnd, updatedBy: row.updatedBy, updatedAt: row.updatedAt };
+}
+
+export async function getBedParkingFeeOverrides(branchId?: string): Promise<BedParkingFeeOverride[]> {
+  const rows = await prisma.bedParkingFeeOverride.findMany({
+    where: branchId ? { branchId } : undefined,
+    orderBy: [{ branchId: "asc" }, { bedNumber: "asc" }]
+  });
+  return rows.map((r) => ({ id: r.id, branchId: r.branchId, bedNumber: r.bedNumber, parkingFeeVnd: r.parkingFeeVnd, updatedBy: r.updatedBy, updatedAt: r.updatedAt }));
+}
+
+export async function upsertBedParkingFeeOverride(
+  actorEmail: string,
+  input: { branchId: string; bedNumber: number; parkingFeeVnd: number }
+): Promise<BedParkingFeeOverride> {
+  await requirePortalRole(actorEmail, ["owner", "app_admin"], "Only owners can edit parking fees.");
+  const row = await prisma.bedParkingFeeOverride.upsert({
+    where: { branchId_bedNumber: { branchId: input.branchId, bedNumber: input.bedNumber } },
+    create: { branchId: input.branchId, bedNumber: input.bedNumber, parkingFeeVnd: input.parkingFeeVnd, updatedBy: actorEmail.trim().toLowerCase() },
+    update: { parkingFeeVnd: input.parkingFeeVnd, updatedBy: actorEmail.trim().toLowerCase() }
+  });
+  return { id: row.id, branchId: row.branchId, bedNumber: row.bedNumber, parkingFeeVnd: row.parkingFeeVnd, updatedBy: row.updatedBy, updatedAt: row.updatedAt };
+}
+
+export async function deleteBedParkingFeeOverride(
+  actorEmail: string,
+  branchId: string,
+  bedNumber: number
+): Promise<void> {
+  await requirePortalRole(actorEmail, ["owner", "app_admin"], "Only owners can edit parking fees.");
+  await prisma.bedParkingFeeOverride.deleteMany({ where: { branchId, bedNumber } });
+}
+
+// Resolve parking fee for a specific bed (bed override > branch default > 0)
+export async function resolveParkingFee(branchId: string, bedNumber: number): Promise<number> {
+  const [bedOverride, branchSettings] = await Promise.all([
+    prisma.bedParkingFeeOverride.findUnique({ where: { branchId_bedNumber: { branchId, bedNumber } } }),
+    prisma.branchPricingSettings.findUnique({ where: { branchId } })
+  ]);
+  if (bedOverride) return bedOverride.parkingFeeVnd;
+  return branchSettings?.parkingFeeVnd ?? 0;
 }
 
 export async function deleteDiscount(

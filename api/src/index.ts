@@ -134,7 +134,8 @@ import {
   setBulkCleaningAvailability,
   getCleaningOptOutForEmail,
   setCleaningOptOut,
-  cancelCleaningOptOut
+  cancelCleaningOptOut,
+  upsertContractCleaningOptOut
 } from "./cleaning.js";
 import {
   getCleaningAutoSchedulerConfig,
@@ -157,6 +158,13 @@ import {
   deleteBedOverride,
   upsertDiscount,
   deleteDiscount,
+  getAllBranchPricingSettings,
+  getBranchPricingSettings,
+  upsertBranchPricingSettings,
+  getBedParkingFeeOverrides,
+  upsertBedParkingFeeOverride,
+  deleteBedParkingFeeOverride,
+  resolveParkingFee,
   type TermType
 } from "./pricing-config.js";
 import { createWriteStream } from "node:fs";
@@ -762,7 +770,11 @@ const publicRegistrationSchema = z.object({
   schoolOrWorkplace: z.string().trim().optional(),
   referralSource: z.string().trim().optional(),
   emergencyPhone: z.string().trim().optional(),
-  additionalTerms: z.string().trim().optional()
+  additionalTerms: z.string().trim().optional(),
+  contractCleaningOptOut: z.boolean().optional().default(false),
+  hasMotorbike: z.boolean().optional().default(false),
+  motorbikePlate: z.string().trim().optional(),
+  idScanUrl: z.string().trim().optional()
 });
 const cleaningAvailabilitySchema = z.object({
   email: z.string().email(),
@@ -4426,6 +4438,27 @@ app.get("/api/public/register/availability", async (request, response) => {
   }
 });
 
+// Public: upload ID scan for registration (stored in api/data/id-scans/)
+app.post("/api/public/register/id-scan", express.raw({ type: "*/*", limit: "10mb" }), async (request, response) => {
+  const originalName = String(request.query.filename ?? "id.jpg");
+  try {
+    const dir = path.join(process.cwd(), "data", "id-scans");
+    await import("node:fs/promises").then((fs) => fs.mkdir(dir, { recursive: true }));
+    const ext = path.extname(originalName) || ".jpg";
+    const fileName = `id-${Date.now()}-${randomUUID()}${ext}`;
+    const filePath = path.join(dir, fileName);
+    await new Promise<void>((resolve, reject) => {
+      const ws = createWriteStream(filePath);
+      ws.on("finish", resolve);
+      ws.on("error", reject);
+      ws.end(request.body as Buffer);
+    });
+    return response.json({ ok: true, fileName });
+  } catch (error) {
+    return response.status(500).json({ error: error instanceof Error ? error.message : "Upload failed" });
+  }
+});
+
 app.post("/api/public/register", async (request, response) => {
   const parsed = publicRegistrationSchema.safeParse(request.body);
 
@@ -4434,11 +4467,41 @@ app.post("/api/public/register", async (request, response) => {
   }
 
   try {
+    // Resolve configurable cleaning opt-out fee for this branch
+    const branchSettings = await getBranchPricingSettings(parsed.data.branchId);
+    const configuredCleaningFeeVnd = branchSettings.cleaningOptOutFeeVnd;
+
+    // Resolve parking fee for the specific bed (if motorbike requested)
+    const parkingFeeVnd = parsed.data.hasMotorbike
+      ? await resolveParkingFee(parsed.data.branchId, parsed.data.bedNumber)
+      : 0;
+
     const result = await runWithWriteGuard({
       key: createWriteGuardKey("/api/public/register", parsed.data),
       duplicateMessage: "This registration was just submitted. Please wait a few seconds before trying again.",
       cooldownMs: 15000,
-      action: () => submitPublicRegistration(parsed.data)
+      action: async () => {
+        const registration = await submitPublicRegistration({
+          ...parsed.data,
+          cleaningOptOutFeeVnd: configuredCleaningFeeVnd,
+          parkingFeeVnd,
+          idScanUrl: parsed.data.idScanUrl,
+          motorbikePlate: parsed.data.motorbikePlate
+        });
+
+        if (parsed.data.contractCleaningOptOut) {
+          await upsertContractCleaningOptOut({
+            email: parsed.data.email,
+            branchId: parsed.data.branchId,
+            contractCode: registration.contractCode,
+            contractStartDate: parsed.data.contractStartDate,
+            contractEndDate: parsed.data.contractEndDate,
+            cleaningFeeVnd: configuredCleaningFeeVnd
+          });
+        }
+
+        return registration;
+      }
     });
 
     return response.json({
@@ -4454,11 +4517,14 @@ app.post("/api/public/register", async (request, response) => {
 
 // ─── Unified Pricing (long-term + short-term beds & discounts) ───────────────
 
-// Public: enabled long-term discounts for the registration form
+// Public: enabled long-term discounts + branch pricing settings for the registration form
 app.get("/api/public/pricing-discounts", async (_request, response) => {
   try {
-    const discounts = await getDiscounts("long_term", true);
-    return response.json({ discounts });
+    const [discounts, branchSettings] = await Promise.all([
+      getDiscounts("long_term", true),
+      getAllBranchPricingSettings()
+    ]);
+    return response.json({ discounts, branchSettings });
   } catch (error) {
     return response.status(500).json({ error: error instanceof Error ? error.message : "Unable to load discounts" });
   }
@@ -4469,13 +4535,58 @@ app.get("/manager/pricing", async (request, response) => {
   const actorEmail = String(request.query.actorEmail ?? "");
   try {
     await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
-    const [bedOverrides, discounts] = await Promise.all([
+    const [bedOverrides, discounts, branchSettings, parkingOverrides] = await Promise.all([
       getBedOverrides(),
-      getDiscounts()
+      getDiscounts(),
+      getAllBranchPricingSettings(),
+      getBedParkingFeeOverrides()
     ]);
-    return response.json({ bedOverrides, discounts });
+    return response.json({ bedOverrides, discounts, branchSettings, parkingOverrides });
   } catch (error) {
     return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to load pricing" });
+  }
+});
+
+// Owner: upsert branch pricing settings (cleaning opt-out fee, parking fee)
+app.put("/manager/pricing/branch-settings", async (request, response) => {
+  const body = request.body as Record<string, unknown>;
+  const actorEmail = String(body.actorEmail ?? "");
+  const { branchId, cleaningOptOutFeeVnd, parkingFeeVnd } = body as {
+    branchId: string; cleaningOptOutFeeVnd?: number; parkingFeeVnd?: number;
+  };
+  try {
+    if (!branchId) return response.status(400).json({ error: "branchId is required" });
+    const row = await upsertBranchPricingSettings(actorEmail, { branchId, cleaningOptOutFeeVnd, parkingFeeVnd });
+    return response.json({ ok: true, row });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to save settings" });
+  }
+});
+
+// Owner: upsert per-bed parking fee override
+app.put("/manager/pricing/parking-beds", async (request, response) => {
+  const body = request.body as Record<string, unknown>;
+  const actorEmail = String(body.actorEmail ?? "");
+  const { branchId, bedNumber, parkingFeeVnd } = body as { branchId: string; bedNumber: number; parkingFeeVnd: number };
+  try {
+    if (!branchId || typeof bedNumber !== "number") return response.status(400).json({ error: "branchId and bedNumber are required" });
+    const row = await upsertBedParkingFeeOverride(actorEmail, { branchId, bedNumber, parkingFeeVnd });
+    return response.json({ ok: true, row });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to save parking fee" });
+  }
+});
+
+// Owner: delete per-bed parking fee override
+app.delete("/manager/pricing/parking-beds", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "");
+  const { branchId, bedNumber } = request.query as { branchId: string; bedNumber: string };
+  try {
+    if (!branchId || !bedNumber) return response.status(400).json({ error: "branchId and bedNumber are required" });
+    await deleteBedParkingFeeOverride(actorEmail, branchId, Number(bedNumber));
+    return response.json({ ok: true });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to delete parking fee override" });
   }
 });
 

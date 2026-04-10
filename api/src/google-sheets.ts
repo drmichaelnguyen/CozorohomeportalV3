@@ -158,7 +158,7 @@ export const laundryMachines = [
 const EMAIL_COLUMN = "\u0110\u1ecba ch\u1ec9 email";
 const HIDDEN_EMAIL_COLUMN = "\u0110\u1ecba ch\u1ec9 email - Hidden";
 const ACTIVE_STAYING_COLUMN = "Hi\u1ec7n c\u00f2n \u1edf";
-const CONTRACT_CODE_COLUMN = "M\u00c3 HD";
+export const CONTRACT_CODE_COLUMN = "M\u00c3 HD";
 const CLIENT_NAME_COLUMN = "T\u00ean";
 const CLIENT_BED_COLUMN = "s\u1ed1 gi\u01b0\u1eddng";
 const CLIENT_GENDER_COLUMN = "Gi\u1edbi t\u00ednh";
@@ -166,6 +166,7 @@ const CLIENT_BRANCH_COLUMN = "Chi nh\u00e1nh Cozoro dorm";
 const CLIENT_PHONE_COLUMN = "S\u1ed1 \u0111i\u1ec7n tho\u1ea1i li\u00ean h\u1ec7";
 const CLIENT_CONTRACT_START_COLUMN = "Ng\u00e0y b\u1eaft \u0111\u1ea7u h\u1ee3p \u0111\u1ed3ng";
 const CLIENT_CONTRACT_END_COLUMN = "Ng\u00e0y h\u1ebft h\u1ea1n h\u1ee3p \u0111\u1ed3ng";
+export const CLIENT_CLEANING_FEE_COLUMN = "Cleaning fee";
 const CLIENT_SHORT_TERM_FEE_COLUMN = "Ph\u00ed ng\u1eafn h\u1ea1n";
 const CLIENT_SHORT_TERM_FREE_COLUMN = "Mi\u1ec5n ph\u00ed ng\u1eafn h\u1ea1n?";
 const CLIENT_TOTAL_COINS_COLUMN = "T\u1ed5ng Coins t\u00edch lu\u1ef9";
@@ -219,6 +220,7 @@ const normalizedHeaderAliases = new Map<string, string>([
   ["\u0111\u1ecba ch\u1ec9 email hidden", HIDDEN_EMAIL_COLUMN],
   ["hi\u1ec7n c\u00f2n \u1edf", ACTIVE_STAYING_COLUMN],
   ["m\u00e3 hd", CONTRACT_CODE_COLUMN],
+  ["cleaning fee", CLIENT_CLEANING_FEE_COLUMN],
   ["d\u1ea5u th\u1eddi gian", COINS_TIMESTAMP_COLUMN],
   ["coins", COINS_BALANCE_COLUMN],
   ["s\u1ef1 ki\u1ec7n", COINS_EVENT_COLUMN],
@@ -296,6 +298,12 @@ export type PublicRegistrationInput = {
   referralSource?: string;
   emergencyPhone?: string;
   additionalTerms?: string;
+  contractCleaningOptOut?: boolean;
+  cleaningOptOutFeeVnd?: number;
+  hasMotorbike?: boolean;
+  motorbikePlate?: string;
+  parkingFeeVnd?: number;
+  idScanUrl?: string;
 };
 
 export type FineRow = Record<string, string> & {
@@ -502,6 +510,34 @@ async function getAuthorizedDriveClient() {
 
   const auth = await getAuthorizedOAuthClient();
   return google.drive({ version: "v3", auth });
+}
+
+async function ensureSheetColumnsExist(input: {
+  sheets: ReturnType<typeof google.sheets>;
+  targetSpreadsheetId: string;
+  targetSheetName: string;
+  sheetValues: string[][];
+  requiredColumns: string[];
+}) {
+  const rawHeaders = (input.sheetValues[0] ?? []).map((value) => repairMojibake(String(value)).trim());
+  const normalizedHeaders = rawHeaders.map((value) => normalizeHeader(value));
+  const missingColumns = input.requiredColumns.filter((column) => !normalizedHeaders.includes(column));
+
+  if (missingColumns.length === 0) {
+    return input.sheetValues;
+  }
+
+  const nextHeaders = [...rawHeaders, ...missingColumns];
+  await input.sheets.spreadsheets.values.update({
+    spreadsheetId: input.targetSpreadsheetId,
+    range: `${input.targetSheetName}!A1:${columnIndexToLetter(nextHeaders.length - 1)}1`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [nextHeaders]
+    }
+  });
+
+  return [nextHeaders, ...input.sheetValues.slice(1)];
 }
 
 function normalizeHeader(value: string) {
@@ -2852,10 +2888,18 @@ export async function upsertPaidGuestBookingClient(input: PaidGuestBookingClient
     range: `${sheetName}!A:AMJ`
   });
 
-  const sheetValues = response.data.values ?? [];
+  let sheetValues = (response.data.values ?? []).map((row) => row.map((value) => String(value)));
   if (sheetValues.length === 0) {
     throw new Error("The Google Sheet is empty");
   }
+
+  sheetValues = await ensureSheetColumnsExist({
+    sheets,
+    targetSpreadsheetId: spreadsheetId,
+    targetSheetName: sheetName,
+    sheetValues,
+    requiredColumns: [CLIENT_CLEANING_FEE_COLUMN]
+  });
 
   const headers = (sheetValues[0] ?? []).map((value) => normalizeHeader(String(value)));
   const existingRowIndex = sheetValues.findIndex((row, index) => {
@@ -2944,10 +2988,22 @@ export async function submitPublicRegistration(input: PublicRegistrationInput) {
     range: `${sheetName}!A:AMJ`
   });
 
-  const sheetValues = response.data.values ?? [];
+  let sheetValues = (response.data.values ?? []).map((row) => row.map((value) => String(value)));
   if (sheetValues.length === 0) {
     throw new Error("The Google Sheet is empty");
   }
+
+  sheetValues = await ensureSheetColumnsExist({
+    sheets,
+    targetSpreadsheetId: spreadsheetId,
+    targetSheetName: sheetName,
+    sheetValues,
+    requiredColumns: [
+      CLIENT_CLEANING_FEE_COLUMN,
+      "Biển số xe máy đăng ký gởi xe",
+      "Ảnh đính kèm CMND hoặc căn cước công dân"
+    ]
+  });
 
   const headers = (sheetValues[0] ?? []).map((value) => normalizeHeader(String(value)));
   const now = new Date();
@@ -2959,6 +3015,9 @@ export async function submitPublicRegistration(input: PublicRegistrationInput) {
   const additionalTerms = input.additionalTerms?.trim() ?? "";
   const monthlyPrice = Math.max(0, Math.trunc(input.monthlyPrice));
   const deposit = Math.max(0, Math.trunc(input.deposit));
+  const cleaningFee = input.contractCleaningOptOut ? (input.cleaningOptOutFeeVnd ?? 100000) : 0;
+  const parkingFee = Math.max(0, Math.trunc(input.parkingFeeVnd ?? 0));
+  const totalMonthlyPayment = monthlyPrice + cleaningFee + parkingFee;
 
   const nextRow: Record<string, string> = {
     [COINS_TIMESTAMP_COLUMN]: formatRegistrationTimestamp(now),
@@ -2990,8 +3049,11 @@ export async function submitPublicRegistration(input: PublicRegistrationInput) {
     ["Hiện tại bạn đang là"]: input.currentStatus?.trim() ?? "",
     ["Tên trường bạn đang học hoặc nơi bạn đang làm việc"]: input.schoolOrWorkplace?.trim() ?? "",
     ["Phí ở đóng mỗi tháng"]: String(monthlyPrice),
-    ["Phí gởi xe"]: "",
-    ["Tổng tiền thanh toán tháng"]: String(monthlyPrice),
+    [CLIENT_CLEANING_FEE_COLUMN]: String(cleaningFee),
+    ["Phí gởi xe"]: input.parkingFeeVnd ? String(input.parkingFeeVnd) : "",
+    ["Biển số xe máy đăng ký gởi xe"]: input.motorbikePlate?.trim() ?? "",
+    ["Ảnh đính kèm CMND hoặc căn cước công dân"]: input.idScanUrl?.trim() ?? "",
+    ["Tổng tiền thanh toán tháng"]: String(totalMonthlyPayment),
     ["Đã đóng phí tháng"]: "FALSE",
     [CLIENT_NOTE_COLUMN]: "Submitted from app.cozorohome.com/register",
     [CONTRACT_CODE_COLUMN]: contractCode,
@@ -4929,6 +4991,8 @@ export type SheetDiscount = {
   minNights: number | null;
   termType: "long_term" | "short_term";
   eligibility: object[];
+  selectionMode: "manual" | "automatic";
+  stackMode: "stackable" | "exclusive";
   enabled: boolean;
   updatedBy: string;
   updatedAt: string;
@@ -4937,7 +5001,7 @@ export type SheetDiscount = {
 const DISCOUNT_HEADERS = [
   "ID", "Label", "Label_VI", "Description", "Description_VI",
   "Amount_VND", "Percent_Off", "Duration_Months", "Min_Nights",
-  "Term_Type", "Eligibility_JSON", "Enabled", "Updated_By", "Updated_At"
+  "Term_Type", "Eligibility_JSON", "Selection_Mode", "Stack_Mode", "Enabled", "Updated_By", "Updated_At"
 ] as const;
 
 function parseSheetDiscountRow(row: Record<string, string>): SheetDiscount | null {
@@ -4957,6 +5021,8 @@ function parseSheetDiscountRow(row: Record<string, string>): SheetDiscount | nul
     minNights: row["Min_Nights"] ? Number(row["Min_Nights"]) || null : null,
     termType: (row["Term_Type"] === "short_term" ? "short_term" : "long_term") as SheetDiscount["termType"],
     eligibility,
+    selectionMode: (row["Selection_Mode"] === "automatic" ? "automatic" : row["Term_Type"] === "short_term" ? "automatic" : "manual") as SheetDiscount["selectionMode"],
+    stackMode: (row["Stack_Mode"] === "exclusive" ? "exclusive" : "stackable") as SheetDiscount["stackMode"],
     enabled: (row["Enabled"] ?? row["enabled"] ?? "1").trim() !== "0",
     updatedBy: (row["Updated_By"] ?? row["updated_by"] ?? "").trim(),
     updatedAt: (row["Updated_At"] ?? row["updated_at"] ?? "").trim(),
@@ -4968,7 +5034,7 @@ export async function readDiscountsFromSheet(): Promise<SheetDiscount[]> {
   const sheets = await getAuthorizedSheetsClient();
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${discountsSheetName}!A:N`
+    range: `${discountsSheetName}!A:P`
   });
   const values = response.data.values ?? [];
   if (values.length < 2) return [];
@@ -5006,7 +5072,7 @@ async function flushDiscountQueue(): Promise<void> {
   // Read current sheet state once
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${discountsSheetName}!A:N`
+    range: `${discountsSheetName}!A:P`
   });
   const values = response.data.values ?? [];
 
@@ -5014,11 +5080,26 @@ async function flushDiscountQueue(): Promise<void> {
   if (values.length === 0) {
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `${discountsSheetName}!A1:N1`,
+      range: `${discountsSheetName}!A1:P1`,
       valueInputOption: "RAW",
       requestBody: { values: [DISCOUNT_HEADERS as unknown as string[]] }
     });
     values.push(DISCOUNT_HEADERS as unknown as string[]);
+  } else {
+    const existingHeaders = (values[0] ?? []).map((value) => String(value).trim());
+    const needsHeaderUpgrade =
+      existingHeaders.length !== DISCOUNT_HEADERS.length ||
+      DISCOUNT_HEADERS.some((header, index) => (existingHeaders[index] ?? "") !== header);
+
+    if (needsHeaderUpgrade) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${discountsSheetName}!A1:P1`,
+        valueInputOption: "RAW",
+        requestBody: { values: [DISCOUNT_HEADERS as unknown as string[]] }
+      });
+      values[0] = DISCOUNT_HEADERS as unknown as string[];
+    }
   }
 
   const now = new Date().toLocaleString("vi-VN", { timeZone: process.env.COZORO_TIMEZONE || "Asia/Ho_Chi_Minh" });
@@ -5046,6 +5127,8 @@ async function flushDiscountQueue(): Promise<void> {
         String(discount.minNights ?? ""),
         discount.termType,
         JSON.stringify(discount.eligibility),
+        discount.selectionMode,
+        discount.stackMode,
         discount.enabled ? "1" : "0",
         actorEmail.trim().toLowerCase(),
         now
@@ -5071,7 +5154,7 @@ async function flushDiscountQueue(): Promise<void> {
   for (const { sheetRow, row } of toUpdate) {
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `${discountsSheetName}!A${sheetRow}:N${sheetRow}`,
+      range: `${discountsSheetName}!A${sheetRow}:P${sheetRow}`,
       valueInputOption: "USER_ENTERED",
       requestBody: { values: [row] }
     });
@@ -5081,7 +5164,7 @@ async function flushDiscountQueue(): Promise<void> {
   if (toAppend.length > 0) {
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: `${discountsSheetName}!A:N`,
+      range: `${discountsSheetName}!A:P`,
       valueInputOption: "USER_ENTERED",
       insertDataOption: "INSERT_ROWS",
       requestBody: { values: toAppend }

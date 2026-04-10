@@ -74,12 +74,12 @@ function parseVndAmount(value: unknown): number {
 
 /**
  * Calculates the tenure surcharge rate based on contract duration.
- * < 3 months: +12%
+ * 1-3 months: +12%
  * 4-5 months: +8%
- * otherwise: 0%
+ * 6+ months: 0%
  */
 export function getTenureSurchargeRate(durationMonths: number): number {
-  if (durationMonths < 3) return 0.12;
+  if (durationMonths >= 1 && durationMonths <= 3) return 0.12;
   if (durationMonths >= 4 && durationMonths <= 5) return 0.08;
   return 0;
 }

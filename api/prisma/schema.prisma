@@ -262,6 +262,21 @@ model CleaningOptOut {
   @@index([branchId, month])
 }
 
+model CleaningContractOptOut {
+  id            String   @id @default(cuid())
+  userEmail      String
+  branchId       String
+  contractCode   String   @unique
+  cleaningFeeVnd Int      @default(100000)
+  startDate      DateTime?
+  endDate        DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userEmail])
+  @@index([branchId])
+}
+
 enum StayBookingStatus {
   CONFIRMED
   CANCELLED
@@ -313,6 +328,31 @@ model MonthlyRentStatus {
 }
 
 // ── Unified Pricing ──────────────────────────────────────────────────────────
+
+// Per-branch configurable fees set by owner
+model BranchPricingSettings {
+  id                   Int      @id @default(autoincrement())
+  branchId             String   @unique // "D2" | "D7"
+  cleaningOptOutFeeVnd Int      @default(100000) // monthly fee to opt out of cleaning duty
+  parkingFeeVnd        Int      @default(0)      // default monthly parking fee for this branch
+  updatedBy            String
+  updatedAt            DateTime @updatedAt
+  createdAt            DateTime @default(now())
+}
+
+// Per-bed parking fee override (overrides branch default)
+model BedParkingFeeOverride {
+  id           Int      @id @default(autoincrement())
+  branchId     String
+  bedNumber    Int
+  parkingFeeVnd Int
+  updatedBy    String
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+
+  @@unique([branchId, bedNumber])
+  @@index([branchId])
+}
 
 model BedPriceOverride {
   id           Int      @id @default(autoincrement())

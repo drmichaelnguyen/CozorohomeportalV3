@@ -879,11 +879,31 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     description: string; descriptionVi: string;
     amountVnd: number | null; percentOff: number | null; minNights: number | null;
     durationMonths: number | null; eligibility: Array<{ type: string; values?: string[]; value?: number }>;
+    selectionMode: "manual" | "automatic";
+    stackMode: "stackable" | "exclusive";
     enabled: boolean; updatedBy: string; updatedAt: string;
   };
-  const [pricingData, setPricingData] = useState<{ bedOverrides: PricingBedOverride[]; discounts: PricingDiscount[] } | null>(null);
+  type BranchPricingSettings = {
+    branchId: string; cleaningOptOutFeeVnd: number; parkingFeeVnd: number; updatedBy: string; updatedAt: string;
+  };
+  type BedParkingFeeOverride = {
+    id: number; branchId: string; bedNumber: number; parkingFeeVnd: number; updatedBy: string; updatedAt: string;
+  };
+  const [pricingData, setPricingData] = useState<{
+    bedOverrides: PricingBedOverride[];
+    discounts: PricingDiscount[];
+    branchSettings: BranchPricingSettings[];
+    parkingOverrides: BedParkingFeeOverride[];
+  } | null>(null);
   const [pricingConfigLoading, setPricingConfigLoading] = useState(false);
   const [pricingSettingsTab, setPricingSettingsTab] = useState<"long_term" | "short_term" | "staff">("long_term");
+  const [bedPricingExpanded, setBedPricingExpanded] = useState(false);
+  const [branchSettingsEdit, setBranchSettingsEdit] = useState<{
+    branchId: string; cleaningOptOutFeeVnd: string; parkingFeeVnd: string; saving: boolean; result: string;
+  } | null>(null);
+  const [parkingBedEdit, setParkingBedEdit] = useState<{
+    branchId: string; bedNumber: string; parkingFeeVnd: string; saving: boolean; result: string;
+  } | null>(null);
   // "per_bed" = click individual beds | "by_room" = branch → floor → room → tier | "by_branch" = branch → tier only
   const [pricingDiagramMode, setPricingDiagramMode] = useState<"per_bed" | "by_room" | "by_branch">("per_bed");
   const [bulkTierEdit, setBulkTierEdit] = useState<{
@@ -899,6 +919,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     description: string; descriptionVi: string;
     amountVnd: string; percentOff: string; minNights: string; durationMonths: string;
     eligibility: Array<{ type: string; values: string; value: string }>;
+    selectionMode: "manual" | "automatic";
+    stackMode: "stackable" | "exclusive";
     enabled: boolean; saving: boolean; result: string;
   } | null>(null);
   const [terminateDialog, setTerminateDialog] = useState(false);
@@ -1727,8 +1749,18 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     setPricingConfigLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/manager/pricing?actorEmail=${encodeURIComponent(normalizedEmail)}`);
-      const data = await res.json();
-      if (res.ok) setPricingData(data);
+      const data = await res.json() as {
+        bedOverrides?: PricingBedOverride[];
+        discounts?: PricingDiscount[];
+        branchSettings?: BranchPricingSettings[];
+        parkingOverrides?: BedParkingFeeOverride[];
+      };
+      if (res.ok) setPricingData({
+        bedOverrides: data.bedOverrides ?? [],
+        discounts: data.discounts ?? [],
+        branchSettings: data.branchSettings ?? [],
+        parkingOverrides: data.parkingOverrides ?? []
+      });
     } finally {
       setPricingConfigLoading(false);
     }
@@ -4931,9 +4963,86 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 </div>
               ) : (
                 <>
-                  {/* ── Bed pricing diagram ── */}
+                  {/* ── Branch pricing settings (cleaning opt-out fee, parking fee) ── */}
+                  <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+                    <div>
+                      <h3 className="text-base font-semibold text-slate-900">Branch Fee Settings</h3>
+                      <p className="mt-1 text-sm text-slate-500">Set the cleaning opt-out fee (monthly surcharge for residents who pay instead of doing cleaning duty) and the default parking fee per branch. Per-bed parking overrides can be set in the bed diagram below.</p>
+                    </div>
+                    {pricingConfigLoading ? <p className="text-sm text-slate-500">Loading…</p> : (
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        {(["D2", "D7"] as const).map((branchId) => {
+                          const settings = (pricingData?.branchSettings ?? []).find((s) => s.branchId === branchId) ?? { branchId, cleaningOptOutFeeVnd: 100000, parkingFeeVnd: 0, updatedBy: "", updatedAt: "" };
+                          const isEditing = branchSettingsEdit?.branchId === branchId;
+                          return (
+                            <div key={branchId} className={`rounded-2xl border p-4 space-y-3 ${isEditing ? "border-teal-400 bg-teal-50" : "border-slate-200 bg-slate-50"}`}>
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-sm font-semibold text-slate-800">{branchId}</p>
+                                {!isEditing && (
+                                  <button type="button" onClick={() => setBranchSettingsEdit({ branchId, cleaningOptOutFeeVnd: String(settings.cleaningOptOutFeeVnd), parkingFeeVnd: String(settings.parkingFeeVnd), saving: false, result: "" })}
+                                    className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-white">Edit</button>
+                                )}
+                              </div>
+                              {isEditing ? (
+                                <div className="space-y-3">
+                                  <label className="space-y-1 block">
+                                    <span className="text-xs font-medium text-slate-700">Cleaning opt-out fee (VND/month)</span>
+                                    <input type="number" min={0} value={branchSettingsEdit!.cleaningOptOutFeeVnd}
+                                      onChange={(e) => setBranchSettingsEdit({ ...branchSettingsEdit!, cleaningOptOutFeeVnd: e.target.value })}
+                                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-teal-500 focus:outline-none" />
+                                  </label>
+                                  <label className="space-y-1 block">
+                                    <span className="text-xs font-medium text-slate-700">Default parking fee (VND/month)</span>
+                                    <input type="number" min={0} value={branchSettingsEdit!.parkingFeeVnd}
+                                      onChange={(e) => setBranchSettingsEdit({ ...branchSettingsEdit!, parkingFeeVnd: e.target.value })}
+                                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-teal-500 focus:outline-none" />
+                                  </label>
+                                  {branchSettingsEdit!.result ? <p className={`text-sm font-medium ${branchSettingsEdit!.result.startsWith("✓") ? "text-emerald-700" : "text-rose-700"}`}>{branchSettingsEdit!.result}</p> : null}
+                                  <div className="flex gap-2">
+                                    <button type="button" onClick={() => setBranchSettingsEdit(null)} className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700">Cancel</button>
+                                    <button type="button" disabled={branchSettingsEdit!.saving} onClick={async () => {
+                                      setBranchSettingsEdit({ ...branchSettingsEdit!, saving: true, result: "" });
+                                      try {
+                                        const res = await fetch(`${API_BASE_URL}/manager/pricing/branch-settings`, {
+                                          method: "PUT", headers: { "Content-Type": "application/json" },
+                                          body: JSON.stringify({ actorEmail: normalizedEmail, branchId, cleaningOptOutFeeVnd: Number(branchSettingsEdit!.cleaningOptOutFeeVnd) || 0, parkingFeeVnd: Number(branchSettingsEdit!.parkingFeeVnd) || 0 })
+                                        });
+                                        const data = await res.json() as { ok?: boolean; row?: BranchPricingSettings; error?: string };
+                                        if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed");
+                                        if (data.row) setPricingData((prev) => prev ? { ...prev, branchSettings: [...(prev.branchSettings ?? []).filter((s) => s.branchId !== branchId), data.row!] } : prev);
+                                        setBranchSettingsEdit({ ...branchSettingsEdit!, saving: false, result: "✓ Saved" });
+                                        setTimeout(() => setBranchSettingsEdit(null), 1500);
+                                      } catch (err) { setBranchSettingsEdit({ ...branchSettingsEdit!, saving: false, result: err instanceof Error ? err.message : "Failed" }); }
+                                    }} className="rounded-xl bg-teal-600 px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-50">{branchSettingsEdit!.saving ? "Saving…" : "Save"}</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="space-y-1 text-sm text-slate-600">
+                                  <div className="flex items-center justify-between"><span className="text-xs text-slate-500">Cleaning opt-out fee</span><span className="font-semibold">{settings.cleaningOptOutFeeVnd.toLocaleString("vi-VN")} ₫/mo</span></div>
+                                  <div className="flex items-center justify-between"><span className="text-xs text-slate-500">Default parking fee</span><span className="font-semibold">{settings.parkingFeeVnd.toLocaleString("vi-VN")} ₫/mo</span></div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ── Bed pricing diagram (collapsible) ── */}
+                  <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                    <button type="button" onClick={() => setBedPricingExpanded((v) => !v)}
+                      className="flex w-full items-center justify-between px-6 py-5 text-left hover:bg-slate-50 transition-colors">
+                      <div>
+                        <h3 className="text-base font-semibold text-slate-900">Bed Prices (Monthly)</h3>
+                        <p className="mt-0.5 text-sm text-slate-500">Click to expand and edit individual bed prices or bulk-set by tier.</p>
+                      </div>
+                      <span className="text-slate-400 text-xl">{bedPricingExpanded ? "▲" : "▼"}</span>
+                    </button>
+                    {bedPricingExpanded && (
+                    <div className="border-t border-slate-100 p-5 space-y-5">
                   {/* Mode selector */}
-                  <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4">
                     <div className="flex flex-wrap gap-2 items-center">
                       <span className="text-sm font-medium text-slate-700 mr-1">Edit mode:</span>
                       {([
@@ -5176,6 +5285,54 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 </label>
                                 <p className="text-xs text-slate-500 pb-2">Deposit = monthly price (set automatically)</p>
                               </div>
+                              {/* Per-bed parking fee override */}
+                              {(() => {
+                                const bedNum = Number(bedOverrideEdit.bedNumber);
+                                const existingPark = (pricingData?.parkingOverrides ?? []).find((p) => p.branchId === branchId && p.bedNumber === bedNum);
+                                const isEditingParking = parkingBedEdit?.branchId === branchId && parkingBedEdit?.bedNumber === bedOverrideEdit.bedNumber;
+                                return (
+                                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 space-y-2">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="text-xs font-semibold text-amber-800">Parking fee override for this bed</span>
+                                      {existingPark && !isEditingParking && <span className="text-xs font-semibold text-amber-700">{existingPark.parkingFeeVnd.toLocaleString("vi-VN")} ₫/mo</span>}
+                                      {!isEditingParking && (
+                                        <button type="button" onClick={() => setParkingBedEdit({ branchId, bedNumber: bedOverrideEdit.bedNumber, parkingFeeVnd: String(existingPark?.parkingFeeVnd ?? ""), saving: false, result: "" })}
+                                          className="rounded-lg border border-amber-300 bg-white px-2 py-0.5 text-xs font-medium text-amber-700 hover:bg-amber-100">
+                                          {existingPark ? "Edit" : "Set override"}
+                                        </button>
+                                      )}
+                                    </div>
+                                    {!existingPark && !isEditingParking && <p className="text-xs text-amber-600">Using branch default. Set an override to give this bed a different parking rate.</p>}
+                                    {isEditingParking && (
+                                      <div className="space-y-2">
+                                        <input type="number" min={0} value={parkingBedEdit!.parkingFeeVnd}
+                                          onChange={(e) => setParkingBedEdit({ ...parkingBedEdit!, parkingFeeVnd: e.target.value })}
+                                          placeholder="Parking fee VND/month"
+                                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-amber-400 focus:outline-none" />
+                                        {parkingBedEdit!.result ? <p className={`text-xs font-medium ${parkingBedEdit!.result.startsWith("✓") ? "text-emerald-700" : "text-rose-700"}`}>{parkingBedEdit!.result}</p> : null}
+                                        <div className="flex gap-2 flex-wrap">
+                                          <button type="button" onClick={() => setParkingBedEdit(null)} className="rounded-xl border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700">Cancel</button>
+                                          {existingPark && <button type="button" onClick={async () => {
+                                            const res = await fetch(`${API_BASE_URL}/manager/pricing/parking-beds?actorEmail=${encodeURIComponent(normalizedEmail)}&branchId=${branchId}&bedNumber=${bedNum}`, { method: "DELETE" });
+                                            if (res.ok) { setPricingData((prev) => prev ? { ...prev, parkingOverrides: prev.parkingOverrides.filter((p) => !(p.branchId === branchId && p.bedNumber === bedNum)) } : prev); setParkingBedEdit(null); }
+                                          }} className="rounded-xl border border-rose-200 px-3 py-1 text-xs font-medium text-rose-600">Remove override</button>}
+                                          <button type="button" disabled={parkingBedEdit!.saving} onClick={async () => {
+                                            setParkingBedEdit({ ...parkingBedEdit!, saving: true, result: "" });
+                                            try {
+                                              const res = await fetch(`${API_BASE_URL}/manager/pricing/parking-beds`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actorEmail: normalizedEmail, branchId, bedNumber: bedNum, parkingFeeVnd: Number(parkingBedEdit!.parkingFeeVnd) || 0 }) });
+                                              const data = await res.json() as { ok?: boolean; row?: BedParkingFeeOverride; error?: string };
+                                              if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed");
+                                              if (data.row) setPricingData((prev) => prev ? { ...prev, parkingOverrides: [...(prev.parkingOverrides ?? []).filter((p) => !(p.branchId === branchId && p.bedNumber === bedNum)), data.row!] } : prev);
+                                              setParkingBedEdit({ ...parkingBedEdit!, saving: false, result: "✓ Saved" });
+                                              setTimeout(() => setParkingBedEdit(null), 1500);
+                                            } catch (err) { setParkingBedEdit({ ...parkingBedEdit!, saving: false, result: err instanceof Error ? err.message : "Failed" }); }
+                                          }} className="rounded-xl bg-amber-600 px-4 py-1 text-xs font-semibold text-white disabled:opacity-50">{parkingBedEdit!.saving ? "Saving…" : "Save"}</button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                               {bedOverrideEdit.result ? <p className={`text-sm font-medium ${bedOverrideEdit.result.startsWith("✓") ? "text-emerald-700" : "text-rose-700"}`}>{bedOverrideEdit.result}</p> : null}
                               <div className="flex gap-2 flex-wrap">
                                 <button type="button" onClick={() => setBedOverrideEdit(null)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Cancel</button>
@@ -5204,6 +5361,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       )}
                     </div>
                   )) : null}
+                  </div>
+                  )}
+                  </div>
 
                   {/* ── Long-term discounts ── */}
                   <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
@@ -5223,7 +5383,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                     {!d.enabled && <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-500">Disabled</span>}
                                   </div>
                                   <div className="flex gap-2">
-                                    <button type="button" onClick={() => setDiscountEdit({ id: d.id, termType: "long_term", label: d.label, labelVi: d.labelVi ?? "", description: d.description, descriptionVi: d.descriptionVi ?? "", amountVnd: String(d.amountVnd ?? ""), percentOff: "", minNights: "", durationMonths: d.durationMonths != null ? String(d.durationMonths) : "", eligibility: d.eligibility.map((e) => ({ type: e.type, values: "values" in e ? ((e as { values: string[] }).values ?? []).join(", ") : "", value: "value" in e ? String((e as { value: number }).value) : "" })), enabled: d.enabled, saving: false, result: "" })}
+                                    <button type="button" onClick={() => setDiscountEdit({ id: d.id, termType: "long_term", label: d.label, labelVi: d.labelVi ?? "", description: d.description, descriptionVi: d.descriptionVi ?? "", amountVnd: String(d.amountVnd ?? ""), percentOff: "", minNights: "", durationMonths: d.durationMonths != null ? String(d.durationMonths) : "", eligibility: d.eligibility.map((e) => ({ type: e.type, values: "values" in e ? ((e as { values: string[] }).values ?? []).join(", ") : "", value: "value" in e ? String((e as { value: number }).value) : "" })), selectionMode: d.selectionMode ?? "manual", stackMode: d.stackMode ?? "stackable", enabled: d.enabled, saving: false, result: "" })}
                                       className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700">Edit</button>
                                     <button type="button" onClick={async () => {
                                       if (!window.confirm(`Delete "${d.label}"?`)) return;
@@ -5236,6 +5396,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 <div className="flex flex-wrap gap-2 text-xs">
                                   {d.amountVnd != null && <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-emerald-700 font-medium">−{d.amountVnd.toLocaleString("vi-VN")} ₫/month</span>}
                                   <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{d.durationMonths != null ? `${d.durationMonths} months` : "Entire contract"}</span>
+                                  <span className={`rounded-full px-2.5 py-1 font-medium ${d.stackMode === "exclusive" ? "bg-rose-100 text-rose-700" : "bg-sky-100 text-sky-700"}`}>{d.stackMode === "exclusive" ? "Exclusive" : "Stackable"}</span>
                                   {d.eligibility.map((e, i) => (
                                     <span key={i} className="rounded-full bg-sky-100 px-2.5 py-1 text-sky-700">
                                       {e.type === "status" ? `Status: ${"values" in e ? ((e as { values: string[] }).values ?? []).join(" / ") : ""}` :
@@ -5272,6 +5433,18 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               </label>
                               <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Duration months (blank = entire contract)</span>
                                 <input type="number" min={1} value={discountEdit.durationMonths} onChange={(e) => setDiscountEdit({ ...discountEdit, durationMonths: e.target.value })} placeholder="Blank = whole contract" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none" />
+                              </label>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Selection rule</span>
+                                <select value={discountEdit.selectionMode} onChange={(e) => setDiscountEdit({ ...discountEdit, selectionMode: e.target.value as "manual" | "automatic" })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none">
+                                  <option value="manual">Resident must select</option>
+                                  <option value="automatic">Auto apply when eligible</option>
+                                </select>
+                              </label>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Stacking rule</span>
+                                <select value={discountEdit.stackMode} onChange={(e) => setDiscountEdit({ ...discountEdit, stackMode: e.target.value as "stackable" | "exclusive" })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none">
+                                  <option value="stackable">Stackable</option>
+                                  <option value="exclusive">Exclusive</option>
+                                </select>
                               </label>
                               <div className="sm:col-span-2 space-y-2">
                                 <span className="text-xs font-medium text-slate-700 block">Eligibility rules (ALL must match)</span>
@@ -5340,7 +5513,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                     return { type: r.type };
                                   });
                                   const id = discountEdit.id || `lt_${Date.now()}`;
-                                  const res = await fetch(`${API_BASE_URL}/manager/pricing/discounts`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actorEmail: normalizedEmail, discount: { id, termType: "long_term", label: discountEdit.label, labelVi: discountEdit.labelVi, description: discountEdit.description, descriptionVi: discountEdit.descriptionVi, amountVnd: Number(discountEdit.amountVnd) || 0, percentOff: null, minNights: null, durationMonths: discountEdit.durationMonths ? Number(discountEdit.durationMonths) : null, eligibility, enabled: discountEdit.enabled } }) });
+                                  const res = await fetch(`${API_BASE_URL}/manager/pricing/discounts`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actorEmail: normalizedEmail, discount: { id, termType: "long_term", label: discountEdit.label, labelVi: discountEdit.labelVi, description: discountEdit.description, descriptionVi: discountEdit.descriptionVi, amountVnd: Number(discountEdit.amountVnd) || 0, percentOff: null, minNights: null, durationMonths: discountEdit.durationMonths ? Number(discountEdit.durationMonths) : null, eligibility, selectionMode: discountEdit.selectionMode, stackMode: discountEdit.stackMode, enabled: discountEdit.enabled } }) });
                                   const data = (await res.json()) as { ok?: boolean; row?: PricingDiscount; error?: string };
                                   if (!res.ok) throw new Error(data.error ?? "Failed");
                                   if (data.row) setPricingData((prev) => prev ? { ...prev, discounts: [...prev.discounts.filter((x) => x.id !== data.row!.id), data.row!] } : prev);
@@ -5350,7 +5523,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             </div>
                           </div>
                         ) : (
-                          <button type="button" onClick={() => setDiscountEdit({ id: "", termType: "long_term", label: "", labelVi: "", description: "", descriptionVi: "", amountVnd: "0", percentOff: "", minNights: "", durationMonths: "", eligibility: [], enabled: true, saving: false, result: "" })}
+                          <button type="button" onClick={() => setDiscountEdit({ id: "", termType: "long_term", label: "", labelVi: "", description: "", descriptionVi: "", amountVnd: "0", percentOff: "", minNights: "", durationMonths: "", eligibility: [], selectionMode: "manual", stackMode: "stackable", enabled: true, saving: false, result: "" })}
                             className="rounded-xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 hover:border-sky-400 hover:text-sky-700">+ Add discount</button>
                         )}
                       </>
@@ -5457,7 +5630,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                     {!d.enabled && <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-500">Disabled</span>}
                                   </div>
                                   <div className="flex gap-2">
-                                    <button type="button" onClick={() => setDiscountEdit({ id: d.id, termType: "short_term", label: d.label, labelVi: d.labelVi ?? "", description: d.description, descriptionVi: d.descriptionVi ?? "", amountVnd: "", percentOff: String(d.percentOff ?? ""), minNights: String(d.minNights ?? ""), durationMonths: "", eligibility: [], enabled: d.enabled, saving: false, result: "" })}
+                                    <button type="button" onClick={() => setDiscountEdit({ id: d.id, termType: "short_term", label: d.label, labelVi: d.labelVi ?? "", description: d.description, descriptionVi: d.descriptionVi ?? "", amountVnd: "", percentOff: String(d.percentOff ?? ""), minNights: String(d.minNights ?? ""), durationMonths: "", eligibility: [], selectionMode: d.selectionMode ?? "automatic", stackMode: d.stackMode ?? "stackable", enabled: d.enabled, saving: false, result: "" })}
                                       className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700">Edit</button>
                                     <button type="button" onClick={async () => {
                                       if (!window.confirm(`Delete "${d.label}"?`)) return;
@@ -5470,6 +5643,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 <div className="flex flex-wrap gap-2 text-xs">
                                   {d.percentOff != null && <span className="rounded-full bg-violet-100 px-2.5 py-1 text-violet-700 font-medium">{d.percentOff}% off</span>}
                                   {d.minNights != null && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">Min {d.minNights} nights</span>}
+                                  <span className={`rounded-full px-2.5 py-1 font-medium ${d.stackMode === "exclusive" ? "bg-rose-100 text-rose-700" : "bg-sky-100 text-sky-700"}`}>{d.stackMode === "exclusive" ? "Exclusive" : "Stackable"}</span>
                                 </div>
                               </div>
                             ))}
@@ -5491,6 +5665,18 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Minimum nights</span>
                                 <input type="number" min={1} value={discountEdit.minNights} onChange={(e) => setDiscountEdit({ ...discountEdit, minNights: e.target.value })} placeholder="e.g. 7" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none" />
                               </label>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Selection rule</span>
+                                <select value={discountEdit.selectionMode} onChange={(e) => setDiscountEdit({ ...discountEdit, selectionMode: e.target.value as "manual" | "automatic" })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none">
+                                  <option value="manual">Guest must select</option>
+                                  <option value="automatic">Auto apply when eligible</option>
+                                </select>
+                              </label>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Stacking rule</span>
+                                <select value={discountEdit.stackMode} onChange={(e) => setDiscountEdit({ ...discountEdit, stackMode: e.target.value as "stackable" | "exclusive" })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none">
+                                  <option value="stackable">Stackable</option>
+                                  <option value="exclusive">Exclusive</option>
+                                </select>
+                              </label>
                               <label className="flex items-center gap-2 sm:col-span-2">
                                 <input type="checkbox" checked={discountEdit.enabled} onChange={(e) => setDiscountEdit({ ...discountEdit, enabled: e.target.checked })} className="h-4 w-4 rounded border-slate-300 text-violet-600" />
                                 <span className="text-sm text-slate-700">Enabled</span>
@@ -5503,7 +5689,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 setDiscountEdit({ ...discountEdit, saving: true, result: "" });
                                 try {
                                   const id = discountEdit.id || `st_${Date.now()}`;
-                                  const res = await fetch(`${API_BASE_URL}/manager/pricing/discounts`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actorEmail: normalizedEmail, discount: { id, termType: "short_term", label: discountEdit.label, labelVi: discountEdit.labelVi, description: discountEdit.description, descriptionVi: discountEdit.descriptionVi, amountVnd: null, percentOff: Number(discountEdit.percentOff) || 0, minNights: Number(discountEdit.minNights) || 1, durationMonths: null, eligibility: [], enabled: discountEdit.enabled } }) });
+                                  const res = await fetch(`${API_BASE_URL}/manager/pricing/discounts`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actorEmail: normalizedEmail, discount: { id, termType: "short_term", label: discountEdit.label, labelVi: discountEdit.labelVi, description: discountEdit.description, descriptionVi: discountEdit.descriptionVi, amountVnd: null, percentOff: Number(discountEdit.percentOff) || 0, minNights: Number(discountEdit.minNights) || 1, durationMonths: null, eligibility: [], stackMode: discountEdit.stackMode, enabled: discountEdit.enabled } }) });
                                   const data = (await res.json()) as { ok?: boolean; row?: PricingDiscount; error?: string };
                                   if (!res.ok) throw new Error(data.error ?? "Failed");
                                   if (data.row) setPricingData((prev) => prev ? { ...prev, discounts: [...prev.discounts.filter((x) => x.id !== data.row!.id), data.row!] } : prev);
@@ -5513,7 +5699,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             </div>
                           </div>
                         ) : (
-                          <button type="button" onClick={() => setDiscountEdit({ id: "", termType: "short_term", label: "", labelVi: "", description: "", descriptionVi: "", amountVnd: "", percentOff: "10", minNights: "7", durationMonths: "", eligibility: [], enabled: true, saving: false, result: "" })}
+                          <button type="button" onClick={() => setDiscountEdit({ id: "", termType: "short_term", label: "", labelVi: "", description: "", descriptionVi: "", amountVnd: "", percentOff: "10", minNights: "7", durationMonths: "", eligibility: [], stackMode: "stackable", enabled: true, saving: false, result: "" })}
                             className="rounded-xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 hover:border-violet-400 hover:text-violet-700">+ Add stay discount</button>
                         )}
                       </>

@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { readCachedClients, syncClientsFromSheet } from "./google-sheets.js";
 import { requirePortalRole } from "./staff-access.js";
-import { getBedOverrides } from "./pricing-config.js";
+import { getBedOverrides, getBedParkingFeeOverrides, getBranchPricingSettings } from "./pricing-config.js";
 
 const cacheDirPath = path.join(process.cwd(), "data");
 const settingsFilePath = path.join(cacheDirPath, "prospect-assistant-settings.json");
@@ -40,6 +40,8 @@ type BedAvailabilityRecord = {
   pricing: {
     monthlyPrice: number;
     deposit: number;
+    parkingFeeVnd: number;
+    cleaningOptOutFeeVnd: number;
   };
 };
 
@@ -447,7 +449,12 @@ export async function getProspectBedAvailability(input: {
   branchId: BranchId;
   sex: ProspectSex;
 }) {
-  const [cache, overrideRows] = await Promise.all([getClientCache(), getBedOverrides("long_term")]);
+  const [cache, overrideRows, parkingOverrides, branchSettings] = await Promise.all([
+    getClientCache(),
+    getBedOverrides("long_term"),
+    getBedParkingFeeOverrides(input.branchId),
+    getBranchPricingSettings(input.branchId)
+  ]);
   const reservations = buildReservations(cache.rows);
   const pricing = buildPriceStats(cache.rows);
   // Build a lookup: bedNumber → override
@@ -456,6 +463,7 @@ export async function getProspectBedAvailability(input: {
       .filter((r) => r.branchId === input.branchId)
       .map((r) => [r.bedNumber, r])
   );
+  const parkingOverrideMap = new Map(parkingOverrides.map((r) => [r.bedNumber, r.parkingFeeVnd]));
   const today = new Date();
   today.setHours(12, 0, 0, 0);
   const windowEnd = addDays(today, 30);
@@ -514,7 +522,11 @@ export async function getProspectBedAvailability(input: {
             availableOn: toIsoDate(firstAvailableDate),
             pricing: {
               monthlyPrice: price.monthlyPrice,
-              deposit: price.deposit
+              deposit: price.deposit,
+              parkingFeeVnd: parkingOverrideMap.has(bedNumber)
+                ? parkingOverrideMap.get(bedNumber)!
+                : branchSettings.parkingFeeVnd,
+              cleaningOptOutFeeVnd: branchSettings.cleaningOptOutFeeVnd
             }
           } satisfies BedAvailabilityRecord
         ];

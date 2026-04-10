@@ -18,7 +18,7 @@ export function ContractExtension({
   const { t } = usePortalLanguage();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [duration, setDuration] = useState<number>(6);
+  const [duration, setDuration] = useState<number | "hostel">(6);
   const [agreed, setAgreed] = useState(false);
   const [fullName, setFullName] = useState("");
   const [isExpanded, setIsExpanded] = useState(forceExpand);
@@ -117,7 +117,16 @@ export function ContractExtension({
     return null;
   }
 
+  // Short-stay surcharge rate for the selected extension duration
+  const extensionSurchargeRate = typeof duration === "number"
+    ? (duration >= 1 && duration <= 3 ? 0.12 : duration >= 4 && duration <= 5 ? 0.08 : 0)
+    : 0;
+
   async function handleExtend() {
+    if (duration === "hostel") {
+      window.open("https://hostel.cozorohome.com", "_blank");
+      return;
+    }
     if (!agreed || !hasSignature || !fullName.trim()) {
       setError(t("mustSignAndAgree", "You must sign, provide your full name, and agree to the terms to proceed."));
       return;
@@ -226,12 +235,27 @@ export function ContractExtension({
               <label className="block text-xs font-bold uppercase tracking-wider text-amber-700 mb-3">
                 {t("selectExtensionDuration", "Select Duration")}
               </label>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {/* Hostel redirect option */}
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => setDuration("hostel")}
+                  className={`rounded-2xl border-2 p-3 text-left transition-all ${
+                    duration === "hostel"
+                      ? "border-rose-400 bg-rose-100 shadow-md"
+                      : "border-rose-200 bg-white hover:border-rose-300"
+                  }`}
+                >
+                  <p className="text-sm font-bold text-rose-900">{"< 1 " + t("month", "Month")}</p>
+                  <p className="text-xs text-rose-700">Dưới 1 tháng</p>
+                  <p className="mt-1.5 text-xs font-semibold text-rose-600">🏨 {t("hostelBooking", "Hostel booking")}</p>
+                </button>
                 {([
-                  { months: 1, label: t("oneMonth", "1 Month"), labelVi: "1 tháng", coins: 0 },
-                  { months: 3, label: t("threeMonths", "3 Months"), labelVi: "3 tháng", coins: 10000 },
-                  { months: 6, label: t("sixMonths", "6 Months"), labelVi: "6 tháng", coins: 25000 },
-                  { months: 12, label: t("twelveMonths", "12 Months"), labelVi: "12 tháng", coins: 50000 },
+                  { months: 1, label: t("oneMonth", "1 Month"), labelVi: "1 tháng", coins: 0, surcharge: 12 },
+                  { months: 3, label: t("threeMonths", "3 Months"), labelVi: "3 tháng", coins: 10000, surcharge: 12 },
+                  { months: 6, label: t("sixMonths", "6 Months"), labelVi: "6 tháng", coins: 25000, surcharge: 0 },
+                  { months: 12, label: t("twelveMonths", "12 Months"), labelVi: "12 tháng", coins: 50000, surcharge: 0 },
                 ] as const).map((opt) => (
                   <button
                     key={opt.months}
@@ -246,7 +270,9 @@ export function ContractExtension({
                   >
                     <p className="text-sm font-bold text-amber-900">{opt.label}</p>
                     <p className="text-xs text-amber-700">{opt.labelVi}</p>
-                    {opt.coins > 0 ? (
+                    {opt.surcharge > 0 ? (
+                      <p className="mt-1.5 text-xs font-semibold text-orange-600">+{opt.surcharge}% {t("surcharge", "surcharge")}</p>
+                    ) : opt.coins > 0 ? (
                       <p className="mt-1.5 text-xs font-semibold text-emerald-700">+{opt.coins.toLocaleString()} coins 🪙</p>
                     ) : (
                       <p className="mt-1.5 text-xs text-slate-400">{t("noCoins", "No coins")}</p>
@@ -254,93 +280,131 @@ export function ContractExtension({
                   </button>
                 ))}
               </div>
+              {/* Hostel redirect notice */}
+              {duration === "hostel" && (
+                <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 flex items-start gap-3">
+                  <span className="text-rose-500 text-lg shrink-0">🏨</span>
+                  <div>
+                    <p className="text-sm font-semibold text-rose-900">{t("hostelRedirectTitle", "Short-term stay (< 1 month)")}</p>
+                    <p className="text-xs text-rose-700 mt-1">{t("hostelRedirectDesc", "Stays under 1 month are booked through our hostel portal. Click the button below to go there.")}</p>
+                    <a href="https://hostel.cozorohome.com" target="_blank" rel="noopener noreferrer"
+                      className="mt-2 inline-block rounded-full bg-rose-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-rose-500">
+                      {t("goToHostel", "Go to hostel.cozorohome.com")} →
+                    </a>
+                  </div>
+                </div>
+              )}
+              {/* Surcharge warning for 1-3 month extensions */}
+              {extensionSurchargeRate > 0 && duration !== "hostel" && (
+                <div className="mt-3 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-3">
+                  <span className="text-amber-500 text-lg shrink-0">⚠️</span>
+                  <div>
+                    <p className="text-sm font-semibold text-amber-900">
+                      {extensionSurchargeRate === 0.12
+                        ? t("surcharge12Title", "Short-stay surcharge: +12%")
+                        : t("surcharge8Title", "Short-stay surcharge: +8%")}
+                    </p>
+                    <p className="text-xs text-amber-700 mt-1">
+                      {extensionSurchargeRate === 0.12
+                        ? t("surcharge12Desc", "Extending for 1–3 months adds a 12% surcharge on your base monthly rent for the extension period. This will be included in your next month's payment.")
+                        : t("surcharge8Desc", "Extending for 4–5 months adds an 8% surcharge on your base monthly rent for the extension period. This will be included in your next month's payment.")}
+                    </p>
+                  </div>
+                </div>
+              )}
               <p className="mt-3 text-xs text-amber-700">
                 🎁 {t("continuousStayBonus", "Continuous stay bonus: +30,000 coins at 6 months · +20,000 extra at 12 months — awarded by management. / Thưởng ở liên tục: +30.000 coins đủ 6 tháng · +20.000 thêm đủ 12 tháng — quản lý cộng thủ công.")}
               </p>
             </div>
 
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-amber-700 mb-2">
-                {t("yourFullName", "Your Full Name")}
-              </label>
-              <input
-                type="text"
-                placeholder={t("fullNamePlaceholder", "Enter your legal full name")}
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                className="w-full rounded-2xl border border-amber-300 bg-white px-4 py-3 text-sm outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-200/50 transition-all font-medium"
-                disabled={loading}
-              />
-            </div>
+            {duration !== "hostel" && (
+              <>
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-amber-700 mb-2">
+                    {t("yourFullName", "Your Full Name")}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={t("fullNamePlaceholder", "Enter your legal full name")}
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    className="w-full rounded-2xl border border-amber-300 bg-white px-4 py-3 text-sm outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-200/50 transition-all font-medium"
+                    disabled={loading}
+                  />
+                </div>
 
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-amber-700 mb-2 flex justify-between">
-                <span>{t("signatureLabel", "E-Signature")}</span>
-                {hasSignature && (
-                  <button onClick={clearSignature} className="text-amber-600 hover:text-amber-800 underline lowercase">
-                    {t("clearSignature", "Clear")}
-                  </button>
-                )}
-              </label>
-              <div className="relative rounded-2xl border-2 border-dashed border-amber-300 bg-white p-1 h-32">
-                <canvas
-                  ref={canvasRef}
-                  width={600}
-                  height={120}
-                  onMouseDown={startDrawing}
-                  onMouseUp={stopDrawing}
-                  onMouseOut={stopDrawing}
-                  onMouseMove={draw}
-                  onTouchStart={startDrawing}
-                  onTouchEnd={stopDrawing}
-                  onTouchMove={draw}
-                  className="w-full h-full cursor-crosshair touch-none"
-                />
-                {!hasSignature && (
-                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-slate-400 text-sm italic">
-                    {t("signHere", "Sign here...")}
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-amber-700 mb-2 flex justify-between">
+                    <span>{t("signatureLabel", "E-Signature")}</span>
+                    {hasSignature && (
+                      <button onClick={clearSignature} className="text-amber-600 hover:text-amber-800 underline lowercase">
+                        {t("clearSignature", "Clear")}
+                      </button>
+                    )}
+                  </label>
+                  <div className="relative rounded-2xl border-2 border-dashed border-amber-300 bg-white p-1 h-32">
+                    <canvas
+                      ref={canvasRef}
+                      width={600}
+                      height={120}
+                      onMouseDown={startDrawing}
+                      onMouseUp={stopDrawing}
+                      onMouseOut={stopDrawing}
+                      onMouseMove={draw}
+                      onTouchStart={startDrawing}
+                      onTouchEnd={stopDrawing}
+                      onTouchMove={draw}
+                      className="w-full h-full cursor-crosshair touch-none"
+                    />
+                    {!hasSignature && (
+                      <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-slate-400 text-sm italic">
+                        {t("signHere", "Sign here...")}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            </div>
+                </div>
 
-            <label className="flex items-start gap-4 cursor-pointer group bg-white/50 p-4 rounded-2xl border border-amber-200 hover:bg-white transition-colors">
-              <div className="shrink-0 mt-0.5 relative flex items-center justify-center">
-                <input
-                  type="checkbox"
-                  checked={agreed}
-                  onChange={(e) => setAgreed(e.target.checked)}
-                  disabled={loading}
-                  className="peer sr-only"
-                />
-                <div className="h-6 w-6 rounded-lg border-2 border-amber-400 bg-white transition peer-checked:border-amber-600 peer-checked:bg-amber-600" />
-                <svg
-                  className="pointer-events-none absolute h-4 w-4 text-white opacity-0 transition peer-checked:opacity-100"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="3"
-                >
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              </div>
-              <span className="text-sm text-amber-950 font-medium font-bold leading-relaxed">
-                {t(
-                  "contractAgreeTermsFormal",
-                  "By signing this, I agree to extend my contract by the selected duration and explicitly accept the current internal rules and policies of Cozoro Home."
-                )}
-              </span>
-            </label>
+                <label className="flex items-start gap-4 cursor-pointer group bg-white/50 p-4 rounded-2xl border border-amber-200 hover:bg-white transition-colors">
+                  <div className="shrink-0 mt-0.5 relative flex items-center justify-center">
+                    <input
+                      type="checkbox"
+                      checked={agreed}
+                      onChange={(e) => setAgreed(e.target.checked)}
+                      disabled={loading}
+                      className="peer sr-only"
+                    />
+                    <div className="h-6 w-6 rounded-lg border-2 border-amber-400 bg-white transition peer-checked:border-amber-600 peer-checked:bg-amber-600" />
+                    <svg
+                      className="pointer-events-none absolute h-4 w-4 text-white opacity-0 transition peer-checked:opacity-100"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="3"
+                    >
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  </div>
+                  <span className="text-sm text-amber-950 font-medium font-bold leading-relaxed">
+                    {t(
+                      "contractAgreeTermsFormal",
+                      "By signing this, I agree to extend my contract by the selected duration and explicitly accept the current internal rules and policies of Cozoro Home."
+                    )}
+                  </span>
+                </label>
+              </>
+            )}
 
             {error && <p className="text-sm text-rose-600 font-bold animate-pulse px-4">✕ {error}</p>}
 
             <div className="flex items-center gap-4 pt-2">
               <button
                 onClick={handleExtend}
-                disabled={loading || !agreed || !hasSignature || !fullName.trim()}
-                className="flex-1 rounded-full bg-slate-900 px-8 py-3.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-50 transition shadow-lg disabled:shadow-none translate-y-0 active:translate-y-0.5"
+                disabled={duration !== "hostel" && (loading || !agreed || !hasSignature || !fullName.trim())}
+                className={`flex-1 rounded-full px-8 py-3.5 text-sm font-bold text-white transition shadow-lg translate-y-0 active:translate-y-0.5 disabled:opacity-50 disabled:shadow-none ${duration === "hostel" ? "bg-rose-600 hover:bg-rose-500" : "bg-slate-900 hover:bg-slate-800"}`}
               >
-                {loading ? t("processing", "Processing...") : t("confirmExtension", "Confirm & Sign Extension")}
+                {duration === "hostel"
+                  ? t("goToHostel", "Go to hostel.cozorohome.com") + " →"
+                  : loading ? t("processing", "Processing...") : t("confirmExtension", "Confirm & Sign Extension")}
               </button>
               <button
                 onClick={() => setIsExpanded(false)}
