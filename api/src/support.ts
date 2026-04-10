@@ -982,6 +982,7 @@ export async function postOperatorSupportMessage(input: {
   }
 
   const senderRole = actor.role === "owner" ? SupportMessageSenderRole.OWNER : SupportMessageSenderRole.MANAGER;
+  const senderName = actor.name ?? normalizedOperatorEmail;
   clearNotificationCaches(normalizedOperatorEmail, existingConversation.residentEmail);
 
   const result = await prisma.$transaction(async (tx) => {
@@ -989,6 +990,7 @@ export async function postOperatorSupportMessage(input: {
       data: {
         conversationId: existingConversation.id,
         senderEmail: normalizedOperatorEmail,
+        senderName,
         senderRole,
         body: trimmedBody
       }

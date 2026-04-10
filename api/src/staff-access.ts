@@ -201,6 +201,7 @@ export async function resolvePortalLogin(email: string) {
       allowed: true,
       email: normalizedEmail,
       role: staffEntry.role as PortalLoginRole,
+      name: staffEntry.name ?? null,
       source: "staff" as const
     };
   }
