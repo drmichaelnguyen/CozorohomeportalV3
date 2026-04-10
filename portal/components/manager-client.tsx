@@ -3265,40 +3265,56 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     </div>
                   );
                 })()}
-                {selectedClientDuplicate && (
-                  <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-400 text-[10px] font-black text-white">!</span>
-                      <div className="text-sm font-semibold text-amber-900">Duplicate Active Contract Detected</div>
-                    </div>
-                    <p className="text-xs text-amber-800">This client has <strong>{selectedClientDuplicate.rows.length} active rows</strong> in the sheet. The app uses the one with the latest start date automatically, but old rows should be marked inactive to avoid confusion.</p>
-                    <div className="space-y-2">
-                      {selectedClientDuplicate.rows.map((row) => {
-                        const isCurrentRow = row.maHd === selectedClient.maHd;
-                        return (
-                          <div key={row.maHd} className={`flex items-center justify-between rounded-xl border px-3 py-2 text-xs ${isCurrentRow ? "border-amber-400 bg-amber-100" : "border-amber-200 bg-white"}`}>
-                            <div className="space-y-0.5">
-                              <div className="font-semibold text-slate-800">{row.maHd} {isCurrentRow && <span className="ml-1 rounded-full bg-amber-400 px-1.5 py-0.5 text-[9px] font-bold text-white">USING THIS (latest timestamp)</span>}</div>
-                              {row.submissionTimestamp && <div className="text-slate-400">Submitted: {row.submissionTimestamp}</div>}
-                              <div className="text-slate-500">{row.branch} · Bed {row.bed} · {row.contractStart} → {row.contractEnd}</div>
-                              <div className="text-slate-500">Status: <span className={row.activeStay === "1" ? "text-emerald-700 font-semibold" : "text-rose-700"}>{row.activeStay || "not set"}</span></div>
+                {selectedClientDuplicate && (() => {
+                  // Parse dd/mm/yyyy hh:mm:ss → Date for sorting
+                  function parseTs(ts: string): number {
+                    const m = ts.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})$/);
+                    if (!m) return 0;
+                    return new Date(`${m[3]}-${m[2]!.padStart(2,"0")}-${m[1]!.padStart(2,"0")}T${m[4]!.padStart(2,"0")}:${m[5]}:${m[6]}`).getTime() || 0;
+                  }
+                  const sortedRows = [...selectedClientDuplicate.rows].sort((a, b) => parseTs(b.submissionTimestamp) - parseTs(a.submissionTimestamp));
+                  const latestTs = sortedRows[0]?.submissionTimestamp ?? "";
+                  return (
+                    <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 space-y-3">
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-400 text-[10px] font-black text-white">!</span>
+                        <div className="text-sm font-semibold text-amber-900">Duplicate Active Contract Detected</div>
+                      </div>
+                      <p className="text-xs text-amber-800">This client has <strong>{selectedClientDuplicate.rows.length} active rows</strong> in the sheet. The app uses the one with the latest <em>DẤU THỜI GIAN</em> (submission timestamp) automatically. Mark old rows inactive to fix this.</p>
+                      <div className="space-y-2">
+                        {sortedRows.map((row) => {
+                          const isLatest = row.submissionTimestamp === latestTs;
+                          return (
+                            <div key={row.maHd || row.submissionTimestamp} className={`flex items-center justify-between rounded-xl border px-3 py-2 text-xs ${isLatest ? "border-amber-400 bg-amber-100" : "border-amber-200 bg-white"}`}>
+                              <div className="space-y-0.5">
+                                <div className="font-semibold text-slate-800">
+                                  {row.maHd || <span className="italic text-slate-400">no contract code</span>}
+                                  {isLatest && <span className="ml-1 rounded-full bg-amber-400 px-1.5 py-0.5 text-[9px] font-bold text-white">USING THIS</span>}
+                                </div>
+                                {row.submissionTimestamp && <div className="text-slate-400">Submitted: {row.submissionTimestamp}</div>}
+                                <div className="text-slate-500">{row.branch} · Bed {row.bed} · {row.contractStart} → {row.contractEnd}</div>
+                                <div className="text-slate-500">Status: <span className={row.activeStay === "1" ? "text-emerald-700 font-semibold" : "text-slate-500"}>{row.activeStay || "not set"}</span></div>
+                              </div>
+                              {!isLatest && row.maHd && (
+                                <button
+                                  type="button"
+                                  disabled={!!settingInactive[row.maHd]}
+                                  onClick={() => markContractInactive(row.maHd)}
+                                  className="ml-3 flex-shrink-0 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                                >
+                                  {settingInactive[row.maHd] ? "Saving…" : "Mark Inactive (−1)"}
+                                </button>
+                              )}
+                              {!isLatest && !row.maHd && (
+                                <span className="ml-3 text-[10px] text-slate-400 italic">No MÃ HD — fix manually in sheet</span>
+                              )}
                             </div>
-                            {!isCurrentRow && (
-                              <button
-                                type="button"
-                                disabled={!!settingInactive[row.maHd]}
-                                onClick={() => markContractInactive(row.maHd)}
-                                className="ml-3 flex-shrink-0 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
-                              >
-                                {settingInactive[row.maHd] ? "Saving…" : "Mark Inactive (−1)"}
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {(() => {
                   const stay = String(selectedClient.activeStay ?? "").trim();
