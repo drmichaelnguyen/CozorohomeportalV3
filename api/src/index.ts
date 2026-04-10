@@ -45,6 +45,7 @@ import {
   createAutomaticFineForEmail,
   sendGmailReceipt,
   syncClientsFromSheet,
+  submitPublicRegistration,
   upsertPaidGuestBookingClient,
   readCachedClients,
   createAuthUrl,
@@ -103,6 +104,12 @@ import {
   MAINTENANCE_FEEDBACK_COLUMN,
   logMicrowaveUse
 } from "./google-sheets.js";
+import {
+  checkProspectReferralEligibility,
+  getProspectAssistantPublicSettings,
+  getProspectBedAvailability,
+  updateProspectAssistantSettings
+} from "./prospect-assistant.js";
 
 
 import {
@@ -143,6 +150,15 @@ import {
   checkoutPhotosDirPath
 } from "./checkout.js";
 import { getShortTermConfig, updateShortTermConfig } from "./short-term-config.js";
+import {
+  getBedOverrides,
+  getDiscounts,
+  upsertBedOverride,
+  deleteBedOverride,
+  upsertDiscount,
+  deleteDiscount,
+  type TermType
+} from "./pricing-config.js";
 import { createWriteStream } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
@@ -719,6 +735,34 @@ const paidGuestBookingSyncSchema = z.object({
   checkOut: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   pricingTotal: z.coerce.number().int().nonnegative(),
   notes: z.string().optional()
+});
+const prospectAvailabilityQuerySchema = z.object({
+  branchId: z.enum(["D2", "D7"]),
+  sex: z.enum(["male", "female"])
+});
+const publicRegistrationSchema = z.object({
+  fullName: z.string().trim().min(1),
+  email: z.string().email(),
+  sex: z.enum(["male", "female"]),
+  branchId: z.enum(["D2", "D7"]),
+  bedNumber: z.coerce.number().int().positive(),
+  phone: z.string().trim().min(6),
+  dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  permanentAddress: z.string().trim().optional(),
+  governmentId: z.string().trim().optional(),
+  idIssuedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  idIssuedPlace: z.string().trim().optional(),
+  contractStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  contractMonths: z.coerce.number().int().min(1).max(36),
+  contractEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  monthlyPrice: z.coerce.number().int().nonnegative(),
+  deposit: z.coerce.number().int().nonnegative(),
+  paymentFrequency: z.string().trim().optional(),
+  currentStatus: z.string().trim().optional(),
+  schoolOrWorkplace: z.string().trim().optional(),
+  referralSource: z.string().trim().optional(),
+  emergencyPhone: z.string().trim().optional(),
+  additionalTerms: z.string().trim().optional()
 });
 const cleaningAvailabilitySchema = z.object({
   email: z.string().email(),
@@ -4308,6 +4352,195 @@ app.post("/internal/guest-auth/send-code", async (req, res) => {
   } catch (error) {
     const statusCode = typeof (error as { statusCode?: number })?.statusCode === "number" ? (error as { statusCode?: number }).statusCode! : 500;
     return res.status(statusCode).json({ error: error instanceof Error ? error.message : "Unable to send verification code" });
+  }
+});
+
+app.get("/api/public/prospect-assistant/settings", async (_request, response) => {
+  try {
+    const settings = await getProspectAssistantPublicSettings();
+    return response.json(settings);
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to load prospect assistant settings"
+    });
+  }
+});
+
+app.put("/api/public/prospect-assistant/settings", async (request, response) => {
+  const parsed = z.object({
+    actorEmail: z.string().email(),
+    referralDiscountVnd: z.coerce.number().int().nonnegative()
+  }).safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid prospect assistant settings payload" });
+  }
+
+  try {
+    const settings = await updateProspectAssistantSettings(parsed.data);
+    return response.json(settings);
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to update prospect assistant settings"
+    });
+  }
+});
+
+app.post("/api/public/prospect-assistant/referral-check", async (request, response) => {
+  const parsed = z.object({
+    referrerName: z.string().trim().min(1),
+    referrerPhone: z.string().trim().min(1)
+  }).safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid referral check payload" });
+  }
+
+  try {
+    const result = await checkProspectReferralEligibility(parsed.data);
+    return response.json(result);
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to check referral eligibility"
+    });
+  }
+});
+
+app.get("/api/public/register/availability", async (request, response) => {
+  const parsed = prospectAvailabilityQuerySchema.safeParse({
+    branchId: request.query.branchId,
+    sex: request.query.sex
+  });
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "A valid branchId and sex are required" });
+  }
+
+  try {
+    const availability = await getProspectBedAvailability(parsed.data);
+    return response.json(availability);
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to load register availability"
+    });
+  }
+});
+
+app.post("/api/public/register", async (request, response) => {
+  const parsed = publicRegistrationSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid register submission payload" });
+  }
+
+  try {
+    const result = await runWithWriteGuard({
+      key: createWriteGuardKey("/api/public/register", parsed.data),
+      duplicateMessage: "This registration was just submitted. Please wait a few seconds before trying again.",
+      cooldownMs: 15000,
+      action: () => submitPublicRegistration(parsed.data)
+    });
+
+    return response.json({
+      ok: true,
+      contractCode: result.contractCode
+    });
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 500).json({
+      error: error instanceof Error ? error.message : "Unable to submit registration"
+    });
+  }
+});
+
+// ─── Unified Pricing (long-term + short-term beds & discounts) ───────────────
+
+// Public: enabled long-term discounts for the registration form
+app.get("/api/public/pricing-discounts", async (_request, response) => {
+  try {
+    const discounts = await getDiscounts("long_term", true);
+    return response.json({ discounts });
+  } catch (error) {
+    return response.status(500).json({ error: error instanceof Error ? error.message : "Unable to load discounts" });
+  }
+});
+
+// Manager: full pricing data (all bed overrides + all discounts)
+app.get("/manager/pricing", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "");
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const [bedOverrides, discounts] = await Promise.all([
+      getBedOverrides(),
+      getDiscounts()
+    ]);
+    return response.json({ bedOverrides, discounts });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to load pricing" });
+  }
+});
+
+// Owner: upsert bed price override
+app.put("/manager/pricing/beds", async (request, response) => {
+  const body = request.body as Record<string, unknown>;
+  const actorEmail = String(body.actorEmail ?? "");
+  const { branchId, bedNumber, termType, monthlyPrice, deposit, nightlyPrice } = body as {
+    branchId: string; bedNumber: number; termType: TermType;
+    monthlyPrice?: number | null; deposit?: number | null; nightlyPrice?: number | null;
+  };
+  try {
+    if (!branchId || typeof bedNumber !== "number" || !termType) {
+      return response.status(400).json({ error: "branchId, bedNumber, and termType are required" });
+    }
+    const row = await upsertBedOverride(actorEmail, { branchId, bedNumber, termType, monthlyPrice, deposit, nightlyPrice });
+    return response.json({ ok: true, row });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to update bed pricing" });
+  }
+});
+
+// Owner: delete bed price override
+app.delete("/manager/pricing/beds", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "");
+  const { branchId, bedNumber, termType } = request.query as { branchId: string; bedNumber: string; termType: TermType };
+  try {
+    if (!branchId || !bedNumber || !termType) {
+      return response.status(400).json({ error: "branchId, bedNumber, and termType are required" });
+    }
+    await deleteBedOverride(actorEmail, branchId, Number(bedNumber), termType);
+    return response.json({ ok: true });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to delete bed override" });
+  }
+});
+
+// Owner: upsert discount
+app.put("/manager/pricing/discounts", async (request, response) => {
+  const body = request.body as Record<string, unknown>;
+  const actorEmail = String(body.actorEmail ?? "");
+  const { discount } = body as { discount: Parameters<typeof upsertDiscount>[1] };
+  try {
+    if (!discount?.id || !discount?.label) {
+      return response.status(400).json({ error: "discount.id and discount.label are required" });
+    }
+    const row = await upsertDiscount(actorEmail, discount);
+    return response.json({ ok: true, row });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to save discount" });
+  }
+});
+
+// Owner: delete discount
+app.delete("/manager/pricing/discounts/:id", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "");
+  const discountId = request.params.id;
+  try {
+    if (!discountId) {
+      return response.status(400).json({ error: "discount id is required" });
+    }
+    await deleteDiscount(actorEmail, discountId);
+    return response.json({ ok: true });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to delete discount" });
   }
 });
 

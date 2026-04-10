@@ -17,7 +17,7 @@ type StaffRole = "manager" | "owner" | "app_admin" | "mechanic";
 type StatsTab = "laundry" | "coins" | "payments" | "fines";
 type ClientAction = "call" | "sms" | "email" | "message" | "fine" | "coins" | "payment" | "password" | "remove" | "";
 type CoinEntryMode = "add" | "use";
-type ManagerView = "overview" | "client_list" | "owners_employees" | "support_chat" | "feedbacks" | "admin_cleaning" | "scheduling" | "controller" | "short_term";
+type ManagerView = "overview" | "client_list" | "owners_employees" | "support_chat" | "feedbacks" | "admin_cleaning" | "scheduling" | "controller" | "short_term" | "settings";
 type StatSummaryItem = {
   label: string;
   value: string;
@@ -868,6 +868,39 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     totalAmount: string; paymentStatus: string; source: string; notes: string;
     saving: boolean; result: string;
   } | null>(null);
+  // Unified pricing state
+  type PricingBedOverride = {
+    id: number; branchId: string; bedNumber: number; termType: "long_term" | "short_term";
+    monthlyPrice: number | null; deposit: number | null; nightlyPrice: number | null;
+    updatedBy: string; updatedAt: string; createdAt: string;
+  };
+  type PricingDiscount = {
+    id: string; termType: "long_term" | "short_term"; label: string; labelVi: string;
+    description: string; descriptionVi: string;
+    amountVnd: number | null; percentOff: number | null; minNights: number | null;
+    durationMonths: number | null; eligibility: Array<{ type: string; values?: string[]; value?: number }>;
+    enabled: boolean; updatedBy: string; updatedAt: string;
+  };
+  const [pricingData, setPricingData] = useState<{ bedOverrides: PricingBedOverride[]; discounts: PricingDiscount[] } | null>(null);
+  const [pricingConfigLoading, setPricingConfigLoading] = useState(false);
+  const [pricingSettingsTab, setPricingSettingsTab] = useState<"long_term" | "short_term" | "staff">("long_term");
+  // "per_bed" = click individual beds | "by_room" = branch → floor → room → tier | "by_branch" = branch → tier only
+  const [pricingDiagramMode, setPricingDiagramMode] = useState<"per_bed" | "by_room" | "by_branch">("per_bed");
+  const [bulkTierEdit, setBulkTierEdit] = useState<{
+    branchId: string; floor?: string; room?: string; tier: "top" | "middle" | "bottom" | "all";
+    monthlyPrice: string; saving: boolean; result: string;
+  } | null>(null);
+  const [bedOverrideEdit, setBedOverrideEdit] = useState<{
+    id?: number; branchId: string; bedNumber: string; termType: "long_term" | "short_term";
+    monthlyPrice: string; deposit: string; nightlyPrice: string; saving: boolean; result: string;
+  } | null>(null);
+  const [discountEdit, setDiscountEdit] = useState<{
+    id: string; termType: "long_term" | "short_term"; label: string; labelVi: string;
+    description: string; descriptionVi: string;
+    amountVnd: string; percentOff: string; minNights: string; durationMonths: string;
+    eligibility: Array<{ type: string; values: string; value: string }>;
+    enabled: boolean; saving: boolean; result: string;
+  } | null>(null);
   const [terminateDialog, setTerminateDialog] = useState(false);
   const [terminateNote, setTerminateNote] = useState("");
   const [terminateLoading, setTerminateLoading] = useState(false);
@@ -1690,6 +1723,59 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     setPermissionsEntry(entry);
   }
 
+  async function loadPricingConfig() {
+    setPricingConfigLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/manager/pricing?actorEmail=${encodeURIComponent(normalizedEmail)}`);
+      const data = await res.json();
+      if (res.ok) setPricingData(data);
+    } finally {
+      setPricingConfigLoading(false);
+    }
+  }
+
+  function getBedTierInLayout(branchId: "D2" | "D7", bedNumber: number): "top" | "middle" | "bottom" {
+    const room = BRANCH_LAYOUTS[branchId].find((r) => bedNumber >= r.startBed && bedNumber <= r.endBed);
+    if (!room) return "top";
+    const tierIdx = (bedNumber - room.startBed) % room.bunkCount;
+    if (room.bunkCount === 3) return (["top", "middle", "bottom"] as const)[tierIdx];
+    return (["top", "bottom"] as const)[tierIdx];
+  }
+
+  async function saveBulkTierPrices(branchId: string, floor: string | undefined, room: string | undefined, tier: string, monthlyPrice: number | null) {
+    // Collect matching bed numbers
+    const allRooms = BRANCH_LAYOUTS[branchId as "D2" | "D7"] ?? [];
+    const targetRooms = allRooms.filter((r) => {
+      if (room) return r.room === room;
+      if (floor) return r.floor === floor;
+      return true;
+    });
+    const bedNumbers: number[] = [];
+    for (const r of targetRooms) {
+      for (let b = r.startBed; b <= r.endBed; b++) {
+        const t = getBedTierInLayout(branchId as "D2" | "D7", b);
+        if (tier === "all" || t === tier) bedNumbers.push(b);
+      }
+    }
+    // Save each bed sequentially
+    const results = await Promise.all(bedNumbers.map((bedNumber) =>
+      fetch(`${API_BASE_URL}/manager/pricing/beds`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorEmail: normalizedEmail, branchId, bedNumber, termType: "long_term", monthlyPrice, deposit: monthlyPrice })
+      }).then((r) => r.json())
+    ));
+    // Merge all returned rows into pricingData
+    const newRows: PricingBedOverride[] = results.flatMap((d) => d.row ? [d.row as PricingBedOverride] : []);
+    if (newRows.length > 0) {
+      setPricingData((prev) => {
+        if (!prev) return prev;
+        const merged = [...prev.bedOverrides.filter((x) => !newRows.some((r) => r.id === x.id)), ...newRows];
+        return { ...prev, bedOverrides: merged };
+      });
+    }
+  }
+
   useEffect(() => {
     if (!isStaffSession) {
       setClients([]);
@@ -1752,6 +1838,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   useEffect(() => {
     if (activeManagerView === "feedbacks") {
       void loadFeedbacks();
+    }
+    if (activeManagerView === "settings") {
+      void loadPricingConfig();
     }
   }, [activeManagerView]);
 
@@ -4808,6 +4897,652 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         </div>
       )}
     </section>
+      ) : null}
+
+      {activeManagerView === "settings" ? (
+        <section className="space-y-6">
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">Pricing</h2>
+                <p className="mt-1 text-sm text-slate-500">Manage bed prices and discount rules for long-term residents and short-term guests.</p>
+              </div>
+              <button type="button" onClick={() => void loadPricingConfig()} disabled={pricingConfigLoading}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-50">
+                {pricingConfigLoading ? "Loading…" : "Refresh"}
+              </button>
+            </div>
+            <div className="mt-5 flex flex-wrap gap-2">
+              {(["long_term", "short_term", "staff"] as const).map((tab) => (
+                <button key={tab} type="button" onClick={() => setPricingSettingsTab(tab)}
+                  className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${pricingSettingsTab === tab ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-50"}`}>
+                  {tab === "long_term" ? "Long-term" : tab === "short_term" ? "Short-term" : "Staff Accounts"}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* ── Long-term tab: bed price diagram + discounts ── */}
+          {(pricingSettingsTab === "long_term") ? (
+            <section className="space-y-5">
+              {!canManageOwnersEmployees ? (
+                <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <p className="text-sm text-slate-500">Pricing editing is restricted to owners and app admins.</p>
+                </div>
+              ) : (
+                <>
+                  {/* ── Bed pricing diagram ── */}
+                  {/* Mode selector */}
+                  <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="flex flex-wrap gap-2 items-center">
+                      <span className="text-sm font-medium text-slate-700 mr-1">Edit mode:</span>
+                      {([
+                        { key: "by_branch", label: "By branch + tier", desc: "Set one price for all beds of a tier across an entire branch" },
+                        { key: "by_room", label: "By room + tier", desc: "Set price for all beds of a tier within a specific room" },
+                        { key: "per_bed", label: "Per bed", desc: "Click any individual bed to set its exact price" }
+                      ] as const).map(({ key, label, desc }) => (
+                        <button key={key} type="button" onClick={() => { setPricingDiagramMode(key); setBulkTierEdit(null); setBedOverrideEdit(null); }}
+                          title={desc}
+                          className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${pricingDiagramMode === key ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-50"}`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs text-slate-400">
+                      {pricingDiagramMode === "by_branch" && "Set one price for all beds of a tier (Top/Middle/Bottom) across an entire branch at once."}
+                      {pricingDiagramMode === "by_room" && "Set a price for all beds of a tier within a specific room."}
+                      {pricingDiagramMode === "per_bed" && "Click any individual bed cell to view or set its price. Teal = has override, grey = using sheet value."}
+                    </p>
+                  </div>
+
+                  {/* ── By-branch bulk mode ── */}
+                  {pricingDiagramMode === "by_branch" ? (
+                    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+                      <h3 className="text-base font-semibold text-slate-900">Set price by branch + tier</h3>
+                      <p className="text-sm text-slate-500">Select a branch and bunk level to set the same price for all matching beds.</p>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        {(["D2", "D7"] as const).map((branchId) => (
+                          <div key={branchId} className="rounded-2xl border border-slate-200 p-4 space-y-3">
+                            <p className="text-sm font-semibold text-slate-800">{branchId}</p>
+                            <div className="grid grid-cols-3 gap-2">
+                              {(["top", "middle", "bottom"] as const).map((tier) => {
+                                const isEditing = bulkTierEdit?.branchId === branchId && bulkTierEdit?.tier === tier && !bulkTierEdit?.floor;
+                                // Count how many beds of this tier have overrides
+                                const matchingBeds = BRANCH_LAYOUTS[branchId].flatMap((r) => {
+                                  const beds = [];
+                                  for (let b = r.startBed; b <= r.endBed; b++) {
+                                    if (getBedTierInLayout(branchId, b) === tier) beds.push(b);
+                                  }
+                                  return beds;
+                                });
+                                const overrideCount = matchingBeds.filter((b) => (pricingData?.bedOverrides ?? []).some((o) => o.termType === "long_term" && o.branchId === branchId && o.bedNumber === b && o.monthlyPrice != null)).length;
+                                return (
+                                  <button key={tier} type="button"
+                                    onClick={() => setBulkTierEdit({ branchId, tier, monthlyPrice: "", saving: false, result: "" })}
+                                    className={`rounded-xl border px-3 py-2 text-center transition-colors ${isEditing ? "border-teal-500 bg-teal-100 ring-1 ring-teal-400" : overrideCount > 0 ? "border-teal-200 bg-teal-50 hover:bg-teal-100" : "border-slate-200 bg-slate-50 hover:bg-slate-100"}`}>
+                                    <div className="text-xs font-bold text-slate-500">{tier.charAt(0).toUpperCase()}</div>
+                                    <div className="text-[10px] text-slate-400 mt-0.5">{overrideCount}/{matchingBeds.length} set</div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      {bulkTierEdit && !bulkTierEdit.floor ? (
+                        <div className="rounded-2xl border border-teal-200 bg-teal-50 p-4 space-y-3">
+                          <p className="text-sm font-semibold text-teal-900">
+                            Set price — {bulkTierEdit.branchId} · All {bulkTierEdit.tier} beds
+                          </p>
+                          <div className="flex items-end gap-3 flex-wrap">
+                            <label className="space-y-1 flex-1 min-w-[140px]">
+                              <span className="text-xs font-medium text-slate-700">Monthly price (VND)</span>
+                              <input type="number" min={0} value={bulkTierEdit.monthlyPrice}
+                                onChange={(e) => setBulkTierEdit({ ...bulkTierEdit, monthlyPrice: e.target.value })}
+                                placeholder="blank = reset to sheet" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-teal-500 focus:outline-none" />
+                            </label>
+                          </div>
+                          {bulkTierEdit.result ? <p className={`text-sm font-medium ${bulkTierEdit.result.startsWith("✓") ? "text-emerald-700" : "text-rose-700"}`}>{bulkTierEdit.result}</p> : null}
+                          <div className="flex gap-2">
+                            <button type="button" onClick={() => setBulkTierEdit(null)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Cancel</button>
+                            <button type="button" disabled={bulkTierEdit.saving} onClick={async () => {
+                              setBulkTierEdit({ ...bulkTierEdit, saving: true, result: "" });
+                              try {
+                                const price = bulkTierEdit.monthlyPrice ? Number(bulkTierEdit.monthlyPrice) : null;
+                                await saveBulkTierPrices(bulkTierEdit.branchId, undefined, undefined, bulkTierEdit.tier, price);
+                                setBulkTierEdit({ ...bulkTierEdit, saving: false, result: `✓ Saved all ${bulkTierEdit.tier} beds in ${bulkTierEdit.branchId}` });
+                              } catch (err) { setBulkTierEdit({ ...bulkTierEdit, saving: false, result: err instanceof Error ? err.message : "Failed" }); }
+                            }} className="rounded-xl bg-teal-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">{bulkTierEdit.saving ? "Saving…" : "Apply to all matching beds"}</button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {/* ── By-room bulk mode ── */}
+                  {pricingDiagramMode === "by_room" ? (
+                    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+                      <h3 className="text-base font-semibold text-slate-900">Set price by room + tier</h3>
+                      {(["D2", "D7"] as const).map((branchId) => {
+                        // Group rooms by floor
+                        const floors = [...new Set(BRANCH_LAYOUTS[branchId].map((r) => r.floor))];
+                        return (
+                          <div key={branchId} className="space-y-3">
+                            <p className="text-sm font-bold text-slate-700">{branchId}</p>
+                            {floors.map((floor) => (
+                              <div key={floor}>
+                                <p className="text-xs text-slate-500 font-medium mb-1.5">{floor}</p>
+                                <div className="flex flex-wrap gap-2">
+                                  {BRANCH_LAYOUTS[branchId].filter((r) => r.floor === floor).map((room) => {
+                                    const tiers = room.bunkCount === 3 ? (["top", "middle", "bottom"] as const) : (["top", "bottom"] as const);
+                                    return (
+                                      <div key={room.room} className="rounded-xl border border-slate-200 p-2.5 space-y-1.5 bg-slate-50">
+                                        <p className="text-[10px] font-semibold text-slate-500 text-center">Room {room.room}</p>
+                                        <div className="flex flex-col gap-1">
+                                          {tiers.map((tier) => {
+                                            const isEditing = bulkTierEdit?.branchId === branchId && bulkTierEdit?.room === room.room && bulkTierEdit?.tier === tier;
+                                            const matchingBeds: number[] = [];
+                                            for (let b = room.startBed; b <= room.endBed; b++) {
+                                              if (getBedTierInLayout(branchId, b) === tier) matchingBeds.push(b);
+                                            }
+                                            const overrideCount = matchingBeds.filter((b) => (pricingData?.bedOverrides ?? []).some((o) => o.termType === "long_term" && o.branchId === branchId && o.bedNumber === b && o.monthlyPrice != null)).length;
+                                            return (
+                                              <button key={tier} type="button"
+                                                onClick={() => setBulkTierEdit({ branchId, floor: room.floor, room: room.room, tier, monthlyPrice: "", saving: false, result: "" })}
+                                                className={`rounded-lg border px-2 py-1 text-[10px] font-medium transition-colors flex items-center justify-between gap-1 ${isEditing ? "border-teal-500 bg-teal-100" : overrideCount > 0 ? "border-teal-200 bg-teal-50 hover:bg-teal-100" : "border-slate-200 bg-white hover:bg-slate-100"}`}>
+                                                <span className="text-slate-600">{tier.charAt(0).toUpperCase()}</span>
+                                                <span className="text-slate-400">{overrideCount}/{matchingBeds.length}</span>
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })}
+                      {bulkTierEdit?.room ? (
+                        <div className="rounded-2xl border border-teal-200 bg-teal-50 p-4 space-y-3">
+                          <p className="text-sm font-semibold text-teal-900">
+                            Set price — {bulkTierEdit.branchId} Room {bulkTierEdit.room} · {bulkTierEdit.tier} beds
+                          </p>
+                          <div className="flex items-end gap-3 flex-wrap">
+                            <label className="space-y-1 flex-1 min-w-[140px]">
+                              <span className="text-xs font-medium text-slate-700">Monthly price (VND)</span>
+                              <input type="number" min={0} value={bulkTierEdit.monthlyPrice}
+                                onChange={(e) => setBulkTierEdit({ ...bulkTierEdit, monthlyPrice: e.target.value })}
+                                placeholder="blank = reset to sheet" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-teal-500 focus:outline-none" />
+                            </label>
+                          </div>
+                          {bulkTierEdit.result ? <p className={`text-sm font-medium ${bulkTierEdit.result.startsWith("✓") ? "text-emerald-700" : "text-rose-700"}`}>{bulkTierEdit.result}</p> : null}
+                          <div className="flex gap-2">
+                            <button type="button" onClick={() => setBulkTierEdit(null)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Cancel</button>
+                            <button type="button" disabled={bulkTierEdit.saving} onClick={async () => {
+                              setBulkTierEdit({ ...bulkTierEdit, saving: true, result: "" });
+                              try {
+                                const price = bulkTierEdit.monthlyPrice ? Number(bulkTierEdit.monthlyPrice) : null;
+                                await saveBulkTierPrices(bulkTierEdit.branchId, bulkTierEdit.floor, bulkTierEdit.room, bulkTierEdit.tier, price);
+                                setBulkTierEdit({ ...bulkTierEdit, saving: false, result: `✓ Saved ${bulkTierEdit.tier} beds in room ${bulkTierEdit.room}` });
+                              } catch (err) { setBulkTierEdit({ ...bulkTierEdit, saving: false, result: err instanceof Error ? err.message : "Failed" }); }
+                            }} className="rounded-xl bg-teal-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">{bulkTierEdit.saving ? "Saving…" : "Apply to room"}</button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {/* ── Per-bed diagram (existing) ── */}
+                  {pricingDiagramMode === "per_bed" ? (["D2", "D7"] as const).map((branchId) => (
+                    <div key={branchId} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+                      <div>
+                        <h3 className="text-base font-semibold text-slate-900">{branchId} — Monthly Bed Prices</h3>
+                        <p className="mt-1 text-sm text-slate-500">Click a bed to override its price. Deposit is automatically set equal to the monthly price. Beds without an override use the price from resident history.</p>
+                      </div>
+                      {pricingConfigLoading ? <p className="text-sm text-slate-500">Loading…</p> : (
+                        <div className="space-y-4">
+                          {BRANCH_LAYOUTS[branchId].map((room) => {
+                            const bedNumbers = Array.from({ length: room.endBed - room.startBed + 1 }, (_, i) => room.startBed + i);
+                            const ltOverrides = pricingData?.bedOverrides.filter((b) => b.termType === "long_term" && b.branchId === branchId) ?? [];
+                            // Group beds into bunks (columns of bunkCount tiers each)
+                            const bunks: number[][] = [];
+                            for (let i = 0; i < bedNumbers.length; i += room.bunkCount) {
+                              bunks.push(bedNumbers.slice(i, i + room.bunkCount));
+                            }
+                            const tierLabels = room.bunkCount === 3 ? ["T", "M", "B"] : ["T", "B"];
+                            return (
+                              <div key={room.room}>
+                                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Room {room.room} · {room.floor}</p>
+                                <div className="flex flex-wrap gap-2">
+                                  {bunks.map((bunk, bunkIdx) => (
+                                    <div key={bunkIdx} className="flex flex-col gap-1">
+                                      {bunk.map((bedNum, tierIdx) => {
+                                        const override = ltOverrides.find((b) => b.bedNumber === bedNum);
+                                        const hasOverride = override?.monthlyPrice != null;
+                                        const isEditing = bedOverrideEdit?.termType === "long_term" && bedOverrideEdit.branchId === branchId && bedOverrideEdit.bedNumber === String(bedNum);
+                                        return (
+                                          <button
+                                            key={bedNum}
+                                            type="button"
+                                            onClick={() => setBedOverrideEdit({ id: override?.id, branchId, bedNumber: String(bedNum), termType: "long_term", monthlyPrice: String(override?.monthlyPrice ?? ""), deposit: "", nightlyPrice: "", saving: false, result: "" })}
+                                            className={`w-20 rounded-lg border px-1.5 py-1 text-center transition-colors ${isEditing ? "border-teal-500 bg-teal-100 ring-1 ring-teal-400" : hasOverride ? "border-teal-300 bg-teal-50 hover:bg-teal-100" : "border-slate-200 bg-slate-50 hover:bg-slate-100"}`}
+                                          >
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[10px] font-bold text-slate-400">{tierLabels[tierIdx]}</span>
+                                              <span className="text-[10px] font-semibold text-slate-600">#{bedNum}</span>
+                                            </div>
+                                            <div className="text-[10px] leading-tight mt-0.5 text-center truncate">
+                                              {hasOverride
+                                                ? <span className="font-semibold text-teal-700">{((override!.monthlyPrice! / 1_000_000)).toFixed(1)}M</span>
+                                                : <span className="text-slate-400">sheet</span>}
+                                            </div>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })}
+                          {/* Edit panel — shown inline when a bed is selected */}
+                          {bedOverrideEdit?.termType === "long_term" && bedOverrideEdit.branchId === branchId ? (
+                            <div className="rounded-2xl border border-teal-200 bg-teal-50 p-4 space-y-3">
+                              <p className="text-sm font-semibold text-teal-900">
+                                {branchId} Bed #{bedOverrideEdit.bedNumber}
+                                {(() => {
+                                  const bedNum = Number(bedOverrideEdit.bedNumber);
+                                  const room = BRANCH_LAYOUTS[branchId].find((r) => bedNum >= r.startBed && bedNum <= r.endBed);
+                                  if (!room) return null;
+                                  const posInRoom = bedNum - room.startBed;
+                                  const tierIdx = posInRoom % room.bunkCount;
+                                  const tierLabel = room.bunkCount === 3 ? ["Top", "Middle", "Bottom"][tierIdx] : ["Top", "Bottom"][tierIdx];
+                                  return <span className="ml-2 font-normal text-teal-700">· Room {room.room} · {tierLabel} bunk</span>;
+                                })()}
+                              </p>
+                              <div className="flex items-end gap-3 flex-wrap">
+                                <label className="space-y-1 flex-1 min-w-[140px]">
+                                  <span className="text-xs font-medium text-slate-700">Monthly price (VND)</span>
+                                  <input
+                                    type="number" min={0}
+                                    value={bedOverrideEdit.monthlyPrice}
+                                    onChange={(e) => setBedOverrideEdit({ ...bedOverrideEdit, monthlyPrice: e.target.value })}
+                                    placeholder="blank = use sheet"
+                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-teal-500 focus:outline-none"
+                                  />
+                                </label>
+                                <p className="text-xs text-slate-500 pb-2">Deposit = monthly price (set automatically)</p>
+                              </div>
+                              {bedOverrideEdit.result ? <p className={`text-sm font-medium ${bedOverrideEdit.result.startsWith("✓") ? "text-emerald-700" : "text-rose-700"}`}>{bedOverrideEdit.result}</p> : null}
+                              <div className="flex gap-2 flex-wrap">
+                                <button type="button" onClick={() => setBedOverrideEdit(null)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Cancel</button>
+                                {(pricingData?.bedOverrides ?? []).some((b) => b.termType === "long_term" && b.branchId === branchId && b.bedNumber === Number(bedOverrideEdit.bedNumber)) && (
+                                  <button type="button" onClick={async () => {
+                                    if (!window.confirm(`Remove override for ${branchId} Bed #${bedOverrideEdit.bedNumber}?`)) return;
+                                    const res = await fetch(`${API_BASE_URL}/manager/pricing/beds?actorEmail=${encodeURIComponent(normalizedEmail)}&branchId=${branchId}&bedNumber=${bedOverrideEdit.bedNumber}&termType=long_term`, { method: "DELETE" });
+                                    if (res.ok) { setPricingData((prev) => prev ? { ...prev, bedOverrides: prev.bedOverrides.filter((x) => !(x.termType === "long_term" && x.branchId === branchId && x.bedNumber === Number(bedOverrideEdit.bedNumber))) } : prev); setBedOverrideEdit(null); }
+                                  }} className="rounded-xl border border-rose-200 px-4 py-2 text-sm font-medium text-rose-600">Reset to sheet</button>
+                                )}
+                                <button type="button" disabled={bedOverrideEdit.saving} onClick={async () => {
+                                  setBedOverrideEdit({ ...bedOverrideEdit, saving: true, result: "" });
+                                  try {
+                                    const monthlyPrice = bedOverrideEdit.monthlyPrice ? Number(bedOverrideEdit.monthlyPrice) : null;
+                                    const res = await fetch(`${API_BASE_URL}/manager/pricing/beds`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actorEmail: normalizedEmail, branchId, bedNumber: Number(bedOverrideEdit.bedNumber), termType: "long_term", monthlyPrice, deposit: monthlyPrice }) });
+                                    const data = (await res.json()) as { ok?: boolean; row?: PricingBedOverride; error?: string };
+                                    if (!res.ok) throw new Error(data.error ?? "Failed");
+                                    if (data.row) setPricingData((prev) => prev ? { ...prev, bedOverrides: [...prev.bedOverrides.filter((x) => x.id !== data.row!.id), data.row!] } : prev);
+                                    setBedOverrideEdit(null);
+                                  } catch (err) { setBedOverrideEdit({ ...bedOverrideEdit, saving: false, result: err instanceof Error ? err.message : "Failed" }); }
+                                }} className="rounded-xl bg-teal-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">{bedOverrideEdit.saving ? "Saving…" : "Save price"}</button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  )) : null}
+
+                  {/* ── Long-term discounts ── */}
+                  <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+                    <div>
+                      <h3 className="text-base font-semibold text-slate-900">Registration Discounts</h3>
+                      <p className="mt-1 text-sm text-slate-500">Shown on the registration form. All eligibility rules must match for the discount to apply.</p>
+                    </div>
+                    {pricingConfigLoading ? <p className="text-sm text-slate-500">Loading…</p> : (
+                      <>
+                        {(pricingData?.discounts ?? []).filter((d) => d.termType === "long_term").length > 0 ? (
+                          <div className="space-y-3">
+                            {(pricingData?.discounts ?? []).filter((d) => d.termType === "long_term").map((d) => (
+                              <div key={d.id} className={`rounded-2xl border p-4 space-y-2 ${d.enabled ? "border-slate-200 bg-white" : "border-slate-100 bg-slate-50 opacity-60"}`}>
+                                <div className="flex flex-wrap items-start justify-between gap-2">
+                                  <div>
+                                    <span className="font-semibold text-slate-900 text-sm">{d.label}</span>
+                                    {!d.enabled && <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-500">Disabled</span>}
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <button type="button" onClick={() => setDiscountEdit({ id: d.id, termType: "long_term", label: d.label, labelVi: d.labelVi ?? "", description: d.description, descriptionVi: d.descriptionVi ?? "", amountVnd: String(d.amountVnd ?? ""), percentOff: "", minNights: "", durationMonths: d.durationMonths != null ? String(d.durationMonths) : "", eligibility: d.eligibility.map((e) => ({ type: e.type, values: "values" in e ? ((e as { values: string[] }).values ?? []).join(", ") : "", value: "value" in e ? String((e as { value: number }).value) : "" })), enabled: d.enabled, saving: false, result: "" })}
+                                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700">Edit</button>
+                                    <button type="button" onClick={async () => {
+                                      if (!window.confirm(`Delete "${d.label}"?`)) return;
+                                      const res = await fetch(`${API_BASE_URL}/manager/pricing/discounts/${encodeURIComponent(d.id)}?actorEmail=${encodeURIComponent(normalizedEmail)}`, { method: "DELETE" });
+                                      if (res.ok) setPricingData((prev) => prev ? { ...prev, discounts: prev.discounts.filter((x) => x.id !== d.id) } : prev);
+                                    }} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-medium text-rose-600">Delete</button>
+                                  </div>
+                                </div>
+                                <p className="text-xs text-slate-500">{d.description}</p>
+                                <div className="flex flex-wrap gap-2 text-xs">
+                                  {d.amountVnd != null && <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-emerald-700 font-medium">−{d.amountVnd.toLocaleString("vi-VN")} ₫/month</span>}
+                                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{d.durationMonths != null ? `${d.durationMonths} months` : "Entire contract"}</span>
+                                  {d.eligibility.map((e, i) => (
+                                    <span key={i} className="rounded-full bg-sky-100 px-2.5 py-1 text-sky-700">
+                                      {e.type === "status" ? `Status: ${"values" in e ? ((e as { values: string[] }).values ?? []).join(" / ") : ""}` :
+                                       e.type === "minMonths" ? `Min ${"value" in e ? (e as { value: number }).value : "?"} months` :
+                                       e.type === "referral" ? "Has referral" :
+                                       e.type === "bedTier" ? `Bed tier: ${"values" in e ? ((e as { values: string[] }).values ?? []).join("/") : ""}` :
+                                       e.type === "gender" ? `Gender: ${"values" in e ? ((e as { values: string[] }).values ?? []).join("/") : ""}` :
+                                       e.type === "occupation" ? `Occupation: ${"values" in e ? ((e as { values: string[] }).values ?? []).join(", ") : ""}` : e.type}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : <p className="text-sm text-slate-400 italic">No long-term discounts configured.</p>}
+                        {discountEdit?.termType === "long_term" ? (
+                          <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5 space-y-4">
+                            <p className="text-sm font-semibold text-sky-900">{discountEdit.id && (pricingData?.discounts ?? []).some((d) => d.id === discountEdit.id) ? "Edit discount" : "New long-term discount"}</p>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Label (English)</span>
+                                <input value={discountEdit.label} onChange={(e) => setDiscountEdit({ ...discountEdit, label: e.target.value })} placeholder="e.g. Student discount" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none" />
+                              </label>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Label (Vietnamese)</span>
+                                <input value={discountEdit.labelVi} onChange={(e) => setDiscountEdit({ ...discountEdit, labelVi: e.target.value })} placeholder="e.g. Giảm giá sinh viên" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none" />
+                              </label>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Description (English)</span>
+                                <input value={discountEdit.description} onChange={(e) => setDiscountEdit({ ...discountEdit, description: e.target.value })} placeholder="e.g. For university students" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none" />
+                              </label>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Description (Vietnamese)</span>
+                                <input value={discountEdit.descriptionVi} onChange={(e) => setDiscountEdit({ ...discountEdit, descriptionVi: e.target.value })} placeholder="e.g. Dành cho sinh viên đại học" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none" />
+                              </label>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Monthly discount (VND)</span>
+                                <input type="number" min={0} value={discountEdit.amountVnd} onChange={(e) => setDiscountEdit({ ...discountEdit, amountVnd: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none" />
+                              </label>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Duration months (blank = entire contract)</span>
+                                <input type="number" min={1} value={discountEdit.durationMonths} onChange={(e) => setDiscountEdit({ ...discountEdit, durationMonths: e.target.value })} placeholder="Blank = whole contract" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none" />
+                              </label>
+                              <div className="sm:col-span-2 space-y-2">
+                                <span className="text-xs font-medium text-slate-700 block">Eligibility rules (ALL must match)</span>
+                                {discountEdit.eligibility.map((rule, idx) => (
+                                  <div key={idx} className="flex gap-2 items-start flex-wrap">
+                                    <select value={rule.type} onChange={(e) => { const u = [...discountEdit.eligibility]; u[idx] = { type: e.target.value, values: "", value: "" }; setDiscountEdit({ ...discountEdit, eligibility: u }); }}
+                                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none">
+                                      <option value="status">Resident status</option>
+                                      <option value="minMonths">Min contract months</option>
+                                      <option value="referral">Has referral</option>
+                                      <option value="bedTier">Bed tier (T/M/B)</option>
+                                      <option value="gender">Gender</option>
+                                      <option value="occupation">Occupation</option>
+                                    </select>
+                                    {rule.type === "status" && <input value={rule.values} onChange={(e) => { const u = [...discountEdit.eligibility]; u[idx] = { ...u[idx], values: e.target.value }; setDiscountEdit({ ...discountEdit, eligibility: u }); }} placeholder="Sinh vien, Hoc sinh" className="flex-1 min-w-[160px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none" />}
+                                    {rule.type === "minMonths" && <input type="number" min={1} value={rule.value} onChange={(e) => { const u = [...discountEdit.eligibility]; u[idx] = { ...u[idx], value: e.target.value }; setDiscountEdit({ ...discountEdit, eligibility: u }); }} placeholder="e.g. 6" className="w-24 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none" />}
+                                    {rule.type === "bedTier" && (
+                                      <div className="flex gap-2">
+                                        {(["top", "middle", "bottom"] as const).map((tier) => (
+                                          <label key={tier} className="flex items-center gap-1 text-sm">
+                                            <input type="checkbox" checked={(rule.values ?? "").split(",").map((v) => v.trim()).includes(tier)}
+                                              onChange={(e) => { const u = [...discountEdit.eligibility]; const cur = (u[idx].values ?? "").split(",").map((v) => v.trim()).filter(Boolean); u[idx] = { ...u[idx], values: (e.target.checked ? [...cur, tier] : cur.filter((v) => v !== tier)).join(", ") }; setDiscountEdit({ ...discountEdit, eligibility: u }); }}
+                                              className="h-4 w-4 rounded border-slate-300" />
+                                            {tier.charAt(0).toUpperCase() + tier.slice(1)}
+                                          </label>
+                                        ))}
+                                      </div>
+                                    )}
+                                    {rule.type === "gender" && (
+                                      <div className="flex gap-3">
+                                        {(["male", "female"] as const).map((g) => (
+                                          <label key={g} className="flex items-center gap-1 text-sm">
+                                            <input type="checkbox" checked={(rule.values ?? "").split(",").map((v) => v.trim()).includes(g)}
+                                              onChange={(e) => { const u = [...discountEdit.eligibility]; const cur = (u[idx].values ?? "").split(",").map((v) => v.trim()).filter(Boolean); u[idx] = { ...u[idx], values: (e.target.checked ? [...cur, g] : cur.filter((v) => v !== g)).join(", ") }; setDiscountEdit({ ...discountEdit, eligibility: u }); }}
+                                              className="h-4 w-4 rounded border-slate-300" />
+                                            {g.charAt(0).toUpperCase() + g.slice(1)}
+                                          </label>
+                                        ))}
+                                      </div>
+                                    )}
+                                    {rule.type === "occupation" && <input value={rule.values} onChange={(e) => { const u = [...discountEdit.eligibility]; u[idx] = { ...u[idx], values: e.target.value }; setDiscountEdit({ ...discountEdit, eligibility: u }); }} placeholder="e.g. Doctor, Engineer, Nurse" className="flex-1 min-w-[160px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none" />}
+                                    <button type="button" onClick={() => setDiscountEdit({ ...discountEdit, eligibility: discountEdit.eligibility.filter((_, i) => i !== idx) })} className="rounded-xl border border-rose-200 px-3 py-2 text-xs text-rose-600 self-start mt-0.5">✕</button>
+                                  </div>
+                                ))}
+                                <button type="button" onClick={() => setDiscountEdit({ ...discountEdit, eligibility: [...discountEdit.eligibility, { type: "status", values: "", value: "" }] })}
+                                  className="rounded-xl border border-dashed border-slate-300 px-3 py-2 text-xs text-slate-600 hover:border-sky-400">+ Add rule</button>
+                              </div>
+                              <label className="flex items-center gap-2">
+                                <input type="checkbox" checked={discountEdit.enabled} onChange={(e) => setDiscountEdit({ ...discountEdit, enabled: e.target.checked })} className="h-4 w-4 rounded border-slate-300 text-sky-600" />
+                                <span className="text-sm text-slate-700">Enabled (visible on registration form)</span>
+                              </label>
+                            </div>
+                            {discountEdit.result ? <p className={`text-sm font-medium ${discountEdit.result.startsWith("✓") ? "text-emerald-700" : "text-rose-700"}`}>{discountEdit.result}</p> : null}
+                            <div className="flex gap-2">
+                              <button type="button" onClick={() => setDiscountEdit(null)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Cancel</button>
+                              <button type="button" disabled={discountEdit.saving || !discountEdit.label} onClick={async () => {
+                                setDiscountEdit({ ...discountEdit, saving: true, result: "" });
+                                try {
+                                  const eligibility = discountEdit.eligibility.filter((r) => r.type).map((r) => {
+                                    if (r.type === "status") return { type: "status", values: r.values.split(",").map((v) => v.trim()).filter(Boolean) };
+                                    if (r.type === "minMonths") return { type: "minMonths", value: Number(r.value) || 1 };
+                                    if (r.type === "referral") return { type: "referral" };
+                                    if (r.type === "bedTier") return { type: "bedTier", values: r.values.split(",").map((v) => v.trim()).filter(Boolean) };
+                                    if (r.type === "gender") return { type: "gender", values: r.values.split(",").map((v) => v.trim()).filter(Boolean) };
+                                    if (r.type === "occupation") return { type: "occupation", values: r.values.split(",").map((v) => v.trim()).filter(Boolean) };
+                                    return { type: r.type };
+                                  });
+                                  const id = discountEdit.id || `lt_${Date.now()}`;
+                                  const res = await fetch(`${API_BASE_URL}/manager/pricing/discounts`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actorEmail: normalizedEmail, discount: { id, termType: "long_term", label: discountEdit.label, labelVi: discountEdit.labelVi, description: discountEdit.description, descriptionVi: discountEdit.descriptionVi, amountVnd: Number(discountEdit.amountVnd) || 0, percentOff: null, minNights: null, durationMonths: discountEdit.durationMonths ? Number(discountEdit.durationMonths) : null, eligibility, enabled: discountEdit.enabled } }) });
+                                  const data = (await res.json()) as { ok?: boolean; row?: PricingDiscount; error?: string };
+                                  if (!res.ok) throw new Error(data.error ?? "Failed");
+                                  if (data.row) setPricingData((prev) => prev ? { ...prev, discounts: [...prev.discounts.filter((x) => x.id !== data.row!.id), data.row!] } : prev);
+                                  setDiscountEdit(null);
+                                } catch (err) { setDiscountEdit({ ...discountEdit, saving: false, result: err instanceof Error ? err.message : "Failed" }); }
+                              }} className="rounded-xl bg-sky-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">{discountEdit.saving ? "Saving…" : "Save discount"}</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button type="button" onClick={() => setDiscountEdit({ id: "", termType: "long_term", label: "", labelVi: "", description: "", descriptionVi: "", amountVnd: "0", percentOff: "", minNights: "", durationMonths: "", eligibility: [], enabled: true, saving: false, result: "" })}
+                            className="rounded-xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 hover:border-sky-400 hover:text-sky-700">+ Add discount</button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
+            </section>
+          ) : null}
+
+          {/* ── Short-term tab: nightly bed prices + stay discounts ── */}
+          {(pricingSettingsTab === "short_term") ? (
+            <section className="space-y-5">
+              {!canManageOwnersEmployees ? (
+                <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <p className="text-sm text-slate-500">Pricing editing is restricted to owners and app admins.</p>
+                </div>
+              ) : (
+                <>
+                  {/* Short-term nightly bed overrides */}
+                  <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+                    <div>
+                      <h3 className="text-base font-semibold text-slate-900">Nightly Bed Prices</h3>
+                      <p className="mt-1 text-sm text-slate-500">Override the nightly rate for a specific bed. Falls back to the short-term config default if not set.</p>
+                    </div>
+                    {pricingConfigLoading ? <p className="text-sm text-slate-500">Loading…</p> : (
+                      <>
+                        {(pricingData?.bedOverrides ?? []).filter((b) => b.termType === "short_term").length > 0 ? (
+                          <div className="space-y-2">
+                            {(pricingData?.bedOverrides ?? []).filter((b) => b.termType === "short_term").map((b) => (
+                              <div key={b.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                <div className="text-sm">
+                                  <span className="font-semibold text-slate-900">{b.branchId} Bed {b.bedNumber}</span>
+                                  <span className="ml-3 text-slate-500">{b.nightlyPrice != null ? `${b.nightlyPrice.toLocaleString("vi-VN")} ₫/night` : "config default"}</span>
+                                  <span className="ml-2 text-xs text-slate-400">by {b.updatedBy}</span>
+                                </div>
+                                <div className="flex gap-2">
+                                  <button type="button" onClick={() => setBedOverrideEdit({ id: b.id, branchId: b.branchId, bedNumber: String(b.bedNumber), termType: "short_term", monthlyPrice: "", deposit: "", nightlyPrice: String(b.nightlyPrice ?? ""), saving: false, result: "" })}
+                                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700">Edit</button>
+                                  <button type="button" onClick={async () => {
+                                    if (!window.confirm(`Remove nightly override for ${b.branchId} Bed ${b.bedNumber}?`)) return;
+                                    const res = await fetch(`${API_BASE_URL}/manager/pricing/beds?actorEmail=${encodeURIComponent(normalizedEmail)}&branchId=${b.branchId}&bedNumber=${b.bedNumber}&termType=short_term`, { method: "DELETE" });
+                                    if (res.ok) setPricingData((prev) => prev ? { ...prev, bedOverrides: prev.bedOverrides.filter((x) => x.id !== b.id) } : prev);
+                                  }} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-medium text-rose-600">Remove</button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : <p className="text-sm text-slate-400 italic">No nightly overrides — using config defaults.</p>}
+                        {bedOverrideEdit?.termType === "short_term" ? (
+                          <div className="rounded-2xl border border-violet-200 bg-violet-50 p-5 space-y-4">
+                            <p className="text-sm font-semibold text-violet-900">{bedOverrideEdit.id ? "Edit" : "Add"} nightly price</p>
+                            <div className="grid gap-3 sm:grid-cols-3">
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Branch</span>
+                                <select value={bedOverrideEdit.branchId} onChange={(e) => setBedOverrideEdit({ ...bedOverrideEdit, branchId: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none">
+                                  <option value="D2">D2</option><option value="D7">D7</option>
+                                </select>
+                              </label>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Bed number</span>
+                                <input type="number" min={1} value={bedOverrideEdit.bedNumber} onChange={(e) => setBedOverrideEdit({ ...bedOverrideEdit, bedNumber: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none" />
+                              </label>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Nightly price (VND)</span>
+                                <input type="number" min={0} value={bedOverrideEdit.nightlyPrice} onChange={(e) => setBedOverrideEdit({ ...bedOverrideEdit, nightlyPrice: e.target.value })} placeholder="e.g. 150000" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none" />
+                              </label>
+                            </div>
+                            {bedOverrideEdit.result ? <p className={`text-sm font-medium ${bedOverrideEdit.result.startsWith("✓") ? "text-emerald-700" : "text-rose-700"}`}>{bedOverrideEdit.result}</p> : null}
+                            <div className="flex gap-2">
+                              <button type="button" onClick={() => setBedOverrideEdit(null)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Cancel</button>
+                              <button type="button" disabled={bedOverrideEdit.saving} onClick={async () => {
+                                setBedOverrideEdit({ ...bedOverrideEdit, saving: true, result: "" });
+                                try {
+                                  const res = await fetch(`${API_BASE_URL}/manager/pricing/beds`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actorEmail: normalizedEmail, branchId: bedOverrideEdit.branchId, bedNumber: Number(bedOverrideEdit.bedNumber), termType: "short_term", nightlyPrice: bedOverrideEdit.nightlyPrice ? Number(bedOverrideEdit.nightlyPrice) : null }) });
+                                  const data = (await res.json()) as { ok?: boolean; row?: PricingBedOverride; error?: string };
+                                  if (!res.ok) throw new Error(data.error ?? "Failed");
+                                  if (data.row) setPricingData((prev) => prev ? { ...prev, bedOverrides: [...prev.bedOverrides.filter((x) => x.id !== data.row!.id), data.row!] } : prev);
+                                  setBedOverrideEdit(null);
+                                } catch (err) { setBedOverrideEdit({ ...bedOverrideEdit, saving: false, result: err instanceof Error ? err.message : "Failed" }); }
+                              }} className="rounded-xl bg-violet-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">{bedOverrideEdit.saving ? "Saving…" : "Save"}</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button type="button" onClick={() => setBedOverrideEdit({ branchId: "D2", bedNumber: "", termType: "short_term", monthlyPrice: "", deposit: "", nightlyPrice: "", saving: false, result: "" })}
+                            className="rounded-xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 hover:border-violet-400 hover:text-violet-700">+ Add nightly price override</button>
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  {/* Short-term stay discounts */}
+                  <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+                    <div>
+                      <h3 className="text-base font-semibold text-slate-900">Stay Discounts</h3>
+                      <p className="mt-1 text-sm text-slate-500">Automatic percent discounts for guests who stay longer (e.g. weekly, monthly).</p>
+                    </div>
+                    {pricingConfigLoading ? <p className="text-sm text-slate-500">Loading…</p> : (
+                      <>
+                        {(pricingData?.discounts ?? []).filter((d) => d.termType === "short_term").length > 0 ? (
+                          <div className="space-y-3">
+                            {(pricingData?.discounts ?? []).filter((d) => d.termType === "short_term").map((d) => (
+                              <div key={d.id} className={`rounded-2xl border p-4 space-y-2 ${d.enabled ? "border-slate-200 bg-white" : "border-slate-100 bg-slate-50 opacity-60"}`}>
+                                <div className="flex flex-wrap items-start justify-between gap-2">
+                                  <div>
+                                    <span className="font-semibold text-slate-900 text-sm">{d.label}</span>
+                                    {!d.enabled && <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-500">Disabled</span>}
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <button type="button" onClick={() => setDiscountEdit({ id: d.id, termType: "short_term", label: d.label, labelVi: d.labelVi ?? "", description: d.description, descriptionVi: d.descriptionVi ?? "", amountVnd: "", percentOff: String(d.percentOff ?? ""), minNights: String(d.minNights ?? ""), durationMonths: "", eligibility: [], enabled: d.enabled, saving: false, result: "" })}
+                                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700">Edit</button>
+                                    <button type="button" onClick={async () => {
+                                      if (!window.confirm(`Delete "${d.label}"?`)) return;
+                                      const res = await fetch(`${API_BASE_URL}/manager/pricing/discounts/${encodeURIComponent(d.id)}?actorEmail=${encodeURIComponent(normalizedEmail)}`, { method: "DELETE" });
+                                      if (res.ok) setPricingData((prev) => prev ? { ...prev, discounts: prev.discounts.filter((x) => x.id !== d.id) } : prev);
+                                    }} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-medium text-rose-600">Delete</button>
+                                  </div>
+                                </div>
+                                <p className="text-xs text-slate-500">{d.description}</p>
+                                <div className="flex flex-wrap gap-2 text-xs">
+                                  {d.percentOff != null && <span className="rounded-full bg-violet-100 px-2.5 py-1 text-violet-700 font-medium">{d.percentOff}% off</span>}
+                                  {d.minNights != null && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">Min {d.minNights} nights</span>}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : <p className="text-sm text-slate-400 italic">No short-term discounts configured.</p>}
+                        {discountEdit?.termType === "short_term" ? (
+                          <div className="rounded-2xl border border-violet-200 bg-violet-50 p-5 space-y-4">
+                            <p className="text-sm font-semibold text-violet-900">{discountEdit.id && (pricingData?.discounts ?? []).some((d) => d.id === discountEdit.id) ? "Edit stay discount" : "New stay discount"}</p>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <label className="space-y-1 sm:col-span-2"><span className="text-xs font-medium text-slate-700">Label</span>
+                                <input value={discountEdit.label} onChange={(e) => setDiscountEdit({ ...discountEdit, label: e.target.value })} placeholder="e.g. Weekly discount" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none" />
+                              </label>
+                              <label className="space-y-1 sm:col-span-2"><span className="text-xs font-medium text-slate-700">Description</span>
+                                <input value={discountEdit.description} onChange={(e) => setDiscountEdit({ ...discountEdit, description: e.target.value })} placeholder="e.g. Stays of 7+ nights get 10% off" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none" />
+                              </label>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Discount % (0–100)</span>
+                                <input type="number" min={0} max={100} value={discountEdit.percentOff} onChange={(e) => setDiscountEdit({ ...discountEdit, percentOff: e.target.value })} placeholder="e.g. 10" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none" />
+                              </label>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Minimum nights</span>
+                                <input type="number" min={1} value={discountEdit.minNights} onChange={(e) => setDiscountEdit({ ...discountEdit, minNights: e.target.value })} placeholder="e.g. 7" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none" />
+                              </label>
+                              <label className="flex items-center gap-2 sm:col-span-2">
+                                <input type="checkbox" checked={discountEdit.enabled} onChange={(e) => setDiscountEdit({ ...discountEdit, enabled: e.target.checked })} className="h-4 w-4 rounded border-slate-300 text-violet-600" />
+                                <span className="text-sm text-slate-700">Enabled</span>
+                              </label>
+                            </div>
+                            {discountEdit.result ? <p className={`text-sm font-medium ${discountEdit.result.startsWith("✓") ? "text-emerald-700" : "text-rose-700"}`}>{discountEdit.result}</p> : null}
+                            <div className="flex gap-2">
+                              <button type="button" onClick={() => setDiscountEdit(null)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Cancel</button>
+                              <button type="button" disabled={discountEdit.saving || !discountEdit.label} onClick={async () => {
+                                setDiscountEdit({ ...discountEdit, saving: true, result: "" });
+                                try {
+                                  const id = discountEdit.id || `st_${Date.now()}`;
+                                  const res = await fetch(`${API_BASE_URL}/manager/pricing/discounts`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actorEmail: normalizedEmail, discount: { id, termType: "short_term", label: discountEdit.label, labelVi: discountEdit.labelVi, description: discountEdit.description, descriptionVi: discountEdit.descriptionVi, amountVnd: null, percentOff: Number(discountEdit.percentOff) || 0, minNights: Number(discountEdit.minNights) || 1, durationMonths: null, eligibility: [], enabled: discountEdit.enabled } }) });
+                                  const data = (await res.json()) as { ok?: boolean; row?: PricingDiscount; error?: string };
+                                  if (!res.ok) throw new Error(data.error ?? "Failed");
+                                  if (data.row) setPricingData((prev) => prev ? { ...prev, discounts: [...prev.discounts.filter((x) => x.id !== data.row!.id), data.row!] } : prev);
+                                  setDiscountEdit(null);
+                                } catch (err) { setDiscountEdit({ ...discountEdit, saving: false, result: err instanceof Error ? err.message : "Failed" }); }
+                              }} className="rounded-xl bg-violet-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">{discountEdit.saving ? "Saving…" : "Save discount"}</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button type="button" onClick={() => setDiscountEdit({ id: "", termType: "short_term", label: "", labelVi: "", description: "", descriptionVi: "", amountVnd: "", percentOff: "10", minNights: "7", durationMonths: "", eligibility: [], enabled: true, saving: false, result: "" })}
+                            className="rounded-xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 hover:border-violet-400 hover:text-violet-700">+ Add stay discount</button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
+            </section>
+          ) : null}
+
+          {/* ── Staff tab ── */}
+          {pricingSettingsTab === "staff" ? (
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-semibold text-slate-900">{t("ownersEmployees")}</h3>
+                  <p className="mt-1 text-sm text-slate-600">{t("ownersEmployeesDesc")}</p>
+                </div>
+                <button type="button" onClick={() => void loadTeam()} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700">{t("refreshAccounts")}</button>
+              </div>
+              <div className="mt-4">
+                <p className="text-sm text-slate-500">
+                  Staff account management is available in the{" "}
+                  <button type="button" onClick={() => setActiveManagerView("owners_employees")} className="font-medium text-sky-600 underline underline-offset-2">Staff Accounts view</button>.
+                </p>
+              </div>
+            </section>
+          ) : null}
+        </section>
       ) : null}
 
       {activeManagerView === "owners_employees" ? (

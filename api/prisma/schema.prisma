@@ -311,3 +311,40 @@ model MonthlyRentStatus {
   @@unique([email, month])
   @@index([email])
 }
+
+// ── Unified Pricing ──────────────────────────────────────────────────────────
+
+model BedPriceOverride {
+  id           Int      @id @default(autoincrement())
+  branchId     String   // "D2" | "D7"
+  bedNumber    Int
+  termType     String   // "long_term" | "short_term"
+  monthlyPrice Int?     // long_term: VND/month (null = use sheet value)
+  deposit      Int?     // long_term: VND deposit (null = use sheet value)
+  nightlyPrice Int?     // short_term: VND/night (null = use default)
+  updatedBy    String
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+
+  @@unique([branchId, bedNumber, termType])
+  @@index([branchId, termType])
+}
+
+model PricingDiscount {
+  id             String   @id
+  termType       String   // "long_term" | "short_term"
+  label          String
+  description    String   @db.Text
+  amountVnd      Int?     // long_term: flat monthly deduction in VND
+  percentOff     Int?     // short_term: percent off (0-100)
+  minNights      Int?     // short_term: minimum nights to qualify
+  durationMonths Int?     // long_term: months discount applies (null = entire contract)
+  eligibility    Json     // long_term: array of EligibilityRule; short_term: []
+  enabled        Boolean  @default(true)
+  createdBy      String
+  updatedBy      String
+  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now())
+
+  @@index([termType, enabled])
+}

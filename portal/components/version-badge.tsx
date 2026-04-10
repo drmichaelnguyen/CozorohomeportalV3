@@ -1,11 +1,11 @@
 "use client";
 
+import { APP_BUILD_TIME, APP_VERSION } from "../lib/app-version";
+
 export function VersionBadge() {
-  const version = "3.5.11";
-  const buildTime = "2026-04-07 20:35";
   return (
     <span className="text-[10px] font-medium text-slate-400 font-mono select-none" suppressHydrationWarning>
-      v{version} ({buildTime})
+      v{APP_VERSION} ({APP_BUILD_TIME})
     </span>
   );
 }

@@ -16,6 +16,7 @@ const finesSheetId = Number.parseInt(process.env.GOOGLE_FINES_SHEET_ID ?? "16354
 const finesDriveFolderId = process.env.GOOGLE_FINE_IMAGE_FOLDER_ID ?? "";
 const maintenanceSheetName = process.env.GOOGLE_MAINTENANCE_SHEET_NAME ?? "MAINTENANCE";
 const maintenanceSheetId = Number.parseInt(process.env.GOOGLE_MAINTENANCE_SHEET_ID ?? "0", 10);
+const discountsSheetName = process.env.GOOGLE_DISCOUNTS_SHEET_NAME ?? "DISCOUNTS";
 
 export const MAINTENANCE_TICKET_ID_COLUMN = "TICKET ID";
 export const MAINTENANCE_RESIDENT_EMAIL_COLUMN = "RESIDENT EMAIL";
@@ -270,6 +271,31 @@ export type PaidGuestBookingClientInput = {
   checkOut: string;
   pricingTotal: number;
   notes?: string;
+};
+
+export type PublicRegistrationInput = {
+  fullName: string;
+  email: string;
+  sex: "male" | "female";
+  branchId: "D2" | "D7";
+  bedNumber: number;
+  phone: string;
+  dateOfBirth?: string;
+  permanentAddress?: string;
+  governmentId?: string;
+  idIssuedDate?: string;
+  idIssuedPlace?: string;
+  contractStartDate: string;
+  contractMonths: number;
+  contractEndDate: string;
+  monthlyPrice: number;
+  deposit: number;
+  paymentFrequency?: string;
+  currentStatus?: string;
+  schoolOrWorkplace?: string;
+  referralSource?: string;
+  emergencyPhone?: string;
+  additionalTerms?: string;
 };
 
 export type FineRow = Record<string, string> & {
@@ -583,6 +609,24 @@ function formatClientContractDate(value: string) {
   const month = String(parsed.getUTCMonth() + 1).padStart(2, "0");
   const year = parsed.getUTCFullYear();
   return `${day}/${month}/${year}`;
+}
+
+function formatRegistrationTimestamp(value: Date) {
+  const day = String(value.getDate()).padStart(2, "0");
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const year = value.getFullYear();
+  const hours = String(value.getHours()).padStart(2, "0");
+  const minutes = String(value.getMinutes()).padStart(2, "0");
+  const seconds = String(value.getSeconds()).padStart(2, "0");
+  return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+}
+
+function createRegistrationContractCode(branchId: "D2" | "D7", bedNumber: number, now: Date) {
+  const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+  const branchDigits = branchId === "D7" ? "7" : "2";
+  const bedDigits = String(bedNumber).padStart(2, "0");
+  const nonce = String(now.getTime() % 10000).padStart(4, "0");
+  return `${stamp}${branchDigits}${bedDigits}${nonce}`;
 }
 
 function mapBioSexToVietnamese(value: string) {
@@ -2463,6 +2507,36 @@ export async function createCleaningCalendarEvent(input: {
   return eventId;
 }
 
+function buildCleaningCalendarDescription(input: {
+  type: string;
+  userEmail: string;
+  userName?: string | null;
+  branchId: string;
+  floor?: number | null;
+  rewardCoins: number;
+  status?: string;
+  completedAt?: Date | null;
+  completionNote?: string | null;
+  completionPhoto?: string | null;
+  auditorNote?: string | null;
+  reviewedBy?: string | null;
+}) {
+  return [
+    `Task: ${input.type}`,
+    `User: ${input.userName ?? input.userEmail}`,
+    `Email: ${input.userEmail}`,
+    `Branch: ${input.branchId}`,
+    `Floor: ${input.floor ?? ""}`,
+    `Reward coins: ${input.rewardCoins}`,
+    `Status: ${input.status ?? ""}`,
+    `Completed at: ${input.completedAt ? input.completedAt.toISOString() : ""}`,
+    `Completion note: ${input.completionNote ?? ""}`,
+    `Completion photo: ${input.completionPhoto ?? ""}`,
+    `Auditor note: ${input.auditorNote ?? ""}`,
+    `Reviewed by: ${input.reviewedBy ?? ""}`
+  ].join("\n");
+}
+
 export async function updateCleaningCalendarEvent(input: {
   calendarId: string;
   eventId: string;
@@ -2475,7 +2549,11 @@ export async function updateCleaningCalendarEvent(input: {
   rewardCoins: number;
   type: string;
   status: string;
+  completedAt?: Date | null;
+  completionNote?: string | null;
+  completionPhoto?: string | null;
   auditorNote?: string | null;
+  reviewedBy?: string | null;
 }) {
   const calendar = await getAuthorizedCalendarClient();
   const start = new Date(input.scheduledDate);
@@ -2488,16 +2566,7 @@ export async function updateCleaningCalendarEvent(input: {
     eventId: input.eventId,
     requestBody: {
       summary: `${input.title} - ${input.userEmail}`,
-      description: [
-        `Task: ${input.type}`,
-        `User: ${input.userName ?? input.userEmail}`,
-        `Email: ${input.userEmail}`,
-        `Branch: ${input.branchId}`,
-        `Floor: ${input.floor ?? ""}`,
-        `Reward coins: ${input.rewardCoins}`,
-        `Status: ${input.status}`,
-        `Auditor note: ${input.auditorNote ?? ""}`
-      ].join("\n"),
+      description: buildCleaningCalendarDescription(input),
       start: {
         dateTime: start.toISOString()
       },
@@ -2512,16 +2581,7 @@ export async function updateCleaningCalendarEvent(input: {
     calendarId: input.calendarId,
     calendarSummary: input.title,
     summary: `${input.title} - ${input.userEmail}`,
-    description: [
-      `Task: ${input.type}`,
-      `User: ${input.userName ?? input.userEmail}`,
-      `Email: ${input.userEmail}`,
-      `Branch: ${input.branchId}`,
-      `Floor: ${input.floor ?? ""}`,
-      `Reward coins: ${input.rewardCoins}`,
-      `Status: ${input.status}`,
-      `Auditor note: ${input.auditorNote ?? ""}`
-    ].join("\n"),
+    description: buildCleaningCalendarDescription(input),
     status: response.data.status ?? "confirmed",
     start: start.toISOString(),
     end: end.toISOString(),
@@ -2866,6 +2926,99 @@ export async function upsertPaidGuestBookingClient(input: PaidGuestBookingClient
   }
 
   return syncClientsFromSheet();
+}
+
+export async function submitPublicRegistration(input: PublicRegistrationInput) {
+  if (!spreadsheetId) {
+    throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
+  }
+
+  const normalizedEmail = input.email.trim().toLowerCase();
+  if (!normalizedEmail) {
+    throw new Error("Email is required.");
+  }
+
+  const sheets = await getAuthorizedSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetName}!A:AMJ`
+  });
+
+  const sheetValues = response.data.values ?? [];
+  if (sheetValues.length === 0) {
+    throw new Error("The Google Sheet is empty");
+  }
+
+  const headers = (sheetValues[0] ?? []).map((value) => normalizeHeader(String(value)));
+  const now = new Date();
+  const contractCode = createRegistrationContractCode(input.branchId, input.bedNumber, now);
+  const branchAddress =
+    input.branchId === "D7"
+      ? "7A/19/28 Thanh Thai, Ward 14, District 10"
+      : "491 Hau Giang, Ward 11, District 6";
+  const additionalTerms = input.additionalTerms?.trim() ?? "";
+  const monthlyPrice = Math.max(0, Math.trunc(input.monthlyPrice));
+  const deposit = Math.max(0, Math.trunc(input.deposit));
+
+  const nextRow: Record<string, string> = {
+    [COINS_TIMESTAMP_COLUMN]: formatRegistrationTimestamp(now),
+    [HIDDEN_EMAIL_COLUMN]: normalizedEmail,
+    [EMAIL_COLUMN]: normalizedEmail,
+    [CLIENT_NAME_COLUMN]: input.fullName.trim(),
+    [CLIENT_GENDER_COLUMN]: mapBioSexToVietnamese(input.sex),
+    [CLIENT_BRANCH_COLUMN]: input.branchId === "D7" ? "7" : "2",
+    [CLIENT_PHONE_COLUMN]: input.phone.trim() ? `'${input.phone.trim()}` : "",
+    [CLIENT_BED_COLUMN]: String(input.bedNumber),
+    [ACTIVE_STAYING_COLUMN]: "1",
+    ["Ngày tháng năm sinh"]: input.dateOfBirth ? formatClientContractDate(input.dateOfBirth) : "",
+    ["Địa chỉ thường trú"]: input.permanentAddress?.trim() ?? "",
+    ["Số CMND hoặc CCCD"]: input.governmentId?.trim() ?? "",
+    ["Ngày cấp"]: input.idIssuedDate ? formatClientContractDate(input.idIssuedDate) : "",
+    ["Nơi cấp"]: input.idIssuedPlace?.trim() ?? "",
+    [CLIENT_CONTRACT_START_COLUMN]: formatClientContractDate(input.contractStartDate),
+    ["Thời hạn hợp đồng (tháng)"]: String(input.contractMonths),
+    [CLIENT_CONTRACT_END_COLUMN]: formatClientContractDate(input.contractEndDate),
+    ["Khoản ưu đãi và chi phí tăng thêm nếu có"]: additionalTerms,
+    ["Số tiền chia sẻ mỗi tháng"]: String(monthlyPrice),
+    ["Số tiền cọc"]: String(deposit),
+    ["Tôi đã đọc, đồng ý và tuân thủ nội quy cozoro dorm"]: "Có",
+    ["ĐỊA CHỈ"]: branchAddress,
+    ["Bạn biết đến Cozoro Home qua đâu?"]: input.referralSource?.trim() ?? "",
+    ["Điều khoản bổ sung"]: additionalTerms,
+    ["Số điện thoại người thân (liên hệ khi cần)"]: input.emergencyPhone?.trim() ?? "",
+    ["Bạn muốn thanh toán chi phí như thế nào?"]: input.paymentFrequency?.trim() ?? "",
+    ["Hiện tại bạn đang là"]: input.currentStatus?.trim() ?? "",
+    ["Tên trường bạn đang học hoặc nơi bạn đang làm việc"]: input.schoolOrWorkplace?.trim() ?? "",
+    ["Phí ở đóng mỗi tháng"]: String(monthlyPrice),
+    ["Phí gởi xe"]: "",
+    ["Tổng tiền thanh toán tháng"]: String(monthlyPrice),
+    ["Đã đóng phí tháng"]: "FALSE",
+    [CLIENT_NOTE_COLUMN]: "Submitted from app.cozorohome.com/register",
+    [CONTRACT_CODE_COLUMN]: contractCode,
+    [CLIENT_SHORT_TERM_FEE_COLUMN]: "0",
+    [CLIENT_SHORT_TERM_FREE_COLUMN]: "FALSE",
+    [CLIENT_CURRENT_COINS_COLUMN]: "0",
+    [CLIENT_TOTAL_COINS_COLUMN]: "0",
+    [COINS_MEMBER_COLUMN]: "Standard"
+  };
+
+  const orderedRow = headers.map((header) => nextRow[header] ?? "");
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${sheetName}!A:AMJ`,
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: {
+      values: [orderedRow]
+    }
+  });
+
+  await syncClientsFromSheet();
+
+  return {
+    contractCode
+  };
 }
 
 export async function syncCoinsFromSheet() {
@@ -4759,3 +4912,243 @@ export async function logMicrowaveUse(email: string, name: string, inspection = 
   });
 }
 
+// ── Discounts Sheet ───────────────────────────────────────────────────────────
+// Columns: ID | Label | Label_VI | Description | Description_VI | Amount_VND |
+//          Percent_Off | Duration_Months | Min_Nights | Term_Type |
+//          Eligibility_JSON | Enabled | Updated_By | Updated_At
+
+export type SheetDiscount = {
+  id: string;
+  label: string;
+  labelVi: string;
+  description: string;
+  descriptionVi: string;
+  amountVnd: number | null;
+  percentOff: number | null;
+  durationMonths: number | null;
+  minNights: number | null;
+  termType: "long_term" | "short_term";
+  eligibility: object[];
+  enabled: boolean;
+  updatedBy: string;
+  updatedAt: string;
+};
+
+const DISCOUNT_HEADERS = [
+  "ID", "Label", "Label_VI", "Description", "Description_VI",
+  "Amount_VND", "Percent_Off", "Duration_Months", "Min_Nights",
+  "Term_Type", "Eligibility_JSON", "Enabled", "Updated_By", "Updated_At"
+] as const;
+
+function parseSheetDiscountRow(row: Record<string, string>): SheetDiscount | null {
+  const id = (row["ID"] ?? row["id"] ?? "").trim();
+  if (!id) return null;
+  let eligibility: object[] = [];
+  try { eligibility = JSON.parse(row["Eligibility_JSON"] ?? row["eligibility_json"] ?? "[]"); } catch { /* empty */ }
+  return {
+    id,
+    label: (row["Label"] ?? row["label"] ?? "").trim(),
+    labelVi: (row["Label_VI"] ?? row["label_vi"] ?? "").trim(),
+    description: (row["Description"] ?? row["description"] ?? "").trim(),
+    descriptionVi: (row["Description_VI"] ?? row["description_vi"] ?? "").trim(),
+    amountVnd: row["Amount_VND"] ? Number(row["Amount_VND"]) || null : null,
+    percentOff: row["Percent_Off"] ? Number(row["Percent_Off"]) || null : null,
+    durationMonths: row["Duration_Months"] ? Number(row["Duration_Months"]) || null : null,
+    minNights: row["Min_Nights"] ? Number(row["Min_Nights"]) || null : null,
+    termType: (row["Term_Type"] === "short_term" ? "short_term" : "long_term") as SheetDiscount["termType"],
+    eligibility,
+    enabled: (row["Enabled"] ?? row["enabled"] ?? "1").trim() !== "0",
+    updatedBy: (row["Updated_By"] ?? row["updated_by"] ?? "").trim(),
+    updatedAt: (row["Updated_At"] ?? row["updated_at"] ?? "").trim(),
+  };
+}
+
+export async function readDiscountsFromSheet(): Promise<SheetDiscount[]> {
+  if (!spreadsheetId) throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
+  const sheets = await getAuthorizedSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${discountsSheetName}!A:N`
+  });
+  const values = response.data.values ?? [];
+  if (values.length < 2) return [];
+  const rawHeaders = (values[0] ?? []).map((v) => String(v).trim());
+  return values.slice(1)
+    .map((row) => {
+      const mapped: Record<string, string> = {};
+      rawHeaders.forEach((h, i) => { mapped[h] = String(row[i] ?? "").trim(); });
+      return parseSheetDiscountRow(mapped);
+    })
+    .filter((d): d is SheetDiscount => d !== null);
+}
+
+// ── Discount write queue (debounced flush, saves API calls) ──────────────────
+// Changes are queued in memory. A flush is scheduled 30 s after the last
+// change. On flush we do ONE read + ONE batch-write for all pending changes.
+
+type DiscountQueueEntry =
+  | { op: "upsert"; discount: SheetDiscount; actorEmail: string }
+  | { op: "delete"; id: string };
+
+const discountQueue = new Map<string, DiscountQueueEntry>(); // keyed by discount id
+let discountFlushTimer: ReturnType<typeof setTimeout> | null = null;
+const DISCOUNT_FLUSH_DELAY_MS = 30_000; // 30 seconds
+
+async function flushDiscountQueue(): Promise<void> {
+  discountFlushTimer = null;
+  if (discountQueue.size === 0) return;
+  const entries = [...discountQueue.values()];
+  discountQueue.clear();
+
+  if (!spreadsheetId) return;
+  const sheets = await getAuthorizedSheetsClient();
+
+  // Read current sheet state once
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${discountsSheetName}!A:N`
+  });
+  const values = response.data.values ?? [];
+
+  // If sheet has no header row, write it first
+  if (values.length === 0) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${discountsSheetName}!A1:N1`,
+      valueInputOption: "RAW",
+      requestBody: { values: [DISCOUNT_HEADERS as unknown as string[]] }
+    });
+    values.push(DISCOUNT_HEADERS as unknown as string[]);
+  }
+
+  const now = new Date().toLocaleString("vi-VN", { timeZone: process.env.COZORO_TIMEZONE || "Asia/Ho_Chi_Minh" });
+
+  // Build an in-memory copy of current data rows (mutable)
+  // rows[i] corresponds to sheet row i+2 (1-indexed, with header at row 1)
+  const dataRows: string[][] = values.slice(1).map((r) => r.map((v) => String(v ?? "")));
+
+  const toAppend: string[][] = [];
+  const toUpdate: Array<{ sheetRow: number; row: string[] }> = [];
+  const toDelete: number[] = []; // sheet row indices to delete (1-based data index)
+
+  for (const entry of entries) {
+    if (entry.op === "upsert") {
+      const { discount, actorEmail } = entry;
+      const rowData = [
+        discount.id,
+        discount.label,
+        discount.labelVi,
+        discount.description,
+        discount.descriptionVi,
+        String(discount.amountVnd ?? ""),
+        String(discount.percentOff ?? ""),
+        String(discount.durationMonths ?? ""),
+        String(discount.minNights ?? ""),
+        discount.termType,
+        JSON.stringify(discount.eligibility),
+        discount.enabled ? "1" : "0",
+        actorEmail.trim().toLowerCase(),
+        now
+      ];
+      const existingIdx = dataRows.findIndex((r) => (r[0] ?? "").trim() === discount.id);
+      if (existingIdx >= 0) {
+        dataRows[existingIdx] = rowData;
+        toUpdate.push({ sheetRow: existingIdx + 2, row: rowData }); // +2 = 1-indexed + header
+      } else {
+        dataRows.push(rowData);
+        toAppend.push(rowData);
+      }
+    } else {
+      // delete
+      const existingIdx = dataRows.findIndex((r) => (r[0] ?? "").trim() === entry.id);
+      if (existingIdx >= 0) {
+        toDelete.push(existingIdx + 1); // 0-based index among data rows (row 2 = index 0 → sheetRow index 1)
+      }
+    }
+  }
+
+  // Apply updates (individual cell range updates)
+  for (const { sheetRow, row } of toUpdate) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${discountsSheetName}!A${sheetRow}:N${sheetRow}`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: [row] }
+    });
+  }
+
+  // Append new rows in one call
+  if (toAppend.length > 0) {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${discountsSheetName}!A:N`,
+      valueInputOption: "USER_ENTERED",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: toAppend }
+    });
+  }
+
+  // Delete rows (process in reverse order so indices stay valid)
+  if (toDelete.length > 0) {
+    const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: "sheets.properties" });
+    const sheetObj = meta.data.sheets?.find((s) => s.properties?.title === discountsSheetName);
+    const sheetId = sheetObj?.properties?.sheetId ?? 0;
+    const sortedDeletes = [...toDelete].sort((a, b) => b - a); // descending
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: sortedDeletes.map((dataIdx) => ({
+          deleteDimension: {
+            range: { sheetId, dimension: "ROWS", startIndex: dataIdx + 1, endIndex: dataIdx + 2 }
+            // +1 because row 1 is the header; dataIdx 0 = sheet row 2 = startIndex 1
+          }
+        }))
+      }
+    });
+  }
+
+  console.log(`[discounts] flushed queue: ${toUpdate.length} updated, ${toAppend.length} appended, ${toDelete.length} deleted`);
+}
+
+function scheduleDiscountFlush() {
+  if (discountFlushTimer) clearTimeout(discountFlushTimer);
+  discountFlushTimer = setTimeout(() => { void flushDiscountQueue(); }, DISCOUNT_FLUSH_DELAY_MS);
+}
+
+// Flush on process exit so no writes are lost
+process.on("exit", () => {
+  if (discountQueue.size > 0) {
+    console.warn(`[discounts] process exiting with ${discountQueue.size} unflushed discount changes — attempting sync flush`);
+  }
+});
+["SIGINT", "SIGTERM"].forEach((sig) => {
+  process.once(sig, () => {
+    void flushDiscountQueue().finally(() => process.exit(0));
+  });
+});
+
+export function queueDiscountUpsert(discount: SheetDiscount, actorEmail: string): void {
+  discountQueue.set(discount.id, { op: "upsert", discount, actorEmail });
+  scheduleDiscountFlush();
+}
+
+export function queueDiscountDelete(discountId: string): void {
+  discountQueue.set(discountId, { op: "delete", id: discountId });
+  scheduleDiscountFlush();
+}
+
+// Force an immediate flush (e.g. called after reading to ensure consistency)
+export async function flushDiscountQueueNow(): Promise<void> {
+  if (discountFlushTimer) { clearTimeout(discountFlushTimer); discountFlushTimer = null; }
+  await flushDiscountQueue();
+}
+
+/** @deprecated use queueDiscountUpsert instead */
+export async function upsertDiscountToSheet(discount: SheetDiscount, actorEmail: string): Promise<void> {
+  queueDiscountUpsert(discount, actorEmail);
+}
+
+/** @deprecated use queueDiscountDelete instead */
+export async function deleteDiscountFromSheet(discountId: string): Promise<void> {
+  queueDiscountDelete(discountId);
+}

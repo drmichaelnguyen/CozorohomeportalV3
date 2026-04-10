@@ -3,11 +3,21 @@ import path from "node:path";
 
 import { readCachedClients, syncClientsFromSheet } from "./google-sheets.js";
 import { requirePortalRole } from "./staff-access.js";
+import { getBedOverrides } from "./pricing-config.js";
 
 const cacheDirPath = path.join(process.cwd(), "data");
 const settingsFilePath = path.join(cacheDirPath, "prospect-assistant-settings.json");
 const ACTIVE_STAYING_COLUMN = "Hiện còn ở";
 const CLIENT_NAME_COLUMN = "Tên";
+const CLIENT_GENDER_COLUMN = "Giới tính";
+const CLIENT_BED_COLUMN = "số giường";
+const CLIENT_BRANCH_COLUMN = "Chi nhánh Cozoro dorm";
+const CLIENT_PHONE_COLUMN = "Số điện thoại liên hệ";
+const CLIENT_CONTRACT_START_COLUMN = "Ngày bắt đầu hợp đồng";
+const CLIENT_CONTRACT_END_COLUMN = "Ngày hết hạn hợp đồng";
+const CLIENT_MONTHLY_SHARE_COLUMN = "Số tiền chia sẻ mỗi tháng";
+const CLIENT_MONTHLY_FEE_COLUMN = "Phí ở đóng mỗi tháng";
+const CLIENT_DEPOSIT_COLUMN = "Số tiền cọc";
 
 type ProspectAssistantSettings = {
   referralDiscountVnd: number;
@@ -18,6 +28,33 @@ type BranchLayoutRoom = {
   floor: string;
   startBed: number;
   endBed: number;
+};
+
+type BranchId = keyof typeof BRANCH_LAYOUTS;
+type ProspectSex = "male" | "female";
+
+type BedAvailabilityRecord = {
+  bedNumber: number;
+  status: "available_now" | "available_soon";
+  availableOn: string;
+  pricing: {
+    monthlyPrice: number;
+    deposit: number;
+  };
+};
+
+type Reservation = {
+  branchId: BranchId;
+  room: string;
+  bedNumber: number;
+  sex: ProspectSex | null;
+  startDate: Date | null;
+  endDate: Date | null;
+};
+
+type PriceStats = {
+  perBed: Record<BranchId, Map<number, { monthlyPrice: number; deposit: number }>>;
+  perBranch: Record<BranchId, { monthlyPrice: number; deposit: number }>;
 };
 
 const DEFAULT_SETTINGS: ProspectAssistantSettings = {
@@ -74,6 +111,11 @@ function parseBedNumber(value: string) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+function parseMoney(value: string) {
+  const parsed = Number.parseInt(String(value ?? "").replace(/[^0-9-]/g, ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
 function normalizeClientBranch(value: string) {
   const normalized = value.trim().toUpperCase().replace(/\s+/g, "");
 
@@ -92,20 +134,69 @@ function normalizeClientBranch(value: string) {
   return "D2" as const;
 }
 
-function getClientBranchValue(row: Record<string, string>) {
-  const directKeys = [
-    "Chi nhánh Cozoro dorm",
-    "Chi nhÃ¡nh Cozoro dorm",
-    "Chi nh?nh Cozoro dorm",
-    "CHI NHÁNH DORM",
-    "CHI NHANH DORM"
-  ];
+function normalizeSex(value: string): ProspectSex | null {
+  const normalized = normalizeLookupValue(value);
 
-  for (const key of directKeys) {
-    const value = row[key];
-    if (typeof value === "string" && value.trim()) {
-      return value.trim();
-    }
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.includes("nu") || normalized.includes("female")) {
+    return "female";
+  }
+
+  if (normalized.includes("nam") || normalized.includes("male")) {
+    return "male";
+  }
+
+  return null;
+}
+
+function parseVietnamDate(value: string) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const match = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  if (match) {
+    const [, dayValue, monthValue, yearValue] = match;
+    const year = Number(yearValue) < 100 ? 2000 + Number(yearValue) : Number(yearValue);
+    const parsed = new Date(year, Number(monthValue) - 1, Number(dayValue), 12, 0, 0, 0);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  parsed.setHours(12, 0, 0, 0);
+  return parsed;
+}
+
+function addDays(value: Date, days: number) {
+  const next = new Date(value);
+  next.setDate(next.getDate() + days);
+  next.setHours(12, 0, 0, 0);
+  return next;
+}
+
+function toIsoDate(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function isSameDay(left: Date, right: Date) {
+  return toIsoDate(left) === toIsoDate(right);
+}
+
+function getClientBranchValue(row: Record<string, string>) {
+  const directValue = String(row[CLIENT_BRANCH_COLUMN] ?? "").trim();
+  if (directValue) {
+    return directValue;
   }
 
   const branchEntry = Object.entries(row).find(([key, value]) => {
@@ -125,19 +216,9 @@ function getClientBranchValue(row: Record<string, string>) {
 }
 
 function getClientPhoneValue(row: Record<string, string>) {
-  const directKeys = [
-    "Số điện thoại liên hệ",
-    "Sá»‘ Ä‘iá»‡n thoáº¡i liÃªn há»‡",
-    "Số điện thoại",
-    "Phone",
-    "PHONE"
-  ];
-
-  for (const key of directKeys) {
-    const value = row[key];
-    if (typeof value === "string" && value.trim()) {
-      return value.trim();
-    }
+  const directValue = String(row[CLIENT_PHONE_COLUMN] ?? "").trim();
+  if (directValue) {
+    return directValue;
   }
 
   const phoneEntry = Object.entries(row).find(([key, value]) => {
@@ -150,6 +231,151 @@ function getClientPhoneValue(row: Record<string, string>) {
   });
 
   return String(phoneEntry?.[1] ?? "").trim();
+}
+
+function getRoomForBed(branchId: BranchId, bedNumber: number) {
+  return BRANCH_LAYOUTS[branchId].find((room) => bedNumber >= room.startBed && bedNumber <= room.endBed) ?? null;
+}
+
+function isReservationActiveOnDate(reservation: Reservation, day: Date) {
+  if (reservation.startDate && day < reservation.startDate) {
+    return false;
+  }
+
+  if (reservation.endDate && day > reservation.endDate) {
+    return false;
+  }
+
+  return true;
+}
+
+function pickMostCommonValue(counter: Map<number, number>) {
+  let winningValue = 0;
+  let winningCount = -1;
+
+  for (const [value, count] of counter.entries()) {
+    if (count > winningCount || (count === winningCount && value > winningValue)) {
+      winningValue = value;
+      winningCount = count;
+    }
+  }
+
+  return winningValue;
+}
+
+function buildPriceStats(rows: Record<string, string>[]) {
+  const branchMonthlyCounters: Record<BranchId, Map<number, number>> = {
+    D2: new Map<number, number>(),
+    D7: new Map<number, number>()
+  };
+  const branchDepositCounters: Record<BranchId, Map<number, number>> = {
+    D2: new Map<number, number>(),
+    D7: new Map<number, number>()
+  };
+  const bedMonthlyCounters: Record<BranchId, Map<number, Map<number, number>>> = {
+    D2: new Map<number, Map<number, number>>(),
+    D7: new Map<number, Map<number, number>>()
+  };
+  const bedDepositCounters: Record<BranchId, Map<number, Map<number, number>>> = {
+    D2: new Map<number, Map<number, number>>(),
+    D7: new Map<number, Map<number, number>>()
+  };
+
+  for (const row of rows) {
+    const branchId = normalizeClientBranch(getClientBranchValue(row));
+    const bedNumber = parseBedNumber(String(row[CLIENT_BED_COLUMN] ?? ""));
+    const monthlyPrice =
+      parseMoney(String(row[CLIENT_MONTHLY_SHARE_COLUMN] ?? "")) ||
+      parseMoney(String(row[CLIENT_MONTHLY_FEE_COLUMN] ?? ""));
+    const deposit = parseMoney(String(row[CLIENT_DEPOSIT_COLUMN] ?? ""));
+
+    if (monthlyPrice > 0) {
+      branchMonthlyCounters[branchId].set(monthlyPrice, (branchMonthlyCounters[branchId].get(monthlyPrice) ?? 0) + 1);
+      if (bedNumber) {
+        const perBedCounter = bedMonthlyCounters[branchId].get(bedNumber) ?? new Map<number, number>();
+        perBedCounter.set(monthlyPrice, (perBedCounter.get(monthlyPrice) ?? 0) + 1);
+        bedMonthlyCounters[branchId].set(bedNumber, perBedCounter);
+      }
+    }
+
+    if (deposit > 0) {
+      branchDepositCounters[branchId].set(deposit, (branchDepositCounters[branchId].get(deposit) ?? 0) + 1);
+      if (bedNumber) {
+        const perBedCounter = bedDepositCounters[branchId].get(bedNumber) ?? new Map<number, number>();
+        perBedCounter.set(deposit, (perBedCounter.get(deposit) ?? 0) + 1);
+        bedDepositCounters[branchId].set(bedNumber, perBedCounter);
+      }
+    }
+  }
+
+  const perBranch: Record<BranchId, { monthlyPrice: number; deposit: number }> = {
+    D2: {
+      monthlyPrice: pickMostCommonValue(branchMonthlyCounters.D2),
+      deposit: pickMostCommonValue(branchDepositCounters.D2)
+    },
+    D7: {
+      monthlyPrice: pickMostCommonValue(branchMonthlyCounters.D7),
+      deposit: pickMostCommonValue(branchDepositCounters.D7)
+    }
+  };
+
+  const perBed: Record<BranchId, Map<number, { monthlyPrice: number; deposit: number }>> = {
+    D2: new Map<number, { monthlyPrice: number; deposit: number }>(),
+    D7: new Map<number, { monthlyPrice: number; deposit: number }>()
+  };
+
+  (Object.keys(BRANCH_LAYOUTS) as BranchId[]).forEach((branchId) => {
+    const knownBeds = new Set<number>([
+      ...bedMonthlyCounters[branchId].keys(),
+      ...bedDepositCounters[branchId].keys()
+    ]);
+
+    for (const bedNumber of knownBeds) {
+      perBed[branchId].set(bedNumber, {
+        monthlyPrice:
+          pickMostCommonValue(bedMonthlyCounters[branchId].get(bedNumber) ?? new Map<number, number>()) ||
+          perBranch[branchId].monthlyPrice,
+        deposit:
+          pickMostCommonValue(bedDepositCounters[branchId].get(bedNumber) ?? new Map<number, number>()) ||
+          perBranch[branchId].deposit
+      });
+    }
+  });
+
+  return {
+    perBed,
+    perBranch
+  } satisfies PriceStats;
+}
+
+function buildReservations(rows: Record<string, string>[]) {
+  return rows.flatMap((row) => {
+    if (String(row[ACTIVE_STAYING_COLUMN] ?? "").trim() !== "1") {
+      return [];
+    }
+
+    const branchId = normalizeClientBranch(getClientBranchValue(row));
+    const bedNumber = parseBedNumber(String(row[CLIENT_BED_COLUMN] ?? ""));
+    if (!bedNumber) {
+      return [];
+    }
+
+    const room = getRoomForBed(branchId, bedNumber);
+    if (!room) {
+      return [];
+    }
+
+    return [
+      {
+        branchId,
+        room: room.room,
+        bedNumber,
+        sex: normalizeSex(String(row[CLIENT_GENDER_COLUMN] ?? "")),
+        startDate: parseVietnamDate(String(row[CLIENT_CONTRACT_START_COLUMN] ?? "")),
+        endDate: parseVietnamDate(String(row[CLIENT_CONTRACT_END_COLUMN] ?? ""))
+      } satisfies Reservation
+    ];
+  });
 }
 
 async function readSettings() {
@@ -213,69 +439,102 @@ export async function checkProspectReferralEligibility(input: {
   return {
     eligible,
     referralDiscountVnd: settings.referralDiscountVnd,
-    message: eligible
-      ? "Eligible for referral discount."
-      : "Not eligible for referral discount."
+    message: eligible ? "Eligible for referral discount." : "Not eligible for referral discount."
   };
 }
 
-export async function getProspectBedAvailability() {
-  const cache = await getClientCache();
-  const occupiedByBranch = {
-    D2: new Set<number>(),
-    D7: new Set<number>()
-  };
+export async function getProspectBedAvailability(input: {
+  branchId: BranchId;
+  sex: ProspectSex;
+}) {
+  const [cache, overrideRows] = await Promise.all([getClientCache(), getBedOverrides("long_term")]);
+  const reservations = buildReservations(cache.rows);
+  const pricing = buildPriceStats(cache.rows);
+  // Build a lookup: bedNumber → override
+  const bedOverrideMap = new Map(
+    overrideRows
+      .filter((r) => r.branchId === input.branchId)
+      .map((r) => [r.bedNumber, r])
+  );
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  const windowEnd = addDays(today, 30);
+  const branchRooms = BRANCH_LAYOUTS[input.branchId];
 
-  for (const row of cache.rows) {
-    if (String(row[ACTIVE_STAYING_COLUMN] ?? "").trim() !== "1") {
-      continue;
-    }
+  const rooms = branchRooms
+    .map((room) => {
+      const roomReservations = reservations.filter(
+        (reservation) => reservation.branchId === input.branchId && reservation.room === room.room
+      );
+      const totalBedNumbers = Array.from(
+        { length: room.endBed - room.startBed + 1 },
+        (_, index) => room.startBed + index
+      );
 
-    const branchId = normalizeClientBranch(getClientBranchValue(row));
-    const bedNumber = parseBedNumber(row["số giường"] ?? "");
-    if (!bedNumber) {
-      continue;
-    }
+      const beds = totalBedNumbers.flatMap((bedNumber) => {
+        let firstAvailableDate: Date | null = null;
 
-    occupiedByBranch[branchId].add(bedNumber);
-  }
+        for (
+          let day = new Date(today);
+          day <= windowEnd;
+          day = addDays(day, 1)
+        ) {
+          const roomOccupants = roomReservations.filter((reservation) => isReservationActiveOnDate(reservation, day));
+          const bedIsOccupied = roomOccupants.some((reservation) => reservation.bedNumber === bedNumber);
+          if (bedIsOccupied) {
+            continue;
+          }
 
-  const branches = (Object.entries(BRANCH_LAYOUTS) as Array<["D2" | "D7", BranchLayoutRoom[]]>).map(
-    ([branchId, rooms]) => {
-      const roomSummaries = rooms.map((room) => {
-        const totalBedNumbers = Array.from(
-          { length: room.endBed - room.startBed + 1 },
-          (_, index) => room.startBed + index
-        );
-        const availableBedNumbers = totalBedNumbers.filter(
-          (bedNumber) => !occupiedByBranch[branchId].has(bedNumber)
-        );
+          const hasOppositeSexOccupant = roomOccupants.some(
+            (reservation) => reservation.sex != null && reservation.sex !== input.sex
+          );
+          if (hasOppositeSexOccupant) {
+            continue;
+          }
 
-        return {
-          room: room.room,
-          floor: room.floor,
-          totalBeds: totalBedNumbers.length,
-          occupiedBeds: totalBedNumbers.length - availableBedNumbers.length,
-          availableBeds: availableBedNumbers.length,
-          availableBedNumbers
+          firstAvailableDate = new Date(day);
+          break;
+        }
+
+        if (!firstAvailableDate) {
+          return [];
+        }
+
+        const sheetPrice = pricing.perBed[input.branchId].get(bedNumber) ?? pricing.perBranch[input.branchId];
+        const override = bedOverrideMap.get(bedNumber);
+        const price = {
+          monthlyPrice: override?.monthlyPrice ?? sheetPrice.monthlyPrice,
+          deposit: override?.deposit ?? sheetPrice.deposit
         };
+
+        return [
+          {
+            bedNumber,
+            status: isSameDay(firstAvailableDate, today) ? "available_now" : "available_soon",
+            availableOn: toIsoDate(firstAvailableDate),
+            pricing: {
+              monthlyPrice: price.monthlyPrice,
+              deposit: price.deposit
+            }
+          } satisfies BedAvailabilityRecord
+        ];
       });
 
-      const totalBeds = roomSummaries.reduce((sum, room) => sum + room.totalBeds, 0);
-      const availableBeds = roomSummaries.reduce((sum, room) => sum + room.availableBeds, 0);
-
       return {
-        branchId,
-        totalBeds,
-        occupiedBeds: totalBeds - availableBeds,
-        availableBeds,
-        rooms: roomSummaries.filter((room) => room.availableBeds > 0)
+        room: room.room,
+        floor: room.floor,
+        totalBeds: totalBedNumbers.length,
+        beds
       };
-    }
-  );
+    })
+    .filter((room) => room.beds.length > 0);
 
   return {
     syncedAt: cache.syncedAt,
-    branches
+    branchId: input.branchId,
+    sex: input.sex,
+    availableBeds: rooms.reduce((sum, room) => sum + room.beds.length, 0),
+    pricingDefaults: pricing.perBranch[input.branchId],
+    rooms
   };
 }

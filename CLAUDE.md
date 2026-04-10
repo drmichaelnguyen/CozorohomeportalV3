@@ -41,13 +41,44 @@ Production runs as a git worktree of the same repo:
 # Already created — do not run again:
 git worktree add ../cozorohome-prod main
 ```
-To ship dev changes to production:
-```bash
-git checkout main
-git merge sandboxing
-git checkout sandboxing
-# then restart start-prod.cmd
-```
+Current branch policy:
+
+- `sandboxing` = active development branch
+- `main` = release / production branch
+- production app must follow `main`, not `sandboxing`
+
+Release rule for future agents:
+
+1. make and verify changes on `sandboxing`
+2. commit on `sandboxing`
+3. when the release is approved, promote `sandboxing` to `main`
+4. if `main` and `sandboxing` are cleanly mergeable, merge `sandboxing` into `main`
+5. if histories have diverged badly and the user explicitly approves `sandboxing` as the new baseline, reset `main` to the `sandboxing` commit instead of doing a risky manual conflict merge
+6. push the updated `main`
+7. refresh production from `main` only
+
+Important release safety rules:
+
+- do not deploy directly from a dirty local workspace
+- do not use old deploy scripts; use `manage-apps.bat` only
+- before releasing, make sure every newly imported runtime file is tracked in git
+- if the app imports a file that is still untracked, production can boot with `MODULE_NOT_FOUND` even when local dev appears fine
+- if production needs local secrets or env values, sync production env deliberately after code sync
+- for this app, a production refresh is not complete unless these runtime files are preserved or restored:
+  - `api/.env`
+  - `api/.google-oauth.json`
+  - important `api/data/*` files such as caches, staff access, and other operational state
+- if `api/.google-oauth.json` is missing in production, Google Sheets / Gmail / Calendar startup calls can fail with `Google OAuth tokens are missing`
+
+Production sync rule:
+
+- prefer a clean `main` worktree or clean `main` checkout as the source for production sync
+- do not copy `sandboxing` directly to production unless the user explicitly asks for a non-standard emergency deploy
+
+Operational note:
+
+- `manage-apps.bat` is now the canonical app manager for backup, production refresh, rollback, and restart
+- outdated deploy commands should be treated as legacy and not used for normal release flow
 
 ### Cloudflare tunnel
 Named tunnel `cozorohome-portal` (ID: `ace69517-369e-44a3-9f00-3304bf2153df`)
@@ -163,6 +194,7 @@ const nextConfig: NextConfig = {
 
 | Version | Description |
 |---------|-------------|
+| 3.6.0 | Unified pricing management: Settings tab replaces Employees tab; long-term bed prices editable via full bed diagram (per-bed, by-room+tier, or by-branch+tier bulk modes); deposit auto-set equal to monthly price; discounts stored in Google Sheets "DISCOUNTS" tab with debounced write queue (30s flush, batched API calls); discount eligibility rules expanded (status, minMonths, referral, bed tier T/M/B, gender, occupation); registration form shows claimable discounts as checkboxes with bilingual EN/VI labels — registrant self-attests with proof-required notice; bed availability loads after branch + sex selection |
 | 3.5.5 | Pre-login landing page with hero, vision (4 pillars), founder bio, cozorohome.com link; global EN/VI language toggle in header (visible on all pages including pre-login) |
 | 3.5.4 | Manager delete for coins/fines/payments/laundry entries; laundry stats table redesigned (name, start, end, machine — 1 row per entry); fix laundry overlap from old-system events with wrong end times (always use machine duration); open slots limited to current month; fine creator field shown to residents and managers; About section collapses by default |
 | 3.5.3 | Hide air fryer section entirely for D2 users; hide microwave section entirely for D7 users (no "branch only" message — section simply absent); About section on account page (app history, Dr. Trong Nguyen, Facebook link) |
@@ -193,3 +225,9 @@ Every route in `portal/app/**/error.tsx` uses either:
 - Active dev branch: `sandboxing`
 - Main branch: `main`
 - Commit messages follow: `type: description` (e.g. `feat:`, `fix:`, `chore:`)
+- Release commits should bump the visible version when user-facing behavior changes
+- When asked to "commit and push", first confirm whether the user wants:
+  - commit only
+  - push branch to GitHub
+  - or refresh the local production app
+- These are separate operations and should not be assumed to be the same
