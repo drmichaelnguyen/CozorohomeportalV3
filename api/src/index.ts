@@ -102,7 +102,8 @@ import {
   MAINTENANCE_REPAIR_TIME_COLUMN,
   MAINTENANCE_SATISFACTION_COLUMN,
   MAINTENANCE_FEEDBACK_COLUMN,
-  logMicrowaveUse
+  logMicrowaveUse,
+  getDuplicateActiveClients
 } from "./google-sheets.js";
 import {
   checkProspectReferralEligibility,
@@ -2432,6 +2433,30 @@ app.get("/staff/inactive-clients", async (request, response) => {
     return response.json({ clients });
   } catch (error) {
     return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to load inactive clients" });
+  }
+});
+
+app.get("/staff/clients/duplicates", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "");
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const duplicates = await getDuplicateActiveClients();
+    return response.json({ duplicates });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to load duplicate clients" });
+  }
+});
+
+app.post("/staff/clients/set-inactive", async (request, response) => {
+  const actorEmail = String(request.body?.actorEmail ?? "");
+  const maHd = String(request.body?.maHd ?? "").trim();
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    if (!maHd) return response.status(400).json({ error: "maHd is required" });
+    await updateClientColumns(maHd, { "Hiện còn ở": "-1" });
+    return response.json({ ok: true });
+  } catch (error) {
+    return response.status(400).json({ error: error instanceof Error ? error.message : "Unable to mark contract inactive" });
   }
 });
 

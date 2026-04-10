@@ -99,6 +99,7 @@ type FineEntry = {
   parsedTimestamp: string | null;
   parsedDueDate: string | null;
 };
+type DuplicateEntry = { email: string; name: string; rows: Array<{ maHd: string; contractStart: string; contractEnd: string; activeStay: string; bed: string; branch: string }> };
 type LaundryEntry = {
   id: string;
   calendarId: string;
@@ -795,6 +796,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [search, setSearch] = useState("");
   const [inactiveClients, setInactiveClients] = useState<ManagerClientRecord[]>([]);
   const [inactiveClientsLoading, setInactiveClientsLoading] = useState(false);
+  const [duplicateClients, setDuplicateClients] = useState<DuplicateEntry[]>([]);
+  const [settingInactive, setSettingInactive] = useState<Record<string, boolean>>({});
   const [inactiveBranchFilter, setInactiveBranchFilter] = useState("");
   const [inactiveYearFilter, setInactiveYearFilter] = useState("");
   const [inactiveSearch, setInactiveSearch] = useState("");
@@ -1369,6 +1372,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     ];
   }, [branchOverviewGroups, clients.length, quickNav.length, selectedBranch]);
 
+  const duplicateEmailSet = useMemo(() => new Set(duplicateClients.map((d) => d.email.toLowerCase())), [duplicateClients]);
+  const selectedClientDuplicate = useMemo(
+    () => duplicateClients.find((d) => d.email.toLowerCase() === selectedClient?.email?.toLowerCase()) ?? null,
+    [duplicateClients, selectedClient]
+  );
+
   const selectedClientPhone = getClientPhone(selectedClient);
   const selectedClientTelHref = toPhoneHref(selectedClientPhone);
   const selectedClientSmsHref = toSmsHref(selectedClientPhone);
@@ -1467,10 +1476,44 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         fillClientForm(nextSelected);
       }
       setStatus(syncFirst ? t("clientDataRefreshed") : t("clientListLoaded"));
+      // Reload duplicates after client sync
+      loadDuplicateClients();
     } catch {
       setStatus(t("unableToLoadClients"));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadDuplicateClients() {
+    try {
+      const res = await fetch(`${API_BASE_URL}/staff/clients/duplicates?actorEmail=${encodeURIComponent(normalizedEmail)}`);
+      const data = (await res.json()) as { duplicates?: DuplicateEntry[] };
+      setDuplicateClients(data.duplicates ?? []);
+    } catch {
+      setDuplicateClients([]);
+    }
+  }
+
+  async function markContractInactive(maHd: string) {
+    setSettingInactive((prev) => ({ ...prev, [maHd]: true }));
+    try {
+      const res = await fetch(`${API_BASE_URL}/staff/clients/set-inactive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorEmail: normalizedEmail, maHd })
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.error ?? "Failed to mark contract as inactive");
+        return;
+      }
+      // Reload clients and duplicates
+      await loadClients(true);
+    } catch {
+      alert("Failed to mark contract as inactive");
+    } finally {
+      setSettingInactive((prev) => ({ ...prev, [maHd]: false }));
     }
   }
 
@@ -2389,6 +2432,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 {bunk.levels.map((slot) => {
                                   const client = slot.client;
                                   const isSelected = client?.maHd === selectedMaHd;
+                                  const isDuplicate = client ? duplicateEmailSet.has(client.email.toLowerCase()) : false;
                                   return (
                                     <button
                                       key={slot.bedNumber}
@@ -2403,16 +2447,21 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                       className={`relative flex h-8 items-center justify-center rounded-md border text-[10px] font-bold ${
                                         isSelected
                                           ? "border-sky-500 bg-sky-500 text-white z-10 scale-105"
-                                          : client && String(client.activeStay ?? "").trim() === ""
-                                            ? "border-pink-300 bg-pink-50 text-pink-700"
-                                            : client
-                                              ? "border-emerald-100 bg-emerald-50 text-emerald-700"
-                                              : "border-dashed border-slate-200 bg-slate-25 text-slate-300"
+                                          : isDuplicate
+                                            ? "border-amber-400 bg-amber-50 text-amber-800 ring-1 ring-amber-300"
+                                            : client && String(client.activeStay ?? "").trim() === ""
+                                              ? "border-pink-300 bg-pink-50 text-pink-700"
+                                              : client
+                                                ? "border-emerald-100 bg-emerald-50 text-emerald-700"
+                                                : "border-dashed border-slate-200 bg-slate-25 text-slate-300"
                                       }`}
-                                      title={client ? `${client.name} (${t("bedLabel")} ${slot.bedNumber})${String(client.activeStay ?? "").trim() === "" ? " — new registration, status not set" : ""}` : `${t("bedLabel")} ${slot.bedNumber} (${t("emptyLabel")})`}
+                                      title={client ? `${client.name} (${t("bedLabel")} ${slot.bedNumber})${isDuplicate ? " ⚠ Duplicate active contract" : String(client.activeStay ?? "").trim() === "" ? " — new registration, status not set" : ""}` : `${t("bedLabel")} ${slot.bedNumber} (${t("emptyLabel")})`}
                                     >
+                                      {isDuplicate && !isSelected && (
+                                        <span className="absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5 items-center justify-center rounded-full bg-amber-400 text-[5px] font-black text-white leading-none">!</span>
+                                      )}
                                       {client && (
-                                        <span className={`absolute left-0.5 top-0.5 text-[7px] leading-none ${String(client.activeStay ?? "").trim() === "" ? "text-pink-500/70" : "text-emerald-600/70"}`}>
+                                        <span className={`absolute left-0.5 top-0.5 text-[7px] leading-none ${isDuplicate ? "text-amber-600/70" : String(client.activeStay ?? "").trim() === "" ? "text-pink-500/70" : "text-emerald-600/70"}`}>
                                           {slot.bedNumber}
                                         </span>
                                       )}
@@ -3216,6 +3265,40 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     </div>
                   );
                 })()}
+                {selectedClientDuplicate && (
+                  <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-400 text-[10px] font-black text-white">!</span>
+                      <div className="text-sm font-semibold text-amber-900">Duplicate Active Contract Detected</div>
+                    </div>
+                    <p className="text-xs text-amber-800">This client has <strong>{selectedClientDuplicate.rows.length} active rows</strong> in the sheet. The app uses the one with the latest start date automatically, but old rows should be marked inactive to avoid confusion.</p>
+                    <div className="space-y-2">
+                      {selectedClientDuplicate.rows.map((row) => {
+                        const isCurrentRow = row.maHd === selectedClient.maHd;
+                        return (
+                          <div key={row.maHd} className={`flex items-center justify-between rounded-xl border px-3 py-2 text-xs ${isCurrentRow ? "border-amber-400 bg-amber-100" : "border-amber-200 bg-white"}`}>
+                            <div className="space-y-0.5">
+                              <div className="font-semibold text-slate-800">{row.maHd} {isCurrentRow && <span className="ml-1 rounded-full bg-amber-400 px-1.5 py-0.5 text-[9px] font-bold text-white">ACTIVE (latest)</span>}</div>
+                              <div className="text-slate-500">{row.branch} · Bed {row.bed} · {row.contractStart} → {row.contractEnd}</div>
+                              <div className="text-slate-500">Status: <span className={row.activeStay === "1" ? "text-emerald-700 font-semibold" : "text-rose-700"}>{row.activeStay || "not set"}</span></div>
+                            </div>
+                            {!isCurrentRow && (
+                              <button
+                                type="button"
+                                disabled={!!settingInactive[row.maHd]}
+                                onClick={() => markContractInactive(row.maHd)}
+                                className="ml-3 flex-shrink-0 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                              >
+                                {settingInactive[row.maHd] ? "Saving…" : "Mark Inactive (−1)"}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {(() => {
                   const stay = String(selectedClient.activeStay ?? "").trim();
                   const isUnset = stay === "";

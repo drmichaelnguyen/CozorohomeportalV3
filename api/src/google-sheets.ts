@@ -3321,11 +3321,81 @@ export async function getActiveClientByEmail(email: string) {
   const cache = await readCachedClients();
   const sourceRows = cache?.rows ?? [];
 
-  return (
-    sourceRows.find(
-      (row) => row[EMAIL_COLUMN]?.trim().toLowerCase() === normalizedEmail && isActiveClient(row)
-    ) ?? null
+  const matches = sourceRows.filter(
+    (row) => row[EMAIL_COLUMN]?.trim().toLowerCase() === normalizedEmail && isActiveClient(row)
   );
+
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0]!;
+
+  // Multiple active rows for same email — pick the one with the latest contract start date
+  return matches.reduce((best, row) => {
+    const bestDate = parseClientContractDate(best[CLIENT_CONTRACT_START_COLUMN] ?? "");
+    const rowDate = parseClientContractDate(row[CLIENT_CONTRACT_START_COLUMN] ?? "");
+    if (!bestDate) return row;
+    if (!rowDate) return best;
+    return rowDate > bestDate ? row : best;
+  });
+}
+
+function parseClientContractDate(value: string): Date | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  // Handles "DD/MM/YYYY" and ISO formats
+  const parts = trimmed.split("/");
+  if (parts.length === 3) {
+    const [d, m, y] = parts;
+    const date = new Date(`${y}-${m!.padStart(2, "0")}-${d!.padStart(2, "0")}`);
+    return isNaN(date.getTime()) ? null : date;
+  }
+  const date = new Date(trimmed);
+  return isNaN(date.getTime()) ? null : date;
+}
+
+export async function getDuplicateActiveClients(): Promise<Array<{
+  email: string;
+  name: string;
+  rows: Array<{ maHd: string; contractStart: string; contractEnd: string; activeStay: string; bed: string; branch: string }>;
+}>> {
+  if (!spreadsheetId) throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
+  const sheets = await getAuthorizedSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetName}!A:AMJ`
+  });
+  const values = response.data.values ?? [];
+  if (values.length === 0) return [];
+  const headers = (values[0] ?? []).map((value) => normalizeHeader(String(value)));
+  const allRows = values.slice(1).map((row) => mapRow(headers, row.map((v) => String(v))));
+
+  // Group by email, only active rows
+  const byEmail = new Map<string, ClientRow[]>();
+  for (const row of allRows) {
+    const email = row[EMAIL_COLUMN]?.trim().toLowerCase();
+    if (!email) continue;
+    if (!isActiveClient(row)) continue;
+    const existing = byEmail.get(email) ?? [];
+    existing.push(row);
+    byEmail.set(email, existing);
+  }
+
+  const duplicates: Array<{ email: string; name: string; rows: Array<{ maHd: string; contractStart: string; contractEnd: string; activeStay: string; bed: string; branch: string }> }> = [];
+  for (const [email, rows] of byEmail.entries()) {
+    if (rows.length < 2) continue;
+    duplicates.push({
+      email,
+      name: rows[0]![CLIENT_NAME_COLUMN] ?? "",
+      rows: rows.map((row) => ({
+        maHd: row[CONTRACT_CODE_COLUMN] ?? "",
+        contractStart: row[CLIENT_CONTRACT_START_COLUMN] ?? "",
+        contractEnd: row[CLIENT_CONTRACT_END_COLUMN] ?? "",
+        activeStay: row[ACTIVE_STAYING_COLUMN] ?? "",
+        bed: row[CLIENT_BED_COLUMN] ?? "",
+        branch: getClientBranchValue(row)
+      }))
+    });
+  }
+  return duplicates;
 }
 
 export async function getCoinsForEmail(email: string) {
