@@ -230,7 +230,10 @@
       "Bash(API_SERVER_ORIGIN=http://localhost:4002 pnpm --filter portal build)",
       "Read(//usr/local/bin/**)",
       "Read(//root/.local/share/pnpm/**)",
-      "Bash(API_SERVER_ORIGIN=http://localhost:4002 node node_modules/next/dist/bin/next build)"
+      "Bash(API_SERVER_ORIGIN=http://localhost:4002 node node_modules/next/dist/bin/next build)",
+      "Bash(sex=female 2>&1)",
+      "Bash(node_modules/.bin/tsc.cmd --noEmit)",
+      "Bash(cmd /c \"node_modules\\\\.bin\\\\tsc --noEmit 2>&1\")"
     ],
     "defaultMode": "bypassPermissions"
   }

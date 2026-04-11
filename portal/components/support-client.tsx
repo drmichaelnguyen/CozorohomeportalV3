@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalSession } from "./portal-session";
 import { usePortalLanguage } from "./portal-language";
+import { ManagerSupportInbox } from "./manager-support-inbox";
 
 const SOUND_PREF_KEY = "chat_sound_enabled";
 const POLL_INTERVAL_MS = 10000;
@@ -80,6 +81,12 @@ type GroupContext = {
 
 type ChatTab = "personal" | "room" | "floor" | "branch";
 
+type ResolvedLogin = {
+  allowed?: boolean;
+  role?: "user" | "manager" | "owner" | "app_admin" | "mechanic" | null;
+  source?: "client" | "staff" | null;
+};
+
 
 function formatDateTime(value: string) {
   return new Date(value).toLocaleString();
@@ -109,6 +116,7 @@ export function SupportClient() {
   const [groupContext, setGroupContext] = useState<GroupContext | null>(null);
   const [isAnonymous, setIsAnonymous] = useState(false);
   const [isStaff, setIsStaff] = useState(false);
+  const [staffOnlyMode, setStaffOnlyMode] = useState(false);
   const [overrideGroupId, setOverrideGroupId] = useState<string | null>(null);
 
   // Maintenance reporting modal state
@@ -223,19 +231,43 @@ export function SupportClient() {
     setStatus("");
 
     try {
+      const normalizedEmail = sessionEmail.trim().toLowerCase();
+      const loginResponse = await fetch(
+        `${API_BASE_URL}/auth/resolve-login?email=${encodeURIComponent(normalizedEmail)}`
+      );
+      const loginData = (await loginResponse.json()) as ResolvedLogin;
+      const isPrivilegedStaff =
+        Boolean(loginResponse.ok && loginData.allowed) &&
+        Boolean(loginData.role) &&
+        loginData.role !== "user";
+
+      setIsStaff(isPrivilegedStaff);
+
       // Load group context first if not loaded
-      if (!groupContext) {
-        const ctxResponse = await fetch(`${API_BASE_URL}/support/group-context?email=${encodeURIComponent(sessionEmail.trim().toLowerCase())}`);
+      let resolvedGroupContext = groupContext;
+      if (!resolvedGroupContext) {
+        const ctxResponse = await fetch(`${API_BASE_URL}/support/group-context?email=${encodeURIComponent(normalizedEmail)}`);
         if (ctxResponse.ok) {
           const ctxData = await ctxResponse.json();
           setGroupContext(ctxData);
+          resolvedGroupContext = ctxData;
+        } else if (isPrivilegedStaff) {
+          setStaffOnlyMode(true);
+          setConversation(null);
+          setMessages([]);
+          return;
         }
       }
+
+      if (staffOnlyMode) {
+        return;
+      }
+      setStaffOnlyMode(false);
 
       // Check if staff (personal conversation might help, but we can also just check if there's an activeTab shift)
       if (activeTab === "personal") {
         const response = await fetch(
-          `${API_BASE_URL}/support/conversation?email=${encodeURIComponent(sessionEmail.trim().toLowerCase())}`
+          `${API_BASE_URL}/support/conversation?email=${encodeURIComponent(normalizedEmail)}`
         );
         const data = (await response.json()) as {
           conversation?: SupportConversation;
@@ -250,10 +282,6 @@ export function SupportClient() {
 
         setConversation(data.conversation ?? null);
         setMessages(data.messages ?? []);
-        
-        // Simple heuristic for isStaff
-        const anyStaffMsg = data.messages?.some(m => m.senderEmail === sessionEmail.trim().toLowerCase() && (m.senderRole === "MANAGER" || m.senderRole === "OWNER"));
-        if (anyStaffMsg) setIsStaff(true);
 
         if (data.conversation?.id) {
           void fetch(`${API_BASE_URL}/support/conversations/${encodeURIComponent(data.conversation.id)}/read`, {
@@ -262,15 +290,15 @@ export function SupportClient() {
               "Content-Type": "application/json"
             },
             body: JSON.stringify({
-              email: sessionEmail.trim().toLowerCase()
+              email: normalizedEmail
             })
           });
         }
       } else {
         // Load group messages
-        const groupId = overrideGroupId || (groupContext ? groupContext.groupIds[activeTab] : null);
+        const groupId = overrideGroupId || (resolvedGroupContext ? resolvedGroupContext.groupIds[activeTab] : null);
         if (!groupId) {
-          if (!groupContext) {
+          if (!resolvedGroupContext) {
             // Wait for context to lead if not staff
             setLoading(false);
           }
@@ -278,7 +306,7 @@ export function SupportClient() {
         }
 
         const response = await fetch(
-          `${API_BASE_URL}/support/group-messages?groupId=${encodeURIComponent(groupId)}&email=${encodeURIComponent(sessionEmail.trim().toLowerCase())}`
+          `${API_BASE_URL}/support/group-messages?groupId=${encodeURIComponent(groupId)}&email=${encodeURIComponent(normalizedEmail)}`
         );
         const data = (await response.json()) as { messages?: SupportMessage[]; error?: string };
 
@@ -300,7 +328,7 @@ export function SupportClient() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            email: sessionEmail.trim().toLowerCase(),
+            email: normalizedEmail,
             groupId
           })
         });
@@ -315,7 +343,7 @@ export function SupportClient() {
 
   useEffect(() => {
     void loadConversation();
-  }, [sessionEmail, activeTab, groupContext?.groupIds?.room, overrideGroupId]);
+  }, [sessionEmail, activeTab, groupContext?.groupIds?.room, overrideGroupId, staffOnlyMode]);
 
 
 
@@ -421,6 +449,10 @@ export function SupportClient() {
     } finally {
       setIsReporting(false);
     }
+  }
+
+  if (staffOnlyMode) {
+    return <ManagerSupportInbox operatorEmail={sessionEmail.trim().toLowerCase()} enabled={Boolean(sessionEmail.trim())} />;
   }
 
   return (

@@ -62,6 +62,13 @@ type AirFryerContext = {
 
 type MicrowaveContext = AirFryerContext;
 
+type AccountLockOverride = {
+  unlocked?: boolean;
+  updatedBy?: string;
+  updatedAt?: string;
+  note?: string;
+};
+
 type LaundryBooking = {
   id: string;
   calendarId: string;
@@ -106,7 +113,7 @@ function parseLooseDate(value: string | undefined): Date | null {
   return parseContractEndDate(value);
 }
 
-function getAccountStatus(client: Record<string, string> | null): {
+function getAccountStatus(client: Record<string, string> | null, override: AccountLockOverride | null): {
   isBlocked: boolean;
   blockReason: string | null;
   warnings: string[];
@@ -140,6 +147,14 @@ function getAccountStatus(client: Record<string, string> | null): {
     } else if (-diffDays < WARN_DAYS_AHEAD) {
       warnings.push(`Gói thanh toán sắp hết hạn vào ngày ${paymentExpiry.toLocaleDateString("vi-VN")}.`);
     }
+  }
+  if (blockReason && override?.unlocked) {
+    warnings.unshift(
+      override.updatedBy
+        ? `Tài khoản đã được mở khoá thủ công bởi ${override.updatedBy}.`
+        : "Tài khoản đã được mở khoá thủ công bởi quản lý."
+    );
+    return { isBlocked: false, blockReason: null, warnings };
   }
   return { isBlocked: blockReason !== null, blockReason, warnings };
 }
@@ -185,6 +200,7 @@ export function ControllerClient({
   const [selectedMicrowaveInspection, setSelectedMicrowaveInspection] = useState("");
   const [selectedInspection, setSelectedInspection] = useState<string>("");
   const [clientRecord, setClientRecord] = useState<Record<string, string> | null>(null);
+  const [accountLockOverride, setAccountLockOverride] = useState<AccountLockOverride | null>(null);
   const [message, setMessage] = useState("");
 
   async function loadControllerContext() {
@@ -236,9 +252,10 @@ export function ControllerClient({
         setMicrowaveContext(null);
       }
 
-      const [laundryData, clientResult] = await Promise.allSettled([
+      const [laundryData, clientResult, overrideResult] = await Promise.allSettled([
         fetchJson<{ active: LaundryBooking | null; next: LaundryBooking | null }>(`${API_BASE_URL}/controller/laundry?email=${encodeURIComponent(resolvedEmail)}`),
-        fetchJson<Record<string, string>>(`${API_BASE_URL}/clients?email=${encodeURIComponent(resolvedEmail)}`)
+        fetchJson<Record<string, string>>(`${API_BASE_URL}/clients?email=${encodeURIComponent(resolvedEmail)}`),
+        fetchJson<{ override?: AccountLockOverride | null }>(`${API_BASE_URL}/account-lock-override?email=${encodeURIComponent(resolvedEmail)}`)
       ]);
 
       if (laundryData.status === "fulfilled") {
@@ -247,6 +264,9 @@ export function ControllerClient({
       }
       if (clientResult.status === "fulfilled") {
         setClientRecord(clientResult.value);
+      }
+      if (overrideResult.status === "fulfilled") {
+        setAccountLockOverride(overrideResult.value.override ?? null);
       }
 
       setActiveEmail(resolvedEmail);
@@ -258,6 +278,7 @@ export function ControllerClient({
       setMicrowaveContext(null);
       setActiveLaundryBooking(null);
       setNextLaundryBooking(null);
+      setAccountLockOverride(null);
       setMessage(error instanceof Error ? error.message : "Unable to load controls.");
     } finally {
       setLoading(false);
@@ -409,8 +430,8 @@ export function ControllerClient({
   }
 
   const { isBlocked, blockReason, warnings } = useMemo(
-    () => getAccountStatus(clientRecord),
-    [clientRecord]
+    () => getAccountStatus(clientRecord, accountLockOverride),
+    [accountLockOverride, clientRecord]
   );
 
   return (

@@ -38,6 +38,12 @@ type CleaningOverview = {
   tasks: CleaningTask[];
   availability: CleaningAvailability[];
   occupiedSlots?: OccupiedSlot[];
+  contractOptOut?: {
+    contractCode: string;
+    cleaningFeeVnd: number;
+    startDate: string | null;
+    endDate: string | null;
+  } | null;
   optOut?: { month: string; paymentMethod: string } | null;
   user?: {
     branchId: string;
@@ -142,6 +148,26 @@ function getLateDeadline(task: { type: CleaningTask["type"]; scheduledDate: stri
   return new Date(windowEnd.getTime() + 10 * 60 * 60 * 1000);
 }
 
+function shouldShowNextCleaningCard(task: CleaningTask) {
+  if (task.status !== "ASSIGNED") {
+    return false;
+  }
+
+  return getLateDeadline(task).getTime() >= Date.now();
+}
+
+function getNextCleaningCardLabel(task: CleaningTask) {
+  if (canCompleteTaskLate(task)) {
+    return "Due";
+  }
+
+  if (canCompleteTaskNow(task)) {
+    return "Today";
+  }
+
+  return "Scheduled";
+}
+
 function isFutureDate(date: Date) {
   return startOfDay(date).getTime() > startOfDay(new Date()).getTime();
 }
@@ -218,7 +244,7 @@ function getReleasePenalty(task: { scheduledDate: string; isSelfAssigned?: boole
 
 export function CleaningScheduleClient() {
   const { sessionEmail, isLoggedIn, login } = usePortalSession();
-  const { t } = usePortalLanguage();
+  const { t, language } = usePortalLanguage();
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -247,7 +273,7 @@ export function CleaningScheduleClient() {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   })();
-  const currentMonthLabel = new Date().toLocaleString(undefined, { month: "long", year: "numeric" });
+  const currentMonthLabel = new Date().toLocaleString(language === "vi" ? "vi-VN" : "en-US", { month: "long", year: "numeric" });
 
   useEffect(() => {
     if (sessionEmail) {
@@ -689,6 +715,13 @@ export function CleaningScheduleClient() {
     () => filteredPastTasks.slice(0, pastVisibleCount),
     [filteredPastTasks, pastVisibleCount]
   );
+  const nextCleaningCardTask = useMemo(
+    () =>
+      [...(overview?.tasks ?? [])]
+        .filter((task) => shouldShowNextCleaningCard(task))
+        .sort((left, right) => left.scheduledDate.localeCompare(right.scheduledDate))[0] ?? null,
+    [overview]
+  );
 
   const monthDays = useMemo(() => {
     const gridStart = startOfMonthGrid(calendarFocusDate);
@@ -752,9 +785,9 @@ export function CleaningScheduleClient() {
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-        <h1 className="text-2xl font-semibold text-slate-900">Cleaning Schedule</h1>
+        <h1 className="text-2xl font-semibold text-slate-900">{t("cleaningScheduleTitle", "Cleaning Schedule")}</h1>
         <p className="mt-2 text-sm text-slate-600">
-          Click a date to mark yourself unavailable or assign yourself to a cleaning task that fits your branch and floor.
+          {t("cleaningScheduleDesc", "Click a date to mark yourself unavailable or assign yourself to a cleaning task that fits your branch and floor.")}
         </p>
 
         <form onSubmit={handleLogin} className="mt-6 grid gap-4 md:grid-cols-2">
@@ -764,7 +797,7 @@ export function CleaningScheduleClient() {
               disabled={loading || !activeEmail}
               className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
             >
-              {loading ? "Loading..." : "Load cleaning schedule"}
+              {loading ? t("refreshing", "Loading...") : t("loadCleaningSchedule", "Load cleaning schedule")}
             </button>
             <button
               type="button"
@@ -772,7 +805,7 @@ export function CleaningScheduleClient() {
               disabled={refreshing || !activeEmail}
               className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60"
             >
-              {refreshing ? "Refreshing..." : "Refresh schedule"}
+              {refreshing ? t("refreshingSchedule", "Refreshing...") : t("refreshSchedule", "Refresh schedule")}
             </button>
           </div>
         </form>
@@ -780,23 +813,50 @@ export function CleaningScheduleClient() {
         {message ? <p className="mt-4 text-sm text-slate-700">{message}</p> : null}
       </section>
 
-      {overview && futureTasks.length > 0 && (
+      {nextCleaningCardTask && (
         <section className="rounded-2xl border border-amber-200 bg-amber-50/50 p-6 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-200 text-amber-700 shadow-sm">
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <div>
-              <h2 className="text-sm font-bold text-amber-900 uppercase tracking-tight">{t("nextCleaning", "Your Next Cleaning")}</h2>
-              <p className="text-xl font-black text-slate-900">
-                {new Date(futureTasks[0].scheduledDate).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
-              </p>
-              <div className="mt-1 flex items-center gap-2">
-                <span className="rounded-md bg-white/60 px-2 py-0.5 text-[10px] font-bold text-slate-700 ring-1 ring-amber-200 uppercase">{prettyTaskType(futureTasks[0].type)}</span>
-                <span className="text-[10px] font-bold text-amber-700">+{futureTasks[0].rewardCoins} Coins</span>
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-200 text-amber-700 shadow-sm">
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
               </div>
+              <div>
+                <h2 className="text-sm font-bold text-amber-900 uppercase tracking-tight">{t("nextCleaning", "Your Next Cleaning")}</h2>
+                <p className="text-xl font-black text-slate-900">
+                  {new Date(nextCleaningCardTask.scheduledDate).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+                </p>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <span className="rounded-md bg-white/60 px-2 py-0.5 text-[10px] font-bold text-slate-700 ring-1 ring-amber-200 uppercase">{prettyTaskType(nextCleaningCardTask.type)}</span>
+                  <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase ${canCompleteTaskLate(nextCleaningCardTask) ? "bg-rose-100 text-rose-700 ring-1 ring-rose-200" : canCompleteTaskNow(nextCleaningCardTask) ? "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200" : "bg-white/70 text-amber-800 ring-1 ring-amber-200"}`}>
+                    {getNextCleaningCardLabel(nextCleaningCardTask)}
+                  </span>
+                  <span className="text-[10px] font-bold text-amber-700">
+                    +{canCompleteTaskLate(nextCleaningCardTask) ? Math.round(nextCleaningCardTask.rewardCoins * 0.5) : nextCleaningCardTask.rewardCoins} Coins
+                  </span>
+                </div>
+                <p className="mt-2 text-sm text-slate-600">
+                  {canCompleteTaskLate(nextCleaningCardTask)
+                    ? t("nextCleaningDueNow", "Due now. Late submissions stay open until {deadline} and earn 50% coins.").replace("{deadline}", getLateDeadline(nextCleaningCardTask).toLocaleString())
+                    : canCompleteTaskNow(nextCleaningCardTask)
+                      ? t("nextCleaningCanDone", "You can mark this done during {window}.").replace("{window}", getCompletionWindow(nextCleaningCardTask).label)
+                      : t("nextCleaningOpensSoon", "Mark done opens during {window}.").replace("{window}", getCompletionWindow(nextCleaningCardTask).label)}
+                </p>
+                {nextCleaningCardTask.type === "TRASH_D7" && nextCleaningCardTask.floor ? (
+                  <p className="mt-1 text-xs text-slate-500">{t("floorLabel", "Floor")} {nextCleaningCardTask.floor}</p>
+                ) : null}
+              </div>
+            </div>
+            <div className="md:min-w-[220px]">
+              <button
+                type="button"
+                onClick={() => void markDone(nextCleaningCardTask.id)}
+                disabled={loading || (!canCompleteTaskNow(nextCleaningCardTask) && !canCompleteTaskLate(nextCleaningCardTask))}
+                className={`w-full rounded-xl px-4 py-3 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:bg-slate-300 ${canCompleteTaskLate(nextCleaningCardTask) ? "bg-amber-600 hover:bg-amber-700" : "bg-slate-900 hover:bg-slate-800"}`}
+              >
+                {canCompleteTaskLate(nextCleaningCardTask) ? t("markDoneLateCardBtn", "Mark done (late - 50% coins)") : t("markDoneCardBtn", "Mark done")}
+              </button>
             </div>
           </div>
         </section>
@@ -805,9 +865,9 @@ export function CleaningScheduleClient() {
       {optOutModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
-            <h3 className="text-lg font-bold text-slate-900">Opt out of cleaning — {currentMonthLabel}</h3>
+            <h3 className="text-lg font-bold text-slate-900">{t("optOutModalTitle", "Opt out of cleaning")} — {currentMonthLabel}</h3>
             <p className="mt-2 text-sm text-slate-600">
-              You will be exempt from all cleaning assignments this month. A fee will be charged.
+              {t("optOutModalDesc", "You will be exempt from all cleaning assignments this month. A fee will be charged.")}
             </p>
             <div className="mt-4 space-y-2">
               <button
@@ -815,8 +875,8 @@ export function CleaningScheduleClient() {
                 className={`flex w-full items-center gap-3 rounded-xl border p-4 text-left transition-all ${optOutPayment === "VND" ? "border-slate-900 bg-slate-50 ring-2 ring-slate-900" : "border-slate-200 hover:bg-slate-50"}`}
               >
                 <div className="flex-1">
-                  <p className="text-sm font-bold text-slate-900">Pay 100,000 VND</p>
-                  <p className="text-xs text-slate-500">A fine will be added to your account.</p>
+                  <p className="text-sm font-bold text-slate-900">{t("pay100kVnd", "Pay 100,000 VND")}</p>
+                  <p className="text-xs text-slate-500">{t("pay100kVndDesc", "A fine will be added to your account.")}</p>
                 </div>
                 {optOutPayment === "VND" && <div className="h-4 w-4 rounded-full bg-slate-900" />}
               </button>
@@ -825,8 +885,8 @@ export function CleaningScheduleClient() {
                 className={`flex w-full items-center gap-3 rounded-xl border p-4 text-left transition-all ${optOutPayment === "COINS" ? "border-amber-500 bg-amber-50 ring-2 ring-amber-500" : "border-slate-200 hover:bg-slate-50"}`}
               >
                 <div className="flex-1">
-                  <p className="text-sm font-bold text-slate-900">Pay 150,000 Coins</p>
-                  <p className="text-xs text-slate-500">Deducted from your coin balance immediately.</p>
+                  <p className="text-sm font-bold text-slate-900">{t("pay150kCoins", "Pay 150,000 Coins")}</p>
+                  <p className="text-xs text-slate-500">{t("pay150kCoinsDesc", "Deducted from your coin balance immediately.")}</p>
                 </div>
                 {optOutPayment === "COINS" && <div className="h-4 w-4 rounded-full bg-amber-500" />}
               </button>
@@ -837,14 +897,14 @@ export function CleaningScheduleClient() {
                 disabled={optOutLoading}
                 className="flex-1 rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white disabled:opacity-60"
               >
-                {optOutLoading ? "Processing..." : "Confirm Opt Out"}
+                {optOutLoading ? t("processingOptOut", "Processing...") : t("confirmOptOut", "Confirm Opt Out")}
               </button>
               <button
                 onClick={() => setOptOutModal(false)}
                 disabled={optOutLoading}
                 className="flex-1 rounded-lg border border-slate-300 py-2.5 text-sm text-slate-700 disabled:opacity-60"
               >
-                Cancel
+                {t("cancel", "Cancel")}
               </button>
             </div>
           </div>
@@ -875,15 +935,15 @@ export function CleaningScheduleClient() {
 
                 <div className="mt-6 space-y-3">
                   <div className="flex items-center justify-between">
-                    <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Task Actions</div>
+                    <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">{t("taskActionsHeader", "Task Actions")}</div>
                     <div className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 uppercase ring-1 ring-amber-200">
-                      +20% Coins Bonus
+                      {t("coinsBonusBadge", "+20% Coins Bonus")}
                     </div>
                   </div>
 
                   {allowedTaskTypes.length === 0 && (
                     <div className="rounded-xl border border-slate-100 bg-slate-50 p-4 text-xs text-slate-500">
-                      Your cleaning profile hasn't been set up yet. Contact your manager to be added to the system.
+                      {t("noCleaningProfile", "Your cleaning profile hasn't been set up yet. Contact your manager to be added to the system.")}
                     </div>
                   )}
 
@@ -921,8 +981,8 @@ export function CleaningScheduleClient() {
                               </svg>
                             </div>
                             <div>
-                              <p className="text-sm font-bold text-amber-900">Take Over</p>
-                              <p className="text-xs text-amber-700">{prettyTaskType(type)} — assigned person hasn't completed it yet</p>
+                              <p className="text-sm font-bold text-amber-900">{t("takeOver", "Take Over")}</p>
+                              <p className="text-xs text-amber-700">{prettyTaskType(type)} — {t("takeOverDesc", "assigned person hasn't completed it yet")}</p>
                             </div>
                             <div className="ml-auto text-[10px] font-bold text-amber-600">+20%</div>
                           </button>
@@ -1099,35 +1159,44 @@ export function CleaningScheduleClient() {
           </section>
 
           {/* Opt-out section */}
-          <section className={`rounded-2xl p-5 shadow-sm ring-1 ${overview.optOut ? "bg-slate-100 ring-slate-300" : "bg-white ring-slate-200"}`}>
+          <section className={`rounded-2xl p-5 shadow-sm ring-1 ${overview.optOut || overview.contractOptOut ? "bg-slate-100 ring-slate-300" : "bg-white ring-slate-200"}`}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <div className="text-sm font-semibold text-slate-900">Cleaning Opt-out — {currentMonthLabel}</div>
-                {overview.optOut ? (
+                <div className="text-sm font-semibold text-slate-900">{t("cleaningOptOutTitle", "Cleaning Opt-out")} — {currentMonthLabel}</div>
+                {overview.contractOptOut ? (
                   <p className="mt-0.5 text-sm text-slate-600">
-                    You have opted out this month (paid via {overview.optOut.paymentMethod === "COINS" ? "150,000 coins" : "100,000 VND"}).
-                    You will not be assigned to any cleaning tasks.
+                    {t("contractCleaningOptedOut", "You are exempt from cleaning assignments for your current contract. Cleaning fee: {amount}/month.")
+                      .replace("{amount}", `${overview.contractOptOut.cleaningFeeVnd.toLocaleString(language === "vi" ? "vi-VN" : "en-US")} VND`)}
+                  </p>
+                ) : overview.optOut ? (
+                  <p className="mt-0.5 text-sm text-slate-600">
+                    {t("cleaningOptedOut", "You have opted out this month (paid via {method}). You will not be assigned to any cleaning tasks.")
+                      .replace("{method}", overview.optOut.paymentMethod === "COINS" ? "150,000 coins" : "100,000 VND")}
                   </p>
                 ) : (
                   <p className="mt-0.5 text-sm text-slate-500">
-                    Pay 100,000 VND or 150,000 coins to be exempt from all cleaning assignments this month.
+                    {t("cleaningOptOutDesc", "Pay 100,000 VND or 150,000 coins to be exempt from all cleaning assignments this month.")}
                   </p>
                 )}
               </div>
-              {overview.optOut ? (
+              {overview.contractOptOut ? (
+                <div className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700">
+                  {t("cleaningFeeActive", "Cleaning fee active")}
+                </div>
+              ) : overview.optOut ? (
                 <button
                   onClick={() => void handleCancelOptOut()}
                   disabled={optOutLoading}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60 hover:bg-white transition-colors"
                 >
-                  {optOutLoading ? "..." : "Cancel opt-out"}
+                  {optOutLoading ? "..." : t("cancelOptOut", "Cancel opt-out")}
                 </button>
               ) : (
                 <button
                   onClick={() => setOptOutModal(true)}
                   className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50 transition-colors"
                 >
-                  Opt out this month
+                  {t("optOutThisMonth", "Opt out this month")}
                 </button>
               )}
             </div>

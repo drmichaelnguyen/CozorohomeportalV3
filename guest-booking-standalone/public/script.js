@@ -94,17 +94,17 @@ function setDefaultDates() {
   els.checkOut.value = state.checkOut;
 }
 
-function setMessage(message) {
-  els.statusMessage.textContent = message || "";
+function setMessage(messageKey, params = {}) {
+  els.statusMessage.textContent = window.t(messageKey, params);
 }
 
-function setAuthMessage(message) {
-  els.authStatus.textContent = message || "";
+function setAuthMessage(messageKey, params = {}) {
+  els.authStatus.textContent = window.t(messageKey, params);
 }
 
-function setAccountMessage(message) {
+function setAccountMessage(messageKey, params = {}) {
   if (els.accountStatus) {
-    els.accountStatus.textContent = message || "";
+    els.accountStatus.textContent = window.t(messageKey, params);
   }
 }
 
@@ -125,8 +125,8 @@ function updateCancellationPolicyNote() {
   }
 
   els.cancellationPolicyNote.textContent = policy === "non_refundable"
-    ? "Only the deposit is refunded after the 24-hour grace period, but you get an extra 10% stay discount."
-    : "Full refund within 24 hours of booking, or until 48 hours before check-in. After that, only the deposit is refunded.";
+    ? window.t("cancellationNoteNonRefundable")
+    : window.t("cancellationNoteCancellable");
 }
 
 function getFieldWrapper(element) {
@@ -190,51 +190,51 @@ function validateBookingBeforeCheckout() {
     } else {
       markInvalid(element, options);
     }
-    missing.push({ element: options.scrollElement || element || options.target, label });
+    missing.push({ element: options.scrollElement || element || options.target, label: window.t(`validation${label}`) });
   };
 
   if (els.isVietnamese.value === "") {
-    addMissing(els.isVietnamese, "nationality");
+    addMissing(els.isVietnamese, "Nationality");
   }
 
   if (!els.bioSex.value) {
-    addMissing(els.bioSex, "biological sex", { wrapper: els.bioSexWrap });
+    addMissing(els.bioSex, "BioSex", { wrapper: els.bioSexWrap });
   }
 
   if (!els.branchId.value) {
-    addMissing(els.branchId, "branch");
+    addMissing(els.branchId, "Branch");
   }
 
   if (!els.checkIn.value) {
-    addMissing(els.checkIn, "check-in date");
+    addMissing(els.checkIn, "CheckIn");
   }
 
   if (!els.checkOut.value) {
-    addMissing(els.checkOut, "check-out date");
+    addMissing(els.checkOut, "CheckOut");
   }
 
   if (!state.selectedBed) {
-    addMissing(null, "bed selection", { target: els.roomsCard, scrollElement: els.roomsCard });
+    addMissing(null, "BedSelection", { target: els.roomsCard, scrollElement: els.roomsCard });
   }
 
   if (!String(els.guestName.value || "").trim()) {
-    addMissing(els.guestName, "guest name");
+    addMissing(els.guestName, "GuestName");
   }
 
   if (!String(els.guestEmail.value || "").trim()) {
-    addMissing(els.guestEmail, "guest email");
+    addMissing(els.guestEmail, "GuestEmail");
   }
 
   if (!String(els.guestPhone.value || "").trim()) {
-    addMissing(els.guestPhone, "guest phone");
+    addMissing(els.guestPhone, "GuestPhone");
   }
 
   if (state.branchId === "D2" && !els.idPhoto.files.length) {
-    addMissing(els.idPhoto, "physical ID photo", { wrapper: els.idPhotoWrap });
+    addMissing(els.idPhoto, "IdPhoto", { wrapper: els.idPhotoWrap });
   }
 
   if (!hasValidBookingSession()) {
-    addMissing(els.authEmail, "verified account", { scrollElement: els.authCard });
+    addMissing(els.authEmail, "Account", { scrollElement: els.authCard });
   }
 
   if (!missing.length) {
@@ -247,7 +247,10 @@ function validateBookingBeforeCheckout() {
   }
 
   const labels = missing.map((entry) => entry.label);
-  setMessage(`Please complete the highlighted field${labels.length > 1 ? "s" : ""}: ${labels.join(", ")}.`);
+  setMessage("pleaseCompleteFields", {
+    plural: labels.length > 1 ? (localStorage.getItem("cozoroGuestLanguage") === "vi" ? " các" : "s") : "",
+    labels: labels.join(", ")
+  });
   return false;
 }
 
@@ -390,16 +393,16 @@ function syncAuthUi() {
   }
 
   if (verified) {
-    setAuthMessage(`Signed in as ${state.authEmail}. You can now book and manage your account.`);
+    setAuthMessage("signedInAs", { email: state.authEmail });
     setAccountMessage("");
   } else if (state.authToken && state.authEmail) {
-    setAuthMessage(`Verified email: ${state.authEmail}. Create your password to finish your account.`);
-    setAccountMessage("Choose a password below to create your guest account.");
+    setAuthMessage("verifiedEmail", { email: state.authEmail });
+    setAccountMessage("accountSetupMsg");
   } else if (state.authEmail) {
-    setAuthMessage(`Email ${state.authEmail} is not verified yet for booking.`);
+    setAuthMessage("emailNotVerified", { email: state.authEmail });
     setAccountMessage("");
   } else {
-    setAuthMessage("Verify your email to unlock booking.");
+    setAuthMessage("verifyEmailUnlock");
     setAccountMessage("");
   }
 
@@ -453,7 +456,7 @@ function updateBranchOptions() {
 
   els.branchId.innerHTML = allowedBranches.length
     ? allowedBranches.map((branchId) => `<option value="${branchId}">${branchId}</option>`).join("")
-    : '<option value="">Select sex first</option>';
+    : `<option value="">${window.t("select")} ${window.t("biologicalSex")}</option>`;
   els.branchId.value = currentValue;
 }
 
@@ -494,13 +497,13 @@ function updateWizardUi() {
 
   if (els.profileStatus) {
     if (!els.isVietnamese.value && !els.bioSex.value) {
-      els.profileStatus.textContent = "Start by choosing your nationality and sex.";
+      els.profileStatus.textContent = window.t("profileStatusStart");
     } else if (els.isVietnamese.value && !els.bioSex.value) {
-      els.profileStatus.textContent = "Now choose your sex so we can show the right branch options.";
+      els.profileStatus.textContent = window.t("profileStatusNextSex");
     } else {
       const femaleVietnamese = els.isVietnamese.value === "yes" && els.bioSex.value === "female";
-      const allowedText = femaleVietnamese ? "D2 or D7" : "D7 only";
-      els.profileStatus.textContent = `You can continue to Step 2. Eligible branch: ${allowedText}.`;
+      const allowedText = femaleVietnamese ? "D2 / D7" : "D7";
+      els.profileStatus.textContent = window.t("profileStatusEligible", { allowedText });
     }
   }
 
@@ -541,8 +544,12 @@ function updateSelectedBedLabel() {
     : null;
 
   els.selectedBedLabel.textContent = selectedBed
-    ? `Bed ${selectedBed.bedNumber} (${selectedBed.bedLevel}) - ${formatCurrencyVnd(selectedBed.nightlyPrice)}/night`
-    : `Bed ${state.selectedBed}`;
+    ? window.t("bedDetails", {
+        number: selectedBed.bedNumber,
+        level: selectedBed.bedLevel,
+        price: formatCurrencyVnd(selectedBed.nightlyPrice)
+      })
+    : window.t("bedLabel", { number: state.selectedBed });
 }
 
 function formatCurrencyVnd(value) {
@@ -783,18 +790,18 @@ function updatePriceSummary(pricing) {
     return;
   }
 
-  els.priceSummary.textContent = `Total after discount: ${formatCurrencyVnd(pricing.stayTotal)} (deposit excluded)`;
+  els.priceSummary.textContent = window.t("totalAfterDiscount", { price: formatCurrencyVnd(pricing.stayTotal) });
   const rows = [
-    { label: "Total nights", value: `${pricing.nights} night${pricing.nights === 1 ? "" : "s"}` },
-    { label: "Total price", value: formatCurrencyVnd(pricing.subtotal) },
+    { label: window.t("totalNights"), value: `${pricing.nights} ${localStorage.getItem("cozoroGuestLanguage") === "vi" ? "đêm" : (pricing.nights === 1 ? "night" : "nights")}` },
+    { label: window.t("totalPrice"), value: formatCurrencyVnd(pricing.subtotal) },
     {
       label: pricing.discountPercent > 0
-        ? `Discount${pricing.cancellationDiscountPercent > 0 ? " (stay + non-refundable bonus)" : ""}`
-        : "Discount",
+        ? window.t("discountBonus")
+        : window.t("discount"),
       value: pricing.discountPercent > 0 ? `-${formatCurrencyVnd(pricing.discountAmount)}` : formatCurrencyVnd(0)
     },
-    { label: "Total after discount", value: formatCurrencyVnd(pricing.stayTotal) },
-    { label: "Nightly rate after discount", value: `${formatCurrencyVnd(pricing.nightlyRateAfterDiscount)}/night` }
+    { label: window.t("totalAfterDiscount", { price: "" }).replace(":", "").trim(), value: formatCurrencyVnd(pricing.stayTotal) },
+    { label: window.t("nightlyRateAfterDiscount"), value: `${formatCurrencyVnd(pricing.nightlyRateAfterDiscount)}/${localStorage.getItem("cozoroGuestLanguage") === "vi" ? "đêm" : "night"}` }
   ];
 
   els.priceDetails.innerHTML = rows.map((row) => `
@@ -846,7 +853,7 @@ async function loadConfig() {
   els.isVietnamese.value = "";
   els.bioSex.value = "";
   els.cancellationPolicy.value = state.cancellationPolicy;
-  els.branchId.innerHTML = '<option value="">Select nationality and sex first</option>';
+  els.branchId.innerHTML = `<option value="">${window.t("select")} ${window.t("areYouVietnamese")} / ${window.t("biologicalSex")}</option>`;
   els.branchId.value = "";
   syncBranchMode();
   updateCancellationPolicyNote();
@@ -869,8 +876,8 @@ async function loadGallery() {
     state.gallery = null;
     if (els.galleryTitle && els.galleryCaption) {
       els.galleryImage.removeAttribute("src");
-      els.galleryTitle.textContent = "Gallery unavailable";
-      els.galleryCaption.textContent = error.message || "Unable to load gallery.";
+      els.galleryTitle.textContent = window.t("galleryUnavailable");
+      els.galleryCaption.textContent = error.message || window.t("unableToLoadGallery");
       els.galleryBranchLabel.textContent = state.branchId || "D7";
       els.galleryCounter.textContent = "0 / 0";
       if (els.galleryDots) {
@@ -883,11 +890,11 @@ async function loadGallery() {
 async function sendVerificationCode() {
   const email = getAuthEmail();
   if (!email) {
-    setAuthMessage("Enter your email first.");
+    setAuthMessage("enterEmailFirst");
     return;
   }
 
-  setAuthMessage("Sending verification code...");
+  setAuthMessage("sendingCode");
 
   try {
     const response = await fetch("/api/guest-auth/request-code", {
@@ -899,9 +906,9 @@ async function sendVerificationCode() {
     if (!response.ok) {
       throw new Error(data.error || "Unable to send verification code.");
     }
-    setAuthMessage(`Verification code sent to ${email}.`);
+    setAuthMessage("codeSent", { email });
   } catch (error) {
-    setAuthMessage(error.message || "Unable to send verification code.");
+    setAuthMessage(error.message || window.t("unableToSendCode"));
   }
 }
 
@@ -910,11 +917,11 @@ async function verifyEmailCode() {
   const code = String(els.authCode.value || "").trim();
 
   if (!email || !code) {
-    setAuthMessage("Enter the email and the code.");
+    setAuthMessage("enterEmailAndCode");
     return;
   }
 
-  setAuthMessage("Verifying code...");
+  setAuthMessage("verifyingCode");
 
   try {
     const response = await fetch("/api/guest-auth/verify-code", {
@@ -928,9 +935,9 @@ async function verifyEmailCode() {
     }
     persistAuthSession(data.email, data.token, "verification");
     els.authCode.value = "";
-    setAuthMessage(`Verified ${data.email}. You can now book.`);
+    setAuthMessage("verifiedEmailNowBook", { email: data.email });
   } catch (error) {
-    setAuthMessage(error.message || "Unable to verify code.");
+    setAuthMessage(error.message || window.t("unableToVerifyCode"));
   }
 }
 
@@ -940,21 +947,21 @@ async function createGuestAccountPassword() {
   const confirmPassword = String(els.accountPasswordConfirm.value || "");
 
   if (!email || !state.authToken) {
-    setAccountMessage("Verify your email first.");
+    setAccountMessage("verifyEmailFirst");
     return;
   }
 
   if (!password || password.length < 8) {
-    setAccountMessage("Password must be at least 8 characters.");
+    setAccountMessage("passwordTooShort");
     return;
   }
 
   if (password !== confirmPassword) {
-    setAccountMessage("Passwords do not match.");
+    setAccountMessage("passwordsDoNotMatch");
     return;
   }
 
-  setAccountMessage("Creating your account...");
+  setAccountMessage("creatingAccount");
 
   try {
     const response = await fetch("/api/guest-account/create", {
@@ -973,9 +980,9 @@ async function createGuestAccountPassword() {
     persistAuthSession(data.email, data.token, "account");
     els.accountPassword.value = "";
     els.accountPasswordConfirm.value = "";
-    setAccountMessage("Account created. You are signed in with your password.");
+    setAccountMessage("accountCreatedSignedIn");
   } catch (error) {
-    setAccountMessage(error.message || "Unable to create account.");
+    setAccountMessage(error.message || window.t("unableToCreateAccount"));
   }
 }
 
@@ -984,11 +991,11 @@ async function signInWithPassword() {
   const password = String(els.accountPassword.value || "");
 
   if (!email || !password) {
-    setAccountMessage("Enter your email and password.");
+    setAccountMessage("enterEmailPassword");
     return;
   }
 
-  setAccountMessage("Signing you in...");
+  setAccountMessage("signingIn");
 
   try {
     const response = await fetch("/api/guest-account/login", {
@@ -1002,29 +1009,29 @@ async function signInWithPassword() {
     }
     persistAuthSession(data.email, data.token, "account");
     els.accountPasswordConfirm.value = "";
-    setAccountMessage("Signed in with your password.");
+    setAccountMessage("signedInPassword");
   } catch (error) {
-    setAccountMessage(error.message || "Unable to sign in.");
+    setAccountMessage(error.message || window.t("unableToSignIn"));
   }
 }
 
 function updateBookingInstructions() {
   if (state.isVietnamese && els.bioSex.value === "female" && state.branchId === "D2") {
-    setMessage("Vietnamese female guests may book D2 or D7. You can choose a bed now, then enter your contact details before payment.");
+    setMessage("instructionStep3D2VietnameseFemale");
     return;
   }
-
   if (state.isVietnamese && els.bioSex.value === "female" && state.branchId === "D7") {
-    setMessage("Vietnamese female guests may also book D7. Choose a bed first, then complete the booking details later.");
+    setMessage("instructionStep3D7VietnameseFemale");
     return;
   }
-
   if (state.isVietnamese && els.bioSex.value === "male") {
-    setMessage("Vietnamese male guests are limited to D7. Choose a bed first, then complete the booking details later.");
+    setMessage("instructionStep3D7VietnameseMale");
     return;
   }
-
-  setMessage("Foreign guests are limited to D7. Choose a bed first, then complete the booking details later.");
+  if (!state.isVietnamese) {
+    setMessage("instructionStep3D7Foreign");
+    return;
+  }
 }
 
 function renderRooms() {
@@ -1113,7 +1120,7 @@ async function loadAvailability() {
     return;
   }
 
-  setMessage("Loading available beds...");
+  setMessage("loadingAvailability");
 
   const params = new URLSearchParams({
     branchId: state.branchId,
@@ -1131,12 +1138,12 @@ async function loadAvailability() {
     state.availability = data;
     updatePriceSummary(calculatePricingPreview());
     renderRooms();
-    setMessage(data.rooms.length ? "Select one of the available beds below." : "No beds are currently available for the information entered.");
+    setMessage(data.rooms.length ? "selectAvailableBed" : "noBedsEnteredInfo");
     updateWizardUi();
   } catch (error) {
     state.availability = null;
     els.roomsGrid.innerHTML = "";
-    setMessage(error.message || "Unable to load availability.");
+    els.statusMessage.textContent = error.message || window.t("noBedsAvailable");
     updateWizardUi();
   }
 }
@@ -1158,18 +1165,18 @@ async function bookSelectedBed() {
   }
 
   if (!state.stripeConfigured) {
-    setMessage("Stripe is not configured yet on this booking site.");
+    setMessage("stripeNotConfigured");
     return;
   }
 
   if (!state.isVietnamese && state.branchId === "D2") {
-    setMessage("Foreign guests can book D7 only.");
+    setMessage("foreignGuestLimitedD7");
     return;
   }
 
   const pricingPreview = calculatePricingPreview();
   if (pricingPreview && pricingPreview.minimumStay && pricingPreview.nights < pricingPreview.minimumStay) {
-    setMessage(`Minimum stay is ${pricingPreview.minimumStay} nights.`);
+    setMessage("minimumStayError", { min: pricingPreview.minimumStay });
     return;
   }
 
@@ -1201,7 +1208,7 @@ async function bookSelectedBed() {
 
   await persistRecentGuestProfile();
 
-  setMessage("Creating secure Stripe checkout...");
+  setMessage("creatingCheckout");
 
   try {
     const response = await fetch("/api/create-checkout-session", {
@@ -1300,7 +1307,7 @@ els.bioSex.addEventListener("change", () => {
 els.idPhoto.addEventListener("change", () => {
   clearFieldInvalidState(els.idPhoto);
   if (els.idPhoto.files.length) {
-    setMessage(`Selected ID photo: ${els.idPhoto.files[0].name}`);
+    els.statusMessage.textContent = `${localStorage.getItem("cozoroGuestLanguage") === "vi" ? "Đã chọn ảnh:" : "Selected ID photo:"} ${els.idPhoto.files[0].name}`;
   } else {
     updateBookingInstructions();
   }
@@ -1320,4 +1327,13 @@ els.bookBtn.addEventListener("click", () => void bookSelectedBed());
   updateBookingInstructions();
   await loadAvailability();
 })();
+
+window.addEventListener("languageChanged", () => {
+  renderRooms();
+  updateSelectedBedLabel();
+  updatePriceSummary(calculatePricingPreview());
+  updateWizardUi();
+  updateCancellationPolicyNote();
+  updateBranchOptions();
+});
 

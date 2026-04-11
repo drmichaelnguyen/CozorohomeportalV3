@@ -12,6 +12,7 @@ import {
 } from "@prisma/client";
 
 import {
+  CONTRACT_CODE_COLUMN,
   ClientRow,
   CleaningCalendarEvent,
   createAutomaticFineForEmail,
@@ -49,6 +50,12 @@ type GenerateCleaningScheduleResult = {
   imported: CleaningTaskRecord[];
   created: CleaningTaskRecord[];
 };
+type ContractCleaningOptOutSummary = {
+  contractCode: string;
+  cleaningFeeVnd: number;
+  startDate: string | null;
+  endDate: string | null;
+};
 type CleaningAvailableUser = {
   email: string;
   name: string;
@@ -64,6 +71,8 @@ type CleaningAvailableUser = {
     scheduledDate: Date;
   }>;
 };
+
+const CONTRACT_CLEANING_FEE_VND = 100000;
 
 class CleaningAssignmentConflictError extends Error {
   conflicts: Array<{
@@ -103,6 +112,7 @@ const CLEANING_TASK_LEGACY_ASSIGNER_OMIT = {
   assignedByName: true
 } as const;
 let cleaningTaskAssignerColumnsMissing = false;
+let cleaningTaskAssignerFieldsUnsupported = false;
 
 const cleaningRewardMap: Record<CleaningTaskType, number> = {
   [CleaningTaskType.KITCHEN_D2]: 5000,
@@ -138,6 +148,20 @@ function isCleaningTaskAssignerColumnMissingError(error: unknown) {
     column.includes("CleaningTask.assignedByEmail") ||
     column.includes("CleaningTask.assignedByName")
   );
+}
+
+function isCleaningTaskAssignerUnsupportedError(error: unknown) {
+  if (!(error instanceof Prisma.PrismaClientValidationError)) {
+    return false;
+  }
+
+  const message = error.message;
+  const referencesCleaningTask =
+    message.includes("model `CleaningTask`") || message.includes("model \"CleaningTask\"");
+  const referencesAssignerField =
+    message.includes("assignedByEmail") || message.includes("assignedByName");
+
+  return referencesCleaningTask && referencesAssignerField;
 }
 
 function withLegacyCleaningTaskAssignerOmit<T extends { omit?: object | null }>(args: T): T {
@@ -252,11 +276,11 @@ async function createCleaningTask<T extends Prisma.CleaningTaskCreateArgs>(
   args: T,
   delegate: CleaningTaskDelegate = prisma.cleaningTask
 ) {
-  if (cleaningTaskAssignerColumnsMissing) {
+  if (cleaningTaskAssignerColumnsMissing || cleaningTaskAssignerFieldsUnsupported) {
     return addLegacyCleaningTaskAssignerFields(
       await delegate.create(
-        withLegacyCleaningTaskAssignerOmit(
-          stripLegacyCleaningTaskAssignerFields(args as T & { data: Record<string, unknown> })
+        stripLegacyCleaningTaskAssignerFields(
+          args as T & { data: Record<string, unknown> }
         ) as Prisma.CleaningTaskCreateArgs
       )
     ) as Prisma.CleaningTaskGetPayload<T>;
@@ -265,15 +289,18 @@ async function createCleaningTask<T extends Prisma.CleaningTaskCreateArgs>(
   try {
     return (await delegate.create(args)) as Prisma.CleaningTaskGetPayload<T>;
   } catch (error) {
-    if (!isCleaningTaskAssignerColumnMissingError(error)) {
+    if (isCleaningTaskAssignerColumnMissingError(error)) {
+      cleaningTaskAssignerColumnsMissing = true;
+    } else if (isCleaningTaskAssignerUnsupportedError(error)) {
+      cleaningTaskAssignerFieldsUnsupported = true;
+    } else {
       throw error;
     }
 
-    cleaningTaskAssignerColumnsMissing = true;
     return addLegacyCleaningTaskAssignerFields(
       await delegate.create(
-        withLegacyCleaningTaskAssignerOmit(
-          stripLegacyCleaningTaskAssignerFields(args as T & { data: Record<string, unknown> })
+        stripLegacyCleaningTaskAssignerFields(
+          args as T & { data: Record<string, unknown> }
         ) as Prisma.CleaningTaskCreateArgs
       )
     ) as Prisma.CleaningTaskGetPayload<T>;
@@ -284,11 +311,11 @@ async function updateCleaningTask<T extends Prisma.CleaningTaskUpdateArgs>(
   args: T,
   delegate: CleaningTaskDelegate = prisma.cleaningTask
 ) {
-  if (cleaningTaskAssignerColumnsMissing) {
+  if (cleaningTaskAssignerColumnsMissing || cleaningTaskAssignerFieldsUnsupported) {
     return addLegacyCleaningTaskAssignerFields(
       await delegate.update(
-        withLegacyCleaningTaskAssignerOmit(
-          stripLegacyCleaningTaskAssignerFields(args as T & { data: Record<string, unknown> })
+        stripLegacyCleaningTaskAssignerFields(
+          args as T & { data: Record<string, unknown> }
         ) as Prisma.CleaningTaskUpdateArgs
       )
     ) as Prisma.CleaningTaskGetPayload<T>;
@@ -297,15 +324,18 @@ async function updateCleaningTask<T extends Prisma.CleaningTaskUpdateArgs>(
   try {
     return (await delegate.update(args)) as Prisma.CleaningTaskGetPayload<T>;
   } catch (error) {
-    if (!isCleaningTaskAssignerColumnMissingError(error)) {
+    if (isCleaningTaskAssignerColumnMissingError(error)) {
+      cleaningTaskAssignerColumnsMissing = true;
+    } else if (isCleaningTaskAssignerUnsupportedError(error)) {
+      cleaningTaskAssignerFieldsUnsupported = true;
+    } else {
       throw error;
     }
 
-    cleaningTaskAssignerColumnsMissing = true;
     return addLegacyCleaningTaskAssignerFields(
       await delegate.update(
-        withLegacyCleaningTaskAssignerOmit(
-          stripLegacyCleaningTaskAssignerFields(args as T & { data: Record<string, unknown> })
+        stripLegacyCleaningTaskAssignerFields(
+          args as T & { data: Record<string, unknown> }
         ) as Prisma.CleaningTaskUpdateArgs
       )
     ) as Prisma.CleaningTaskGetPayload<T>;
@@ -745,8 +775,55 @@ function getAllowedTaskTypesForUser(user: ActiveCleaningUser): CleaningTaskType[
 }
 
 function isHostelShortTermCleaningUser(user: ActiveCleaningUser) {
-  const contractCode = (user.source["MÃ HD"] ?? "").trim().toUpperCase();
+  const contractCode = (user.source[CONTRACT_CODE_COLUMN] ?? "").trim().toUpperCase();
   return contractCode.startsWith("SHORTTERM-");
+}
+
+function getUserContractCode(user: Pick<ActiveCleaningUser, "source"> | null | undefined) {
+  return (user?.source?.[CONTRACT_CODE_COLUMN] ?? "").trim();
+}
+
+async function getContractCleaningOptOutByContractCode(contractCode: string) {
+  const normalizedContractCode = contractCode.trim();
+  if (!normalizedContractCode) {
+    return null;
+  }
+
+  return prisma.cleaningContractOptOut.findUnique({
+    where: { contractCode: normalizedContractCode }
+  });
+}
+
+async function getContractCleaningOptOutLookup(contractCodes: string[]) {
+  const normalizedCodes = Array.from(new Set(contractCodes.map((value) => value.trim()).filter(Boolean)));
+
+  if (normalizedCodes.length === 0) {
+    return new Map<string, ContractCleaningOptOutSummary>();
+  }
+
+  const rows = await prisma.cleaningContractOptOut.findMany({
+    where: {
+      contractCode: { in: normalizedCodes }
+    },
+    select: {
+      contractCode: true,
+      cleaningFeeVnd: true,
+      startDate: true,
+      endDate: true
+    }
+  });
+
+  return new Map(
+    rows.map((row) => [
+      row.contractCode,
+      {
+        contractCode: row.contractCode,
+        cleaningFeeVnd: row.cleaningFeeVnd,
+        startDate: row.startDate ? row.startDate.toISOString() : null,
+        endDate: row.endDate ? row.endDate.toISOString() : null
+      }
+    ])
+  );
 }
 
 function getSlotFloor(type: CleaningTaskType, floor?: number | null) {
@@ -1000,6 +1077,9 @@ async function assignTaskToUser(input: {
             rewardCoins: reassignedTask.rewardCoins,
             type: reassignedTask.type,
             status: reassignedTask.status,
+            completedAt: reassignedTask.completedAt,
+            completionNote: reassignedTask.completionNote,
+            completionPhoto: reassignedTask.completionPhoto,
             auditorNote: reassignedTask.auditorNote
           });
         } catch (error) {
@@ -1365,6 +1445,10 @@ export async function selfAssignCleaningTask(input: {
   }
 
   const selfAssignMonth = `${normalizedTaskDate.getFullYear()}-${String(normalizedTaskDate.getMonth() + 1).padStart(2, "0")}`;
+  const contractOptOut = await getContractCleaningOptOutByContractCode(getUserContractCode(user));
+  if (contractOptOut) {
+    throw new Error("You are opted out of cleaning for this contract.");
+  }
   const optOut = await prisma.cleaningOptOut.findFirst({
     where: { userEmail: normalizedEmail, month: selfAssignMonth }
   });
@@ -1457,6 +1541,13 @@ export async function checkSelfAssignCleaningTask(input: {
   }
 
   const checkMonth = `${normalizedTaskDate.getFullYear()}-${String(normalizedTaskDate.getMonth() + 1).padStart(2, "0")}`;
+  const contractOptOut = await getContractCleaningOptOutByContractCode(getUserContractCode(user));
+  if (contractOptOut) {
+    return {
+      canSubmit: false,
+      reason: "You are opted out of cleaning for this contract."
+    };
+  }
   const optOut = await prisma.cleaningOptOut.findFirst({
     where: { userEmail: normalizedEmail, month: checkMonth }
   });
@@ -1589,6 +1680,9 @@ export async function releaseCleaningTask(taskId: string, email: string) {
           rewardCoins: task.rewardCoins,
           type: task.type,
           status: task.status,
+          completedAt: task.completedAt,
+          completionNote: task.completionNote,
+          completionPhoto: task.completionPhoto,
           auditorNote: task.auditorNote
         });
       } catch (calendarError) {
@@ -1721,6 +1815,7 @@ async function buildCleaningOverviewForUser(email: string) {
   }));
 
   const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  const contractOptOut = await getContractCleaningOptOutByContractCode(getUserContractCode(user));
   const optOut = await prisma.cleaningOptOut.findFirst({
     where: { userEmail: normalizedEmail, month: currentMonth }
   });
@@ -1732,6 +1827,7 @@ async function buildCleaningOverviewForUser(email: string) {
     tasks,
     availability,
     occupiedSlots,
+    contractOptOut,
     optOut: optOut ? { month: optOut.month, paymentMethod: optOut.paymentMethod } : null,
     releasesThisMonth,
     monthlyReleaseLimit: MONTHLY_RELEASE_LIMIT
@@ -1852,6 +1948,7 @@ export async function getAvailableUsersForAdminSlot(input: {
   }
   const excludedEmails = new Set((input.excludeEmails ?? []).map((email) => email.trim().toLowerCase()));
   const activeUsers = await getActiveCleaningUsers();
+  const contractOptOutLookup = await getContractCleaningOptOutLookup(activeUsers.map((user) => getUserContractCode(user)));
   const availabilityMap = await getAvailabilityMap(normalizedDate, normalizedDate);
   const occupiedTasks = await findManyCleaningTasks({
     where: {
@@ -1875,6 +1972,9 @@ export async function getAvailableUsersForAdminSlot(input: {
 
   for (const user of activeUsers) {
     if (excludedEmails.has(user.email)) {
+      continue;
+    }
+    if (contractOptOutLookup.has(getUserContractCode(user))) {
       continue;
     }
 
@@ -1957,6 +2057,11 @@ export async function adminAssignCleaningTask(input: {
     throw new Error("Active user not found for admin assignment");
   }
 
+  const contractOptOut = await getContractCleaningOptOutByContractCode(getUserContractCode(user));
+  if (contractOptOut) {
+    throw new Error("This user is opted out of cleaning for the current contract.");
+  }
+
   const availability = await prisma.cleaningAvailability.findUnique({
     where: {
       userEmail_date: {
@@ -1995,6 +2100,8 @@ export async function adminAutoAssignCleaningSlots(input: {
 }) {
   const today = normalizeCalendarDate(new Date());
   const activeUsers = (await getActiveCleaningUsers()).filter((user) => !isHostelShortTermCleaningUser(user));
+  const contractOptOutLookup = await getContractCleaningOptOutLookup(activeUsers.map((user) => getUserContractCode(user)));
+  const eligibleActiveUsers = activeUsers.filter((user) => !contractOptOutLookup.has(getUserContractCode(user)));
   const recentTaskCounts = await getRecentTaskCounts(addDays(today, -60));
   const results: CleaningTaskRecord[] = [];
   const reservedEmails = new Set<string>();
@@ -2030,7 +2137,7 @@ export async function adminAutoAssignCleaningSlots(input: {
     }
 
     const candidates = await getAssignableCandidates(
-      activeUsers,
+      eligibleActiveUsers,
       availabilityMap,
       normalizedDate,
       input.type,
@@ -2131,6 +2238,9 @@ export async function completeCleaningTask(taskId: string, email: string, note?:
         rewardCoins: updated.rewardCoins,
         type: updated.type,
         status: CleaningTaskStatus.DONE_PENDING_AUDIT,
+        completedAt: updated.completedAt,
+        completionNote: updated.completionNote,
+        completionPhoto: updated.completionPhoto,
         auditorNote: updated.auditorNote
       });
     }
@@ -2229,7 +2339,11 @@ export async function auditCleaningTask(input: {
         rewardCoins: updatedTask.rewardCoins,
         type: updatedTask.type,
         status: updatedTask.status,
-        auditorNote: updatedTask.auditorNote
+        completedAt: updatedTask.completedAt,
+        completionNote: updatedTask.completionNote,
+        completionPhoto: updatedTask.completionPhoto,
+        auditorNote: updatedTask.auditorNote,
+        reviewedBy: input.reviewer
       });
     }
   }
@@ -2334,6 +2448,9 @@ export async function sweepOverdueCleaningTasks(now = new Date()) {
           rewardCoins: missedTask.rewardCoins,
           type: missedTask.type,
           status: missedTask.status,
+          completedAt: missedTask.completedAt,
+          completionNote: missedTask.completionNote,
+          completionPhoto: missedTask.completionPhoto,
           auditorNote: missedTask.auditorNote
         });
       }
@@ -2377,11 +2494,15 @@ export async function sweepMonthlyEvasionPenalties(now = new Date()) {
   const monthEnd = new Date(Date.UTC(prevMonthDate.getUTCFullYear(), prevMonthDate.getUTCMonth() + 1, 0, 23, 59, 59, 999));
 
   const activeUsers = await getActiveCleaningUsers();
+  const contractOptOutLookup = await getContractCleaningOptOutLookup(activeUsers.map((user) => getUserContractCode(user)));
   const knownFines = await getManagerFines();
   const results: Array<{ email: string; month: string; unavailableDays: number; releases: number }> = [];
 
   for (const user of activeUsers) {
     const email = user.email;
+    if (contractOptOutLookup.has(getUserContractCode(user))) {
+      continue;
+    }
 
     if (knownFines.some((f) => isEvasionFineForUserMonth(f.row, email, month))) {
       continue;
@@ -2477,6 +2598,47 @@ export async function getCleaningOptOutForEmail(email: string, month?: string) {
   });
 }
 
+export async function upsertContractCleaningOptOut(input: {
+  email: string;
+  branchId: string;
+  contractCode: string;
+  contractStartDate?: string;
+  contractEndDate?: string;
+  cleaningFeeVnd?: number;
+}) {
+  const normalizedEmail = input.email.trim().toLowerCase();
+  const contractCode = input.contractCode.trim();
+  if (!contractCode) {
+    throw new Error("Contract code is required for contract cleaning opt-out.");
+  }
+
+  const cleaningFeeVnd = Math.max(0, Math.trunc(input.cleaningFeeVnd ?? CONTRACT_CLEANING_FEE_VND));
+  const startDate = input.contractStartDate ? normalizeCalendarDate(input.contractStartDate) : null;
+  const endDate = input.contractEndDate ? normalizeCalendarDate(input.contractEndDate) : null;
+
+  const result = await prisma.cleaningContractOptOut.upsert({
+    where: { contractCode },
+    update: {
+      userEmail: normalizedEmail,
+      branchId: input.branchId,
+      cleaningFeeVnd,
+      startDate,
+      endDate
+    },
+    create: {
+      userEmail: normalizedEmail,
+      branchId: input.branchId,
+      contractCode,
+      cleaningFeeVnd,
+      startDate,
+      endDate
+    }
+  });
+
+  await invalidateCleaningOverviewCache(normalizedEmail);
+  return result;
+}
+
 export async function setCleaningOptOut(input: {
   email: string;
   branchId: string;
@@ -2527,6 +2689,7 @@ export async function autoScheduleCleaningTasks(horizonDays = 15) {
   const today = normalizeCalendarDate(new Date());
   const recentTaskCounts = await getRecentTaskCounts(addDays(today, -60));
   const activeUsers = (await getActiveCleaningUsers()).filter((user) => !isHostelShortTermCleaningUser(user));
+  const contractOptOutLookup = await getContractCleaningOptOutLookup(activeUsers.map((user) => getUserContractCode(user)));
   const calendarDefs = await getConfiguredCleaningCalendars();
 
   // Build slot definitions from calendar config (includes floor-specific TRASH_D7)
@@ -2628,6 +2791,7 @@ export async function autoScheduleCleaningTasksByJob(
   const maxHorizonDays = Math.max(...activeJobs.map((job) => job.horizonDays));
   const recentTaskCounts = await getRecentTaskCounts(addDays(today, -60));
   const activeUsers = (await getActiveCleaningUsers()).filter((user) => !isHostelShortTermCleaningUser(user));
+  const contractOptOutLookup = await getContractCleaningOptOutLookup(activeUsers.map((user) => getUserContractCode(user)));
 
   const optOutCache = new Map<string, Set<string>>();
   const getOptedOut = async (month: string) => {
@@ -2643,7 +2807,9 @@ export async function autoScheduleCleaningTasksByJob(
     const date = addDays(today, d);
     const month = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
     const optedOut = await getOptedOut(month);
-    const eligibleUsers = activeUsers.filter((u) => !optedOut.has(u.email));
+    const eligibleUsers = activeUsers.filter(
+      (u) => !optedOut.has(u.email) && !contractOptOutLookup.has(getUserContractCode(u))
+    );
 
     const dayTasks = await findManyCleaningTasks({
       where: {

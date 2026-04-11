@@ -16,6 +16,7 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
   const { language, setLanguage, t } = usePortalLanguage();
   const { sessionEmail, sessionRole, isLoggedIn, isSessionLoaded, logout } = usePortalSession();
   const pathname = usePathname();
+  const isPublicStandalonePage = pathname === "/client-login" || pathname === "/register";
   const isLoginPage = pathname === "/client-login";
   const isStaffSession = isLoggedIn && !!sessionRole && ["manager", "owner", "app_admin", "mechanic"].includes(sessionRole);
   const isManagerWorkspace = pathname.startsWith("/manager") || pathname.startsWith("/admin-cleaning");
@@ -109,7 +110,7 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
         </div>
       </header>
       <main className="mx-auto max-w-5xl px-4 py-6 pb-32 sm:px-6 sm:pt-10 sm:pb-40">
-        {!isSessionLoaded ? null : isLoggedIn || isLoginPage ? (
+        {!isSessionLoaded ? null : isLoggedIn || isPublicStandalonePage ? (
           children
         ) : (
           <div className="space-y-6">

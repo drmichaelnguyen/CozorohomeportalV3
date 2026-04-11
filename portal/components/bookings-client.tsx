@@ -832,13 +832,15 @@ export function BookingsClient() {
                 </div>
                 {allowance.floor ? (
                   <div className="mt-1">
-                    Floor: <span className="font-medium">{allowance.floor}</span>
+                    {language === "vi" ? "Tầng" : "Floor"}: <span className="font-medium">{allowance.floor}</span>
                   </div>
                 ) : null}
                 <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-slate-500">
-                  {allowance.notes.map((note) => (
-                    <li key={note}>{note}</li>
-                  ))}
+                  {allowance.notes.map((note) => {
+                    const parts = note.split(" / ");
+                    const display = language === "vi" && parts.length >= 2 ? parts.slice(1).join(" / ") : parts[0] ?? note;
+                    return <li key={note}>{display}</li>;
+                  })}
                 </ul>
               </div>
             ) : null}
@@ -851,7 +853,7 @@ export function BookingsClient() {
                 disabled={loading || machines.length === 0}
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
               >
-                {machines.length === 0 ? <option value="">No machines available</option> : null}
+                {machines.length === 0 ? <option value="">{language === "vi" ? "Không có máy" : "No machines available"}</option> : null}
                 {machines.map((machine) => (
                   <option key={machine.id} value={machine.id}>
                     {machine.label} ({formatDuration(machine.durationMinutes)})

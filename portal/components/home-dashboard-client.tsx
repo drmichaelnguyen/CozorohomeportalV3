@@ -26,8 +26,9 @@ type LaundryBooking = {
 type CleaningTask = {
   id: string;
   scheduledDate: string;
-  type: string;
-  status: string;
+  type: "KITCHEN_D2" | "KITCHEN_D7" | "TRASH_D7";
+  status: "ASSIGNED" | "DONE_PENDING_AUDIT" | "APPROVED" | "REJECTED" | "MISSED";
+  rewardCoins: number;
 };
 
 type CleaningOverview = {
@@ -84,48 +85,6 @@ type MaintenanceTicket = {
 const FINE_AMOUNT_COLUMN = "CHI PH\u00cd THANH TO\u00c1N CHO VI PH\u1ea0M";
 const COINS_COLUMN = "COINS";
 const COIN_EVENT_COLUMN = "S\u1ef0 KI\u1ec6N";
-
-const quickLinks = [
-  {
-    href: "/service/laundry",
-    label: "Laundry Booking",
-    labelKey: "laundryBooking",
-    description: "Schedule your next laundry session.",
-    descriptionKey: "laundryBookingDesc"
-  },
-  {
-    href: "/cleaning-schedule",
-    label: "Cleaning Schedule",
-    labelKey: "cleaningSchedule",
-    description: "View and assign cleaning tasks.",
-    descriptionKey: "cleaningScheduleDesc"
-  },
-  {
-    href: "/support",
-    label: "Support Center",
-    labelKey: "supportCenter",
-    description: "Get help or report an issue.",
-    descriptionKey: "supportCenterDesc"
-  },
-  {
-    href: "/billings/fine",
-    label: "Fine Tickets",
-    labelKey: "fineTickets",
-    description: "Review and pay your fine tickets.",
-    descriptionKey: "fineTicketsDesc"
-  }
-];
-
-const QUICK_LINK_HELP: Record<string, string> = {
-  "/service/laundry":
-    "Laundry booking lets residents reserve machine time in advance so usage stays orderly and fair.\n\nThis aligns with Cozorohome policy by limiting use to valid booking windows and respecting automatic feature locks when rent or contract rules are not met.",
-  "/cleaning-schedule":
-    "Cleaning Schedule shows assigned cleaning duties and upcoming dates.\n\nThis aligns with Cozorohome policy by making shared-house responsibilities visible and helping residents complete required tasks on time.",
-  "/support":
-    "Support Center is the official place to message staff about room issues, billing questions, or general help.\n\nThis aligns with Cozorohome policy by keeping support communication traceable and tied to the resident account.",
-  "/billings/fine":
-    "Fine Tickets shows active fines and their payment status.\n\nThis aligns with Cozorohome policy by making violations, charges, and outstanding balances transparent before they affect account access."
-};
 
 const DASHBOARD_HELP = {
   rent:
@@ -209,6 +168,52 @@ function prettyTaskType(type: string): string {
 
 function formatCoins(value: number): string {
   return new Intl.NumberFormat().format(value);
+}
+
+function startOfDay(date: Date) {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function getCleaningCompletionWindow(task: { type: CleaningTask["type"]; scheduledDate: string }) {
+  const dayStart = startOfDay(new Date(task.scheduledDate));
+  const windowStart = new Date(dayStart);
+  const windowEnd = new Date(dayStart);
+
+  if (task.type === "KITCHEN_D7") {
+    windowStart.setHours(17, 0, 0, 0);
+    windowEnd.setHours(23, 0, 0, 0);
+    return { windowStart, windowEnd, label: "17:00 to 23:00 on the assigned date" };
+  }
+
+  windowStart.setHours(0, 0, 0, 0);
+  windowEnd.setHours(23, 59, 59, 999);
+  return { windowStart, windowEnd, label: "any time on the assigned date" };
+}
+
+function canCompleteCleaningTaskNow(task: { type: CleaningTask["type"]; scheduledDate: string }) {
+  const { windowStart, windowEnd } = getCleaningCompletionWindow(task);
+  const now = new Date();
+  return now >= windowStart && now <= windowEnd;
+}
+
+function canCompleteCleaningTaskLate(task: { type: CleaningTask["type"]; scheduledDate: string }) {
+  const { windowEnd } = getCleaningCompletionWindow(task);
+  const lateEnd = new Date(windowEnd.getTime() + 10 * 60 * 60 * 1000);
+  const now = new Date();
+  return now > windowEnd && now <= lateEnd;
+}
+
+function getCleaningLateDeadline(task: { type: CleaningTask["type"]; scheduledDate: string }) {
+  const { windowEnd } = getCleaningCompletionWindow(task);
+  return new Date(windowEnd.getTime() + 10 * 60 * 60 * 1000);
+}
+
+function getNextCleaningTask(tasks: CleaningTask[]) {
+  return [...tasks]
+    .filter((task) => task.status === "ASSIGNED" && getCleaningLateDeadline(task).getTime() >= Date.now())
+    .sort((left, right) => left.scheduledDate.localeCompare(right.scheduledDate))[0] ?? null;
 }
 
 export function HomeDashboardClient() {
@@ -349,13 +354,7 @@ export function HomeDashboardClient() {
     [laundryBookings]
   );
 
-  const nextCleaning = useMemo(
-    () =>
-      [...(cleaningOverview?.tasks ?? [])]
-        .filter((task) => new Date(task.scheduledDate).getTime() >= Date.now())
-        .sort((left, right) => left.scheduledDate.localeCompare(right.scheduledDate))[0] ?? null,
-    [cleaningOverview]
-  );
+  const nextCleaning = useMemo(() => getNextCleaningTask(cleaningOverview?.tasks ?? []), [cleaningOverview]);
 
   const unpaidFineSummary = useMemo(() => {
     const unpaidEntries = fineEntries.filter((entry) => !entry.coinPayment.isPaid);
@@ -669,31 +668,118 @@ export function HomeDashboardClient() {
         </section>
       ) : (
         <div className="space-y-6 animate-in fade-in duration-700">
-          {!isExpired ? (
-            <section className="-mx-4 overflow-x-auto px-4 pb-1 hide-scrollbar sm:mx-0 sm:px-0">
-              <div className="flex min-w-max gap-3">
-                {quickLinks.map((link) => (
-                  <div
-                    key={link.href}
-                    className="w-48 shrink-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <Link href={link.href} className="text-sm font-semibold text-slate-900">
-                        {t(link.labelKey, link.label)}
-                      </Link>
-                      <InlineHelp
-                        label={`How ${link.label} works`}
-                        title={link.label}
-                        body={QUICK_LINK_HELP[link.href] ?? ""}
-                        panelClassName="right-0"
-                      />
-                    </div>
-                    <div className="mt-2 text-xs leading-5 text-slate-600">{t(link.descriptionKey, link.description)}</div>
-                  </div>
-                ))}
+          <section className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr_1.05fr]">
+            <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold text-slate-900">{t("briefUserInfo", "Brief User Info")}</h2>
+                {!isExpired && (
+                  <Link href="/account-overview" className="text-sm font-medium text-sky-800">
+                    {t("openFullAccount", "Open full account")}
+                  </Link>
+                )}
               </div>
-            </section>
-          ) : null}
+              <div className="mt-4 space-y-3 text-sm text-slate-700">
+                <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("name", "Name")}</div>
+                  <div className="mt-1 font-medium text-slate-900">{client?.["TÃªn"] || "-"}</div>
+                </div>
+                <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("branch", "Branch")}</div>
+                  <div className="mt-1 font-medium text-slate-900">
+                    {[client?.["Chi nhÃ¡nh Cozoro dorm"] || "-", roomLabel ? `${t("roomLabel", "Room")} ${roomLabel}` : null, bedLabel !== "-" ? `${t("bedNumber", "Bed")} ${bedLabel}` : null]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </div>
+                </div>
+                <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("emailLabel", "Email")}</div>
+                  <div className="mt-1 break-all font-medium text-slate-900">{client?.["Äá»‹a chá»‰ email"] || sessionEmail || "-"}</div>
+                </div>
+              </div>
+            </div>
+
+            {!isExpired && (
+              <div className="rounded-3xl border border-sky-200 bg-sky-50 p-5 shadow-sm sm:p-6">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-lg font-semibold text-slate-900">{t("nextLaundry", "Next Laundry")}</h2>
+                    <InlineHelp
+                      label="How next laundry works"
+                      title="Next Laundry"
+                      body={DASHBOARD_HELP.nextLaundry}
+                    />
+                  </div>
+                  <Link href="/service/laundry" className="text-sm font-medium text-sky-800">
+                    {t("openLaundry", "Open laundry")}
+                  </Link>
+                </div>
+
+                {!nextLaundry ? (
+                  <p className="mt-5 text-sm text-slate-600">{t("noUpcomingLaundry", "No upcoming laundry booking is scheduled.")}</p>
+                ) : (
+                  <div className="mt-5 space-y-3">
+                    <div className="text-sm font-semibold uppercase tracking-[0.24em] text-sky-700">{t("today", "Today")}</div>
+                    <div className="text-xl font-semibold text-slate-900">
+                      {new Date(nextLaundry.start).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+                    </div>
+                    <div className="text-base font-semibold text-slate-900">{nextLaundry.summary || nextLaundry.calendarSummary}</div>
+                    <div className="text-sm text-slate-600">
+                      {new Date(nextLaundry.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} to {new Date(nextLaundry.end).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className={`rounded-3xl border border-amber-200 bg-amber-50 p-5 shadow-sm sm:p-6 ${isExpired ? "lg:col-span-2" : ""}`}>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold text-slate-900">{t("nextCleaning", "Next Cleaning")}</h2>
+                {!isExpired && (
+                  <Link href="/cleaning-schedule" className="text-sm font-medium text-amber-800">
+                    {t("openCleaning", "Open cleaning")}
+                  </Link>
+                )}
+              </div>
+
+              {!nextCleaning ? (
+                <p className="mt-5 text-sm text-slate-600">{t("clearForNow", "You are clear for now.")}</p>
+              ) : (
+                <div className="mt-5 space-y-3">
+                  <div className="text-sm font-semibold uppercase tracking-[0.24em] text-amber-700">
+                    {canCompleteCleaningTaskLate(nextCleaning)
+                      ? t("due", "Due")
+                      : canCompleteCleaningTaskNow(nextCleaning)
+                        ? t("today", "Today")
+                        : t("scheduled", "Scheduled")}
+                  </div>
+                  <div className="text-xl font-semibold text-slate-900">
+                    {new Date(nextCleaning.scheduledDate).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+                  </div>
+                  <div className="text-base font-semibold text-slate-900">{prettyTaskType(nextCleaning.type)}</div>
+                  <div className="text-sm text-slate-600">
+                    {canCompleteCleaningTaskLate(nextCleaning)
+                      ? `${t("lateReward", "Late reward")}: +${formatCoins(Math.floor(nextCleaning.rewardCoins * 0.5))} ${t("coins", "Coins")}`
+                      : `+${formatCoins(nextCleaning.rewardCoins)} ${t("coins", "Coins")}`}
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <details className="group rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">{t("moreDetails", "More Details")}</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {t("moreDetailsDesc", "Payment, support, maintenance, fines, and coin details are here if you need them.")}
+                </p>
+              </div>
+              <div className="rounded-full bg-slate-100 p-2 text-slate-500 transition group-open:rotate-180">
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+            </summary>
 
           <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {!isExpired && (
@@ -727,7 +813,9 @@ export function HomeDashboardClient() {
             <div className={`rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm ${isExpired ? "sm:col-span-2 xl:col-span-1" : ""}`}>
               <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">{t("nextCleaning", "Next Cleaning")}</div>
               <div className="mt-3 text-lg font-semibold text-slate-900">
-                {nextCleaning ? new Date(nextCleaning.scheduledDate).toLocaleDateString() : t("noUpcomingTask", "No upcoming task")}
+                {nextCleaning
+                  ? new Date(nextCleaning.scheduledDate).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })
+                  : t("noUpcomingTask", "No upcoming task")}
               </div>
               <div className="mt-2 text-sm text-slate-600">
                 {nextCleaning ? `${prettyTaskType(nextCleaning.type)} · ${nextCleaning.status}` : t("clearForNow", "You are clear for now.")}
@@ -1003,6 +1091,7 @@ export function HomeDashboardClient() {
               </div>
             </section>
           )}
+          </details>
         </div>
       )}
 

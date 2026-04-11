@@ -10,6 +10,7 @@ import {
   parseUpgradeCoins
 } from "../lib/cozoro-member";
 import { API_BASE_URL } from "../lib/api-base-url";
+import { APP_VERSION } from "../lib/app-version";
 import { parseVietnamDate } from "../lib/contract-utils";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
@@ -41,6 +42,7 @@ type CleaningTask = {
   type: "KITCHEN_D2" | "KITCHEN_D7" | "TRASH_D7";
   scheduledDate: string;
   status: "ASSIGNED" | "DONE_PENDING_AUDIT" | "APPROVED" | "REJECTED" | "MISSED";
+  rewardCoins: number;
 };
 
 type CleaningOverview = {
@@ -185,6 +187,40 @@ function deriveRoomLabel(branchId: "D2" | "D7", bedValue: string | undefined) {
   return "";
 }
 
+function getCleaningCompletionWindow(task: { type: CleaningTask["type"]; scheduledDate: string }) {
+  const dayStart = startOfDay(new Date(task.scheduledDate));
+  const windowStart = new Date(dayStart);
+  const windowEnd = new Date(dayStart);
+
+  if (task.type === "KITCHEN_D7") {
+    windowStart.setHours(17, 0, 0, 0);
+    windowEnd.setHours(23, 0, 0, 0);
+    return { windowStart, windowEnd, label: "17:00 to 23:00 on the assigned date" };
+  }
+
+  windowStart.setHours(0, 0, 0, 0);
+  windowEnd.setHours(23, 59, 59, 999);
+  return { windowStart, windowEnd, label: "any time on the assigned date" };
+}
+
+function canCompleteCleaningTaskNow(task: { type: CleaningTask["type"]; scheduledDate: string }) {
+  const { windowStart, windowEnd } = getCleaningCompletionWindow(task);
+  const now = new Date();
+  return now >= windowStart && now <= windowEnd;
+}
+
+function canCompleteCleaningTaskLate(task: { type: CleaningTask["type"]; scheduledDate: string }) {
+  const { windowEnd } = getCleaningCompletionWindow(task);
+  const lateEnd = new Date(windowEnd.getTime() + 10 * 60 * 60 * 1000);
+  const now = new Date();
+  return now > windowEnd && now <= lateEnd;
+}
+
+function getCleaningLateDeadline(task: { type: CleaningTask["type"]; scheduledDate: string }) {
+  const { windowEnd } = getCleaningCompletionWindow(task);
+  return new Date(windowEnd.getTime() + 10 * 60 * 60 * 1000);
+}
+
 export function AccountOverviewClient() {
   const { t, language, setLanguage } = usePortalLanguage();
   const { sessionEmail, isLoggedIn, login } = usePortalSession();
@@ -211,6 +247,7 @@ export function AccountOverviewClient() {
   const [showMemberRuleHelp, setShowMemberRuleHelp] = useState(false);
   const [selectedUpgradeMember, setSelectedUpgradeMember] = useState("");
   const [upgradingMember, setUpgradingMember] = useState(false);
+  const [completingCleaningTaskId, setCompletingCleaningTaskId] = useState("");
   const [payments, setPayments] = useState<PaymentEntry[]>([]);
   const [fines, setFines] = useState<FineEntry[]>([]);
   
@@ -457,6 +494,41 @@ export function AccountOverviewClient() {
     }
   }
 
+  async function markCleaningTaskDone(taskId: string) {
+    if (!activeEmail) {
+      setMessage("Enter your email first.");
+      return;
+    }
+
+    setCompletingCleaningTaskId(taskId);
+    setMessage("");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/cleaning/tasks/${taskId}/complete`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          email: activeEmail
+        })
+      });
+      const payload = (await response.json()) as { error?: string };
+
+      if (!response.ok) {
+        setMessage(payload.error ?? "Unable to mark task done.");
+        return;
+      }
+
+      await loadAccountData();
+      setMessage("Task marked done and sent for audit.");
+    } catch {
+      setMessage("Unable to mark task done right now.");
+    } finally {
+      setCompletingCleaningTaskId("");
+    }
+  }
+
   const shownFields = clientWithDerivedRoom
     ? overviewFields
         .filter((field) => clientWithDerivedRoom[field])
@@ -605,9 +677,8 @@ export function AccountOverviewClient() {
       .sort((left, right) => left.start.localeCompare(right.start))[0] ?? null;
   }, [laundryBookings]);
   const nextCleaningTask = useMemo(() => {
-    const now = Date.now();
     return [...(cleaningOverview?.tasks ?? [])]
-      .filter((task) => new Date(task.scheduledDate).getTime() >= now)
+      .filter((task) => task.status === "ASSIGNED" && getCleaningLateDeadline(task).getTime() >= Date.now())
       .sort((left, right) => left.scheduledDate.localeCompare(right.scheduledDate))[0] ?? null;
   }, [cleaningOverview]);
   const memberProgram = useMemo(
@@ -781,6 +852,40 @@ export function AccountOverviewClient() {
                     ? `${nextCleaningTask.type} - ${new Date(nextCleaningTask.scheduledDate).toLocaleDateString()}`
                     : "No upcoming cleaning task"}
                 </div>
+                {nextCleaningTask ? (
+                  <>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                      <span className={`rounded-full px-2 py-1 font-semibold ${canCompleteCleaningTaskLate(nextCleaningTask) ? "bg-rose-100 text-rose-700" : canCompleteCleaningTaskNow(nextCleaningTask) ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-700"}`}>
+                        {canCompleteCleaningTaskLate(nextCleaningTask) ? "Due" : canCompleteCleaningTaskNow(nextCleaningTask) ? "Today" : "Scheduled"}
+                      </span>
+                      <span className="font-semibold text-amber-800">
+                        +{new Intl.NumberFormat().format(canCompleteCleaningTaskLate(nextCleaningTask) ? Math.round(nextCleaningTask.rewardCoins * 0.5) : nextCleaningTask.rewardCoins)} Coins
+                      </span>
+                    </div>
+                    <div className="mt-2 text-xs text-slate-600">
+                      {canCompleteCleaningTaskLate(nextCleaningTask)
+                        ? `Late window is open until ${getCleaningLateDeadline(nextCleaningTask).toLocaleString()}.`
+                        : canCompleteCleaningTaskNow(nextCleaningTask)
+                          ? `Mark done is open during ${getCleaningCompletionWindow(nextCleaningTask).label}.`
+                          : `Mark done opens during ${getCleaningCompletionWindow(nextCleaningTask).label}.`}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void markCleaningTaskDone(nextCleaningTask.id)}
+                      disabled={
+                        completingCleaningTaskId === nextCleaningTask.id ||
+                        (!canCompleteCleaningTaskNow(nextCleaningTask) && !canCompleteCleaningTaskLate(nextCleaningTask))
+                      }
+                      className={`mt-3 w-full rounded-lg px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:bg-slate-300 ${canCompleteCleaningTaskLate(nextCleaningTask) ? "bg-amber-600 hover:bg-amber-700" : "bg-slate-900 hover:bg-slate-800"}`}
+                    >
+                      {completingCleaningTaskId === nextCleaningTask.id
+                        ? "Submitting..."
+                        : canCompleteCleaningTaskLate(nextCleaningTask)
+                          ? "Mark done (late - 50% coins)"
+                          : "Mark done"}
+                    </button>
+                  </>
+                ) : null}
               </div>
 
               <div className="rounded-xl border border-slate-200 p-4">
@@ -1570,6 +1675,9 @@ export function AccountOverviewClient() {
                 ? "Đây là phiên bản thay thế cho ứng dụng web CozoroHome 7 năm tuổi vốn đã trở nên chậm chạp theo thời gian. Ứng dụng mới được xây dựng với hiệu suất cao, hệ thống tự động hóa tiên tiến và trải nghiệm sống hiện đại cho cư dân."
                 : "This app is the replacement for the 7-year-old CozoroHome web app, which had become slow over time. It was built for speed, high automation, and a modern living experience for residents."}
             </p>
+            <div className="mt-3 inline-flex rounded-full border border-sky-200 bg-white px-3 py-1 text-xs font-semibold text-sky-700 shadow-sm">
+              {language === "vi" ? `Phiên bản ứng dụng: v${APP_VERSION}` : `App version: v${APP_VERSION}`}
+            </div>
             <div className="mt-5 flex items-start gap-4">
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sky-700 text-xl font-bold select-none">T</div>
               <div>
