@@ -597,6 +597,10 @@ export function RegisterFormClient() {
     [autoPassDiscounts]
   );
 
+  // Recurring discounts apply every month; one-time discounts apply only for durationMonths months
+  const recurringDiscounts = eligibleDiscounts.filter((d) => d.durationMonths == null);
+  const oneTimeDiscounts = eligibleDiscounts.filter((d) => d.durationMonths != null);
+  const totalRecurringDiscount = recurringDiscounts.reduce((sum, d) => sum + d.amountVnd, 0);
   const totalMonthlyDiscount = eligibleDiscounts.reduce((sum, d) => sum + d.amountVnd, 0);
 
   const selectedBedCleaningOptOutFee = selectedBed?.pricing.cleaningOptOutFeeVnd ?? 100000;
@@ -605,44 +609,47 @@ export function RegisterFormClient() {
     if (!selectedBed) return 0;
     return Math.round(selectedBed.pricing.monthlyPrice * tenureSurchargeRate);
   }, [selectedBed, tenureSurchargeRate]);
-  // Payment frequency discount: 3-month = flat -500000 total (i.e. -500000/3 per month effectively shown at checkout), 6-month = 7th month free
-  // We show the effective monthly equivalent discount
-  const paymentFreqMonthlyDiscount = useMemo(() => {
-    if (!selectedBed) return 0;
-    const base = Math.max(0, selectedBed.pricing.monthlyPrice - totalMonthlyDiscount);
-    if (form.paymentFrequency.includes("06")) return Math.round(base / 6); // 7th free = 1/6 of one month
-    if (form.paymentFrequency.includes("03")) return Math.round(500000 / 3); // 500k spread over 3 months
-    return 0;
-  }, [selectedBed, form.paymentFrequency, totalMonthlyDiscount]);
-
   const pricingSummary = selectedBed
-    ? {
-        monthlyPrice: selectedBed.pricing.monthlyPrice,
-        deposit: selectedBed.pricing.deposit,
-        discountedMonthlyPrice: Math.max(0, selectedBed.pricing.monthlyPrice - totalMonthlyDiscount),
-        cleaningFee: form.contractCleaningOptOut ? selectedBedCleaningOptOutFee : 0,
-        parkingFee: form.hasMotorbike ? selectedBedParkingFee : 0,
-        paymentFreqMonthlyDiscount,
-        tenureSurchargeVnd,
-        tenureSurchargeRate,
-        monthlyTotal: Math.max(0, selectedBed.pricing.monthlyPrice - totalMonthlyDiscount - paymentFreqMonthlyDiscount) +
-          tenureSurchargeVnd +
-          (form.contractCleaningOptOut ? selectedBedCleaningOptOutFee : 0) +
-          (form.hasMotorbike ? selectedBedParkingFee : 0),
-        firstPayment: (() => {
-          const multiplier = getFirstPaymentMultiplier(form.paymentFrequency);
-          const base = Math.max(0, selectedBed.pricing.monthlyPrice - totalMonthlyDiscount);
-          const parkFee = form.hasMotorbike ? selectedBedParkingFee : 0;
-          const cleanFee = form.contractCleaningOptOut ? selectedBedCleaningOptOutFee : 0;
-          // 3-month: subtract 500k once; 6-month: subtract 1 month of base
-          const freqDiscount = form.paymentFrequency.includes("06")
-            ? base
-            : form.paymentFrequency.includes("03")
-              ? 500000
-              : 0;
-          return (base + tenureSurchargeVnd + parkFee + cleanFee) * multiplier - freqDiscount + selectedBed.pricing.deposit;
-        })()
-      }
+    ? (() => {
+        const discountedMonthlyPrice = Math.max(0, selectedBed.pricing.monthlyPrice - totalRecurringDiscount);
+        const parkingFee = form.hasMotorbike ? selectedBedParkingFee : 0;
+        const cleaningFee = form.contractCleaningOptOut ? selectedBedCleaningOptOutFee : 0;
+        // Full recurring monthly cost (bed after recurring discounts + fees)
+        const monthlyRecurringTotal = discountedMonthlyPrice + tenureSurchargeVnd + parkingFee + cleaningFee;
+        // Payment frequency discount spread over months for average display:
+        // 6-month plan: pay 6 months, 7th free → discount = 1 full month / 6
+        // 3-month plan: flat 500k off
+        const paymentFreqMonthlyDiscount = form.paymentFrequency.includes("06")
+          ? Math.round(monthlyRecurringTotal / 6)
+          : form.paymentFrequency.includes("03")
+            ? Math.round(500000 / 3)
+            : 0;
+        const multiplier = getFirstPaymentMultiplier(form.paymentFrequency);
+        const oneTimeFlatDiscount = oneTimeDiscounts.reduce(
+          (sum, d) => sum + d.amountVnd * Math.min(d.durationMonths!, multiplier),
+          0
+        );
+        // 6-month: 7th month free = subtract full monthly total once; 3-month: flat 500k
+        const freqDiscount = form.paymentFrequency.includes("06")
+          ? monthlyRecurringTotal
+          : form.paymentFrequency.includes("03")
+            ? 500000
+            : 0;
+        return {
+          monthlyPrice: selectedBed.pricing.monthlyPrice,
+          deposit: selectedBed.pricing.deposit,
+          discountedMonthlyPrice,
+          cleaningFee,
+          parkingFee,
+          paymentFreqMonthlyDiscount,
+          tenureSurchargeVnd,
+          tenureSurchargeRate,
+          oneTimeDiscounts,
+          // Average monthly cost = recurring total minus the freq discount spread
+          monthlyTotal: monthlyRecurringTotal - paymentFreqMonthlyDiscount,
+          firstPayment: monthlyRecurringTotal * multiplier - oneTimeFlatDiscount - freqDiscount + selectedBed.pricing.deposit,
+        };
+      })()
     : null;
 
   async function uploadIdScan(file: File): Promise<string> {
@@ -1103,7 +1110,7 @@ export function RegisterFormClient() {
                                 <span className={`text-sm font-semibold ${claimed ? "text-emerald-800" : "text-slate-800"}`}>{d.label}</span>
                                 {d.labelVi && <span className={`ml-1.5 text-sm ${claimed ? "text-emerald-700" : "text-slate-500"}`}>— {d.labelVi}</span>}
                               </div>
-                              <span className={`text-sm font-semibold ${claimed ? "text-emerald-700" : "text-slate-500"}`}>−{formatCurrency(d.amountVnd)}{t.perMonth}</span>
+                              <span className={`text-sm font-semibold ${claimed ? "text-emerald-700" : "text-slate-500"}`}>−{formatCurrency(d.amountVnd)}{d.durationMonths == null ? t.perMonth : ""}</span>
                             </div>
                             <p className="mt-0.5 text-xs text-slate-500">{d.description}{d.descriptionVi ? ` / ${d.descriptionVi}` : ""}</p>
                             <ul className="mt-1 space-y-0.5">
@@ -1128,7 +1135,7 @@ export function RegisterFormClient() {
                             <span className="font-semibold text-emerald-800">{d.label}</span>
                             {d.labelVi && <span className="ml-1.5 text-sm text-emerald-700">— {d.labelVi}</span>}
                           </div>
-                          <span className="font-semibold text-emerald-700">−{formatCurrency(d.amountVnd)}{t.perMonth}</span>
+                          <span className="font-semibold text-emerald-700">−{formatCurrency(d.amountVnd)}{d.durationMonths == null ? t.perMonth : ""}</span>
                         </div>
                         <p className="mt-1 text-xs text-emerald-600">{d.description}{d.descriptionVi ? ` / ${d.descriptionVi}` : ""}</p>
                         {d.durationMonths != null && (
@@ -1195,18 +1202,42 @@ export function RegisterFormClient() {
                   </div>
                   {showFirstPaymentDetail ? (() => {
                     const multiplier = getFirstPaymentMultiplier(form.paymentFrequency);
-                    const base = Math.max(0, pricingSummary.monthlyPrice - (pricingSummary.monthlyPrice - pricingSummary.discountedMonthlyPrice));
-                    const freqDiscount = form.paymentFrequency.includes("06") ? base : form.paymentFrequency.includes("03") ? 500000 : 0;
+                    const is6Month = form.paymentFrequency.includes("06");
+                    const is3Month = form.paymentFrequency.includes("03");
+                    // For 6-month plan: display as ×7 months − 1 free month (net = ×6 paid)
+                    const displayMultiplier = is6Month ? 7 : multiplier;
                     const monthlyBeforeFreq = pricingSummary.discountedMonthlyPrice + pricingSummary.tenureSurchargeVnd + pricingSummary.parkingFee + pricingSummary.cleaningFee;
+                    const oneTimeFlatDiscount = pricingSummary.oneTimeDiscounts.reduce(
+                      (sum, d) => sum + d.amountVnd * Math.min(d.durationMonths!, multiplier),
+                      0
+                    );
+                    const recurringNames = recurringDiscounts.map((d) => lang === "vi" && d.labelVi ? d.labelVi : d.label).join(", ");
                     return (
                       <div className="mt-3 space-y-1.5 border-t border-slate-200 pt-3 text-xs text-slate-600">
                         <p className="font-semibold text-slate-700 text-xs uppercase tracking-wide mb-2">{lang === "vi" ? "Cách tính" : "Breakdown"}</p>
-                        <div className="flex justify-between"><span>{lang === "vi" ? "Giá giường (sau giảm giá)" : "Bed price (after discounts)"}</span><span className="font-medium">{formatCurrency(pricingSummary.discountedMonthlyPrice)}</span></div>
+                        <div className="flex justify-between">
+                          <span>
+                            {lang === "vi" ? "Giá giường" : "Bed price"}{" "}
+                            {recurringDiscounts.length > 0 && (
+                              <span className="text-emerald-600">
+                                {lang === "vi"
+                                  ? `(−${formatCurrency(totalRecurringDiscount)}/tháng: ${recurringNames})`
+                                  : `(−${formatCurrency(totalRecurringDiscount)}/mo: ${recurringNames})`}
+                              </span>
+                            )}
+                          </span>
+                          <span className="font-medium">{formatCurrency(pricingSummary.discountedMonthlyPrice)}</span>
+                        </div>
                         {pricingSummary.tenureSurchargeVnd > 0 && <div className="flex justify-between text-amber-700"><span>{lang === "vi" ? "Phụ thu hợp đồng ngắn hạn" : "Short-stay surcharge"}</span><span className="font-medium">+{formatCurrency(pricingSummary.tenureSurchargeVnd)}</span></div>}
                         {pricingSummary.parkingFee > 0 && <div className="flex justify-between"><span>{lang === "vi" ? "Phí gửi xe" : "Parking fee"}</span><span className="font-medium">+{formatCurrency(pricingSummary.parkingFee)}</span></div>}
                         {pricingSummary.cleaningFee > 0 && <div className="flex justify-between"><span>{lang === "vi" ? "Phí vệ sinh" : "Cleaning fee"}</span><span className="font-medium">+{formatCurrency(pricingSummary.cleaningFee)}</span></div>}
-                        <div className="flex justify-between border-t border-slate-200 pt-1.5 font-medium text-slate-700"><span>{lang === "vi" ? `Tổng/tháng × ${multiplier} tháng` : `Monthly total × ${multiplier} month${multiplier > 1 ? "s" : ""}`}</span><span>{formatCurrency(monthlyBeforeFreq)} × {multiplier} = {formatCurrency(monthlyBeforeFreq * multiplier)}</span></div>
-                        {freqDiscount > 0 && <div className="flex justify-between text-emerald-700"><span>{lang === "vi" ? "Ưu đãi tần suất thanh toán" : "Payment frequency discount"}</span><span className="font-medium">−{formatCurrency(freqDiscount)}</span></div>}
+                        <div className="flex justify-between border-t border-slate-200 pt-1.5 font-medium text-slate-700">
+                          <span>{lang === "vi" ? `Tổng/tháng × ${displayMultiplier} tháng` : `Monthly total × ${displayMultiplier} month${displayMultiplier > 1 ? "s" : ""}`}</span>
+                          <span>{formatCurrency(monthlyBeforeFreq)} × {displayMultiplier} = {formatCurrency(monthlyBeforeFreq * displayMultiplier)}</span>
+                        </div>
+                        {is6Month && <div className="flex justify-between text-emerald-700"><span>{lang === "vi" ? "Tháng thứ 7 miễn phí" : "7th month free"}</span><span className="font-medium">−{formatCurrency(monthlyBeforeFreq)}</span></div>}
+                        {is3Month && <div className="flex justify-between text-emerald-700"><span>{lang === "vi" ? "Ưu đãi thanh toán 3 tháng" : "3-month payment discount"}</span><span className="font-medium">−{formatCurrency(500000)}</span></div>}
+                        {oneTimeFlatDiscount > 0 && <div className="flex justify-between text-emerald-700"><span>{lang === "vi" ? "Giảm giá 1 lần (ưu đãi tháng đầu)" : "One-time discounts (first-month)"}</span><span className="font-medium">−{formatCurrency(oneTimeFlatDiscount)}</span></div>}
                         <div className="flex justify-between"><span>{lang === "vi" ? "Tiền cọc" : "Deposit"}</span><span className="font-medium">+{formatCurrency(pricingSummary.deposit)}</span></div>
                         <div className="flex justify-between border-t-2 border-slate-300 pt-1.5 font-bold text-slate-900"><span>{lang === "vi" ? "Tổng lần đầu" : "Total first payment"}</span><span>{formatCurrency(pricingSummary.firstPayment)}</span></div>
                         <p className="mt-2 text-slate-400">{lang === "vi" ? `Thanh toán trung bình mỗi tháng: ${formatCurrency(pricingSummary.monthlyTotal)}` : `Average monthly payment: ${formatCurrency(pricingSummary.monthlyTotal)}`}</p>
