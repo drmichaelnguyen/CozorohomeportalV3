@@ -1,1 +1,9 @@
-﻿{"autoAcceptAll": true}
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmd /c \"cd /d \\\\\"C:\\\\Users\\\\User\\\\Desktop\\\\cozorohome webapp\\\\portal\\\\\" && npx tsc --noEmit 2>&1\")",
+      "Bash(cmd /c \"C:\\\\Users\\\\User\\\\Desktop\\\\cozorohome webapp\\\\manage-apps.bat\")"
+    ]
+  },
+  "autoAcceptAll": true
+}
