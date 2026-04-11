@@ -15,6 +15,7 @@ import {
   CONTRACT_CODE_COLUMN,
   ClientRow,
   CleaningCalendarEvent,
+  awardCleaningCoinsToSheet,
   createAutomaticFineForEmail,
   deleteCleaningCalendarEvent,
   getConfiguredCleaningCalendars,
@@ -2346,6 +2347,17 @@ export async function auditCleaningTask(input: {
         reviewedBy: input.reviewer
       });
     }
+  }
+
+  if (input.decision === CleaningAuditDecision.APPROVE) {
+    await awardCleaningCoinsToSheet({
+      userEmail: updatedTask.userEmail,
+      userName: updatedTask.userName,
+      branchId: updatedTask.branchId,
+      rewardCoins: updatedTask.rewardCoins,
+      taskId: updatedTask.id,
+      reviewedBy: input.reviewer
+    });
   }
 
   await invalidateCleaningOverviewCache(updatedTask.userEmail);

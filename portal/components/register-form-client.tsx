@@ -480,6 +480,7 @@ export function RegisterFormClient() {
   // House rules modal state
   const [showRulesModal, setShowRulesModal] = useState(false);
   const [rulesStep, setRulesStep] = useState(0);
+  const [showFirstPaymentDetail, setShowFirstPaymentDetail] = useState(false);
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/public/pricing-discounts`)
@@ -1184,7 +1185,35 @@ export function RegisterFormClient() {
                   <div className="flex items-center justify-between rounded-2xl bg-amber-50 px-4 py-3 text-amber-900"><span>{t.parkingFeeLabel}</span><span className="font-semibold">{formatCurrency(pricingSummary.parkingFee)}</span></div>
                 ) : null}
                 <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3"><span>{t.depositSideLabel}</span><span className="font-semibold text-slate-900">{formatCurrency(pricingSummary.deposit)}</span></div>
-                <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3"><span>{t.firstPaymentEstimate}</span><span className="font-semibold text-slate-900">{formatCurrency(pricingSummary.firstPayment)}</span></div>
+                <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm">{t.firstPaymentEstimate}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-slate-900">{formatCurrency(pricingSummary.firstPayment)}</span>
+                      <button type="button" onClick={() => setShowFirstPaymentDetail((v) => !v)} className="rounded-lg border border-slate-300 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100">{showFirstPaymentDetail ? (lang === "vi" ? "Ẩn" : "Hide") : (lang === "vi" ? "Chi tiết" : "Detail")}</button>
+                    </div>
+                  </div>
+                  {showFirstPaymentDetail ? (() => {
+                    const multiplier = getFirstPaymentMultiplier(form.paymentFrequency);
+                    const base = Math.max(0, pricingSummary.monthlyPrice - (pricingSummary.monthlyPrice - pricingSummary.discountedMonthlyPrice));
+                    const freqDiscount = form.paymentFrequency.includes("06") ? base : form.paymentFrequency.includes("03") ? 500000 : 0;
+                    const monthlyBeforeFreq = pricingSummary.discountedMonthlyPrice + pricingSummary.tenureSurchargeVnd + pricingSummary.parkingFee + pricingSummary.cleaningFee;
+                    return (
+                      <div className="mt-3 space-y-1.5 border-t border-slate-200 pt-3 text-xs text-slate-600">
+                        <p className="font-semibold text-slate-700 text-xs uppercase tracking-wide mb-2">{lang === "vi" ? "Cách tính" : "Breakdown"}</p>
+                        <div className="flex justify-between"><span>{lang === "vi" ? "Giá giường (sau giảm giá)" : "Bed price (after discounts)"}</span><span className="font-medium">{formatCurrency(pricingSummary.discountedMonthlyPrice)}</span></div>
+                        {pricingSummary.tenureSurchargeVnd > 0 && <div className="flex justify-between text-amber-700"><span>{lang === "vi" ? "Phụ thu hợp đồng ngắn hạn" : "Short-stay surcharge"}</span><span className="font-medium">+{formatCurrency(pricingSummary.tenureSurchargeVnd)}</span></div>}
+                        {pricingSummary.parkingFee > 0 && <div className="flex justify-between"><span>{lang === "vi" ? "Phí gửi xe" : "Parking fee"}</span><span className="font-medium">+{formatCurrency(pricingSummary.parkingFee)}</span></div>}
+                        {pricingSummary.cleaningFee > 0 && <div className="flex justify-between"><span>{lang === "vi" ? "Phí vệ sinh" : "Cleaning fee"}</span><span className="font-medium">+{formatCurrency(pricingSummary.cleaningFee)}</span></div>}
+                        <div className="flex justify-between border-t border-slate-200 pt-1.5 font-medium text-slate-700"><span>{lang === "vi" ? `Tổng/tháng × ${multiplier} tháng` : `Monthly total × ${multiplier} month${multiplier > 1 ? "s" : ""}`}</span><span>{formatCurrency(monthlyBeforeFreq)} × {multiplier} = {formatCurrency(monthlyBeforeFreq * multiplier)}</span></div>
+                        {freqDiscount > 0 && <div className="flex justify-between text-emerald-700"><span>{lang === "vi" ? "Ưu đãi tần suất thanh toán" : "Payment frequency discount"}</span><span className="font-medium">−{formatCurrency(freqDiscount)}</span></div>}
+                        <div className="flex justify-between"><span>{lang === "vi" ? "Tiền cọc" : "Deposit"}</span><span className="font-medium">+{formatCurrency(pricingSummary.deposit)}</span></div>
+                        <div className="flex justify-between border-t-2 border-slate-300 pt-1.5 font-bold text-slate-900"><span>{lang === "vi" ? "Tổng lần đầu" : "Total first payment"}</span><span>{formatCurrency(pricingSummary.firstPayment)}</span></div>
+                        <p className="mt-2 text-slate-400">{lang === "vi" ? `Thanh toán trung bình mỗi tháng: ${formatCurrency(pricingSummary.monthlyTotal)}` : `Average monthly payment: ${formatCurrency(pricingSummary.monthlyTotal)}`}</p>
+                      </div>
+                    );
+                  })() : null}
+                </div>
                 <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3"><span>{t.availability}</span><span className="font-semibold text-slate-900">{selectedBed.status === "available_now" ? t.nowBadge : selectedBed.availableOn}</span></div>
               </div>
             ) : (

@@ -4165,6 +4165,44 @@ async function appendCoinsSheetRow(entry: Record<string, string>) {
   await syncCoinsFromSheet();
 }
 
+export async function awardCleaningCoinsToSheet(input: {
+  userEmail: string;
+  userName: string | null;
+  branchId: string;
+  rewardCoins: number;
+  taskId: string;
+  reviewedBy: string;
+}) {
+  const normalizedEmail = input.userEmail.trim().toLowerCase();
+  const client = await getActiveClientByEmail(normalizedEmail);
+  const currentCoins = client
+    ? Number.parseInt(String(client[CLIENT_CURRENT_COINS_COLUMN] ?? "0").replace(/[^0-9-]/g, ""), 10) || 0
+    : 0;
+  const nextCoins = currentCoins + input.rewardCoins;
+  const recordedMember = client ? (client[COINS_MEMBER_COLUMN] ?? "") : "";
+
+  await appendCoinsSheetRow({
+    [COINS_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(new Date()),
+    [CONTRACT_CODE_COLUMN]: client ? (client[CONTRACT_CODE_COLUMN] ?? "") : "",
+    ["Chi nhánh Cozoro dorm"]: input.branchId.replace("D", ""),
+    [EMAIL_COLUMN]: normalizedEmail,
+    [CLIENT_NAME_COLUMN]: input.userName ?? (client ? (client[CLIENT_NAME_COLUMN] ?? "") : ""),
+    [CLIENT_BED_COLUMN]: client ? (client[CLIENT_BED_COLUMN] ?? "") : "",
+    [COINS_BALANCE_COLUMN]: String(input.rewardCoins),
+    [COINS_EVENT_COLUMN]: "Vệ sinh khu vực chung",
+    [COINS_OPERATOR_COLUMN]: "",
+    [COINS_MEMBER_COLUMN]: recordedMember,
+    [COINS_CURRENT_BALANCE_COLUMN]: String(nextCoins),
+    [COINS_TRANSACTION_CODE_COLUMN]: `CleaningReward${input.taskId}`
+  });
+
+  if (client && client[CONTRACT_CODE_COLUMN]) {
+    await updateClientColumns(client[CONTRACT_CODE_COLUMN], {
+      [CLIENT_CURRENT_COINS_COLUMN]: String(nextCoins)
+    });
+  }
+}
+
 async function appendPaymentSheetRow(entry: Record<string, string>) {
   if (!paymentsSpreadsheetId) {
     throw new Error("GOOGLE_PAYMENT_SPREADSHEET_ID is not configured");

@@ -4940,9 +4940,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         ) : (
                           <>
                             <th className="px-4 py-3 font-medium">{t("whenLabel")}</th>
-                            <th className="px-4 py-3 font-medium">{activeTab === "fines" ? (language === "vi" ? "Nội dung vi phạm" : "Violation") : `${t("detailLabel")} 1`}</th>
-                            <th className="px-4 py-3 font-medium">{activeTab === "fines" ? (language === "vi" ? "Người lập phiếu" : "Created by") : `${t("detailLabel")} 2`}</th>
-                            <th className="px-4 py-3 font-medium">{activeTab === "fines" ? (language === "vi" ? "Chi phí" : "Amount") : `${t("detailLabel")} 3`}</th>
+                            <th className="px-4 py-3 font-medium">{activeTab === "fines" ? (language === "vi" ? "Nội dung vi phạm" : "Violation") : activeTab === "coins" ? "Coins" : `${t("detailLabel")} 1`}</th>
+                            <th className="px-4 py-3 font-medium">{activeTab === "fines" ? (language === "vi" ? "Người lập phiếu" : "Created by") : activeTab === "coins" ? "Sự kiện" : `${t("detailLabel")} 2`}</th>
+                            <th className="px-4 py-3 font-medium">{activeTab === "fines" ? (language === "vi" ? "Chi phí" : "Amount") : activeTab === "coins" ? "Người thao tác" : `${t("detailLabel")} 3`}</th>
                           </>
                         )}
                         <th className="px-4 py-3 font-medium">{t("clientActions")}</th>
@@ -4972,9 +4972,25 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             ) : (
                               <>
                                 <td className="px-4 py-3 text-slate-700">{formatDateTime(entry.parsedTimestamp)}</td>
-                                <td className="px-4 py-3 text-slate-700">{activeTab === "fines" ? (fineContent || "-") : preview[1] ? `${preview[1][0]}: ${preview[1][1]}` : "-"}</td>
-                                <td className="px-4 py-3 text-slate-700">{activeTab === "fines" ? (fineCreator || "-") : preview[2] ? `${preview[2][0]}: ${preview[2][1]}` : "-"}</td>
-                                <td className="px-4 py-3 text-slate-700">{activeTab === "fines" ? (fineAmount ? `${Number(fineAmount).toLocaleString()} ₫` : "-") : preview[3] ? `${preview[3][0]}: ${preview[3][1]}` : "-"}</td>
+                                {activeTab === "coins" ? (
+                                  <>
+                                    <td className="px-4 py-3 font-medium" style={{ color: Number(entry.row["COINS"] ?? "0") >= 0 ? "#16a34a" : "#dc2626" }}>{entry.row["COINS"] ? `${Number(entry.row["COINS"]) >= 0 ? "+" : ""}${Number(entry.row["COINS"]).toLocaleString()}` : "-"}</td>
+                                    <td className="px-4 py-3 text-slate-700">{entry.row["Sự kiện"] || "-"}</td>
+                                    <td className="px-4 py-3 text-slate-500">{entry.row["Người thao tác"] || (language === "vi" ? "Hệ thống" : "System")}</td>
+                                  </>
+                                ) : activeTab === "fines" ? (
+                                  <>
+                                    <td className="px-4 py-3 text-slate-700">{fineContent || "-"}</td>
+                                    <td className="px-4 py-3 text-slate-700">{fineCreator || "-"}</td>
+                                    <td className="px-4 py-3 text-slate-700">{fineAmount ? `${Number(fineAmount).toLocaleString()} ₫` : "-"}</td>
+                                  </>
+                                ) : (
+                                  <>
+                                    <td className="px-4 py-3 text-slate-700">{preview[1] ? `${preview[1][0]}: ${preview[1][1]}` : "-"}</td>
+                                    <td className="px-4 py-3 text-slate-700">{preview[2] ? `${preview[2][0]}: ${preview[2][1]}` : "-"}</td>
+                                    <td className="px-4 py-3 text-slate-700">{preview[3] ? `${preview[3][0]}: ${preview[3][1]}` : "-"}</td>
+                                  </>
+                                )}
                               </>
                             )}
                             <td className="px-4 py-3">
