@@ -2,6 +2,7 @@
   "name": "cozorohome",
   "private": true,
   "version": "0.0.1",
+  "packageManager": "pnpm@10.32.1",
   "scripts": {
     "dev": "pnpm -r --parallel dev",
     "build": "pnpm --filter cozorohome-api build && pnpm --filter cozorohome-portal build",
@@ -9,6 +10,13 @@
     "build:bot": "pnpm --filter cozorohome-bot build",
     "start:bot": "pnpm --filter cozorohome-bot start",
     "start:api": "pnpm --filter cozorohome-api start",
-    "start:portal": "pnpm --filter cozorohome-portal start"
+    "start:portal": "pnpm --filter cozorohome-portal start",
+    "host:doctor": "node scripts/host-manager.mjs doctor",
+    "host:build": "node scripts/host-manager.mjs build",
+    "host:start": "node scripts/host-manager.mjs start",
+    "host:stop": "node scripts/host-manager.mjs stop",
+    "host:restart": "node scripts/host-manager.mjs restart",
+    "host:status": "node scripts/host-manager.mjs status",
+    "export:mac": "powershell -ExecutionPolicy Bypass -File scripts/export-mac-deploy.ps1"
   }
 }

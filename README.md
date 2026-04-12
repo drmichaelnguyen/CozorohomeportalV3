@@ -43,6 +43,28 @@ This repo contains the Cozorohome portal frontend, the API backend, and a few lo
 - Windows PowerShell or Command Prompt
 - local env files and Google credentials not stored in Git
 
+## Mac Air M1 Host Quick Start
+
+If you are moving this repo to an Apple Silicon Mac for hosting, use the Mac-specific runbook here:
+
+- `docs/mac-hosting.md`
+
+Short version from the repo root on the Mac:
+
+```bash
+corepack pnpm host:doctor
+corepack pnpm host:build
+corepack pnpm host:start
+```
+
+Important: copy the env/credential files, but do not trust copied `node_modules`, `portal/.next`, or `dist` folders from Windows. Rebuild them on the Mac.
+
+To create a transfer zip from this Windows machine that already includes the runtime files, Cloudflare tunnel assets, and a MySQL dump for the Mac handoff:
+
+```powershell
+corepack pnpm export:mac
+```
+
 ## Important Local Files Not In Git
 
 You may need to copy these from the working machine when setting up another computer:
