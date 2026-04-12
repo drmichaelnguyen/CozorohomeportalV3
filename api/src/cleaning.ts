@@ -2175,10 +2175,17 @@ export async function adminRemoveCleaningTask(taskId: string) {
   }
 
   if (task.calendarId && task.calendarEventId) {
-    await deleteCleaningCalendarEvent({
-      calendarId: task.calendarId,
-      eventId: task.calendarEventId
-    });
+    try {
+      await deleteCleaningCalendarEvent({
+        calendarId: task.calendarId,
+        eventId: task.calendarEventId
+      });
+    } catch (calErr) {
+      // If the calendar event is already gone (404/410), proceed with DB deletion
+      const msg = calErr instanceof Error ? calErr.message : String(calErr);
+      const isGone = /404|410|not found|Resource has been deleted/i.test(msg);
+      if (!isGone) throw calErr;
+    }
   }
 
   await deleteCleaningTask({ where: { id: taskId } });
