@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { InlineHelp } from "./inline-help";
+import { usePortalLanguage } from "./portal-language";
 
 type Booking = {
   id: string;
@@ -27,15 +28,14 @@ type MachineSchedule = {
   upcoming: Booking[];
 };
 
-function formatDuration(minutes: number | null) {
+function formatDuration(minutes: number | null, t: (key: any, ...args: any[]) => string) {
   if (minutes === null) {
     return "-";
   }
-
   const hours = Math.floor(minutes / 60);
   const remainder = minutes % 60;
   if (hours === 0) {
-    return `${minutes} min`;
+    return `${minutes} ${t("minShort", "min")}`;
   }
   if (remainder === 0) {
     return `${hours}h`;
@@ -44,6 +44,7 @@ function formatDuration(minutes: number | null) {
 }
 
 export function LaundryScheduleManager({ actorEmail }: { actorEmail: string }) {
+  const { t } = usePortalLanguage();
   const [schedules, setSchedules] = useState<MachineSchedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -157,7 +158,7 @@ export function LaundryScheduleManager({ actorEmail }: { actorEmail: string }) {
   }
 
   if (loading) {
-    return <div className="p-8 text-center text-slate-500">Loading schedules...</div>;
+    return <div className="p-8 text-center text-slate-500">{t("refreshing")}</div>;
   }
 
   if (error) {
@@ -169,7 +170,7 @@ export function LaundryScheduleManager({ actorEmail }: { actorEmail: string }) {
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-xl font-bold text-slate-900">Laundry Machine Timelines</h2>
+            <h2 className="text-xl font-bold text-slate-900">{t("laundryTimelines")}</h2>
             <InlineHelp
               label="How laundry timing works"
               title="Laundry Calendar Logic"
@@ -188,7 +189,7 @@ export function LaundryScheduleManager({ actorEmail }: { actorEmail: string }) {
               }
             />
           </div>
-          <p className="mt-1 text-sm text-slate-500">Managers can set both booking duration and cooldown. Next slot = start time + duration + cooldown.</p>
+          <p className="mt-1 text-sm text-slate-500">{t("laundryTimelinesDesc", "Managers can set both booking duration and cooldown. Next slot = start time + duration + cooldown.")}</p>
         </div>
         <div className="flex gap-2">
           {branches.map((branch) => (
@@ -218,7 +219,7 @@ export function LaundryScheduleManager({ actorEmail }: { actorEmail: string }) {
                     {machine.label}
                   </h3>
                   <p className="mt-1 text-xs text-slate-500">
-                    {machine.branchId ?? "-"} {machine.type ? `| ${machine.type}` : ""} {machine.durationMinutes !== null ? `| ${formatDuration(machine.durationMinutes)} cycle` : ""}
+                    {machine.branchId ?? "-"} {machine.type ? `| ${t(machine.type.toLowerCase() + "Label", machine.type)}` : ""} {machine.durationMinutes !== null ? `| ${formatDuration(machine.durationMinutes, t)} ${t("cycleLabel")}` : ""}
                   </p>
                 </div>
                 <span className="text-xs font-mono text-slate-400">{machine.machineId}</span>
@@ -226,21 +227,21 @@ export function LaundryScheduleManager({ actorEmail }: { actorEmail: string }) {
 
               <div className="grid gap-8 p-6 lg:grid-cols-[320px_1fr_1fr]">
                 <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
-                  <div className="text-xs font-black uppercase tracking-widest text-slate-400">Machine setup</div>
+                  <div className="text-xs font-black uppercase tracking-widest text-slate-400">{t("machineSetup")}</div>
                   <div className="mt-4 text-sm text-slate-700">
-                    <div>Duration: <span className="font-semibold text-slate-900">{formatDuration(machine.durationMinutes)}</span></div>
-                    <div className="mt-2">Current cooldown: <span className="font-semibold text-slate-900">{machine.cooldownMinutes} min</span></div>
-                    <div className="mt-2">Next start rule: <span className="font-semibold text-slate-900">start + duration + cooldown</span></div>
+                    <div>{t("durationLabel", "Duration")}: <span className="font-semibold text-slate-900">{formatDuration(machine.durationMinutes, t)}</span></div>
+                    <div className="mt-2">{t("currentCooldown")}: <span className="font-semibold text-slate-900">{machine.cooldownMinutes} {t("minShort", "min")}</span></div>
+                    <div className="mt-2">{t("nextStartRule")}: <span className="font-semibold text-slate-900">start + duration + cooldown</span></div>
                     {machine.updatedAt ? (
                       <div className="mt-2 text-xs text-slate-500">
-                        Last updated {new Date(machine.updatedAt).toLocaleString()}
-                        {machine.updatedBy ? ` by ${machine.updatedBy}` : ""}
+                        {t("lastUpdatedBy", "Last updated by")} {new Date(machine.updatedAt).toLocaleString("vi-VN")}
+                        {machine.updatedBy ? ` ${t("byLabel", "by")} ${machine.updatedBy}` : ""}
                       </div>
                     ) : null}
                   </div>
 
                   <label className="mt-4 block text-sm font-medium text-slate-700">
-                    Duration per booking
+                    {t("durationPerBooking")}
                     <div className="mt-2 flex gap-2">
                       <input
                         type="number"
@@ -260,7 +261,7 @@ export function LaundryScheduleManager({ actorEmail }: { actorEmail: string }) {
                   </label>
 
                   <label className="mt-4 block text-sm font-medium text-slate-700">
-                    Cooldown after booking ends
+                    {t("cooldownAfterBooking")}
                     <div className="mt-2 flex gap-2">
                       <input
                         type="number"
@@ -282,7 +283,7 @@ export function LaundryScheduleManager({ actorEmail }: { actorEmail: string }) {
                         disabled={saving}
                         className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {saving ? "Saving..." : "Save"}
+                        {saving ? t("saving") : t("saveLabel")}
                       </button>
                     </div>
                   </label>
@@ -295,17 +296,17 @@ export function LaundryScheduleManager({ actorEmail }: { actorEmail: string }) {
                 </div>
 
                 <div>
-                  <h4 className="mb-4 text-xs font-black uppercase tracking-widest text-slate-400">Past 5 Bookings</h4>
+                  <h4 className="mb-4 text-xs font-black uppercase tracking-widest text-slate-400">{t("past5Bookings")}</h4>
                   <div className="space-y-3">
                     {machine.previous.length === 0 ? (
-                      <p className="text-sm italic text-slate-400">No recent history</p>
+                      <p className="text-sm italic text-slate-400">{t("noRecentHistory")}</p>
                     ) : (
                       machine.previous.map((booking) => (
                         <div key={booking.id} className="flex gap-4 rounded-2xl border border-slate-100 bg-slate-50/30 p-3 opacity-70">
                           <div className="w-24 shrink-0 text-[10px] font-bold text-slate-400">
-                            {new Date(booking.start).toLocaleDateString()}
+                            {new Date(booking.start).toLocaleDateString("vi-VN")}
                             <br />
-                            {new Date(booking.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                            {new Date(booking.start).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
                           </div>
                           <div className="text-sm text-slate-600">{booking.summary}</div>
                         </div>
@@ -315,18 +316,18 @@ export function LaundryScheduleManager({ actorEmail }: { actorEmail: string }) {
                 </div>
 
                 <div>
-                  <h4 className="mb-4 text-xs font-black uppercase tracking-widest text-sky-500">Next 2 Bookings</h4>
+                  <h4 className="mb-4 text-xs font-black uppercase tracking-widest text-sky-500">{t("next2Bookings")}</h4>
                   <div className="space-y-3">
                     {machine.upcoming.length === 0 ? (
-                      <p className="text-sm italic text-slate-400">No upcoming bookings</p>
+                      <p className="text-sm italic text-slate-400">{t("noUpcomingBookings")}</p>
                     ) : (
                       machine.upcoming.map((booking) => (
                         <div key={booking.id} className="rounded-2xl border border-sky-100 bg-sky-50 p-4 shadow-sm ring-1 ring-sky-200">
                           <div className="flex gap-4">
                             <div className="w-24 shrink-0 text-[10px] font-bold text-sky-600">
-                              {new Date(booking.start).toLocaleDateString()}
+                              {new Date(booking.start).toLocaleDateString("vi-VN")}
                               <br />
-                              {new Date(booking.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                              {new Date(booking.start).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
                             </div>
                             <div className="text-sm font-semibold text-sky-900">{booking.summary}</div>
                           </div>

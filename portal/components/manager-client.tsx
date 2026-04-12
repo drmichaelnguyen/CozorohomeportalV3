@@ -5,6 +5,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react
 import { API_BASE_URL } from "../lib/api-base-url";
 import { parseVietnamDate } from "../lib/contract-utils";
 import { AdminCleaningClient } from "./admin-cleaning-client";
+import { ManagerAiChat } from "./manager-ai-chat";
 import { ManagerSupportInbox } from "./manager-support-inbox";
 import { LaundryScheduleManager } from "./laundry-schedule-manager";
 import { usePortalLanguage } from "./portal-language";
@@ -5109,19 +5110,19 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-xl font-bold text-slate-900">Pricing</h2>
-                <p className="mt-1 text-sm text-slate-500">Manage bed prices and discount rules for long-term residents and short-term guests.</p>
+                <h2 className="text-xl font-bold text-slate-900">{t("pricing")}</h2>
+                <p className="mt-1 text-sm text-slate-500">{t("pricingDesc")}</p>
               </div>
               <button type="button" onClick={() => void loadPricingConfig()} disabled={pricingConfigLoading}
                 className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-50">
-                {pricingConfigLoading ? "Loading…" : "Refresh"}
+                {pricingConfigLoading ? t("refreshing") : t("refreshData")}
               </button>
             </div>
             <div className="mt-5 flex flex-wrap gap-2">
               {(["long_term", "short_term", "staff"] as const).map((tab) => (
                 <button key={tab} type="button" onClick={() => setPricingSettingsTab(tab)}
                   className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${pricingSettingsTab === tab ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-50"}`}>
-                  {tab === "long_term" ? "Long-term" : tab === "short_term" ? "Short-term" : "Staff Accounts"}
+                  {tab === "long_term" ? t("longTermTab") : tab === "short_term" ? t("shortTermTab") : t("staffAccountsTab")}
                 </button>
               ))}
             </div>
@@ -5132,18 +5133,18 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             <section className="space-y-5">
               {!canManageOwnersEmployees ? (
                 <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                  <p className="text-sm text-slate-500">Pricing editing is restricted to owners and app admins.</p>
+                  <p className="text-sm text-slate-500">{t("pricingRestricted")}</p>
                 </div>
               ) : (
                 <>
                   {/* ── Branch pricing settings (cleaning opt-out fee, parking fee) ── */}
                   <CollapsibleSettingsSection
-                    title="Branch Fee Settings"
-                    description="Set the cleaning opt-out fee and default parking fee per branch. Open this only when you need to edit it."
+                    title={t("branchFeeSettings")}
+                    description={t("branchFeeSettingsDesc")}
                     expanded={pricingSettingsExpanded.branch_fees}
                     onToggle={() => togglePricingSettingsSection("branch_fees")}
                   >
-                    {pricingConfigLoading ? <p className="text-sm text-slate-500">Loading…</p> : (
+                    {pricingConfigLoading ? <p className="text-sm text-slate-500">{t("refreshing")}</p> : (
                       <div className="grid gap-4 sm:grid-cols-2">
                         {(["D2", "D7"] as const).map((branchId) => {
                           const settings = (pricingData?.branchSettings ?? []).find((s) => s.branchId === branchId) ?? { branchId, cleaningOptOutFeeVnd: 100000, parkingFeeVnd: 0, updatedBy: "", updatedAt: "" };
@@ -5154,26 +5155,26 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 <p className="text-sm font-semibold text-slate-800">{branchId}</p>
                                 {!isEditing && (
                                   <button type="button" onClick={() => setBranchSettingsEdit({ branchId, cleaningOptOutFeeVnd: String(settings.cleaningOptOutFeeVnd), parkingFeeVnd: String(settings.parkingFeeVnd), saving: false, result: "" })}
-                                    className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-white">Edit</button>
+                                    className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-white">{t("editLabel")}</button>
                                 )}
                               </div>
                               {isEditing ? (
                                 <div className="space-y-3">
                                   <label className="space-y-1 block">
-                                    <span className="text-xs font-medium text-slate-700">Cleaning opt-out fee (VND/month)</span>
+                                    <span className="text-xs font-medium text-slate-700">{t("cleaningOptOutFeeLabel")}</span>
                                     <input type="number" min={0} value={branchSettingsEdit!.cleaningOptOutFeeVnd}
                                       onChange={(e) => setBranchSettingsEdit({ ...branchSettingsEdit!, cleaningOptOutFeeVnd: e.target.value })}
                                       className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-teal-500 focus:outline-none" />
                                   </label>
                                   <label className="space-y-1 block">
-                                    <span className="text-xs font-medium text-slate-700">Default parking fee (VND/month)</span>
+                                    <span className="text-xs font-medium text-slate-700">{t("defaultParkingFeeLabel")}</span>
                                     <input type="number" min={0} value={branchSettingsEdit!.parkingFeeVnd}
                                       onChange={(e) => setBranchSettingsEdit({ ...branchSettingsEdit!, parkingFeeVnd: e.target.value })}
                                       className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-teal-500 focus:outline-none" />
                                   </label>
                                   {branchSettingsEdit!.result ? <p className={`text-sm font-medium ${branchSettingsEdit!.result.startsWith("✓") ? "text-emerald-700" : "text-rose-700"}`}>{branchSettingsEdit!.result}</p> : null}
                                   <div className="flex gap-2">
-                                    <button type="button" onClick={() => setBranchSettingsEdit(null)} className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700">Cancel</button>
+                                    <button type="button" onClick={() => setBranchSettingsEdit(null)} className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700">{t("cancel")}</button>
                                     <button type="button" disabled={branchSettingsEdit!.saving} onClick={async () => {
                                       setBranchSettingsEdit({ ...branchSettingsEdit!, saving: true, result: "" });
                                       try {
@@ -5187,13 +5188,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                         setBranchSettingsEdit({ ...branchSettingsEdit!, saving: false, result: "✓ Saved" });
                                         setTimeout(() => setBranchSettingsEdit(null), 1500);
                                       } catch (err) { setBranchSettingsEdit({ ...branchSettingsEdit!, saving: false, result: err instanceof Error ? err.message : "Failed" }); }
-                                    }} className="rounded-xl bg-teal-600 px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-50">{branchSettingsEdit!.saving ? "Saving…" : "Save"}</button>
+                                    }} className="rounded-xl bg-teal-600 px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-50">{branchSettingsEdit!.saving ? t("saving") : t("saveLabel")}</button>
                                   </div>
                                 </div>
                               ) : (
                                 <div className="space-y-1 text-sm text-slate-600">
-                                  <div className="flex items-center justify-between"><span className="text-xs text-slate-500">Cleaning opt-out fee</span><span className="font-semibold">{settings.cleaningOptOutFeeVnd.toLocaleString("vi-VN")} ₫/mo</span></div>
-                                  <div className="flex items-center justify-between"><span className="text-xs text-slate-500">Default parking fee</span><span className="font-semibold">{settings.parkingFeeVnd.toLocaleString("vi-VN")} ₫/mo</span></div>
+                                  <div className="flex items-center justify-between"><span className="text-xs text-slate-500">{t("cleaningOptOutFeeShort")}</span><span className="font-semibold">{settings.cleaningOptOutFeeVnd.toLocaleString("vi-VN")} ₫/mo</span></div>
+                                  <div className="flex items-center justify-between"><span className="text-xs text-slate-500">{t("defaultParkingFeeShort")}</span><span className="font-semibold">{settings.parkingFeeVnd.toLocaleString("vi-VN")} ₫/mo</span></div>
                                 </div>
                               )}
                             </div>
@@ -5208,8 +5209,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     <button type="button" onClick={() => setBedPricingExpanded((v) => !v)}
                       className="flex w-full items-center justify-between px-6 py-5 text-left hover:bg-slate-50 transition-colors">
                       <div>
-                        <h3 className="text-base font-semibold text-slate-900">Bed Prices (Monthly)</h3>
-                        <p className="mt-0.5 text-sm text-slate-500">Click to expand and edit individual bed prices or bulk-set by tier.</p>
+                        <h3 className="text-base font-semibold text-slate-900">{t("bedPricesMonthly")}</h3>
+                        <p className="mt-0.5 text-sm text-slate-500">{t("bedPricesMonthlyDesc")}</p>
                       </div>
                       <span className="text-slate-400 text-xl">{bedPricingExpanded ? "▲" : "▼"}</span>
                     </button>
@@ -5218,31 +5219,31 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   {/* Mode selector */}
                   <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4">
                     <div className="flex flex-wrap gap-2 items-center">
-                      <span className="text-sm font-medium text-slate-700 mr-1">Edit mode:</span>
+                      <span className="text-sm font-medium text-slate-700 mr-1">{t("editMode")}</span>
                       {([
                         { key: "by_branch", label: "By branch + tier", desc: "Set one price for all beds of a tier across an entire branch" },
                         { key: "by_room", label: "By room + tier", desc: "Set price for all beds of a tier within a specific room" },
                         { key: "per_bed", label: "Per bed", desc: "Click any individual bed to set its exact price" }
                       ] as const).map(({ key, label, desc }) => (
                         <button key={key} type="button" onClick={() => { setPricingDiagramMode(key); setBulkTierEdit(null); setBedOverrideEdit(null); }}
-                          title={desc}
+                          title={t(key === "by_branch" ? "byBranchDesc" : key === "by_room" ? "byRoomDesc" : "perBedDesc")}
                           className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${pricingDiagramMode === key ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-50"}`}>
-                          {label}
+                          {key === "by_branch" ? t("byBranchTier") : key === "by_room" ? t("byRoomTier") : t("perBedBase")}
                         </button>
                       ))}
                     </div>
                     <p className="mt-2 text-xs text-slate-400">
-                      {pricingDiagramMode === "by_branch" && "Set one price for all beds of a tier (Top/Middle/Bottom) across an entire branch at once."}
-                      {pricingDiagramMode === "by_room" && "Set a price for all beds of a tier within a specific room."}
-                      {pricingDiagramMode === "per_bed" && "Click any individual bed cell to view or set its price. Teal = has override, grey = using sheet value."}
+                      {pricingDiagramMode === "by_branch" && t("byBranchDesc")}
+                      {pricingDiagramMode === "by_room" && t("byRoomDesc")}
+                      {pricingDiagramMode === "per_bed" && t("perBedDesc")}
                     </p>
                   </div>
 
                   {/* ── By-branch bulk mode ── */}
                   {pricingDiagramMode === "by_branch" ? (
                     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
-                      <h3 className="text-base font-semibold text-slate-900">Set price by branch + tier</h3>
-                      <p className="text-sm text-slate-500">Select a branch and bunk level to set the same price for all matching beds.</p>
+                      <h3 className="text-base font-semibold text-slate-900">{t("setPriceByBranchTier")}</h3>
+                      <p className="text-sm text-slate-500">{t("setPriceByBranchTierDesc")}</p>
                       <div className="grid gap-4 sm:grid-cols-2">
                         {(["D2", "D7"] as const).map((branchId) => (
                           <div key={branchId} className="rounded-2xl border border-slate-200 p-4 space-y-3">
@@ -5263,8 +5264,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                   <button key={tier} type="button"
                                     onClick={() => setBulkTierEdit({ branchId, tier, monthlyPrice: "", saving: false, result: "" })}
                                     className={`rounded-xl border px-3 py-2 text-center transition-colors ${isEditing ? "border-teal-500 bg-teal-100 ring-1 ring-teal-400" : overrideCount > 0 ? "border-teal-200 bg-teal-50 hover:bg-teal-100" : "border-slate-200 bg-slate-50 hover:bg-slate-100"}`}>
-                                    <div className="text-xs font-bold text-slate-500">{tier.charAt(0).toUpperCase()}</div>
-                                    <div className="text-[10px] text-slate-400 mt-0.5">{overrideCount}/{matchingBeds.length} set</div>
+                                    <div className="text-xs font-bold text-slate-500">{tier === "top" ? t("topBunk").charAt(0) : tier === "middle" ? t("middleBunk").charAt(0) : t("bottomBunk").charAt(0)}</div>
+                                    <div className="text-[10px] text-slate-400 mt-0.5">{overrideCount}/{matchingBeds.length} {t("setSuffix")}</div>
                                   </button>
                                 );
                               })}
@@ -5275,27 +5276,27 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       {bulkTierEdit && !bulkTierEdit.floor ? (
                         <div className="rounded-2xl border border-teal-200 bg-teal-50 p-4 space-y-3">
                           <p className="text-sm font-semibold text-teal-900">
-                            Set price — {bulkTierEdit.branchId} · All {bulkTierEdit.tier} beds
+                            {t("setPriceLabel")} — {bulkTierEdit.branchId} · {t("allTiersBeds", { tier: bulkTierEdit.tier === "top" ? t("topBunk") : bulkTierEdit.tier === "middle" ? t("middleBunk") : t("bottomBunk") })}
                           </p>
                           <div className="flex items-end gap-3 flex-wrap">
                             <label className="space-y-1 flex-1 min-w-[140px]">
-                              <span className="text-xs font-medium text-slate-700">Monthly price (VND)</span>
+                              <span className="text-xs font-medium text-slate-700">{t("monthlyPriceVnd")}</span>
                               <input type="number" min={0} value={bulkTierEdit.monthlyPrice}
                                 onChange={(e) => setBulkTierEdit({ ...bulkTierEdit, monthlyPrice: e.target.value })}
-                                placeholder="blank = reset to sheet" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-teal-500 focus:outline-none" />
+                                placeholder={t("resetToSheetPlaceholder")} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-teal-500 focus:outline-none" />
                             </label>
                           </div>
                           {bulkTierEdit.result ? <p className={`text-sm font-medium ${bulkTierEdit.result.startsWith("✓") ? "text-emerald-700" : "text-rose-700"}`}>{bulkTierEdit.result}</p> : null}
                           <div className="flex gap-2">
-                            <button type="button" onClick={() => setBulkTierEdit(null)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Cancel</button>
+                            <button type="button" onClick={() => setBulkTierEdit(null)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">{t("cancel")}</button>
                             <button type="button" disabled={bulkTierEdit.saving} onClick={async () => {
                               setBulkTierEdit({ ...bulkTierEdit, saving: true, result: "" });
                               try {
                                 const price = bulkTierEdit.monthlyPrice ? Number(bulkTierEdit.monthlyPrice) : null;
                                 await saveBulkTierPrices(bulkTierEdit.branchId, undefined, undefined, bulkTierEdit.tier, price);
-                                setBulkTierEdit({ ...bulkTierEdit, saving: false, result: `✓ Saved all ${bulkTierEdit.tier} beds in ${bulkTierEdit.branchId}` });
+                                setBulkTierEdit({ ...bulkTierEdit, saving: false, result: t("savedAllBedsInBranch", { tier: bulkTierEdit.tier === "top" ? t("topBunk") : bulkTierEdit.tier === "middle" ? t("middleBunk") : t("bottomBunk"), branch: bulkTierEdit.branchId }) });
                               } catch (err) { setBulkTierEdit({ ...bulkTierEdit, saving: false, result: err instanceof Error ? err.message : "Failed" }); }
-                            }} className="rounded-xl bg-teal-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">{bulkTierEdit.saving ? "Saving…" : "Apply to all matching beds"}</button>
+                            }} className="rounded-xl bg-teal-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">{bulkTierEdit.saving ? t("saving") : t("applyToMatchingBeds")}</button>
                           </div>
                         </div>
                       ) : null}
@@ -5305,7 +5306,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   {/* ── By-room bulk mode ── */}
                   {pricingDiagramMode === "by_room" ? (
                     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
-                      <h3 className="text-base font-semibold text-slate-900">Set price by room + tier</h3>
+                      <h3 className="text-base font-semibold text-slate-900">{t("setPriceByRoomTier")}</h3>
                       {(["D2", "D7"] as const).map((branchId) => {
                         // Group rooms by floor
                         const floors = [...new Set(BRANCH_LAYOUTS[branchId].map((r) => r.floor))];
@@ -5320,7 +5321,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                     const tiers = room.bunkCount === 3 ? (["top", "middle", "bottom"] as const) : (["top", "bottom"] as const);
                                     return (
                                       <div key={room.room} className="rounded-xl border border-slate-200 p-2.5 space-y-1.5 bg-slate-50">
-                                        <p className="text-[10px] font-semibold text-slate-500 text-center">Room {room.room}</p>
+                                        <p className="text-[10px] font-semibold text-slate-500 text-center">{t("roomLabel")} {room.room}</p>
                                         <div className="flex flex-col gap-1">
                                           {tiers.map((tier) => {
                                             const isEditing = bulkTierEdit?.branchId === branchId && bulkTierEdit?.room === room.room && bulkTierEdit?.tier === tier;
@@ -5333,7 +5334,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                               <button key={tier} type="button"
                                                 onClick={() => setBulkTierEdit({ branchId, floor: room.floor, room: room.room, tier, monthlyPrice: "", saving: false, result: "" })}
                                                 className={`rounded-lg border px-2 py-1 text-[10px] font-medium transition-colors flex items-center justify-between gap-1 ${isEditing ? "border-teal-500 bg-teal-100" : overrideCount > 0 ? "border-teal-200 bg-teal-50 hover:bg-teal-100" : "border-slate-200 bg-white hover:bg-slate-100"}`}>
-                                                <span className="text-slate-600">{tier.charAt(0).toUpperCase()}</span>
+                                                <span className="text-slate-600">{tier === "top" ? t("topBunk").charAt(0) : tier === "middle" ? t("middleBunk").charAt(0) : t("bottomBunk").charAt(0)}</span>
                                                 <span className="text-slate-400">{overrideCount}/{matchingBeds.length}</span>
                                               </button>
                                             );
@@ -5351,7 +5352,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       {bulkTierEdit?.room ? (
                         <div className="rounded-2xl border border-teal-200 bg-teal-50 p-4 space-y-3">
                           <p className="text-sm font-semibold text-teal-900">
-                            Set price — {bulkTierEdit.branchId} Room {bulkTierEdit.room} · {bulkTierEdit.tier} beds
+                            {t("setPriceLabel")} — {bulkTierEdit.branchId} {t("roomLabel")} {bulkTierEdit.room} · {t("allTiersBeds", { tier: bulkTierEdit.tier === "top" ? t("topBunk") : bulkTierEdit.tier === "middle" ? t("middleBunk") : t("bottomBunk") })}
                           </p>
                           <div className="flex items-end gap-3 flex-wrap">
                             <label className="space-y-1 flex-1 min-w-[140px]">
@@ -5382,10 +5383,10 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   {pricingDiagramMode === "per_bed" ? (["D2", "D7"] as const).map((branchId) => (
                     <div key={branchId} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
                       <div>
-                        <h3 className="text-base font-semibold text-slate-900">{branchId} — Monthly Bed Prices</h3>
-                        <p className="mt-1 text-sm text-slate-500">Click a bed to override its price. Deposit is automatically set equal to the monthly price. Beds without an override use the price from resident history.</p>
+                        <h3 className="text-base font-semibold text-slate-900">{branchId} — {t("monthlyBedPricesHeader")}</h3>
+                        <p className="mt-1 text-sm text-slate-500">{t("monthlyBedPricesDesc")}</p>
                       </div>
-                      {pricingConfigLoading ? <p className="text-sm text-slate-500">Loading…</p> : (
+                      {pricingConfigLoading ? <p className="text-sm text-slate-500">{t("refreshing")}</p> : (
                         <div className="space-y-4">
                           {BRANCH_LAYOUTS[branchId].map((room) => {
                             const bedNumbers = Array.from({ length: room.endBed - room.startBed + 1 }, (_, i) => room.startBed + i);
@@ -5398,7 +5399,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             const tierLabels = room.bunkCount === 3 ? ["T", "M", "B"] : ["T", "B"];
                             return (
                               <div key={room.room}>
-                                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Room {room.room} · {room.floor}</p>
+                                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">{t("roomLabel")} {room.room} · {t("floorLabel")} {room.floor}</p>
                                 <div className="flex flex-wrap gap-2">
                                   {bunks.map((bunk, bunkIdx) => (
                                     <div key={bunkIdx} className="flex flex-col gap-1">
@@ -5420,7 +5421,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                             <div className="text-[10px] leading-tight mt-0.5 text-center truncate">
                                               {hasOverride
                                                 ? <span className="font-semibold text-teal-700">{((override!.monthlyPrice! / 1_000_000)).toFixed(1)}M</span>
-                                                : <span className="text-slate-400">sheet</span>}
+                                                : <span className="text-slate-400">{t("sheetValue")}</span>}
                                             </div>
                                           </button>
                                         );
@@ -5442,22 +5443,22 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                   if (!room) return null;
                                   const posInRoom = bedNum - room.startBed;
                                   const tierIdx = posInRoom % room.bunkCount;
-                                  const tierLabel = room.bunkCount === 3 ? ["Top", "Middle", "Bottom"][tierIdx] : ["Top", "Bottom"][tierIdx];
-                                  return <span className="ml-2 font-normal text-teal-700">· Room {room.room} · {tierLabel} bunk</span>;
+                                  const tierLabel = room.bunkCount === 3 ? [t("topBunk"), t("middleBunk"), t("bottomBunk")][tierIdx] : [t("topBunk"), t("bottomBunk")][tierIdx];
+                                  return <span className="ml-2 font-normal text-teal-700">· {t("roomLabel")} {room.room} · {tierLabel} {t("bedLabel").toLowerCase()}</span>;
                                 })()}
                               </p>
                               <div className="flex items-end gap-3 flex-wrap">
                                 <label className="space-y-1 flex-1 min-w-[140px]">
-                                  <span className="text-xs font-medium text-slate-700">Monthly price (VND)</span>
+                                  <span className="text-xs font-medium text-slate-700">{t("monthlyPriceVnd")}</span>
                                   <input
                                     type="number" min={0}
                                     value={bedOverrideEdit.monthlyPrice}
                                     onChange={(e) => setBedOverrideEdit({ ...bedOverrideEdit, monthlyPrice: e.target.value })}
-                                    placeholder="blank = use sheet"
+                                    placeholder={t("resetToSheetPlaceholder")}
                                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-teal-500 focus:outline-none"
                                   />
                                 </label>
-                                <p className="text-xs text-slate-500 pb-2">Deposit = monthly price (set automatically)</p>
+                                <p className="text-xs text-slate-500 pb-2">{t("depositAutoNote")}</p>
                               </div>
                               {/* Per-bed parking fee override */}
                               {(() => {
@@ -5472,7 +5473,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                       {!isEditingParking && (
                                         <button type="button" onClick={() => setParkingBedEdit({ branchId, bedNumber: bedOverrideEdit.bedNumber, parkingFeeVnd: String(existingPark?.parkingFeeVnd ?? ""), saving: false, result: "" })}
                                           className="rounded-lg border border-amber-300 bg-white px-2 py-0.5 text-xs font-medium text-amber-700 hover:bg-amber-100">
-                                          {existingPark ? "Edit" : "Set override"}
+                                          {existingPark ? t("editLabel") : t("setOverride")}
                                         </button>
                                       )}
                                     </div>
@@ -5515,7 +5516,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                     if (!window.confirm(`Remove override for ${branchId} Bed #${bedOverrideEdit.bedNumber}?`)) return;
                                     const res = await fetch(`${API_BASE_URL}/manager/pricing/beds?actorEmail=${encodeURIComponent(normalizedEmail)}&branchId=${branchId}&bedNumber=${bedOverrideEdit.bedNumber}&termType=long_term`, { method: "DELETE" });
                                     if (res.ok) { setPricingData((prev) => prev ? { ...prev, bedOverrides: prev.bedOverrides.filter((x) => !(x.termType === "long_term" && x.branchId === branchId && x.bedNumber === Number(bedOverrideEdit.bedNumber))) } : prev); setBedOverrideEdit(null); }
-                                  }} className="rounded-xl border border-rose-200 px-4 py-2 text-sm font-medium text-rose-600">Reset to sheet</button>
+                                  }} className="rounded-xl border border-rose-200 px-4 py-2 text-sm font-medium text-rose-600">{t("resetToSheet")}</button>
                                 )}
                                 <button type="button" disabled={bedOverrideEdit.saving} onClick={async () => {
                                   setBedOverrideEdit({ ...bedOverrideEdit, saving: true, result: "" });
@@ -5539,14 +5540,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   )}
                   </div>
 
-                  {/* ── Long-term discounts ── */}
+{/* ── Long-term discounts ── */}
                   <CollapsibleSettingsSection
-                    title="Registration Discounts"
-                    description="Registration discount rules stay collapsed until you open them to review or edit."
+                    title={t("longTermDiscountsHeader")}
+                    description={t("longTermDiscountsDesc")}
                     expanded={pricingSettingsExpanded.long_term_discounts}
                     onToggle={() => togglePricingSettingsSection("long_term_discounts")}
                   >
-                    {pricingConfigLoading ? <p className="text-sm text-slate-500">Loading…</p> : (
+                    {pricingConfigLoading ? <p className="text-sm text-slate-500">{t("refreshing")}</p> : (
                       <>
                         {(pricingData?.discounts ?? []).filter((d) => d.termType === "long_term").length > 0 ? (
                           <div className="space-y-3">
@@ -5554,32 +5555,32 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               <div key={d.id} className={`rounded-2xl border p-4 space-y-2 ${d.enabled ? "border-slate-200 bg-white" : "border-slate-100 bg-slate-50 opacity-60"}`}>
                                 <div className="flex flex-wrap items-start justify-between gap-2">
                                   <div>
-                                    <span className="font-semibold text-slate-900 text-sm">{d.label}</span>
-                                    {!d.enabled && <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-500">Disabled</span>}
+                                    <span className="font-semibold text-slate-900 text-sm">{language === "vi" && d.labelVi ? d.labelVi : d.label}</span>
+                                    {!d.enabled && <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-500">{t("disabledLabel")}</span>}
                                   </div>
                                   <div className="flex gap-2">
                                     <button type="button" onClick={() => setDiscountEdit({ id: d.id, termType: "long_term", label: d.label, labelVi: d.labelVi ?? "", description: d.description, descriptionVi: d.descriptionVi ?? "", amountVnd: String(d.amountVnd ?? ""), percentOff: "", minNights: "", durationMonths: d.durationMonths != null ? String(d.durationMonths) : "", eligibility: d.eligibility.map((e) => ({ type: e.type, values: "values" in e ? ((e as { values: string[] }).values ?? []).join(", ") : "", value: "value" in e ? String((e as { value: number }).value) : "" })), selectionMode: d.selectionMode ?? "manual", stackMode: d.stackMode ?? "stackable", enabled: d.enabled, saving: false, result: "" })}
-                                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700">Edit</button>
+                                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700">{t("editLabel")}</button>
                                     <button type="button" onClick={async () => {
                                       if (!window.confirm(`Delete "${d.label}"?`)) return;
                                       const res = await fetch(`${API_BASE_URL}/manager/pricing/discounts/${encodeURIComponent(d.id)}?actorEmail=${encodeURIComponent(normalizedEmail)}`, { method: "DELETE" });
                                       if (res.ok) setPricingData((prev) => prev ? { ...prev, discounts: prev.discounts.filter((x) => x.id !== d.id) } : prev);
-                                    }} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-medium text-rose-600">Delete</button>
+                                    }} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-medium text-rose-600">{t("deleteLabel")}</button>
                                   </div>
                                 </div>
-                                <p className="text-xs text-slate-500">{d.description}</p>
+                                <p className="text-xs text-slate-500">{language === "vi" && d.descriptionVi ? d.descriptionVi : d.description}</p>
                                 <div className="flex flex-wrap gap-2 text-xs">
                                   {d.amountVnd != null && <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-emerald-700 font-medium">−{d.amountVnd.toLocaleString("vi-VN")} ₫/month</span>}
-                                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{d.durationMonths != null ? `${d.durationMonths} months` : "Entire contract"}</span>
-                                  <span className={`rounded-full px-2.5 py-1 font-medium ${d.stackMode === "exclusive" ? "bg-rose-100 text-rose-700" : "bg-sky-100 text-sky-700"}`}>{d.stackMode === "exclusive" ? "Exclusive" : "Stackable"}</span>
+                                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{d.durationMonths != null ? `${d.durationMonths} ${t("monthsLabel")}` : t("entireContractLabel")}</span>
+                                  <span className={`rounded-full px-2.5 py-1 font-medium ${d.stackMode === "exclusive" ? "bg-rose-100 text-rose-700" : "bg-sky-100 text-sky-700"}`}>{d.stackMode === "exclusive" ? t("exclusiveLabel") : t("stackableLabel")}</span>
                                   {d.eligibility.map((e, i) => (
                                     <span key={i} className="rounded-full bg-sky-100 px-2.5 py-1 text-sky-700">
-                                      {e.type === "status" ? `Status: ${"values" in e ? ((e as { values: string[] }).values ?? []).join(" / ") : ""}` :
-                                       e.type === "minMonths" ? `Min ${"value" in e ? (e as { value: number }).value : "?"} months` :
-                                       e.type === "referral" ? "Has referral" :
-                                       e.type === "bedTier" ? `Bed tier: ${"values" in e ? ((e as { values: string[] }).values ?? []).join("/") : ""}` :
-                                       e.type === "gender" ? `Gender: ${"values" in e ? ((e as { values: string[] }).values ?? []).join("/") : ""}` :
-                                       e.type === "occupation" ? `Occupation: ${"values" in e ? ((e as { values: string[] }).values ?? []).join(", ") : ""}` : e.type}
+                                      {e.type === "status" ? `${t("statusLabel")}: ${"values" in e ? ((e as { values: string[] }).values ?? []).join(" / ") : ""}` :
+                                       e.type === "minMonths" ? `${t("minLabel")} ${"value" in e ? (e as { value: number }).value : "?"} ${t("monthsLabel")}` :
+                                       e.type === "referral" ? t("hasReferralLabel") :
+                                       e.type === "bedTier" ? `${t("bedTierLabel")}: ${"values" in e ? ((e as { values: string[] }).values ?? []).join("/") : ""}` :
+                                       e.type === "gender" ? `${t("genderLabel")}: ${"values" in e ? ((e as { values: string[] }).values ?? []).join("/") : ""}` :
+                                       e.type === "occupation" ? `${t("occupationLabel")}: ${"values" in e ? ((e as { values: string[] }).values ?? []).join(", ") : ""}` : e.type}
                                     </span>
                                   ))}
                                 </div>
@@ -5597,42 +5598,42 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Label (Vietnamese)</span>
                                 <input value={discountEdit.labelVi} onChange={(e) => setDiscountEdit({ ...discountEdit, labelVi: e.target.value })} placeholder="e.g. Giảm giá sinh viên" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none" />
                               </label>
-                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Description (English)</span>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">{t("descEn")}</span>
                                 <input value={discountEdit.description} onChange={(e) => setDiscountEdit({ ...discountEdit, description: e.target.value })} placeholder="e.g. For university students" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none" />
                               </label>
-                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Description (Vietnamese)</span>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">{t("descVi")}</span>
                                 <input value={discountEdit.descriptionVi} onChange={(e) => setDiscountEdit({ ...discountEdit, descriptionVi: e.target.value })} placeholder="e.g. Dành cho sinh viên đại học" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none" />
                               </label>
-                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Monthly discount (VND)</span>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">{t("monthlyDiscountVnd")}</span>
                                 <input type="number" min={0} value={discountEdit.amountVnd} onChange={(e) => setDiscountEdit({ ...discountEdit, amountVnd: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none" />
                               </label>
-                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Duration months (blank = entire contract)</span>
-                                <input type="number" min={1} value={discountEdit.durationMonths} onChange={(e) => setDiscountEdit({ ...discountEdit, durationMonths: e.target.value })} placeholder="Blank = whole contract" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none" />
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">{t("durationMonthsLabel")}</span>
+                                <input type="number" min={1} value={discountEdit.durationMonths} onChange={(e) => setDiscountEdit({ ...discountEdit, durationMonths: e.target.value })} placeholder={t("wholeContractPlaceholder")} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none" />
                               </label>
-                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Selection rule</span>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">{t("selectionRuleDefault")}</span>
                                 <select value={discountEdit.selectionMode} onChange={(e) => setDiscountEdit({ ...discountEdit, selectionMode: e.target.value as "manual" | "automatic" })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none">
-                                  <option value="manual">Resident must select</option>
-                                  <option value="automatic">Auto apply when eligible</option>
+                                  <option value="manual">{t("residentMustSelect")}</option>
+                                  <option value="automatic">{t("autoApplyEligible")}</option>
                                 </select>
                               </label>
-                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Stacking rule</span>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">{t("stackingRuleDefault")}</span>
                                 <select value={discountEdit.stackMode} onChange={(e) => setDiscountEdit({ ...discountEdit, stackMode: e.target.value as "stackable" | "exclusive" })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none">
-                                  <option value="stackable">Stackable</option>
-                                  <option value="exclusive">Exclusive</option>
+                                  <option value="stackable">{t("stackable")}</option>
+                                  <option value="exclusive">{t("exclusive")}</option>
                                 </select>
                               </label>
                               <div className="sm:col-span-2 space-y-2">
-                                <span className="text-xs font-medium text-slate-700 block">Eligibility rules (ALL must match)</span>
+                                <span className="text-xs font-medium text-slate-700 block">{t("eligibilityRulesLabel")}</span>
                                 {discountEdit.eligibility.map((rule, idx) => (
                                   <div key={idx} className="flex gap-2 items-start flex-wrap">
                                     <select value={rule.type} onChange={(e) => { const u = [...discountEdit.eligibility]; u[idx] = { type: e.target.value, values: "", value: "" }; setDiscountEdit({ ...discountEdit, eligibility: u }); }}
                                       className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none">
-                                      <option value="status">Resident status</option>
-                                      <option value="minMonths">Min contract months</option>
-                                      <option value="referral">Has referral</option>
-                                      <option value="bedTier">Bed tier (T/M/B)</option>
-                                      <option value="gender">Gender</option>
-                                      <option value="occupation">Occupation</option>
+                                      <option value="status">{t("residentStatus")}</option>
+                                      <option value="minMonths">{t("minContractMonths")}</option>
+                                      <option value="referral">{t("hasReferral")}</option>
+                                      <option value="bedTier">{t("bedTierRule")}</option>
+                                      <option value="gender">{t("genderRule")}</option>
+                                      <option value="occupation">{t("occupationRule")}</option>
                                     </select>
                                     {rule.type === "status" && <input value={rule.values} onChange={(e) => { const u = [...discountEdit.eligibility]; u[idx] = { ...u[idx], values: e.target.value }; setDiscountEdit({ ...discountEdit, eligibility: u }); }} placeholder="Sinh vien, Hoc sinh" className="flex-1 min-w-[160px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none" />}
                                     {rule.type === "minMonths" && <input type="number" min={1} value={rule.value} onChange={(e) => { const u = [...discountEdit.eligibility]; u[idx] = { ...u[idx], value: e.target.value }; setDiscountEdit({ ...discountEdit, eligibility: u }); }} placeholder="e.g. 6" className="w-24 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-500 focus:outline-none" />}
@@ -5643,7 +5644,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                             <input type="checkbox" checked={(rule.values ?? "").split(",").map((v) => v.trim()).includes(tier)}
                                               onChange={(e) => { const u = [...discountEdit.eligibility]; const cur = (u[idx].values ?? "").split(",").map((v) => v.trim()).filter(Boolean); u[idx] = { ...u[idx], values: (e.target.checked ? [...cur, tier] : cur.filter((v) => v !== tier)).join(", ") }; setDiscountEdit({ ...discountEdit, eligibility: u }); }}
                                               className="h-4 w-4 rounded border-slate-300" />
-                                            {tier.charAt(0).toUpperCase() + tier.slice(1)}
+                                            {tier === "top" ? t("topBunk") : tier === "middle" ? t("middleBunk") : t("bottomBunk")}
                                           </label>
                                         ))}
                                       </div>
@@ -5655,7 +5656,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                             <input type="checkbox" checked={(rule.values ?? "").split(",").map((v) => v.trim()).includes(g)}
                                               onChange={(e) => { const u = [...discountEdit.eligibility]; const cur = (u[idx].values ?? "").split(",").map((v) => v.trim()).filter(Boolean); u[idx] = { ...u[idx], values: (e.target.checked ? [...cur, g] : cur.filter((v) => v !== g)).join(", ") }; setDiscountEdit({ ...discountEdit, eligibility: u }); }}
                                               className="h-4 w-4 rounded border-slate-300" />
-                                            {g.charAt(0).toUpperCase() + g.slice(1)}
+                                            {g === "male" ? t("maleLabel") : t("femaleLabel")}
                                           </label>
                                         ))}
                                       </div>
@@ -5665,11 +5666,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                   </div>
                                 ))}
                                 <button type="button" onClick={() => setDiscountEdit({ ...discountEdit, eligibility: [...discountEdit.eligibility, { type: "status", values: "", value: "" }] })}
-                                  className="rounded-xl border border-dashed border-slate-300 px-3 py-2 text-xs text-slate-600 hover:border-sky-400">+ Add rule</button>
+                                  className="rounded-xl border border-dashed border-slate-300 px-3 py-2 text-xs text-slate-600 hover:border-sky-400">{t("addRule")}</button>
                               </div>
                               <label className="flex items-center gap-2">
                                 <input type="checkbox" checked={discountEdit.enabled} onChange={(e) => setDiscountEdit({ ...discountEdit, enabled: e.target.checked })} className="h-4 w-4 rounded border-slate-300 text-sky-600" />
-                                <span className="text-sm text-slate-700">Enabled (visible on registration form)</span>
+                                <span className="text-sm text-slate-700">{t("enabledVisibleLabel")}</span>
                               </label>
                             </div>
                             {discountEdit.result ? <p className={`text-sm font-medium ${discountEdit.result.startsWith("✓") ? "text-emerald-700" : "text-rose-700"}`}>{discountEdit.result}</p> : null}
@@ -5694,12 +5695,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                   if (data.row) setPricingData((prev) => prev ? { ...prev, discounts: [...prev.discounts.filter((x) => x.id !== data.row!.id), data.row!] } : prev);
                                   setDiscountEdit(null);
                                 } catch (err) { setDiscountEdit({ ...discountEdit, saving: false, result: err instanceof Error ? err.message : "Failed" }); }
-                              }} className="rounded-xl bg-sky-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">{discountEdit.saving ? "Saving…" : "Save discount"}</button>
+                              }} className="rounded-xl bg-sky-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">{discountEdit.saving ? t("saving") : t("saveDiscount")}</button>
                             </div>
                           </div>
                         ) : (
                           <button type="button" onClick={() => setDiscountEdit({ id: "", termType: "long_term", label: "", labelVi: "", description: "", descriptionVi: "", amountVnd: "0", percentOff: "", minNights: "", durationMonths: "", eligibility: [], selectionMode: "manual", stackMode: "stackable", enabled: true, saving: false, result: "" })}
-                            className="rounded-xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 hover:border-sky-400 hover:text-sky-700">+ Add discount</button>
+                            className="rounded-xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 hover:border-sky-400 hover:text-sky-700">{t("addDiscount")}</button>
                         )}
                       </>
                     )}
@@ -5714,14 +5715,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             <section className="space-y-5">
               {!canManageOwnersEmployees ? (
                 <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                  <p className="text-sm text-slate-500">Pricing editing is restricted to owners and app admins.</p>
+                  <p className="text-sm text-slate-500">{t("pricingRestricted")}</p>
                 </div>
               ) : (
                 <>
                   {/* Short-term nightly bed overrides */}
                   <CollapsibleSettingsSection
-                    title="Nightly Bed Prices"
-                    description="Nightly price overrides stay collapsed until you expand this section."
+                    title={t("nightlyBedPricesHeader")}
+                    description={t("nightlyBedPricesDesc")}
                     expanded={pricingSettingsExpanded.nightly_bed_prices}
                     onToggle={() => togglePricingSettingsSection("nightly_bed_prices")}
                   >
@@ -5732,42 +5733,42 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             {(pricingData?.bedOverrides ?? []).filter((b) => b.termType === "short_term").map((b) => (
                               <div key={b.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                                 <div className="text-sm">
-                                  <span className="font-semibold text-slate-900">{b.branchId} Bed {b.bedNumber}</span>
-                                  <span className="ml-3 text-slate-500">{b.nightlyPrice != null ? `${b.nightlyPrice.toLocaleString("vi-VN")} ₫/night` : "config default"}</span>
+                                  <span className="font-semibold text-slate-900">{b.branchId} {t("bedLabel")} {b.bedNumber}</span>
+                                  <span className="ml-3 text-slate-500">{b.nightlyPrice != null ? `${b.nightlyPrice.toLocaleString("vi-VN")} ₫/${t("nightSuffix")}` : t("configDefault", "config default")}</span>
                                   <span className="ml-2 text-xs text-slate-400">by {b.updatedBy}</span>
                                 </div>
                                 <div className="flex gap-2">
                                   <button type="button" onClick={() => setBedOverrideEdit({ id: b.id, branchId: b.branchId, bedNumber: String(b.bedNumber), termType: "short_term", monthlyPrice: "", deposit: "", nightlyPrice: String(b.nightlyPrice ?? ""), saving: false, result: "" })}
-                                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700">Edit</button>
+                                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700">{t("editLabel")}</button>
                                   <button type="button" onClick={async () => {
                                     if (!window.confirm(`Remove nightly override for ${b.branchId} Bed ${b.bedNumber}?`)) return;
                                     const res = await fetch(`${API_BASE_URL}/manager/pricing/beds?actorEmail=${encodeURIComponent(normalizedEmail)}&branchId=${b.branchId}&bedNumber=${b.bedNumber}&termType=short_term`, { method: "DELETE" });
                                     if (res.ok) setPricingData((prev) => prev ? { ...prev, bedOverrides: prev.bedOverrides.filter((x) => x.id !== b.id) } : prev);
-                                  }} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-medium text-rose-600">Remove</button>
+                                  }} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-medium text-rose-600">{t("removeLabel")}</button>
                                 </div>
                               </div>
                             ))}
                           </div>
-                        ) : <p className="text-sm text-slate-400 italic">No nightly overrides — using config defaults.</p>}
+                        ) : <p className="text-sm text-slate-400 italic">{t("noNightlyOverrides")}</p>}
                         {bedOverrideEdit?.termType === "short_term" ? (
                           <div className="rounded-2xl border border-violet-200 bg-violet-50 p-5 space-y-4">
-                            <p className="text-sm font-semibold text-violet-900">{bedOverrideEdit.id ? "Edit" : "Add"} nightly price</p>
+                            <p className="text-sm font-semibold text-violet-900">{bedOverrideEdit.id ? t("editLabel") : t("addLabel")} {t("nightlyBedPricesHeader").toLowerCase()}</p>
                             <div className="grid gap-3 sm:grid-cols-3">
-                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Branch</span>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">{t("branchLabel")}</span>
                                 <select value={bedOverrideEdit.branchId} onChange={(e) => setBedOverrideEdit({ ...bedOverrideEdit, branchId: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none">
                                   <option value="D2">D2</option><option value="D7">D7</option>
                                 </select>
                               </label>
-                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Bed number</span>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">{t("bedNumberLabel")}</span>
                                 <input type="number" min={1} value={bedOverrideEdit.bedNumber} onChange={(e) => setBedOverrideEdit({ ...bedOverrideEdit, bedNumber: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none" />
                               </label>
-                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Nightly price (VND)</span>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">{t("nightlyPriceVnd")}</span>
                                 <input type="number" min={0} value={bedOverrideEdit.nightlyPrice} onChange={(e) => setBedOverrideEdit({ ...bedOverrideEdit, nightlyPrice: e.target.value })} placeholder="e.g. 150000" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none" />
                               </label>
                             </div>
                             {bedOverrideEdit.result ? <p className={`text-sm font-medium ${bedOverrideEdit.result.startsWith("✓") ? "text-emerald-700" : "text-rose-700"}`}>{bedOverrideEdit.result}</p> : null}
                             <div className="flex gap-2">
-                              <button type="button" onClick={() => setBedOverrideEdit(null)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Cancel</button>
+                              <button type="button" onClick={() => setBedOverrideEdit(null)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">{t("cancelLabel")}</button>
                               <button type="button" disabled={bedOverrideEdit.saving} onClick={async () => {
                                 setBedOverrideEdit({ ...bedOverrideEdit, saving: true, result: "" });
                                 try {
@@ -5777,12 +5778,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                   if (data.row) setPricingData((prev) => prev ? { ...prev, bedOverrides: [...prev.bedOverrides.filter((x) => x.id !== data.row!.id), data.row!] } : prev);
                                   setBedOverrideEdit(null);
                                 } catch (err) { setBedOverrideEdit({ ...bedOverrideEdit, saving: false, result: err instanceof Error ? err.message : "Failed" }); }
-                              }} className="rounded-xl bg-violet-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">{bedOverrideEdit.saving ? "Saving…" : "Save"}</button>
+                              }} className="rounded-xl bg-violet-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">{bedOverrideEdit.saving ? t("saving") : t("saveLabel")}</button>
                             </div>
                           </div>
                         ) : (
                           <button type="button" onClick={() => setBedOverrideEdit({ branchId: "D2", bedNumber: "", termType: "short_term", monthlyPrice: "", deposit: "", nightlyPrice: "", saving: false, result: "" })}
-                            className="rounded-xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 hover:border-violet-400 hover:text-violet-700">+ Add nightly price override</button>
+                            className="rounded-xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 hover:border-violet-400 hover:text-violet-700">{t("addNightlyOverride")}</button>
                         )}
                       </>
                     )}
@@ -5790,12 +5791,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
                   {/* Short-term stay discounts */}
                   <CollapsibleSettingsSection
-                    title="Stay Discounts"
-                    description="Automatic short-stay discount rules are collapsed by default and expand on demand."
+                    title={t("stayDiscountsHeader")}
+                    description={t("stayDiscountsDesc")}
                     expanded={pricingSettingsExpanded.stay_discounts}
                     onToggle={() => togglePricingSettingsSection("stay_discounts")}
                   >
-                    {pricingConfigLoading ? <p className="text-sm text-slate-500">Loading…</p> : (
+                    {pricingConfigLoading ? <p className="text-sm text-slate-500">{t("refreshing")}</p> : (
                       <>
                         {(pricingData?.discounts ?? []).filter((d) => d.termType === "short_term").length > 0 ? (
                           <div className="space-y-3">
@@ -5804,54 +5805,54 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 <div className="flex flex-wrap items-start justify-between gap-2">
                                   <div>
                                     <span className="font-semibold text-slate-900 text-sm">{d.label}</span>
-                                    {!d.enabled && <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-500">Disabled</span>}
+                                    {!d.enabled && <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-500">{t("disabledLabel")}</span>}
                                   </div>
                                   <div className="flex gap-2">
                                     <button type="button" onClick={() => setDiscountEdit({ id: d.id, termType: "short_term", label: d.label, labelVi: d.labelVi ?? "", description: d.description, descriptionVi: d.descriptionVi ?? "", amountVnd: "", percentOff: String(d.percentOff ?? ""), minNights: String(d.minNights ?? ""), durationMonths: "", eligibility: [], selectionMode: d.selectionMode ?? "automatic", stackMode: d.stackMode ?? "stackable", enabled: d.enabled, saving: false, result: "" })}
-                                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700">Edit</button>
+                                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700">{t("editLabel")}</button>
                                     <button type="button" onClick={async () => {
                                       if (!window.confirm(`Delete "${d.label}"?`)) return;
                                       const res = await fetch(`${API_BASE_URL}/manager/pricing/discounts/${encodeURIComponent(d.id)}?actorEmail=${encodeURIComponent(normalizedEmail)}`, { method: "DELETE" });
                                       if (res.ok) setPricingData((prev) => prev ? { ...prev, discounts: prev.discounts.filter((x) => x.id !== d.id) } : prev);
-                                    }} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-medium text-rose-600">Delete</button>
+                                    }} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-medium text-rose-600">{t("deleteLabel")}</button>
                                   </div>
                                 </div>
-                                <p className="text-xs text-slate-500">{d.description}</p>
+                                <p className="text-xs text-slate-500">{language === "vi" && d.descriptionVi ? d.descriptionVi : d.description}</p>
                                 <div className="flex flex-wrap gap-2 text-xs">
-                                  {d.percentOff != null && <span className="rounded-full bg-violet-100 px-2.5 py-1 text-violet-700 font-medium">{d.percentOff}% off</span>}
-                                  {d.minNights != null && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">Min {d.minNights} nights</span>}
-                                  <span className={`rounded-full px-2.5 py-1 font-medium ${d.stackMode === "exclusive" ? "bg-rose-100 text-rose-700" : "bg-sky-100 text-sky-700"}`}>{d.stackMode === "exclusive" ? "Exclusive" : "Stackable"}</span>
+                                  {d.percentOff != null && <span className="rounded-full bg-violet-100 px-2.5 py-1 text-violet-700 font-medium">{t("percentOffLabel", { percent: d.percentOff })}</span>}
+                                  {d.minNights != null && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{t("minNightsCondition", { count: d.minNights })}</span>}
+                                  <span className={`rounded-full px-2.5 py-1 font-medium ${d.stackMode === "exclusive" ? "bg-rose-100 text-rose-700" : "bg-sky-100 text-sky-700"}`}>{d.stackMode === "exclusive" ? t("exclusiveDiscount") : t("stackableDiscount")}</span>
                                 </div>
                               </div>
                             ))}
                           </div>
-                        ) : <p className="text-sm text-slate-400 italic">No short-term discounts configured.</p>}
+                        ) : <p className="text-sm text-slate-400 italic">{t("noShortTermDiscounts")}</p>}
                         {discountEdit?.termType === "short_term" ? (
                           <div className="rounded-2xl border border-violet-200 bg-violet-50 p-5 space-y-4">
-                            <p className="text-sm font-semibold text-violet-900">{discountEdit.id && (pricingData?.discounts ?? []).some((d) => d.id === discountEdit.id) ? "Edit stay discount" : "New stay discount"}</p>
+                            <p className="text-sm font-semibold text-violet-900">{discountEdit.id && (pricingData?.discounts ?? []).some((d) => d.id === discountEdit.id) ? t("editStayDiscount") : t("newStayDiscount")}</p>
                             <div className="grid gap-3 sm:grid-cols-2">
-                              <label className="space-y-1 sm:col-span-2"><span className="text-xs font-medium text-slate-700">Label</span>
+                              <label className="space-y-1 sm:col-span-2"><span className="text-xs font-medium text-slate-700">{t("labelLabel", "Label")}</span>
                                 <input value={discountEdit.label} onChange={(e) => setDiscountEdit({ ...discountEdit, label: e.target.value })} placeholder="e.g. Weekly discount" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none" />
                               </label>
-                              <label className="space-y-1 sm:col-span-2"><span className="text-xs font-medium text-slate-700">Description</span>
+                              <label className="space-y-1 sm:col-span-2"><span className="text-xs font-medium text-slate-700">{t("descriptionLabel", "Description")}</span>
                                 <input value={discountEdit.description} onChange={(e) => setDiscountEdit({ ...discountEdit, description: e.target.value })} placeholder="e.g. Stays of 7+ nights get 10% off" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none" />
                               </label>
-                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Discount % (0–100)</span>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">{t("percentOffInput", "Discount % (0–100)")}</span>
                                 <input type="number" min={0} max={100} value={discountEdit.percentOff} onChange={(e) => setDiscountEdit({ ...discountEdit, percentOff: e.target.value })} placeholder="e.g. 10" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none" />
                               </label>
-                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Minimum nights</span>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">{t("minimumNights", "Minimum nights")}</span>
                                 <input type="number" min={1} value={discountEdit.minNights} onChange={(e) => setDiscountEdit({ ...discountEdit, minNights: e.target.value })} placeholder="e.g. 7" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none" />
                               </label>
-                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Selection rule</span>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">{t("selectionRuleDefault")}</span>
                                 <select value={discountEdit.selectionMode} onChange={(e) => setDiscountEdit({ ...discountEdit, selectionMode: e.target.value as "manual" | "automatic" })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none">
-                                  <option value="manual">Guest must select</option>
-                                  <option value="automatic">Auto apply when eligible</option>
+                                  <option value="manual">{t("guestMustSelect")}</option>
+                                  <option value="automatic">{t("autoApplyEligible")}</option>
                                 </select>
                               </label>
-                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">Stacking rule</span>
+                              <label className="space-y-1"><span className="text-xs font-medium text-slate-700">{t("stackingRuleDefault")}</span>
                                 <select value={discountEdit.stackMode} onChange={(e) => setDiscountEdit({ ...discountEdit, stackMode: e.target.value as "stackable" | "exclusive" })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none">
-                                  <option value="stackable">Stackable</option>
-                                  <option value="exclusive">Exclusive</option>
+                                  <option value="stackable">{t("stackable")}</option>
+                                  <option value="exclusive">{t("exclusive")}</option>
                                 </select>
                               </label>
                               <label className="flex items-center gap-2 sm:col-span-2">
@@ -5877,7 +5878,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           </div>
                         ) : (
                           <button type="button" onClick={() => setDiscountEdit({ id: "", termType: "short_term", label: "", labelVi: "", description: "", descriptionVi: "", amountVnd: "", percentOff: "10", minNights: "7", durationMonths: "", eligibility: [], selectionMode: "automatic", stackMode: "stackable", enabled: true, saving: false, result: "" })}
-                            className="rounded-xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 hover:border-violet-400 hover:text-violet-700">+ Add stay discount</button>
+                            className="rounded-xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 hover:border-violet-400 hover:text-violet-700">{t("addStayDiscount")}</button>
                         )}
                       </>
                     )}
@@ -5901,7 +5902,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               <div>
                 <p className="text-sm text-slate-500">
                   Staff account management is available in the{" "}
-                  <button type="button" onClick={() => setActiveManagerView("owners_employees")} className="font-medium text-sky-600 underline underline-offset-2">Staff Accounts view</button>.
+                  <button type="button" onClick={() => setActiveManagerView("owners_employees")} className="font-medium text-sky-600 underline underline-offset-2">{t("staffAccountViewBtn")}</button>.
                 </p>
               </div>
             </CollapsibleSettingsSection>
@@ -6061,7 +6062,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   value={newStaffPassword}
                   onChange={(event) => setNewStaffPassword(event.target.value)}
                   className="rounded-lg border border-slate-300 px-3 py-2"
-                  placeholder="Starter password"
+                  placeholder={t("starterPasswordPlaceholder")}
                 />
                 <button
                   type="button"
@@ -6088,7 +6089,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   disabled={!newStaffEmail.trim()}
                   className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
                 >
-                  {t("saveAccount")}
+                  {t("saveLabel")}
                 </button>
               </div>
             </div>
@@ -6105,7 +6106,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm"
             >
               <span>{showStaffList ? "▲" : "▼"}</span>
-              {showStaffList ? t("hideTeamList", "Hide team list") : t("showTeamList", "Show team list")}
+              {showStaffList ? t("hideTeamList") : t("showTeamList")}
               {staffEntries.length > 0 && (
                 <span className="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
                   {staffEntries.length}
@@ -6129,7 +6130,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             {entry.name ? `${entry.name} — ` : ""}{entry.email}
                           </div>
                           <div className="mt-1 text-sm text-slate-600">
-                            {t("roleLabel")}: {entry.role} | {t("addedByLabel")}: {entry.addedBy || "system"}
+                            {t("roleLabel")}: {entry.role} | {t("addedByLabel")}: {entry.addedBy || t("system")}
                           </div>
                         </div>
 
@@ -6178,7 +6179,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 onClick={() => void loadPermissions(entry)}
                                 className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-medium text-violet-700 hover:bg-violet-100"
                               >
-                                {entry.email === normalizedEmail ? "My permissions" : "⚙ Permissions"}
+                                {entry.email === normalizedEmail ? t("myPermissions") : `⚙ ${t("permissions", "Permissions")}`}
                               </button>
                             )}
                           </div>
@@ -6190,7 +6191,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 onClick={() => void loadPermissions(entry)}
                                 className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-medium text-violet-700 hover:bg-violet-100"
                               >
-                                My permissions
+                                {t("myPermissions")}
                               </button>
                             )}
                             <div className="text-sm text-slate-500 self-center">{t("viewOnly")}</div>
@@ -6213,16 +6214,16 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
               <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-xl">
                 <h3 className="text-base font-semibold text-slate-900">
-                  {t("confirmRemoveTitle", "Remove account?")}
+                  {t("confirmRemoveTitle")}
                 </h3>
                 <p className="mt-2 text-sm text-slate-600">
-                  {t("confirmRemoveDesc", "You are about to remove access for")}:{" "}
+                  {t("confirmRemoveDesc")}:{" "}
                   <span className="font-medium text-slate-900">
                     {removeConfirmEntry.name ? `${removeConfirmEntry.name} (${removeConfirmEntry.email})` : removeConfirmEntry.email}
                   </span>
                 </p>
                 <p className="mt-3 text-sm text-slate-600">
-                  {t("confirmRemovePasswordPrompt", "Enter your password to confirm:")}
+                  {t("confirmRemovePasswordPrompt")}
                 </p>
                 <input
                   type="password"
@@ -6231,7 +6232,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     setRemoveConfirmPassword(e.target.value);
                     setRemoveConfirmError("");
                   }}
-                  placeholder={t("passwordPlaceholder", "Your password")}
+                  placeholder={t("passwordPlaceholder")}
                   className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
                 />
                 {removeConfirmError && (
@@ -6278,7 +6279,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     }}
                     className="flex-1 rounded-xl bg-rose-600 py-2 text-sm font-medium text-white disabled:opacity-50"
                   >
-                    {removeConfirmLoading ? t("calculating") : t("confirmRemoveBtn", "Remove account")}
+                    {removeConfirmLoading ? t("refreshing") : t("confirmRemoveBtn")}
                   </button>
                 </div>
               </div>
@@ -6293,7 +6294,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 <div className="flex items-start justify-between gap-3 px-6 pt-6 pb-4 border-b border-slate-100 flex-shrink-0">
                   <div>
                     <h3 className="text-base font-semibold text-slate-900">
-                      {permissionsEntry.email === normalizedEmail ? "My Permissions" : `Permissions — ${permissionsEntry.name ?? permissionsEntry.email}`}
+                      {permissionsEntry.email === normalizedEmail ? t("myPermissions") : `${t("permissions", "Permissions")} — ${permissionsEntry.name ?? permissionsEntry.email}`}
                     </h3>
                     <p className="mt-1 text-xs text-slate-500">{permissionsEntry.email}</p>
                   </div>
@@ -6304,7 +6305,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 <div className="flex-1 overflow-y-auto px-6 py-4">
                   {/* Branch access */}
                   <div>
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Branch access</div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">{t("branchAccess")}</div>
                     <div className="flex flex-wrap gap-2">
                       {KNOWN_BRANCHES.map(b => {
                         const isActive = editingPermissions.branches.length === 0 || editingPermissions.branches.includes(b);
@@ -6327,7 +6328,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         );
                       })}
                       {editingPermissions.branches.length === 0 && (
-                        <span className="text-xs text-slate-500 self-center">All branches</span>
+                        <span className="text-xs text-slate-500 self-center">{t("allBranches")}</span>
                       )}
                     </div>
                   </div>
@@ -6335,9 +6336,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   {/* Data permissions grid */}
                   <div className="mt-5">
                     <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 gap-y-2 items-center">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Data type</div>
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 text-center">Read</div>
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 text-center">Write</div>
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("dataType")}</div>
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 text-center">{t("readLabel")}</div>
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 text-center">{t("writeLabel")}</div>
                       {DATA_CATEGORIES.map(({ key, label, hasWrite }) => {
                         const perm = editingPermissions.data[key] ?? { read: false, write: false };
                         const canEdit = (isOwnerSession || isAppAdminSession) && permissionsEntry.email !== normalizedEmail;
@@ -6386,7 +6387,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 {/* Sticky footer */}
                 <div className="flex gap-2 justify-end px-6 py-4 border-t border-slate-100 flex-shrink-0 bg-white rounded-b-3xl">
                   <button type="button" onClick={() => { setPermissionsEntry(null); setEditingPermissions(null); }} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700">
-                    {(isOwnerSession || isAppAdminSession) && permissionsEntry.email !== normalizedEmail ? "Cancel" : "Close"}
+                    {(isOwnerSession || isAppAdminSession) && permissionsEntry.email !== normalizedEmail ? t("cancelLabel") : t("closeLabel")}
                   </button>
                   {(isOwnerSession || isAppAdminSession) && permissionsEntry.email !== normalizedEmail && (
                     <button
@@ -6412,7 +6413,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       }}
                       className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                     >
-                      {permissionsSaving ? "Saving…" : "Save permissions"}
+                      {permissionsSaving ? t("saving") : t("saveLabel")}
                     </button>
                   )}
                 </div>
@@ -6434,7 +6435,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   : "text-slate-600 hover:bg-slate-50"
               }`}
             >
-              Messages
+              {t("messagesTab")}
             </button>
             <button
               type="button"
@@ -6448,7 +6449,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   : "text-slate-600 hover:bg-slate-50"
               }`}
             >
-              Feedbacks
+              {t("feedbacksTab")}
             </button>
           </div>
 
@@ -6482,7 +6483,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   disabled={feedbackLoading}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60"
                 >
-                  Refresh
+                  {t("refreshLabel")}
                 </button>
               </div>
 
@@ -6494,7 +6495,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         <div>
                           <div className="font-medium text-slate-900">{entry.email}</div>
                           <div className="mt-1 text-sm text-slate-600">
-                            {entry.page} | {entry.createdAt ? formatDateTime(entry.createdAt) : "Unknown time"}
+                            {entry.page} | {entry.createdAt ? formatDateTime(entry.createdAt) : t("unknownTime")}
                           </div>
                         </div>
                       </div>
@@ -6503,7 +6504,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   ))
                 ) : (
                   <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
-                    {feedbackLoading ? "Loading feedbacks..." : "No feedbacks yet."}
+                    {feedbackLoading ? t("loadingFeedbacks") : t("noFeedbacks")}
                   </div>
                 )}
               </div>
@@ -6512,9 +6513,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-semibold text-slate-900">Maintenance Tickets</h2>
+                  <h2 className="text-lg font-semibold text-slate-900">{t("maintenanceTickets")}</h2>
                   <p className="mt-1 text-sm text-slate-600">
-                    Manage active malfunction and maintenance reports.
+                    {t("maintenanceTicketsDesc")}
                   </p>
                 </div>
                 <button
@@ -6523,7 +6524,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   disabled={maintenanceLoading}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60"
                 >
-                  Refresh
+                  {t("refreshLabel")}
                 </button>
               </div>
 
@@ -6532,22 +6533,22 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   <thead>
                     <tr className="border-b border-slate-100 text-slate-500 uppercase text-[10px] font-bold tracking-wider">
                       <th className="pb-3 px-2 cursor-pointer hover:text-slate-900" onClick={() => setMaintenanceSort({ field: 'reportedAt', direction: maintenanceSort.direction === 'asc' ? 'desc' : 'asc' })}>
-                        Time {maintenanceSort.field === 'reportedAt' && (maintenanceSort.direction === 'asc' ? '↑' : '↓')}
+                        {t("timeLabel")} {maintenanceSort.field === 'reportedAt' && (maintenanceSort.direction === 'asc' ? '↑' : '↓')}
                       </th>
                       <th className="pb-3 px-2 cursor-pointer hover:text-slate-900" onClick={() => setMaintenanceSort({ field: 'residentName', direction: maintenanceSort.direction === 'asc' ? 'desc' : 'asc' })}>
-                        Resident {maintenanceSort.field === 'residentName' && (maintenanceSort.direction === 'asc' ? '↑' : '↓')}
+                        {t("residentLabel")} {maintenanceSort.field === 'residentName' && (maintenanceSort.direction === 'asc' ? '↑' : '↓')}
                       </th>
                       <th className="pb-3 px-2 cursor-pointer hover:text-slate-900" onClick={() => setMaintenanceSort({ field: 'location', direction: maintenanceSort.direction === 'asc' ? 'desc' : 'asc' })}>
-                        Location {maintenanceSort.field === 'location' && (maintenanceSort.direction === 'asc' ? '↑' : '↓')}
+                        {t("locationLabel")} {maintenanceSort.field === 'location' && (maintenanceSort.direction === 'asc' ? '↑' : '↓')}
                       </th>
                       <th className="pb-3 px-2 cursor-pointer hover:text-slate-900" onClick={() => setMaintenanceSort({ field: 'device', direction: maintenanceSort.direction === 'asc' ? 'desc' : 'asc' })}>
-                        Machine {maintenanceSort.field === 'device' && (maintenanceSort.direction === 'asc' ? '↑' : '↓')}
+                        {t("machineLabel")} {maintenanceSort.field === 'device' && (maintenanceSort.direction === 'asc' ? '↑' : '↓')}
                       </th>
-                      <th className="pb-3 px-2">Issue</th>
+                      <th className="pb-3 px-2">{t("issueLabel")}</th>
                       <th className="pb-3 px-2 cursor-pointer hover:text-slate-900" onClick={() => setMaintenanceSort({ field: 'status', direction: maintenanceSort.direction === 'asc' ? 'desc' : 'asc' })}>
-                        Status {maintenanceSort.field === 'status' && (maintenanceSort.direction === 'asc' ? '↑' : '↓')}
+                        {t("statusLabel")} {maintenanceSort.field === 'status' && (maintenanceSort.direction === 'asc' ? '↑' : '↓')}
                       </th>
-                      <th className="pb-3 px-2 text-right">Actions</th>
+                      <th className="pb-3 px-2 text-right">{t("actionsLabel")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
@@ -6576,7 +6577,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 onClick={() => resolveMaintenanceTicket(ticket.id)}
                                 className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100 transition-all opacity-0 group-hover:opacity-100"
                             >
-                                Resolve
+                                {t("resolveLabel")}
                             </button>
                           </td>
                         </tr>
@@ -6584,7 +6585,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     ) : (
                       <tr>
                         <td colSpan={7} className="py-12 text-center text-slate-500 italic">
-                          {maintenanceLoading ? "Loading tickets..." : "No active maintenance tickets."}
+                          {maintenanceLoading ? t("loadingTickets") : t("noActiveTickets")}
                         </td>
                       </tr>
                     )}
@@ -6609,7 +6610,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   : "border border-slate-300 text-slate-700"
               }`}
             >
-              Cleaning schedule
+              {t("cleaningSchedule")}
             </button>
             <button
               type="button"
@@ -6620,7 +6621,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   : "border border-slate-300 text-slate-700"
               }`}
             >
-              Laundry schedule
+              {t("laundrySchedule")}
             </button>
           </div>
 
@@ -6637,8 +6638,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h2 className="text-xl font-bold text-slate-900 tracking-tight">Real-time Device Control</h2>
-                <p className="mt-1 text-sm text-slate-500">Centralized override for all IoT devices across branches.</p>
+                <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t("realTimeDeviceControl")}</h2>
+                <p className="mt-1 text-sm text-slate-500">{t("deviceControlDesc")}</p>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -6646,12 +6647,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   onClick={() => setShowControllerHistory((current) => !current)}
                   className="rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
                 >
-                  {showControllerHistory ? "Hide Controller History" : "View Controller History"}
+                  {showControllerHistory ? t("hideControllerHistory") : t("viewControllerHistory")}
                 </button>
                 <button 
                   onClick={() => void fetchDevices()} 
                   className="p-2 rounded-full hover:bg-slate-100 text-slate-500 transition-colors"
-                  title="Refresh Status"
+                  title={t("refreshStatus")}
                 >
                   <svg className={`h-5 w-5 ${controllerLoading ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -6672,7 +6673,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               function getRoomFloor(room: any): string | null {
                 const code = (room.roomCodes?.[0] ?? "");
                 const match = code.match(/^(\d+)\./);
-                return match ? `Floor ${match[1]}` : null;
+                return match ? `${t("floorLabel")} ${match[1]}` : null;
               }
 
               const branches = ["D7", "D2"] as const;
@@ -6703,7 +6704,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           onClick={() => toggleGroup(branchKey)}
                           className="w-full flex items-center justify-between px-5 py-3 text-left hover:bg-slate-100 transition-colors"
                         >
-                          <span className="text-sm font-bold text-slate-900">Branch {branch}</span>
+                          <span className="text-sm font-bold text-slate-900">{t("branchLabel")} {branch}</span>
                           <svg
                             className={`h-4 w-4 text-slate-400 transition-transform ${branchCollapsed ? "" : "rotate-180"}`}
                             fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
@@ -6717,7 +6718,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             {/* Room area grouped by floor */}
                             {floors.length > 0 && (
                               <div>
-                                <div className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">Rooms — Air Conditioning</div>
+                                <div className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">{t("roomsAcTitle")}</div>
                                 <div className="space-y-3">
                                   {floors.map(([floor, rooms]) => {
                                     const floorKey = `floor:${branch}:${floor}`;
@@ -6748,7 +6749,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                                   <div className="flex justify-between items-start">
                                                     <div>
                                                       <div className="text-sm font-bold text-slate-900">{room.label}</div>
-                                                      <div className="text-[10px] text-slate-400">IoT ID: {room.id}</div>
+                                                      <div className="text-[10px] text-slate-400">{t("iotIdLabel")}: {room.id}</div>
                                                     </div>
                                                     <div className={`h-2 w-2 rounded-full mt-1 ${room.lastRequestedAction === "ON" ? "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]" : "bg-slate-300"}`} />
                                                   </div>
@@ -6788,7 +6789,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             {/* Laundry area */}
                             {branchLaundry.length > 0 && (
                               <div>
-                                <div className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">Laundry</div>
+                                <div className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">{t("laundryTitle")}</div>
                                 {(() => {
                                   const laundryKey = `laundry:${branch}`;
                                   const laundryCollapsed = groupCollapsed(laundryKey);
@@ -6799,7 +6800,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                         onClick={() => toggleGroup(laundryKey)}
                                         className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-slate-50 transition-colors"
                                       >
-                                        <span className="text-xs font-semibold text-slate-700">Machines</span>
+                                        <span className="text-xs font-semibold text-slate-700">{t("machinesLabel")}</span>
                                         <svg
                                           className={`h-3.5 w-3.5 text-slate-400 transition-transform ${laundryCollapsed ? "" : "rotate-180"}`}
                                           fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
@@ -6821,7 +6822,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                                   disabled={Boolean(pendingAction)}
                                                   className="mt-3 w-full rounded-lg bg-sky-600 py-2 text-xs font-black text-white hover:bg-sky-700 active:scale-95 transition-all disabled:cursor-not-allowed disabled:opacity-60"
                                                 >
-                                                  {pendingAction ? "TRIGGERING..." : "TRIGGER"}
+                                                  {pendingAction ? t("triggering") : t("trigger")}
                                                 </button>
                                                 {feedback ? (
                                                   <div className={`mt-2 text-xs font-medium ${feedback.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}>
@@ -6842,7 +6843,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             {/* Common Area (kitchen: airfryers, microwave etc.) */}
                             {branchAirfryers.length > 0 && (
                               <div>
-                                <div className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">Common Area — Kitchen</div>
+                                <div className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">{t("kitchenTitle")}</div>
                                 {(() => {
                                   const appKey = `kitchen:${branch}`;
                                   const appCollapsed = groupCollapsed(appKey);
@@ -6853,7 +6854,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                         onClick={() => toggleGroup(appKey)}
                                         className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-slate-50 transition-colors"
                                       >
-                                        <span className="text-xs font-semibold text-slate-700">Kitchen Appliances</span>
+                                        <span className="text-xs font-semibold text-slate-700">{t("kitchenAppliances")}</span>
                                         <svg
                                           className={`h-3.5 w-3.5 text-slate-400 transition-transform ${appCollapsed ? "" : "rotate-180"}`}
                                           fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
@@ -6875,7 +6876,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                                   disabled={Boolean(pendingAction)}
                                                   className="mt-3 w-full rounded-lg bg-amber-600 py-2 text-xs font-black text-white hover:bg-amber-700 active:scale-95 transition-all disabled:cursor-not-allowed disabled:opacity-60"
                                                 >
-                                                  {pendingAction ? "TRIGGERING..." : "TRIGGER"}
+                                                  {pendingAction ? t("triggering") : t("trigger")}
                                                 </button>
                                                 {feedback ? (
                                                   <div className={`mt-2 text-xs font-medium ${feedback.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}>
@@ -6906,22 +6907,22 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-semibold text-slate-900">Controller History</h2>
-                  <p className="mt-1 text-sm text-slate-500">Recent AC, laundry, airfryer, and microwave actions across the app.</p>
+                  <h2 className="text-lg font-semibold text-slate-900">{t("controllerHistoryTitle")}</h2>
+                  <p className="mt-1 text-sm text-slate-500">{t("controllerHistoryDesc")}</p>
                 </div>
                 <button
                   type="button"
                   onClick={() => void fetchControllerHistory()}
                   className="rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 >
-                  Refresh History
+                  {t("refreshHistory")}
                 </button>
               </div>
 
               {controllerHistoryLoading ? (
-                <div className="mt-6 text-sm text-slate-500">Loading controller history...</div>
+                <div className="mt-6 text-sm text-slate-500">{t("refreshing")}</div>
               ) : controllerHistory.length === 0 ? (
-                <div className="mt-6 text-sm text-slate-500">No controller actions have been logged yet.</div>
+                <div className="mt-6 text-sm text-slate-500">{t("noControllerHistory")}</div>
               ) : (
                 <div className="mt-6 space-y-3">
                   {controllerHistory.map((entry) => (
@@ -6951,13 +6952,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center p-0 sm:p-4">
           <div className="w-full max-w-md rounded-t-3xl sm:rounded-3xl bg-white shadow-xl flex flex-col max-h-[90vh]">
             <div className="px-6 pt-6 pb-4 border-b border-slate-100 flex-shrink-0">
-              <h3 className="text-base font-semibold text-slate-900">Confirm & Import Booking</h3>
+              <h3 className="text-base font-semibold text-slate-900">{t("confirmImportBooking")}</h3>
               <p className="mt-1 text-xs text-slate-500">{stConfirmDialog.booking.guestName} · {stConfirmDialog.booking.email}</p>
               <p className="text-xs text-slate-500">{stConfirmDialog.booking.checkIn} → {stConfirmDialog.booking.checkOut}</p>
             </div>
             <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Branch</label>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">{t("branchLabel")}</label>
                 <div className="flex gap-2">
                   {(["D2", "D7"] as const).map((br) => (
                     <button key={br} type="button"
@@ -6968,7 +6969,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Bed number</label>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">{t("bedNumberLabel")}</label>
                 <input
                   type="number" min={1}
                   value={stConfirmDialog.bed}
@@ -6978,7 +6979,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 />
               </div>
               <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
-                This will create a portal account for the guest. Their initial password will be their phone number. They must change it on first login.
+                {t("initialPasswordWarning")}
               </div>
               {stConfirmDialog.result && (
                 <div className={`rounded-xl p-3 text-xs font-medium ${stConfirmDialog.result.startsWith("✓") ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
@@ -6990,7 +6991,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               <button type="button"
                 onClick={() => setStConfirmDialog(null)}
                 className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700"
-              >Cancel</button>
+              >{t("cancelLabel")}</button>
               <button type="button"
                 disabled={stConfirmDialog.saving || !stConfirmDialog.bed}
                 onClick={async () => {
@@ -7020,7 +7021,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 }}
                 className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
               >
-                {stConfirmDialog.saving ? "Importing…" : "Confirm & Import"}
+                {stConfirmDialog.saving ? t("importingLabel") : t("confirmImportLabel")}
               </button>
             </div>
           </div>
@@ -7032,38 +7033,38 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center p-0 sm:p-4">
           <div className="w-full max-w-md rounded-t-3xl sm:rounded-3xl bg-white shadow-xl flex flex-col max-h-[90vh]">
             <div className="px-6 pt-6 pb-4 border-b border-slate-100 flex-shrink-0">
-              <h3 className="text-base font-semibold text-slate-900">Add hostel guest</h3>
-              <p className="mt-1 text-xs text-slate-500">Manually add a guest from Booking.com, Airbnb, or direct booking.</p>
+              <h3 className="text-base font-semibold text-slate-900">{t("addHostelGuest")}</h3>
+              <p className="mt-1 text-xs text-slate-500">{t("addHostelGuestDesc")}</p>
             </div>
             <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Guest name</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">{t("guestNameLabel")}</label>
                   <input type="text" value={stAddDialog.guestName} onChange={(e) => setStAddDialog({ ...stAddDialog, guestName: e.target.value })}
                     className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none" placeholder="Full name" />
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Email</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">{t("emailLabel")}</label>
                   <input type="email" value={stAddDialog.email} onChange={(e) => setStAddDialog({ ...stAddDialog, email: e.target.value })}
                     className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none" placeholder="guest@email.com" />
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Phone</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">{t("phoneLabel")}</label>
                   <input type="text" inputMode="tel" value={stAddDialog.phone} onChange={(e) => setStAddDialog({ ...stAddDialog, phone: e.target.value })}
                     className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none" placeholder="e.g. 0901234567" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Check-in</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">{t("checkInLabel")}</label>
                   <input type="date" value={stAddDialog.checkIn} onChange={(e) => setStAddDialog({ ...stAddDialog, checkIn: e.target.value })}
                     className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Check-out</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">{t("checkOutLabel")}</label>
                   <input type="date" value={stAddDialog.checkOut} onChange={(e) => setStAddDialog({ ...stAddDialog, checkOut: e.target.value })}
                     className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Branch</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">{t("branchLabel")}</label>
                   <div className="flex gap-2">
                     {(["D2", "D7"] as const).map((br) => (
                       <button key={br} type="button" onClick={() => setStAddDialog({ ...stAddDialog, branch: br })}
@@ -7073,42 +7074,42 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Bed number</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">{t("bedNumberLabel")}</label>
                   <input type="number" min={1} value={stAddDialog.bed} onChange={(e) => setStAddDialog({ ...stAddDialog, bed: e.target.value })}
                     className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none" placeholder="e.g. 5" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Total price (₫)</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">{t("totalPriceLabel")}</label>
                   <input type="number" min={0} value={stAddDialog.totalAmount} onChange={(e) => setStAddDialog({ ...stAddDialog, totalAmount: e.target.value })}
                     className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none" placeholder="e.g. 1500000" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Payment</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">{t("paymentLabel")}</label>
                   <select value={stAddDialog.paymentStatus} onChange={(e) => setStAddDialog({ ...stAddDialog, paymentStatus: e.target.value })}
                     className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none bg-white">
-                    <option value="paid">Paid</option>
-                    <option value="cash">Cash</option>
-                    <option value="unpaid">Unpaid</option>
+                    <option value="paid">{t("paidLabel")}</option>
+                    <option value="cash">{t("cashLabel")}</option>
+                    <option value="unpaid">{t("unpaidLabel")}</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Source</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">{t("sourceLabel")}</label>
                   <select value={stAddDialog.source} onChange={(e) => setStAddDialog({ ...stAddDialog, source: e.target.value })}
                     className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none bg-white">
-                    <option value="direct">Direct</option>
+                    <option value="direct">{t("directLabel")}</option>
                     <option value="booking.com">Booking.com</option>
                     <option value="airbnb">Airbnb</option>
-                    <option value="other">Other</option>
+                    <option value="other">{t("otherLabel")}</option>
                   </select>
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Notes (optional)</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">{t("notesLabel")}</label>
                   <textarea value={stAddDialog.notes} onChange={(e) => setStAddDialog({ ...stAddDialog, notes: e.target.value })}
-                    rows={2} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none" placeholder="Any extra info" />
+                    rows={2} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none" placeholder={t("anyExtraInfo")} />
                 </div>
               </div>
               <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
-                A portal account will be created for the guest. Initial password = phone digits. They must change it on first login.
+                {t("portalAccountWarning", "A portal account will be created for the guest. Initial password = phone digits. They must change it on first login.")}
               </div>
               {stAddDialog.result && (
                 <div className={`rounded-xl p-3 text-xs font-medium ${stAddDialog.result.startsWith("✓") ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
@@ -7118,7 +7119,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             </div>
             <div className="flex gap-3 px-6 py-4 border-t border-slate-100 flex-shrink-0">
               <button type="button" onClick={() => setStAddDialog(null)}
-                className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700">Cancel</button>
+                className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700">{t("cancelLabel")}</button>
               <button type="button"
                 disabled={stAddDialog.saving || !stAddDialog.guestName || !stAddDialog.email || !stAddDialog.checkIn || !stAddDialog.checkOut || !stAddDialog.bed}
                 onClick={async () => {
@@ -7157,6 +7158,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             </div>
           </div>
         </div>
+      )}
+
+      {isStaffSession && (
+        <ManagerAiChat
+          operatorEmail={normalizedEmail}
+          onNavigate={(view) => setActiveManagerView(view as ManagerView)}
+        />
       )}
     </div>
   );

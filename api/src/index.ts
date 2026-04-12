@@ -152,6 +152,7 @@ import {
   checkoutPhotosDirPath
 } from "./checkout.js";
 import { getShortTermConfig, updateShortTermConfig } from "./short-term-config.js";
+import { handleManagerAiChat, type AiChatMessage } from "./manager-ai-chat.js";
 import {
   getBedOverrides,
   getDiscounts,
@@ -2959,6 +2960,29 @@ app.post("/manager/fines/resolve", async (request, response) => {
   } catch (error) {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to resolve fine dispute"
+    });
+  }
+});
+
+app.post("/manager/ai-chat", async (request, response) => {
+  const parsed = z.object({
+    operatorEmail: z.string().email(),
+    history: z.array(z.object({ role: z.enum(["user", "model"]), text: z.string() })).min(1)
+  }).safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid AI chat payload" });
+  }
+
+  try {
+    const result = await handleManagerAiChat(
+      parsed.data.operatorEmail,
+      parsed.data.history as AiChatMessage[]
+    );
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "AI assistant error"
     });
   }
 });

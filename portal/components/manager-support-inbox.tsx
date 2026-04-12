@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
+import { usePortalLanguage } from "./portal-language";
 
 type SupportConversationListItem = {
   id: string;
@@ -43,15 +44,15 @@ function formatTime(value: string) {
   return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function formatDateLabel(value: string) {
+function formatDateLabel(value: string, t: (key: any, ...args: any[]) => string) {
   const d = new Date(value);
   const today = new Date();
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
 
-  if (d.toDateString() === today.toDateString()) return "Today";
-  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  if (d.toDateString() === today.toDateString()) return t("todayLabel");
+  if (d.toDateString() === yesterday.toDateString()) return t("yesterdayLabel");
+  return d.toLocaleDateString("vi-VN", { month: "short", day: "numeric", year: "numeric" });
 }
 
 function formatConversationTime(value: string) {
@@ -67,11 +68,11 @@ function isStaffRole(role: SupportMessage["senderRole"]) {
   return role === "MANAGER" || role === "OWNER";
 }
 
-function senderShortName(message: SupportMessage) {
+function senderShortName(message: SupportMessage, t: (key: any, ...args: any[]) => string) {
   if (isStaffRole(message.senderRole)) {
-    return message.senderName?.trim() || (message.senderRole === "OWNER" ? "Owner" : "Manager");
+    return message.senderName?.trim() || (message.senderRole === "OWNER" ? t("roleOwner", "Owner") : t("roleManager", "Manager"));
   }
-  return message.senderName?.trim() || "Resident";
+  return message.senderName?.trim() || t("residentLabelShort");
 }
 
 export function ManagerSupportInbox({
@@ -83,6 +84,7 @@ export function ManagerSupportInbox({
   enabled: boolean;
   onViewClient?: (email: string) => void;
 }) {
+  const { t } = usePortalLanguage();
   const [conversations, setConversations] = useState<SupportConversationListItem[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState("");
   const [selectedConversation, setSelectedConversation] = useState<SupportConversation | null>(null);
@@ -124,7 +126,7 @@ export function ManagerSupportInbox({
       };
 
       if (!inboxResponse.ok) {
-        setStatus(inboxData.error ?? "Unable to load support inbox.");
+        setStatus(inboxData.error ?? t("loadingInboxError", "Unable to load support inbox."));
         return;
       }
 
@@ -260,7 +262,7 @@ export function ManagerSupportInbox({
     let lastDateLabel = "";
 
     messages.forEach((message, index) => {
-      const dateLabel = formatDateLabel(message.createdAt);
+      const dateLabel = formatDateLabel(message.createdAt, t);
       const isStaff = isStaffRole(message.senderRole);
       const prevMessage = messages[index - 1];
       const nextMessage = messages[index + 1];
@@ -293,11 +295,11 @@ export function ManagerSupportInbox({
                   onClick={() => onViewClient(message.senderEmail)}
                   className="mb-1 px-1 text-[11px] font-medium text-sky-600 hover:underline text-left"
                 >
-                  {senderShortName(message)}
+                  {senderShortName(message, t)}
                 </button>
               ) : (
                 <span className="mb-1 px-1 text-[11px] font-medium text-slate-400">
-                  {senderShortName(message)}
+                  {senderShortName(message, t)}
                 </span>
               )
             )}
@@ -311,7 +313,7 @@ export function ManagerSupportInbox({
               <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.body}</p>
               {message.pagePath ? (
                 <p className={`mt-1 text-[10px] ${isStaff ? "text-blue-200" : "text-slate-400"}`}>
-                  from {message.pagePath}
+                  {t("fromLabel", "from")} {message.pagePath}
                 </p>
               ) : null}
             </div>
@@ -333,8 +335,8 @@ export function ManagerSupportInbox({
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-6 py-4">
         <div>
-          <h2 className="text-base font-semibold text-slate-900">Support Inbox</h2>
-          <p className="text-xs text-slate-500">Residents send one conversation per account — reply from this shared inbox.</p>
+          <h2 className="text-base font-semibold text-slate-900">{t("supportInboxTitle")}</h2>
+          <p className="text-xs text-slate-500">{t("supportInboxDesc")}</p>
         </div>
         <button
           type="button"
@@ -342,7 +344,7 @@ export function ManagerSupportInbox({
           disabled={loading}
           className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60"
         >
-          {loading ? "Loading…" : "Refresh"}
+          {loading ? t("refreshing") : t("refreshLabel")}
         </button>
       </div>
 
@@ -351,7 +353,7 @@ export function ManagerSupportInbox({
         {["BRANCH_D2", "BRANCH_D7"].map((groupId) => {
           const conv = conversations.find((c) => c.id === groupId);
           const unreadCount = conv?.unreadCount || 0;
-          const label = groupId.replace("BRANCH_", "Branch ");
+          const label = groupId.replace("BRANCH_", `${t("branchLabelShort", "Branch")} `);
           const isSelected = selectedConversationId === groupId;
 
           return (
@@ -382,7 +384,7 @@ export function ManagerSupportInbox({
         {/* Conversation list */}
         <div className="overflow-y-auto border-r border-slate-100 lg:max-h-[600px]">
           {conversations.length === 0 ? (
-            <div className="p-6 text-sm text-slate-500">No conversations yet.</div>
+            <div className="p-6 text-sm text-slate-500">{t("noConversationsYet")}</div>
           ) : (
             conversations.map((conversation) => {
               const isSelected = conversation.id === selectedConversationId;
@@ -408,14 +410,14 @@ export function ManagerSupportInbox({
                   <div className="flex items-center gap-1.5">
                     {conversation.type === "GROUP" && (
                       <span className={`rounded px-1 py-0.5 text-[9px] font-bold uppercase tracking-wider ${isSelected ? "bg-white/20 text-white" : "bg-slate-200 text-slate-500"}`}>
-                        Group
+                        {t("groupLabelShort")}
                       </span>
                     )}
                     <span className={`truncate text-sm font-semibold ${isSelected ? "text-white" : "text-slate-900"}`}>
                       {conversation.label}
                     </span>
                     <span className={`ml-auto shrink-0 text-[9px] font-semibold uppercase ${isSelected ? "text-white/70" : conversation.status === "OPEN" ? "text-emerald-600" : "text-slate-400"}`}>
-                      {conversation.status}
+                      {t(`${conversation.status.toLowerCase()}Status`)}
                     </span>
                   </div>
                   <div className={`mt-0.5 truncate text-xs ${isSelected ? "text-blue-100" : "text-slate-400"}`}>
@@ -441,7 +443,7 @@ export function ManagerSupportInbox({
         <div className="flex flex-col">
           {!selectedConversation && !selectedPreview ? (
             <div className="flex flex-1 items-center justify-center p-8">
-              <p className="text-sm text-slate-400">Select a conversation to start reading</p>
+              <p className="text-sm text-slate-400">{t("selectConversationPrompt", "Select a conversation to start reading")}</p>
             </div>
           ) : (
             <>
@@ -449,7 +451,7 @@ export function ManagerSupportInbox({
               <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
                 <div>
                   <p className="text-sm font-semibold text-slate-900">
-                    {selectedConversation?.residentName || selectedPreview?.label || "Conversation"}
+                    {selectedConversation?.residentName || selectedPreview?.label || t("conversationLabel", "Conversation")}
                   </p>
                   <p className="text-xs text-slate-400">
                     {selectedConversation?.residentEmail || selectedPreview?.subLabel}
@@ -462,7 +464,7 @@ export function ManagerSupportInbox({
                     disabled={loading || selectedConversation?.status === "OPEN"}
                     className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
                   >
-                    Reopen
+                    {t("reopenLabel")}
                   </button>
                   <button
                     type="button"
@@ -470,7 +472,7 @@ export function ManagerSupportInbox({
                     disabled={loading || selectedConversation?.status === "CLOSED"}
                     className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
                   >
-                    Close
+                    {t("closeLabel")}
                   </button>
                 </div>
               </div>
@@ -482,7 +484,7 @@ export function ManagerSupportInbox({
               {/* Messages */}
               <div className="flex-1 overflow-y-auto px-5 py-4" style={{ maxHeight: "420px" }}>
                 {messages.length === 0 ? (
-                  <p className="text-center text-sm text-slate-400">No messages yet.</p>
+                  <p className="text-center text-sm text-slate-400">{t("noMessagesYet")}</p>
                 ) : (
                   <>
                     {renderMessages()}
@@ -500,7 +502,7 @@ export function ManagerSupportInbox({
                     onChange={(e) => setDraft(e.target.value)}
                     onKeyDown={handleKeyDown}
                     rows={1}
-                    placeholder="Message…"
+                    placeholder={t("messagePlaceholder")}
                     className="flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-1 focus:ring-blue-200"
                     style={{ maxHeight: "120px", overflowY: "auto" }}
                     onInput={(e) => {
@@ -519,7 +521,7 @@ export function ManagerSupportInbox({
                     </svg>
                   </button>
                 </form>
-                <p className="mt-1.5 text-center text-[10px] text-slate-300">Enter to send · Shift+Enter for new line</p>
+                <p className="mt-1.5 text-center text-[10px] text-slate-300">{t("chatKeyboardHint", "Enter to send · Shift+Enter for new line")}</p>
               </div>
             </>
           )}

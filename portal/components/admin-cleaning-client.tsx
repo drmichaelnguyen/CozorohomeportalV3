@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
+import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 const PRIVILEGED_EMAILS = new Set(["cozorohome@gmail.com", "dr.trongto@gmail.com"]);
 const DEFAULT_PRIVILEGED_EMAIL = "cozorohome@gmail.com";
@@ -75,10 +76,10 @@ type AutoSchedulerConfig = {
   }>;
 };
 
-function prettyTaskType(type: AdminTask["type"]) {
-  if (type === "KITCHEN_D2") return "Kitchen D2";
-  if (type === "KITCHEN_D7") return "Kitchen D7";
-  return "Trash D7";
+function prettyTaskType(type: AdminTask["type"], t: (key: any, ...args: any[]) => string) {
+  if (type === "KITCHEN_D2") return t("kitchenD2");
+  if (type === "KITCHEN_D7") return t("kitchenD7");
+  return t("trashD7");
 }
 
 function startOfDay(date: Date) {
@@ -127,12 +128,12 @@ function isFutureDate(date: Date) {
   return startOfDay(date).getTime() > startOfDay(new Date()).getTime();
 }
 
-function getAssignerLabel(task: Pick<AdminTask, "assignmentSource" | "isSelfAssigned" | "assignedByName" | "assignedByEmail">) {
+function getAssignerLabel(task: Pick<AdminTask, "assignmentSource" | "isSelfAssigned" | "assignedByName" | "assignedByEmail">, t: (key: any, ...args: any[]) => string) {
   if (task.assignmentSource === "SYSTEM") {
-    return "System";
+    return t("systemAssigned");
   }
   if (task.assignmentSource === "SELF" || task.isSelfAssigned) {
-    return "Self assign";
+    return t("selfAssigned");
   }
   return task.assignedByName?.trim() || task.assignedByEmail?.trim() || "Cozoro";
 }
@@ -142,6 +143,7 @@ function getSchedulerJobLabel(job: AutoSchedulerConfig["jobs"][number]) {
 }
 
 export function AdminCleaningClient() {
+  const { t } = usePortalLanguage();
   const { sessionEmail } = usePortalSession();
   const activeEmail = sessionEmail || DEFAULT_PRIVILEGED_EMAIL;
   const [message, setMessage] = useState("");
@@ -595,12 +597,12 @@ export function AdminCleaningClient() {
     <div className="mx-auto max-w-7xl space-y-6">
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
         <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-semibold text-slate-900">Admin Cleaning</h1>
+          <h1 className="text-2xl font-semibold text-slate-900">{t("adminCleaningHeader")}</h1>
           <button
             type="button"
             onClick={() => setShowSchedulerHelp((v) => !v)}
             className="flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 bg-slate-100 text-xs font-semibold text-slate-500 hover:bg-slate-200"
-            aria-label="About this scheduler"
+            aria-label={t("aboutLabel", "About")}
           >
             ?
           </button>
@@ -617,7 +619,7 @@ export function AdminCleaningClient() {
           </div>
 
           <label className="block text-sm font-medium text-slate-700">
-            From
+            {t("fromLabel", "From")}
             <input
               type="date"
               value={from}
@@ -627,7 +629,7 @@ export function AdminCleaningClient() {
           </label>
 
           <label className="block text-sm font-medium text-slate-700">
-            To
+            {t("toLabel", "To")}
             <input
               type="date"
               value={to}
@@ -642,7 +644,7 @@ export function AdminCleaningClient() {
               disabled={loading}
               className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-60"
             >
-              {loading ? "Loading..." : "Load admin calendars"}
+              {loading ? t("refreshing") : t("loadAdminCalendars")}
             </button>
             <button
               type="button"
@@ -650,7 +652,7 @@ export function AdminCleaningClient() {
               disabled={loading}
               className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60"
             >
-              Pull existing calendar data
+              {t("pullExistingCalendarData")}
             </button>
           </div>
         </form>
@@ -684,8 +686,8 @@ export function AdminCleaningClient() {
                 <div>
                   <h2 className="text-lg font-semibold text-slate-900">{selectedCalendar.title}</h2>
                   <p className="text-sm text-slate-600">
-                    Branch: {selectedCalendar.branchId}
-                    {selectedCalendar.floor ? ` | Floor ${selectedCalendar.floor}` : ""}
+                    {t("branchLabel")}: {selectedCalendar.branchId}
+                    {selectedCalendar.floor ? ` | ${t("floorLabel")} ${selectedCalendar.floor}` : ""}
                   </p>
                 </div>
 
@@ -695,21 +697,21 @@ export function AdminCleaningClient() {
                     onClick={() => setCalendarFocusDate(new Date(calendarFocusDate.getFullYear(), calendarFocusDate.getMonth() - 1, 1))}
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
                   >
-                    Prev
+                    {t("previousNav", "Prev")}
                   </button>
                   <button
                     type="button"
                     onClick={() => setCalendarFocusDate(startOfDay(new Date()))}
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
                   >
-                    Today
+                    {t("todayNav", "Today")}
                   </button>
                   <button
                     type="button"
                     onClick={() => setCalendarFocusDate(new Date(calendarFocusDate.getFullYear(), calendarFocusDate.getMonth() + 1, 1))}
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
                   >
-                    Next
+                    {t("nextNav", "Next")}
                   </button>
                 </div>
               </div>
@@ -718,8 +720,8 @@ export function AdminCleaningClient() {
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <h3 className="text-sm font-semibold text-slate-900">Background Auto-Scheduler</h3>
-                      <p className="mt-1 text-sm text-slate-600">Control the system job for {getSchedulerJobLabel(selectedSchedulerJob)}.</p>
+                      <h3 className="text-sm font-semibold text-slate-900">{t("backgroundAutoScheduler")}</h3>
+                      <p className="mt-1 text-sm text-slate-600">{t("controlSystemJob", "Control the system job for")} {getSchedulerJobLabel(selectedSchedulerJob)}.</p>
                     </div>
                     <button
                       type="button"
@@ -727,7 +729,7 @@ export function AdminCleaningClient() {
                       disabled={!autoSchedulerConfig || autoSchedulerSaving}
                       className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-60"
                     >
-                      {autoSchedulerSaving ? "Saving..." : "Save settings"}
+                      {autoSchedulerSaving ? t("saving") : t("saveLabel")}
                     </button>
                   </div>
 
@@ -736,8 +738,8 @@ export function AdminCleaningClient() {
                     <div className="mt-1 text-xs text-slate-500">These settings apply only to this selected calendar.</div>
 
                     <label className="mt-4 block">
-                      <div className="font-medium text-slate-900">Enable this job</div>
-                      <div className="mt-1 text-xs text-slate-500">Turn the background scheduler on or off for this specific cleaning slot.</div>
+                      <div className="font-medium text-slate-900">{t("enableThisJob")}</div>
+                      <div className="mt-1 text-xs text-slate-500">{t("enableJobDesc", "Turn the background scheduler on or off for this specific cleaning slot.")}</div>
                       <input
                         type="checkbox"
                         checked={selectedSchedulerJob.enabled}
@@ -761,8 +763,8 @@ export function AdminCleaningClient() {
                     </label>
 
                     <label className="mt-4 block">
-                      <div className="font-medium text-slate-900">Fill unassigned dates</div>
-                      <div className="mt-1 text-xs text-slate-500">Stop automatic assignment for this slot while keeping other jobs running.</div>
+                      <div className="font-medium text-slate-900">{t("fillUnassignedDates")}</div>
+                      <div className="mt-1 text-xs text-slate-500">{t("fillUnassignedDesc", "Stop automatic assignment for this slot while keeping other jobs running.")}</div>
                       <input
                         type="checkbox"
                         checked={selectedSchedulerJob.fillUnassignedDates}
@@ -783,8 +785,8 @@ export function AdminCleaningClient() {
                     </label>
 
                     <label className="mt-4 block">
-                      <div className="font-medium text-slate-900">Days in advance</div>
-                      <div className="mt-1 text-xs text-slate-500">How far ahead the system should auto-schedule this specific cleaning job.</div>
+                      <div className="font-medium text-slate-900">{t("daysInAdvance")}</div>
+                      <div className="mt-1 text-xs text-slate-500">{t("daysAdvanceDesc", "How far ahead the system should auto-schedule this specific cleaning job.")}</div>
                       <input
                         type="number"
                         min={1}
@@ -808,14 +810,14 @@ export function AdminCleaningClient() {
                   </div>
 
                   <p className="mt-3 text-xs text-slate-500">
-                    Last updated by {autoSchedulerConfig.updatedBy || "system"} at{" "}
-                    {autoSchedulerConfig.updatedAt ? new Date(autoSchedulerConfig.updatedAt).toLocaleString() : "unknown"}.
+                    {t("lastUpdatedBy", "Last updated by")} {autoSchedulerConfig.updatedBy || t("system")} at{" "}
+                    {autoSchedulerConfig.updatedAt ? new Date(autoSchedulerConfig.updatedAt).toLocaleString("vi-VN") : t("unknown")}.
                   </p>
                 </div>
               ) : null}
 
               <div className="grid grid-cols-7 gap-2 text-center text-xs font-medium uppercase tracking-wide text-slate-500">
-                {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label) => (
+                {[t("mon", "Mon"), t("tue", "Tue"), t("wed", "Wed"), t("thu", "Thu"), t("fri", "Fri"), t("sat", "Sat"), t("sun", "Sun")].map((label) => (
                   <div key={label}>{label}</div>
                 ))}
               </div>
@@ -843,7 +845,7 @@ export function AdminCleaningClient() {
                           </div>
                         ))}
                         {dayTasks.length > 3 ? (
-                          <div className="text-xs text-slate-500">+{dayTasks.length - 3} more</div>
+                          <div className="text-xs text-slate-500">+{dayTasks.length - 3} {t("moreLabel", "more")}</div>
                         ) : null}
                       </div>
                     </button>
@@ -854,10 +856,10 @@ export function AdminCleaningClient() {
 
             <aside className="space-y-4 rounded-2xl border border-slate-200 p-4">
               <div>
-                <div className="text-sm font-medium text-slate-500">Selected date</div>
-                <div className="mt-1 text-lg font-semibold text-slate-900">{selectedDate.toLocaleDateString()}</div>
+                <div className="text-sm font-medium text-slate-500">{t("selectedDate", "Selected date")}</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">{selectedDate.toLocaleDateString("vi-VN")}</div>
                 {!canAssignSelectedDate ? (
-                  <div className="mt-2 text-sm text-amber-700">Assignment is only enabled for future dates.</div>
+                  <div className="mt-2 text-sm text-amber-700">{t("assignmentFutureOnly", "Assignment is only enabled for future dates.")}</div>
                 ) : null}
               </div>
 
@@ -868,7 +870,7 @@ export function AdminCleaningClient() {
                   disabled={loading || !canAssignSelectedDate}
                   className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 disabled:opacity-60"
                 >
-                  {loading ? "Loading..." : "Find best user"}
+                  {loading ? t("refreshing") : t("findBestUser")}
                 </button>
                 <button
                   type="button"
@@ -876,7 +878,7 @@ export function AdminCleaningClient() {
                   disabled={loading || !canAssignSelectedDate}
                   className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-sm text-sky-700 disabled:opacity-60"
                 >
-                  Show all users
+                  {t("showAllUsers")}
                 </button>
                 <button
                   type="button"
@@ -884,15 +886,15 @@ export function AdminCleaningClient() {
                   disabled={loading}
                   className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 disabled:opacity-60"
                 >
-                  Auto-assign next 7 days
+                  {t("autoAssignNext7Days")}
                 </button>
               </div>
 
               <div>
-                <h3 className="text-sm font-semibold text-slate-900">Tasks on this day</h3>
+                <h3 className="text-sm font-semibold text-slate-900">{t("tasksOnThisDay")}</h3>
                 <div className="mt-2 space-y-3">
                   {selectedDayTasks.length === 0 ? (
-                    <p className="text-sm text-slate-600">No cleaning task on this day yet.</p>
+                    <p className="text-sm text-slate-600">{t("noCleaningTaskOnThisDay")}</p>
                   ) : (
                     selectedDayTasks.map((task) => {
                       const isAuditing = auditingTaskId === task.id;
@@ -913,14 +915,14 @@ export function AdminCleaningClient() {
                               <div className="text-xs text-slate-500 truncate">{task.userEmail}</div>
                               <div className="flex items-center gap-1.5 flex-wrap mt-1">
                                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusColors[task.status] ?? "bg-slate-100 text-slate-600"}`}>
-                                  {task.status.replace("_", " ")}
+                                  {t(`task${task.status.split("_").map(x => x.charAt(0) + x.slice(1).toLowerCase()).join("")}`)}
                                 </span>
                                 {(task.assignmentSource === "SELF" || task.isSelfAssigned) ? (
-                                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">★ Self</span>
+                                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">★ {t("selfShort", "Self")}</span>
                                 ) : task.assignmentSource === "SYSTEM" ? (
-                                  <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">⚙ Auto</span>
+                                  <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">⚙ {t("autoShort", "Auto")}</span>
                                 ) : task.assignmentSource === "MANAGER" ? (
-                                  <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600">👤 Manager</span>
+                                  <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600">👤 {t("roleManager", "Manager")}</span>
                                 ) : null}
                                 {task.status === "REJECTED" ? (
                                   <span className="text-[11px] font-semibold text-rose-500 line-through">+{task.rewardCoins.toLocaleString()} coins</span>
@@ -936,9 +938,9 @@ export function AdminCleaningClient() {
                               {task.completionPhoto && (
                                 <a href={task.completionPhoto} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-xs text-sky-600 underline">View photo</a>
                               )}
-                              <p className="mt-1 text-xs text-slate-500">Assigner: {getAssignerLabel(task)}</p>
+                              <p className="mt-1 text-xs text-slate-500">{t("assignerLabel")}: {getAssignerLabel(task, t)}</p>
                               {task.auditorNote && (
-                                <p className="mt-1 text-xs text-rose-700 font-medium">Auditor: {task.auditorNote}</p>
+                                <p className="mt-1 text-xs text-rose-700 font-medium">{t("auditorNoteLabel")}: {task.auditorNote}</p>
                               )}
                             </div>
                             <div className="flex flex-col gap-1 shrink-0">
@@ -949,7 +951,7 @@ export function AdminCleaningClient() {
                                   disabled={loading}
                                   className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
                                 >
-                                  Remove
+                                  {t("removeLabel")}
                                 </button>
                               )}
                               {canAudit && (
@@ -962,7 +964,7 @@ export function AdminCleaningClient() {
                                   disabled={loading}
                                   className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
                                 >
-                                  {isAuditing ? "Cancel" : task.status === "DONE_PENDING_AUDIT" ? "Audit" : "Re-audit"}
+                                  {isAuditing ? t("cancelLabel") : task.status === "DONE_PENDING_AUDIT" ? t("auditLabel", "Audit") : t("reAuditLabel", "Re-audit")}
                                 </button>
                               )}
                             </div>
@@ -972,7 +974,7 @@ export function AdminCleaningClient() {
                             <div className="border-t border-slate-200 pt-2 space-y-2">
                               <textarea
                                 rows={2}
-                                placeholder="Auditor note (optional)"
+                                placeholder={t("auditorNotePlaceholder")}
                                 value={auditNote}
                                 onChange={(e) => setAuditNote(e.target.value)}
                                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-400"
@@ -984,7 +986,7 @@ export function AdminCleaningClient() {
                                   disabled={loading}
                                   className="flex-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
                                 >
-                                  ✓ Approve — grant +{task.rewardCoins.toLocaleString()} coins
+                                  {t("approveLabel", "Approve")} — {t("grantCoinsLabel", "grant +{count} coins", { count: task.rewardCoins.toLocaleString("vi-VN") })}
                                 </button>
                                 <button
                                   type="button"
@@ -992,7 +994,7 @@ export function AdminCleaningClient() {
                                   disabled={loading}
                                   className="flex-1 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
                                 >
-                                  ✗ Reject — forfeit coins
+                                  {t("rejectLabel", "Reject")} — {t("forfeitCoinsLabel", "forfeit coins")}
                                 </button>
                               </div>
                             </div>
@@ -1005,15 +1007,15 @@ export function AdminCleaningClient() {
               </div>
 
               <div>
-                <h3 className="text-sm font-semibold text-slate-900">Assign task</h3>
+                <h3 className="text-sm font-semibold text-slate-900">{t("assignTaskLabel")}</h3>
                 {availableUsers.length === 0 ? (
                   <p className="mt-2 text-sm text-slate-600">
-                    Click <span className="font-medium">Find best user</span> to load recommended users for this date.
+                    {t("findBestUserPrompt", "Click <span className=\"font-medium\">Find best user</span> to load recommended users for this date.")}
                   </p>
                 ) : (
                   <div className="mt-2 space-y-3">
                     <label className="block text-sm font-medium text-slate-700">
-                      {showAllUsers ? "All eligible users" : "Suggested user"}
+                      {showAllUsers ? t("allEligibleUsers") : t("suggestedUser")}
                       <select
                         value={selectedAssignEmail}
                         onChange={(event) => {
@@ -1024,9 +1026,9 @@ export function AdminCleaningClient() {
                       >
                         {availableUsers.map((user) => (
                           <option key={user.email} value={user.email}>
-                            {user.name} ({user.email}) | tasks {user.totalTaskCount}
-                            {user.availabilityType === "UNAVAILABLE" ? " | UNAVAILABLE" : user.availabilityType === "PREFERRED" ? " | preferred" : ""}
-                            {user.hasSameDayTask ? " | already booked" : ""}
+                            {user.name} ({user.email}) | {t("tasksCount", "tasks {count}", { count: user.totalTaskCount })}
+                            {user.availabilityType === "UNAVAILABLE" ? ` | ${t("unavailableLabel", "UNAVAILABLE")}` : user.availabilityType === "PREFERRED" ? ` | ${t("preferredLabel", "preferred")}` : ""}
+                            {user.hasSameDayTask ? ` | ${t("alreadyBookedLabel", "already booked")}` : ""}
                           </option>
                         ))}
                       </select>
@@ -1037,19 +1039,19 @@ export function AdminCleaningClient() {
                         {(() => {
                           const selectedUser = availableUsers.find((user) => user.email === selectedAssignEmail);
                           if (!selectedUser) {
-                            return "No user selected.";
+                            return t("noUserSelected", "No user selected.");
                           }
 
                           return (
                             <>
                               <div className="font-medium text-slate-900">{selectedUser.name}</div>
                               <div>
-                                Preference: {selectedUser.availabilityType ?? "none"} | Availability score: {selectedUser.availabilityCount}
+                                {t("preferenceLabel")}: {selectedUser.availabilityType ?? t("noneLabel", "none")} | {t("availabilityScore")}: {selectedUser.availabilityCount}
                               </div>
-                              <div>Total tasks: {selectedUser.totalTaskCount}</div>
+                              <div>{t("totalTasksLabel")}: {selectedUser.totalTaskCount}</div>
                               {selectedUser.hasSameDayTask ? (
                                 <div className="mt-2 text-amber-700">
-                                  Warning: this user already has task(s) on this date.
+                                  {t("alreadyBookedWarning")}
                                 </div>
                               ) : null}
                             </>
@@ -1065,7 +1067,7 @@ export function AdminCleaningClient() {
                         disabled={loading || !selectedAssignEmail || !canAssignSelectedDate}
                         className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-60"
                       >
-                        Assign task
+                        {t("assignTaskLabel")}
                       </button>
                       {pendingConflict ? (
                         <button
@@ -1074,21 +1076,21 @@ export function AdminCleaningClient() {
                           disabled={loading || !canAssignSelectedDate}
                           className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-800 disabled:opacity-60"
                         >
-                          Assign anyway
+                          {t("assignAnyway")}
                         </button>
                       ) : null}
                     </div>
 
                     {pendingConflict ? (
                       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                        <div className="font-medium">Admin warning</div>
+                        <div className="font-medium">{t("adminWarning")}</div>
                         <div className="mt-1">
-                          {pendingConflict.email} already has task(s) on this date. You can still override this rule.
+                          {t("userAlreadyHasTask", "{email} already has task(s) on this date. You can still override this rule.", { email: pendingConflict.email })}
                         </div>
                         <div className="mt-2 space-y-1">
                           {pendingConflict.conflicts.map((conflict) => (
                             <div key={conflict.id}>
-                              {prettyTaskType(conflict.type)} on {new Date(conflict.scheduledDate).toLocaleDateString()}
+                              {prettyTaskType(conflict.type, t)} on {new Date(conflict.scheduledDate).toLocaleDateString("vi-VN")}
                             </div>
                           ))}
                         </div>
@@ -1099,10 +1101,10 @@ export function AdminCleaningClient() {
               </div>
 
               <div>
-                <h3 className="text-sm font-semibold text-slate-900">Bulk Auto-Assignment</h3>
+                <h3 className="text-sm font-semibold text-slate-900">{t("bulkAutoAssignment")}</h3>
                 {autoAssignPreview.length === 0 ? (
                   <p className="mt-2 text-sm text-slate-600">
-                    Preview open future dates first, then submit the selected dates when the suggestions look good.
+                    {t("bulkAutoAssignPrompt", "Preview open future dates first, then submit the selected dates when the suggestions look good.")}
                   </p>
                 ) : (
                   <div className="mt-2 space-y-3">
@@ -1127,14 +1129,14 @@ export function AdminCleaningClient() {
                           {entry.user ? (
                             <>
                               <div>
-                                Suggested: {entry.user.name} ({entry.user.email})
+                                {t("suggestedLabel", "Suggested")}: {entry.user.name} ({entry.user.email})
                               </div>
                               <div>
-                                Availability: {entry.user.availabilityType ?? "none"} | Availability entries: {entry.user.availabilityCount} | Total tasks: {entry.user.totalTaskCount}
+                                {t("availabilityLabel", "Availability")}: {entry.user.availabilityType ?? t("noneLabel", "none")} | {t("availabilityScore")}: {entry.user.availabilityCount} | {t("totalTasksLabel")}: {entry.user.totalTaskCount}
                               </div>
                             </>
                           ) : (
-                            <div className="text-amber-700">No eligible user found for this date.</div>
+                            <div className="text-amber-700">{t("noEligibleUserFound", "No eligible user found for this date.")}</div>
                           )}
                         </div>
                       </label>
@@ -1145,7 +1147,7 @@ export function AdminCleaningClient() {
                       disabled={loading || selectedAutoAssignDates.length === 0}
                       className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-60"
                     >
-                      Submit selected dates
+                      {t("submitSelectedDates")}
                     </button>
                   </div>
                 )}
@@ -1153,18 +1155,17 @@ export function AdminCleaningClient() {
             </aside>
           </div>
         ) : (
-          <p className="mt-4 text-sm text-slate-600">Load the admin calendars first.</p>
+          <p className="mt-4 text-sm text-slate-600">{t("loadCalendarsPrompt", "Load the admin calendars first.")}</p>
         )}
       </section>
 
       {rejectFineDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
           <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl space-y-4">
-            <h3 className="text-base font-bold text-slate-900">Reject task — confirm</h3>
+            <h3 className="text-base font-bold text-slate-900">{t("rejectTaskConfirm")}</h3>
             <p className="text-sm text-slate-600">
-              Rejecting for <span className="font-semibold">{rejectFineDialog.userEmail}</span> on{" "}
-              {new Date(rejectFineDialog.scheduledDate).toLocaleDateString()}.
-              Coins will be forfeited.
+              {t("rejectingFor", { email: rejectFineDialog.userEmail, date: new Date(rejectFineDialog.scheduledDate).toLocaleDateString("vi-VN") })}
+              {" "}{t("coinsWillBeForfeited")}
             </p>
 
             <label className="flex items-center gap-3 cursor-pointer">
@@ -1174,12 +1175,12 @@ export function AdminCleaningClient() {
                 onChange={(e) => setRejectFineCreate(e.target.checked)}
                 className="h-4 w-4 rounded border-slate-300 text-rose-600"
               />
-              <span className="text-sm font-medium text-slate-700">Also create a fine ticket</span>
+              <span className="text-sm font-medium text-slate-700">{t("createFineTicket")}</span>
             </label>
 
             {rejectFineCreate && (
               <label className="block text-sm font-medium text-slate-700">
-                Fine amount (₫)
+                {t("fineAmountLabel")}
                 <input
                   type="number"
                   value={rejectFineAmount}
@@ -1202,14 +1203,14 @@ export function AdminCleaningClient() {
                 )}
                 className="flex-1 rounded-xl bg-rose-600 py-2.5 text-sm font-bold text-white hover:bg-rose-700 disabled:opacity-50"
               >
-                {loading ? "Processing…" : rejectFineCreate ? "Reject & Issue Fine" : "Reject"}
+                {loading ? t("refreshing") : rejectFineCreate ? t("rejectIssueFine") : t("rejectLabel")}
               </button>
               <button
                 type="button"
                 onClick={() => { setRejectFineDialog(null); setRejectFineCreate(false); }}
                 className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
-                Cancel
+                {t("cancelLabel")}
               </button>
             </div>
           </div>
