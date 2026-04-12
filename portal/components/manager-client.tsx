@@ -5907,6 +5907,18 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               </div>
             </CollapsibleSettingsSection>
           ) : null}
+
+          <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-6 shadow-sm">
+            <h3 className="text-lg font-semibold text-slate-900">AI Assistant <span className="ml-1.5 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-700">Beta</span></h3>
+            <p className="mt-1 text-sm text-slate-600">Ask the assistant to add coins, create fines, make receipts, or check bed availability.</p>
+            <div className="mt-4">
+              <ManagerAiChat
+                operatorEmail={normalizedEmail}
+                onNavigate={(view) => setActiveManagerView(view as ManagerView)}
+                inline
+              />
+            </div>
+          </div>
         </section>
       ) : null}
 
@@ -7160,12 +7172,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         </div>
       )}
 
-      {isStaffSession && (
-        <ManagerAiChat
-          operatorEmail={normalizedEmail}
-          onNavigate={(view) => setActiveManagerView(view as ManagerView)}
-        />
-      )}
     </div>
   );
 }
