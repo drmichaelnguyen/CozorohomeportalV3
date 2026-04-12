@@ -3381,21 +3381,43 @@ export async function getDuplicateActiveClients(): Promise<Array<{
     byEmail.set(email, existing);
   }
 
-  const duplicates: Array<{ email: string; name: string; rows: Array<{ maHd: string; contractStart: string; contractEnd: string; activeStay: string; bed: string; branch: string }> }> = [];
+  const duplicates: Array<{
+    email: string;
+    name: string;
+    rows: Array<{
+      maHd: string;
+      submissionTimestamp: string;
+      contractStart: string;
+      contractEnd: string;
+      activeStay: string;
+      bed: string;
+      branch: string;
+    }>;
+  }> = [];
   for (const [email, rows] of byEmail.entries()) {
     if (rows.length < 2) continue;
+    const duplicateRows: Array<{
+      maHd: string;
+      submissionTimestamp: string;
+      contractStart: string;
+      contractEnd: string;
+      activeStay: string;
+      bed: string;
+      branch: string;
+    }> = rows.map((row) => ({
+      maHd: row[CONTRACT_CODE_COLUMN] ?? "",
+      submissionTimestamp: row[COINS_TIMESTAMP_COLUMN] ?? "",
+      contractStart: row[CLIENT_CONTRACT_START_COLUMN] ?? "",
+      contractEnd: row[CLIENT_CONTRACT_END_COLUMN] ?? "",
+      activeStay: row[ACTIVE_STAYING_COLUMN] ?? "",
+      bed: row[CLIENT_BED_COLUMN] ?? "",
+      branch: getClientBranchValue(row)
+    }));
+
     duplicates.push({
       email,
       name: rows[0]![CLIENT_NAME_COLUMN] ?? "",
-      rows: rows.map((row) => ({
-        maHd: row[CONTRACT_CODE_COLUMN] ?? "",
-        submissionTimestamp: row[COINS_TIMESTAMP_COLUMN] ?? "",
-        contractStart: row[CLIENT_CONTRACT_START_COLUMN] ?? "",
-        contractEnd: row[CLIENT_CONTRACT_END_COLUMN] ?? "",
-        activeStay: row[ACTIVE_STAYING_COLUMN] ?? "",
-        bed: row[CLIENT_BED_COLUMN] ?? "",
-        branch: getClientBranchValue(row)
-      }))
+      rows: duplicateRows
     });
   }
   return duplicates;
