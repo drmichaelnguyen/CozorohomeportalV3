@@ -31,6 +31,9 @@ type StoredCleaningAutoSchedulerConfig = {
   enabled?: boolean;
   updatedAt?: string;
   updatedBy?: string;
+  // Legacy flat format (pre-jobs-array): top-level fillUnassignedDates and horizonDays
+  fillUnassignedDates?: boolean;
+  horizonDays?: number;
   jobs?: Array<Partial<CleaningAutoSchedulerJobConfig> & { key?: string }>;
 };
 
@@ -69,6 +72,10 @@ async function readConfig(): Promise<CleaningAutoSchedulerConfig> {
     const parsed = JSON.parse(raw) as StoredCleaningAutoSchedulerConfig;
     const parsedJobsByKey = new Map((parsed.jobs ?? []).map((job) => [String(job.key ?? ""), job]));
 
+    // Legacy flat format: no jobs array — apply top-level values to all jobs
+    const legacyFillUnassigned = typeof parsed.fillUnassignedDates === "boolean" ? parsed.fillUnassignedDates : undefined;
+    const legacyHorizonDays = typeof parsed.horizonDays === "number" ? parsed.horizonDays : undefined;
+
     return {
       enabled: typeof parsed.enabled === "boolean" ? parsed.enabled : DEFAULT_ENABLED,
       updatedAt: parsed.updatedAt ?? new Date(0).toISOString(),
@@ -79,8 +86,10 @@ async function readConfig(): Promise<CleaningAutoSchedulerConfig> {
           ...job,
           enabled: typeof parsedJob?.enabled === "boolean" ? parsedJob.enabled : job.enabled,
           fillUnassignedDates:
-            typeof parsedJob?.fillUnassignedDates === "boolean" ? parsedJob.fillUnassignedDates : job.fillUnassignedDates,
-          horizonDays: clampHorizonDays(parsedJob?.horizonDays ?? job.horizonDays),
+            typeof parsedJob?.fillUnassignedDates === "boolean"
+              ? parsedJob.fillUnassignedDates
+              : (legacyFillUnassigned ?? job.fillUnassignedDates),
+          horizonDays: clampHorizonDays(parsedJob?.horizonDays ?? legacyHorizonDays ?? job.horizonDays),
           updatedAt: parsedJob?.updatedAt ?? parsed.updatedAt ?? job.updatedAt,
           updatedBy: parsedJob?.updatedBy ?? parsed.updatedBy ?? job.updatedBy
         };

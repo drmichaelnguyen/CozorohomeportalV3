@@ -14,6 +14,7 @@ import { APP_VERSION } from "../lib/app-version";
 import { parseVietnamDate } from "../lib/contract-utils";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
+import { usePortalTheme } from "./portal-theme";
 import { LaundryController } from "./laundry-controller";
 import { ContractExtension } from "./contract-extension";
 
@@ -61,7 +62,6 @@ type FineEntry = {
 };
 
 type BookingFilterMode = "future" | "past";
-type CalendarViewMode = "list" | "month" | "week" | "day";
 
 const overviewFields = [
   "\u0110\u1ecba ch\u1ec9 email",
@@ -105,18 +105,6 @@ function addDays(date: Date, days: number) {
   const next = new Date(date);
   next.setDate(next.getDate() + days);
   return next;
-}
-
-function startOfWeek(date: Date) {
-  const next = startOfDay(date);
-  const day = next.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  return addDays(next, diff);
-}
-
-function startOfMonthGrid(date: Date) {
-  const first = new Date(date.getFullYear(), date.getMonth(), 1);
-  return startOfWeek(first);
 }
 
 function sameDay(left: Date, right: Date) {
@@ -223,7 +211,8 @@ function getCleaningLateDeadline(task: { type: CleaningTask["type"]; scheduledDa
 
 export function AccountOverviewClient() {
   const { t, language, setLanguage } = usePortalLanguage();
-  const { sessionEmail, isLoggedIn, login } = usePortalSession();
+  const { sessionEmail, isLoggedIn, login, logout } = usePortalSession();
+  const { theme, toggleTheme } = usePortalTheme();
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -232,18 +221,17 @@ export function AccountOverviewClient() {
   const [coinEntries, setCoinEntries] = useState<CoinEntry[]>([]);
   const [cleaningOverview, setCleaningOverview] = useState<CleaningOverview | null>(null);
   const [bookingFilterMode, setBookingFilterMode] = useState<BookingFilterMode>("future");
-  const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>("list");
-  const [calendarFocusDate, setCalendarFocusDate] = useState(() => startOfDay(new Date()));
   const [expandedBookingIds, setExpandedBookingIds] = useState<string[]>([]);
   const [refreshingCalendar, setRefreshingCalendar] = useState(false);
   const [calendarFilter, setCalendarFilter] = useState("all");
   const [monthFilter, setMonthFilter] = useState("all");
   const [yearFilter, setYearFilter] = useState("all");
   const [aboutExpanded, setAboutExpanded] = useState(false);
+  const [bookingsExpanded, setBookingsExpanded] = useState(false);
+  const [securityExpanded, setSecurityExpanded] = useState(false);
   const [rangeStart, setRangeStart] = useState("");
   const [rangeEnd, setRangeEnd] = useState("");
   const [showAllInformation, setShowAllInformation] = useState(false);
-  const [showLaundryDetails, setShowLaundryDetails] = useState(false);
   const [showMemberRuleHelp, setShowMemberRuleHelp] = useState(false);
   const [selectedUpgradeMember, setSelectedUpgradeMember] = useState("");
   const [upgradingMember, setUpgradingMember] = useState(false);
@@ -294,7 +282,6 @@ export function AccountOverviewClient() {
     setRangeStart("");
     setRangeEnd("");
     setShowAllInformation(false);
-    setShowLaundryDetails(false);
 
     try {
       const response = await fetch(`${API_BASE_URL}/clients?email=${encodeURIComponent(activeEmail)}`);
@@ -579,39 +566,6 @@ export function AccountOverviewClient() {
       return passesCurrentPast && passesCalendar && passesMonth && passesYear && passesStart && passesEnd;
     });
   }, [bookingFilterMode, calendarFilter, monthFilter, yearFilter, rangeEnd, rangeStart, laundryBookings]);
-  const laundrySummaryByCalendar = useMemo(() => {
-    const summary = new Map<
-      string,
-      { calendar: string; bookings: number; totalMinutes: number }
-    >();
-
-    for (const booking of filteredBookings) {
-      const key = booking.calendarSummary || "Unknown calendar";
-      const current = summary.get(key) ?? {
-        calendar: key,
-        bookings: 0,
-        totalMinutes: 0
-      };
-      const durationMinutes = Math.max(
-        0,
-        Math.round((new Date(booking.end).getTime() - new Date(booking.start).getTime()) / 60000)
-      );
-      current.bookings += 1;
-      current.totalMinutes += durationMinutes;
-      summary.set(key, current);
-    }
-
-    return Array.from(summary.values()).sort((left, right) => left.calendar.localeCompare(right.calendar));
-  }, [filteredBookings]);
-  const monthDays = useMemo(() => {
-    const gridStart = startOfMonthGrid(calendarFocusDate);
-    return Array.from({ length: 42 }, (_, index) => addDays(gridStart, index));
-  }, [calendarFocusDate]);
-  const weekDays = useMemo(() => {
-    const weekStart = startOfWeek(calendarFocusDate);
-    return Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
-  }, [calendarFocusDate]);
-  const dayBookings = filteredBookings.filter((booking) => sameDay(new Date(booking.start), calendarFocusDate));
   const nextPaymentDate = useMemo(() => {
     if (!client) {
       return null;
@@ -713,22 +667,6 @@ export function AccountOverviewClient() {
     );
   }, [availableMemberUpgrades]);
 
-  function moveCalendar(direction: -1 | 1) {
-    if (calendarViewMode === "month") {
-      setCalendarFocusDate(
-        (current) => new Date(current.getFullYear(), current.getMonth() + direction, 1)
-      );
-      return;
-    }
-
-    if (calendarViewMode === "week") {
-      setCalendarFocusDate((current) => addDays(current, direction * 7));
-      return;
-    }
-
-    setCalendarFocusDate((current) => addDays(current, direction));
-  }
-
   function toggleExpandedBooking(id: string) {
     setExpandedBookingIds((current) =>
       current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]
@@ -753,7 +691,18 @@ export function AccountOverviewClient() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-        <h1 className="text-2xl font-semibold text-slate-900">{t("accountOverviewTitle")}</h1>
+        <div className="flex items-start justify-between gap-4">
+          <h1 className="text-2xl font-semibold text-slate-900">{t("accountOverviewTitle")}</h1>
+          {isLoggedIn && (
+            <button
+              type="button"
+              onClick={logout}
+              className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-1 text-sm text-slate-600 hover:border-slate-300 hover:text-slate-900"
+            >
+              {t("logout", "Log out")}
+            </button>
+          )}
+        </div>
         <p className="mt-2 text-sm text-slate-600">
           {language === "vi"
             ? "Người dùng thường có thể xem thông tin tài khoản đã đồng bộ tại đây. Trang này không cho chỉnh sửa."
@@ -786,7 +735,7 @@ export function AccountOverviewClient() {
 
         {!client ? (
           <p className="mt-3 text-sm text-slate-600">
-            Enter your email to load the active client row where <code>Hi\u1ec7n c\u00f2n \u1edf = 1</code>.
+            Enter your email to load your account information.
           </p>
         ) : (
           <div className="mt-4 space-y-3">
@@ -1077,424 +1026,148 @@ export function AccountOverviewClient() {
         )}
       </section>
 
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-        <h2 className="text-lg font-semibold text-slate-900">
-          {language === "vi" ? "Lịch giặt sấy" : "Laundry Bookings"}
-        </h2>
+      <section className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+        <button
+          type="button"
+          onClick={() => setBookingsExpanded((v) => !v)}
+          className="flex w-full items-center justify-between p-6 text-left"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">
+            {language === "vi" ? "Lịch giặt sấy" : "My Bookings"}
+          </h2>
+          <svg
+            className={`h-5 w-5 text-slate-500 transition-transform ${bookingsExpanded ? "rotate-180" : ""}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
 
+        {bookingsExpanded && (
+          <div className="px-6 pb-6">
         {!client ? (
-          <p className="mt-3 text-sm text-slate-600">
+          <p className="text-sm text-slate-600">
             Load your account first to see any matching Google Calendar laundry bookings.
           </p>
         ) : laundryBookings.length === 0 ? (
-          <p className="mt-3 text-sm text-slate-600">
+          <p className="text-sm text-slate-600">
             No Google Calendar laundry bookings were found for this email in the configured calendars.
           </p>
         ) : (
-          <div className="mt-4 space-y-4">
-            <div className="rounded-xl border border-slate-200 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-medium text-slate-900">Booking View</div>
-                  <div className="text-sm text-slate-600">
-                    {calendarViewMode === "month"
-                      ? calendarFocusDate.toLocaleString(undefined, {
-                          month: "long",
-                          year: "numeric"
-                        })
-                      : calendarViewMode === "week"
-                        ? `Week of ${startOfWeek(calendarFocusDate).toLocaleDateString()}`
-                        : calendarFocusDate.toLocaleDateString()}
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {(["future", "past"] as const).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => setBookingFilterMode(mode)}
-                      className={`rounded-lg px-3 py-2 text-sm ${
-                        bookingFilterMode === mode
-                          ? "bg-slate-900 text-white"
-                          : "border border-slate-300 text-slate-700"
-                      }`}
-                    >
-                      {mode === "future" ? "Future" : "Past"}
-                    </button>
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={bookingFilterMode}
+                  onChange={(e) => setBookingFilterMode(e.target.value as BookingFilterMode)}
+                  className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs text-slate-700"
+                >
+                  <option value="future">Upcoming</option>
+                  <option value="past">Past</option>
+                </select>
+                <select
+                  value={calendarFilter}
+                  onChange={(event) => setCalendarFilter(event.target.value)}
+                  className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs text-slate-700"
+                >
+                  <option value="all">All calendars</option>
+                  {calendarOptions.map((calendar) => (
+                    <option key={calendar} value={calendar}>{calendar}</option>
                   ))}
-                  <button
-                    type="button"
-                    onClick={() => moveCalendar(-1)}
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
-                  >
-                    Prev
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCalendarFocusDate(startOfDay(new Date()))}
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
-                  >
-                    Today
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => moveCalendar(1)}
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
-                  >
-                    Next
-                  </button>
-                  {(["list", "month", "week", "day"] as const).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => setCalendarViewMode(mode)}
-                      className={`rounded-lg px-3 py-2 text-sm ${
-                        calendarViewMode === mode
-                          ? "bg-slate-900 text-white"
-                          : "border border-slate-300 text-slate-700"
-                      }`}
-                    >
-                      {mode[0].toUpperCase() + mode.slice(1)}
-                    </button>
+                </select>
+                <select
+                  value={yearFilter}
+                  onChange={(event) => setYearFilter(event.target.value)}
+                  className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs text-slate-700"
+                >
+                  <option value="all">All years</option>
+                  {yearOptions.map((year) => (
+                    <option key={year} value={year}>{year}</option>
                   ))}
-                  <button
-                    type="button"
-                    onClick={() => void refreshCalendarNow()}
-                    disabled={refreshingCalendar}
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 disabled:opacity-60"
-                  >
-                    {refreshingCalendar ? "Refreshing..." : "Refresh calendar"}
-                  </button>
-                </div>
-              </div>
-
-              <div className="mt-4 grid gap-3 md:grid-cols-5">
-                <label className="block text-sm font-medium text-slate-700">
-                  Calendar
-                  <select
-                    value={calendarFilter}
-                    onChange={(event) => setCalendarFilter(event.target.value)}
-                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-                  >
-                    <option value="all">All calendars</option>
-                    {calendarOptions.map((calendar) => (
-                      <option key={calendar} value={calendar}>
-                        {calendar}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="block text-sm font-medium text-slate-700">
-                  Month
-                  <select
-                    value={monthFilter}
-                    onChange={(event) => setMonthFilter(event.target.value)}
-                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-                  >
-                    <option value="all">All months</option>
-                    {monthOptions.map((month) => (
-                      <option key={month} value={month}>
-                        {new Date(2000, Number(month) - 1, 1).toLocaleString(undefined, {
-                          month: "long"
-                        })}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="block text-sm font-medium text-slate-700">
-                  Year
-                  <select
-                    value={yearFilter}
-                    onChange={(event) => setYearFilter(event.target.value)}
-                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-                  >
-                    <option value="all">All years</option>
-                    {yearOptions.map((year) => (
-                      <option key={year} value={year}>
-                        {year}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="block text-sm font-medium text-slate-700">
-                  From
-                  <input
-                    type="date"
-                    value={rangeStart}
-                    onChange={(event) => setRangeStart(event.target.value)}
-                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-                  />
-                </label>
-
-                <label className="block text-sm font-medium text-slate-700">
-                  To
-                  <input
-                    type="date"
-                    value={rangeEnd}
-                    onChange={(event) => setRangeEnd(event.target.value)}
-                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-                  />
-                </label>
-              </div>
-
-              <div className="mt-4 grid gap-3 md:grid-cols-3">
-                <div className="rounded-xl bg-slate-50 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Total Bookings
-                  </div>
-                  <div className="mt-2 text-2xl font-semibold text-slate-900">
-                    {filteredBookings.length}
-                  </div>
-                </div>
-                <div className="rounded-xl bg-slate-50 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Total Usage
-                  </div>
-                  <div className="mt-2 text-2xl font-semibold text-slate-900">
-                    {formatUsage(
-                      filteredBookings.reduce((sum, booking) => {
-                        return (
-                          sum +
-                          Math.max(
-                            0,
-                            Math.round(
-                              (new Date(booking.end).getTime() - new Date(booking.start).getTime()) / 60000
-                            )
-                          )
-                        );
-                      }, 0)
-                    )}
-                  </div>
-                </div>
-                <div className="rounded-xl bg-slate-50 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Calendars Used
-                  </div>
-                  <div className="mt-2 text-2xl font-semibold text-slate-900">
-                    {laundrySummaryByCalendar.length}
-                  </div>
-                </div>
-              </div>
-
-              {laundrySummaryByCalendar.length > 0 ? (
-                <div className="mt-4 rounded-xl border border-slate-200">
-                  <div className="border-b border-slate-200 px-4 py-3 text-sm font-medium text-slate-900">
-                    Laundry Summary by Calendar
-                  </div>
-                  <div className="divide-y divide-slate-200">
-                    {laundrySummaryByCalendar.map((entry) => (
-                      <div
-                        key={entry.calendar}
-                        className="grid gap-2 px-4 py-3 text-sm text-slate-700 md:grid-cols-[minmax(0,1fr),140px,140px]"
-                      >
-                        <div className="font-medium text-slate-900">{entry.calendar}</div>
-                        <div>{entry.bookings} bookings</div>
-                        <div>{formatUsage(entry.totalMinutes)}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-
-              {filteredBookings.length === 0 ? (
-                <div className="mt-4 text-sm text-slate-500">
-                  No {bookingFilterMode} laundry bookings found for this account.
-                </div>
-              ) : null}
-
-              {filteredBookings.length > 0 ? (
-                <div className="mt-4">
-                  <button
-                    type="button"
-                    onClick={() => setShowLaundryDetails((current) => !current)}
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700"
-                  >
-                    {showLaundryDetails ? "Hide booking details" : `Expand booking details (${filteredBookings.length})`}
-                  </button>
-                </div>
-              ) : null}
-
-              {filteredBookings.length > 0 && showLaundryDetails && calendarViewMode === "list" ? (
-                <div className="mt-4 space-y-3">
-                  {filteredBookings.map((booking) => (
-                    <button
-                      key={booking.id}
-                      type="button"
-                      onClick={() => toggleExpandedBooking(booking.id)}
-                      className="block w-full rounded-xl border border-slate-200 p-4 text-left"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="font-medium text-slate-900">{booking.summary}</div>
-                        <div className="text-xs text-slate-500">
-                          {expandedBookingIds.includes(booking.id) ? "Hide" : "Show"}
-                        </div>
-                      </div>
-
-                      {expandedBookingIds.includes(booking.id) ? (
-                        <div className="mt-3">
-                          <div className="text-sm text-slate-600">{formatRange(booking.start, booking.end)}</div>
-                          <div className="mt-1 text-sm text-slate-600">Calendar: {booking.calendarSummary}</div>
-                          {booking.location ? (
-                            <div className="mt-1 text-sm text-slate-600">Location: {booking.location}</div>
-                          ) : null}
-                          {booking.description ? (
-                            <div className="mt-2 whitespace-pre-wrap text-sm text-slate-600">
-                              {booking.description}
-                            </div>
-                          ) : null}
-                          {booking.htmlLink ? (
-                            <a
-                              href={booking.htmlLink}
-                              target="_blank"
-                              rel="noreferrer"
-                              onClick={(event) => event.stopPropagation()}
-                              className="mt-3 inline-block text-sm font-medium text-slate-900 underline"
-                            >
-                              Open in Google Calendar
-                            </a>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </button>
+                </select>
+                <select
+                  value={monthFilter}
+                  onChange={(event) => setMonthFilter(event.target.value)}
+                  className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs text-slate-700"
+                >
+                  <option value="all">All months</option>
+                  {monthOptions.map((month) => (
+                    <option key={month} value={month}>
+                      {new Date(2000, Number(month) - 1, 1).toLocaleString(undefined, { month: "short" })}
+                    </option>
                   ))}
-                </div>
-              ) : null}
-
-              {filteredBookings.length > 0 && showLaundryDetails && calendarViewMode === "month" ? (
-                <div className="mt-4 overflow-x-auto pb-2 hide-scrollbar">
-                  <div className="grid min-w-[42rem] grid-cols-7 gap-2 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label) => (
-                      <div key={label}>{label}</div>
-                    ))}
-                  </div>
-                  <div className="mt-2 grid min-w-[42rem] grid-cols-7 gap-2">
-                    {monthDays.map((day) => {
-                      const events = filteredBookings.filter((booking) => sameDay(new Date(booking.start), day));
-                      const isCurrentMonth = day.getMonth() === calendarFocusDate.getMonth();
-                      const isToday = sameDay(day, new Date());
-                      return (
-                        <div
-                          key={day.toISOString()}
-                          className={`min-h-28 rounded-xl border p-2 ${
-                            isCurrentMonth ? "border-slate-200 bg-white" : "border-slate-100 bg-slate-50"
-                          } ${isToday ? "ring-2 ring-slate-900" : ""}`}
-                        >
-                          <div className="text-sm font-medium text-slate-900">{day.getDate()}</div>
-                          <div className="mt-2 space-y-1">
-                            {events.slice(0, 3).map((booking) => (
-                              <button
-                                key={booking.id}
-                                type="button"
-                                onClick={() => {
-                                  setCalendarViewMode("day");
-                                  setCalendarFocusDate(startOfDay(new Date(booking.start)));
-                                }}
-                                className="block w-full rounded-md bg-slate-900 px-2 py-1 text-left text-xs text-white"
-                              >
-                                {new Date(booking.start).toLocaleTimeString([], {
-                                  hour: "numeric",
-                                  minute: "2-digit"
-                                })}{" "}
-                                {booking.summary}
-                              </button>
-                            ))}
-                            {events.length > 3 ? (
-                              <div className="text-xs text-slate-500">+{events.length - 3} more</div>
-                            ) : null}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
-
-              {filteredBookings.length > 0 && showLaundryDetails && calendarViewMode === "week" ? (
-                <div className="mt-4 overflow-x-auto pb-2 hide-scrollbar">
-                  <div className="grid min-w-[42rem] gap-3 md:grid-cols-7">
-                  {weekDays.map((day) => {
-                    const events = filteredBookings.filter((booking) => sameDay(new Date(booking.start), day));
-                    return (
-                      <div key={day.toISOString()} className="rounded-xl border border-slate-200 p-3">
-                        <div className="text-sm font-semibold text-slate-900">
-                          {day.toLocaleDateString(undefined, {
-                            weekday: "short",
-                            month: "short",
-                            day: "numeric"
-                          })}
-                        </div>
-                        <div className="mt-3 space-y-2">
-                          {events.length === 0 ? (
-                            <div className="text-xs text-slate-500">No bookings</div>
-                          ) : (
-                            events.map((booking) => (
-                              <div key={booking.id} className="rounded-lg bg-slate-50 p-2">
-                                <div className="text-xs font-medium text-slate-900">{booking.summary}</div>
-                                <div className="mt-1 text-xs text-slate-600">
-                                  {new Date(booking.start).toLocaleTimeString([], {
-                                    hour: "numeric",
-                                    minute: "2-digit"
-                                  })}
-                                </div>
-                                <div className="mt-1 text-xs text-slate-500">{booking.calendarSummary}</div>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  </div>
-                </div>
-              ) : null}
-
-              {filteredBookings.length > 0 && showLaundryDetails && calendarViewMode === "day" ? (
-                <div className="mt-4 rounded-xl border border-slate-200 p-4">
-                  <div className="text-sm font-semibold text-slate-900">
-                    {calendarFocusDate.toLocaleDateString(undefined, {
-                      weekday: "long",
-                      month: "long",
-                      day: "numeric",
-                      year: "numeric"
-                    })}
-                  </div>
-                  <div className="mt-4 space-y-3">
-                    {dayBookings.length === 0 ? (
-                      <div className="text-sm text-slate-500">No bookings for this day.</div>
-                    ) : (
-                      dayBookings.map((booking) => (
-                        <div key={booking.id} className="rounded-xl bg-slate-50 p-4">
-                          <div className="font-medium text-slate-900">{booking.summary}</div>
-                          <div className="mt-1 text-sm text-slate-600">{formatRange(booking.start, booking.end)}</div>
-                          <div className="mt-1 text-sm text-slate-600">Calendar: {booking.calendarSummary}</div>
-                          {booking.location ? (
-                            <div className="mt-1 text-sm text-slate-600">Location: {booking.location}</div>
-                          ) : null}
-                          {booking.description ? (
-                            <div className="mt-2 whitespace-pre-wrap text-sm text-slate-600">
-                              {booking.description}
-                            </div>
-                          ) : null}
-                          {booking.htmlLink ? (
-                            <a
-                              href={booking.htmlLink}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="mt-3 inline-block text-sm font-medium text-slate-900 underline"
-                            >
-                              Open in Google Calendar
-                            </a>
-                          ) : null}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              ) : null}
+                </select>
+                <input
+                  type="date"
+                  value={rangeStart}
+                  onChange={(event) => setRangeStart(event.target.value)}
+                  className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs text-slate-700"
+                  title="From date"
+                />
+                <input
+                  type="date"
+                  value={rangeEnd}
+                  onChange={(event) => setRangeEnd(event.target.value)}
+                  className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs text-slate-700"
+                  title="To date"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500">{filteredBookings.length} bookings</span>
+                <button
+                  type="button"
+                  onClick={() => void refreshCalendarNow()}
+                  disabled={refreshingCalendar}
+                  className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs text-slate-700 disabled:opacity-60"
+                >
+                  {refreshingCalendar ? "..." : "Refresh"}
+                </button>
+              </div>
             </div>
+
+            {filteredBookings.length === 0 ? (
+              <p className="text-sm text-slate-500">No {bookingFilterMode === "future" ? "upcoming" : "past"} bookings.</p>
+            ) : (
+              <div className="space-y-2">
+                {filteredBookings.map((booking) => (
+                  <button
+                    key={booking.id}
+                    type="button"
+                    onClick={() => toggleExpandedBooking(booking.id)}
+                    className="block w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-left hover:bg-slate-50"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm font-medium text-slate-900">{booking.summary}</div>
+                      <svg className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${expandedBookingIds.includes(booking.id) ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                    <div className="mt-0.5 text-xs text-slate-500">{formatRange(booking.start, booking.end)}</div>
+                    {expandedBookingIds.includes(booking.id) ? (
+                      <div className="mt-2 space-y-1 border-t border-slate-200 pt-2">
+                        <div className="text-xs text-slate-600">Calendar: {booking.calendarSummary}</div>
+                        {booking.description ? (
+                          <div className="text-xs text-slate-500">{booking.description}</div>
+                        ) : null}
+                        {booking.htmlLink ? (
+                          <a
+                            href={booking.htmlLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(event) => event.stopPropagation()}
+                            className="text-xs font-medium text-sky-600 underline"
+                          >
+                            Open in Google Calendar
+                          </a>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
           </div>
         )}
       </section>
@@ -1565,86 +1238,108 @@ export function AccountOverviewClient() {
       </section>
 
       {/* Account Security Section */}
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-        <h2 className="text-lg font-semibold text-slate-900">
-          {t("accountSecurity", "Account Security")}
-        </h2>
-        <p className="mt-1 text-sm text-slate-500">
-          {t("changePasswordAnytime", "You can change your portal password here.")}
-        </p>
-
-        <form onSubmit={handlePasswordChange} className="mt-6 space-y-4 max-w-md">
-          <div>
-            <label className="block text-sm font-medium text-slate-700">{t("currentPassword")}</label>
-            <input
-              type="password"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              placeholder={t("enterCurrentPassword")}
-              className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-            />
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label className="block text-sm font-medium text-slate-700">{t("newPassword")}</label>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder={t("chooseNewPassword")}
-                className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700">{t("confirmPassword")}</label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder={t("confirmPassword")}
-                className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-              />
-            </div>
-          </div>
-
-          {passwordError && (
-            <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700 font-medium">
-              {passwordError}
-            </div>
-          )}
-          {passwordSuccess && (
-            <div className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700 font-medium">
-              {passwordSuccess}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={isChangingPassword}
-            className="flex w-full items-center justify-center rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 disabled:opacity-50 transition-all sm:w-auto"
+      <section className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+        <button
+          type="button"
+          onClick={() => setSecurityExpanded((v) => !v)}
+          className="flex w-full items-center justify-between p-6 text-left"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">
+            {t("accountSecurity", "Account Security")}
+          </h2>
+          <svg
+            className={`h-5 w-5 text-slate-500 transition-transform ${securityExpanded ? "rotate-180" : ""}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
           >
-            {isChangingPassword ? t("changingPassword") : t("changePassword")}
-          </button>
-        </form>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {securityExpanded && (
+          <div className="border-t border-slate-200 px-6 pb-6 pt-4">
+            <form onSubmit={handlePasswordChange} className="space-y-4 max-w-md">
+              <div>
+                <label className="block text-sm font-medium text-slate-700">{t("currentPassword")}</label>
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  placeholder={t("enterCurrentPassword")}
+                  className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                />
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">{t("newPassword")}</label>
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder={t("chooseNewPassword")}
+                    className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">{t("confirmPassword")}</label>
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder={t("confirmPassword")}
+                    className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                  />
+                </div>
+              </div>
+              {passwordError && (
+                <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700 font-medium">{passwordError}</div>
+              )}
+              {passwordSuccess && (
+                <div className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700 font-medium">{passwordSuccess}</div>
+              )}
+              <button
+                type="submit"
+                disabled={isChangingPassword}
+                className="flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 disabled:opacity-50 transition-all"
+              >
+                {isChangingPassword ? t("changingPassword") : t("changePassword")}
+              </button>
+            </form>
+          </div>
+        )}
       </section>
 
-      {/* Language Preference Section */}
+      {/* Preferences Section */}
       <section className="mt-8 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">
-          {language === "vi" ? "Cài đặt ngôn ngữ" : "Language Preference"}
+          {language === "vi" ? "Tùy chọn" : "Preferences"}
         </h2>
-        <div className="mt-4 flex items-center justify-between">
-          <p className="text-sm text-slate-600">
-            {language === "vi" ? "Chọn ngôn ngữ hiển thị cho cổng thông tin." : "Choose the display language for the portal."}
-          </p>
-          <select
-            value={language}
-            onChange={(e) => setLanguage(e.target.value as "en" | "vi")}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-          >
-            <option value="en">{t("english", "English")}</option>
-            <option value="vi">{t("vietnamese", "Vietnamese")}</option>
-          </select>
+        <div className="mt-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-slate-600">
+              {language === "vi" ? "Chọn ngôn ngữ hiển thị." : "Display language"}
+            </p>
+            <select
+              value={language}
+              onChange={(e) => setLanguage(e.target.value as "en" | "vi")}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            >
+              <option value="en">{t("english", "English")}</option>
+              <option value="vi">{t("vietnamese", "Vietnamese")}</option>
+            </select>
+          </div>
+          <div className="flex items-center justify-between border-t border-slate-100 pt-4">
+            <p className="text-sm text-slate-600">
+              {language === "vi" ? "Giao diện tối" : "Dark mode"}
+            </p>
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${theme === "dark" ? "bg-slate-700" : "bg-slate-200"}`}
+              role="switch"
+              aria-checked={theme === "dark"}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${theme === "dark" ? "translate-x-6" : "translate-x-1"}`} />
+            </button>
+          </div>
         </div>
       </section>
 

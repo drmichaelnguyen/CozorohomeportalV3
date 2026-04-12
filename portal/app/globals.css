@@ -10,6 +10,10 @@ nextjs-portal {
   color-scheme: light;
 }
 
+.dark {
+  color-scheme: dark;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -60,3 +64,49 @@ a {
 .h-safe-bottom {
   height: env(safe-area-inset-bottom, 0px);
 }
+
+/* Dark mode overrides */
+.dark body {
+  background: #0f1117;
+  color: #e2e8f0;
+}
+
+.dark .bg-white { background-color: #1e2130 !important; }
+.dark .bg-slate-50 { background-color: #252836 !important; }
+.dark .bg-slate-50\/50 { background-color: #252836 !important; }
+.dark .bg-slate-100 { background-color: #2a2f42 !important; }
+
+.dark .ring-1.ring-slate-200 { --tw-ring-color: #2e3347 !important; }
+.dark .border-slate-200 { border-color: #2e3347 !important; }
+.dark .border-slate-300 { border-color: #3a4058 !important; }
+.dark .border-slate-100 { border-color: #252836 !important; }
+.dark .divide-slate-200 > * + * { border-color: #2e3347 !important; }
+
+.dark .text-slate-900 { color: #f1f5f9 !important; }
+.dark .text-slate-800 { color: #e2e8f0 !important; }
+.dark .text-slate-700 { color: #cbd5e1 !important; }
+.dark .text-slate-600 { color: #94a3b8 !important; }
+.dark .text-slate-500 { color: #64748b !important; }
+
+.dark header { background-color: #1e2130 !important; border-color: #2e3347 !important; }
+.dark nav { background-color: #1e2130 !important; border-color: #2e3347 !important; }
+
+.dark input,
+.dark select,
+.dark textarea {
+  background-color: #252836 !important;
+  border-color: #3a4058 !important;
+  color: #e2e8f0 !important;
+}
+
+.dark .rounded-xl.border { border-color: #2e3347 !important; }
+.dark .rounded-2xl.bg-white { background-color: #1e2130 !important; }
+.dark .rounded-2xl.bg-slate-50 { background-color: #252836 !important; }
+.dark .rounded-3xl.bg-white { background-color: #1e2130 !important; }
+
+.dark .bg-sky-50 { background-color: #0c1a2e !important; }
+.dark .bg-red-50 { background-color: #1f1215 !important; }
+.dark .bg-emerald-50 { background-color: #0f1e18 !important; }
+.dark .bg-amber-50 { background-color: #1f1a0f !important; }
+.dark .bg-sky-50\/30 { background-color: #0c1a2e !important; }
+.dark .bg-red-50\/30 { background-color: #1f1215 !important; }

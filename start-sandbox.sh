@@ -1,12 +1,11 @@
 #!/bin/bash
-# CozoroHome Sandbox — Portal :3002 | API :4002
-# Runs independently from the public app (Portal :3001 | API :4001)
+# CozoroHome Dev — Portal :3000 | API :4000
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
-echo "=== CozoroHome Sandbox ==="
-echo "Portal  → http://localhost:3002"
-echo "API     → http://localhost:4002"
+echo "=== CozoroHome Dev ==="
+echo "Portal  → http://localhost:3000"
+echo "API     → http://localhost:4000"
 echo ""
 
 # Regenerate Prisma client for this platform (fixes Windows/WSL mismatch)
@@ -30,11 +29,11 @@ if [ -z "$WSL_DATABASE_URL" ]; then
 fi
 echo "Database: $WSL_DATABASE_URL"
 
-# Start API on 4002 in background
+# Start API on 4000 in background
 (
   cd "$ROOT/api"
-  PORT=4002 \
-  GOOGLE_REDIRECT_URI="http://localhost:4002/integrations/google/oauth/callback" \
+  PORT=4000 \
+  GOOGLE_REDIRECT_URI="http://localhost:4000/integrations/google/oauth/callback" \
   DATABASE_URL="$WSL_DATABASE_URL" \
   node --import tsx/esm src/index.ts
 ) &
@@ -46,14 +45,14 @@ sleep 3
 # Build portal if .next build output is missing or stale
 if [ ! -d "$ROOT/portal/.next/server" ]; then
   echo "Building portal..."
-  (cd "$ROOT/portal" && API_SERVER_ORIGIN=http://localhost:4002 npm run build)
+  (cd "$ROOT/portal" && API_SERVER_ORIGIN=http://localhost:4000 npm run build)
 fi
 
-# Start Portal on 3002 (production build)
+# Start Portal on 3000 (production build)
 (
   cd "$ROOT/portal"
-  API_SERVER_ORIGIN=http://localhost:4002 \
-  npx next start -p 3002
+  API_SERVER_ORIGIN=http://localhost:4000 \
+  npx next start -p 3000
 )
 
 # Kill API when portal exits

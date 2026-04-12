@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import { NotificationBell } from "./notification-bell";
 import { PortalLanguageProvider, usePortalLanguage } from "./portal-language";
 import { PortalSessionProvider, usePortalSession } from "./portal-session";
+import { PortalThemeProvider } from "./portal-theme";
 import { MobileNav } from "./mobile-nav";
 import { ChatNotifier } from "./chat-notifier";
 import { VersionBadge } from "./version-badge";
@@ -14,7 +15,7 @@ import { PushSubscription } from "./push-subscription";
 
 function SiteChrome({ children }: { children: React.ReactNode }) {
   const { language, setLanguage, t } = usePortalLanguage();
-  const { sessionEmail, sessionRole, isLoggedIn, isSessionLoaded, logout } = usePortalSession();
+  const { sessionEmail, sessionRole, isLoggedIn, isSessionLoaded } = usePortalSession();
   const pathname = usePathname();
   const isPublicStandalonePage = pathname === "/client-login" || pathname === "/register";
   const isLoginPage = pathname === "/client-login";
@@ -85,15 +86,6 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
                   {t("signedInAs", "Signed in as")} {sessionEmail}
                   {sessionRole ? ` (${sessionRole})` : ""}
                 </div>
-              ) : null}
-              {isLoggedIn ? (
-                <button
-                  type="button"
-                  onClick={logout}
-                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm text-slate-700 hover:border-slate-300"
-                >
-                  {t("logout", "Log out")}
-                </button>
               ) : null}
               <button
                 type="button"
@@ -248,10 +240,12 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
 
 export function SiteShell({ children }: { children: React.ReactNode }) {
   return (
-    <PortalSessionProvider>
-      <PortalLanguageProvider>
-        <SiteChrome>{children}</SiteChrome>
-      </PortalLanguageProvider>
-    </PortalSessionProvider>
+    <PortalThemeProvider>
+      <PortalSessionProvider>
+        <PortalLanguageProvider>
+          <SiteChrome>{children}</SiteChrome>
+        </PortalLanguageProvider>
+      </PortalSessionProvider>
+    </PortalThemeProvider>
   );
 }

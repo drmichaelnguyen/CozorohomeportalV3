@@ -76,10 +76,12 @@ function senderShortName(message: SupportMessage) {
 
 export function ManagerSupportInbox({
   operatorEmail,
-  enabled
+  enabled,
+  onViewClient
 }: {
   operatorEmail: string;
   enabled: boolean;
+  onViewClient?: (email: string) => void;
 }) {
   const [conversations, setConversations] = useState<SupportConversationListItem[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState("");
@@ -285,9 +287,19 @@ export function ManagerSupportInbox({
         <div key={message.id} className={`flex ${isStaff ? "justify-end" : "justify-start"} ${isLastInGroup ? "mb-3" : "mb-0.5"}`}>
           <div className={`flex max-w-[75%] flex-col ${isStaff ? "items-end" : "items-start"}`}>
             {isFirstInGroup && (
-              <span className="mb-1 px-1 text-[11px] font-medium text-slate-400">
-                {senderShortName(message)}
-              </span>
+              !isStaff && onViewClient ? (
+                <button
+                  type="button"
+                  onClick={() => onViewClient(message.senderEmail)}
+                  className="mb-1 px-1 text-[11px] font-medium text-sky-600 hover:underline text-left"
+                >
+                  {senderShortName(message)}
+                </button>
+              ) : (
+                <span className="mb-1 px-1 text-[11px] font-medium text-slate-400">
+                  {senderShortName(message)}
+                </span>
+              )
             )}
             <div
               className={`rounded-2xl px-4 py-2.5 ${

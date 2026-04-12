@@ -262,6 +262,8 @@ export function BookingsClient() {
   const [refreshingAvailability, setRefreshingAvailability] = useState(false);
   const [acceptedLoadWarning, setAcceptedLoadWarning] = useState(false);
   const [acceptedBasketWarning, setAcceptedBasketWarning] = useState(false);
+  const [showBookingHelp, setShowBookingHelp] = useState(false);
+  const [showAllowanceDetails, setShowAllowanceDetails] = useState(false);
 
   const selectedMachine = useMemo(
     () => machines.find((machine) => machine.id === selectedMachineId) ?? null,
@@ -726,12 +728,24 @@ export function BookingsClient() {
   return (
     <div className="space-y-8">
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-        <h1 className="text-2xl font-semibold text-slate-900">{t("laundryBookingsTitle")}</h1>
-        <p className="mt-2 text-sm text-slate-600">
-          {language === "vi"
-            ? "Chọn máy theo chi nhánh của bạn, rồi đặt một khung giờ còn trống trong 7 ngày tới. Sau khi đặt, khung giờ đó sẽ bị khóa trên Google Calendar."
-            : "Choose your branch machine, then book an open time in the next 7 days. Once booked, that slot is blocked in Google Calendar."}
-        </p>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-semibold text-slate-900">{t("laundryBookingsTitle")}</h1>
+          <button
+            type="button"
+            onClick={() => setShowBookingHelp((v) => !v)}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-300 text-sm font-semibold text-slate-700"
+            aria-label="How laundry booking works"
+          >
+            ?
+          </button>
+        </div>
+        {showBookingHelp && (
+          <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-slate-700">
+            {language === "vi"
+              ? "Chọn máy theo chi nhánh của bạn, rồi đặt một khung giờ còn trống trong 7 ngày tới. Sau khi đặt, khung giờ đó sẽ bị khóa trên Google Calendar."
+              : "Choose your branch machine, then book an open time in the next 7 days. Once booked, that slot is blocked in Google Calendar."}
+          </div>
+        )}
       </section>
 
       {isBlocked && blockReason ? (
@@ -783,65 +797,88 @@ export function BookingsClient() {
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current Coins</div>
                 <div className="mt-2 text-lg font-semibold text-slate-900">{coins || "-"}</div>
               </div>
-              <div className="rounded-xl bg-slate-50 p-4 md:col-span-2">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Timezone</div>
-                <div className="mt-2 text-lg font-semibold text-slate-900">
-                  {getTimeZoneLabel(timeZone)} ({timeZone})
-                </div>
-              </div>
             </div>
 
-            {allowance ? (
-              <div className="rounded-xl border border-slate-200 p-4 text-sm text-slate-700">
-                <div className="font-medium text-slate-900">{language === "vi" ? "Ưu đãi giặt miễn phí hằng tháng" : "Monthly Free Laundry"}</div>
-                <div className="mt-2">
-                  {language === "vi" ? "Hạng thành viên" : "Recorded member"}: <span className="font-medium">{allowance.recordedMember}</span>
-                </div>
-                <div className="mt-1">
-                  {language === "vi" ? "Lượt miễn phí cơ bản" : "Base free uses"}: <span className="font-medium">{allowance.baseFreeUsesPerMonth}</span>
-                </div>
-                <div className="mt-1">
-                  {language === "vi" ? "Đã dùng tháng này" : "Used free laundry this month"}: <span className="font-medium">{allowance.usedFreeLaundryThisMonth}</span>
-                </div>
-                <div className="mt-1">
-                  {language === "vi" ? "Số lượt miễn phí còn lại" : "Remaining free laundry"}:{" "}
-                  <span className="font-medium">
-                    {allowance.branchId === "D2"
-                      ? (language === "vi" 
-                        ? `${allowance.remainingBaseFreeUses} cơ bản+coupon / ${allowance.remainingCouponFreeUses} coupon / ${allowance.remainingBonusWasherUses} giặt thêm`
-                        : `${allowance.remainingBaseFreeUses} base+coupon / ${allowance.remainingCouponFreeUses} coupon / ${allowance.remainingBonusWasherUses} washer bonus`)
-                      : (language === "vi"
-                        ? `${allowance.remainingBaseFreeUses} cơ bản+coupon / ${allowance.remainingCouponFreeUses} coupon / ${allowance.remainingBonusWasherUses} giặt thêm / ${allowance.remainingBonusDryerUses} sấy thêm`
-                        : `${allowance.remainingBaseFreeUses} base+coupon / ${allowance.remainingCouponFreeUses} coupon / ${allowance.remainingBonusWasherUses} washer bonus / ${allowance.remainingBonusDryerUses} dryer bonus`)}
+            {(timeZone || allowance) ? (
+              <div className="rounded-xl border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setShowAllowanceDetails((v) => !v)}
+                  className="flex w-full items-center justify-between px-4 py-3 text-left"
+                >
+                  <span className="text-sm font-medium text-slate-700">
+                    {language === "vi" ? "Chi tiết & Ưu đãi" : "Details & Allowance"}
                   </span>
-                </div>
-                <div className="mt-1">
-                  {language === "vi" ? "Số lượt coupon trong tháng" : "Coupon free uses this month"}: <span className="font-medium">{allowance.couponFreeUsesPerMonth}</span>
-                </div>
-                <div className="mt-1">
-                  {language === "vi" ? "Khuyến mãi thành viên" : "Member bonus"}:{" "}
-                  <span className="font-medium">
-                    {allowance.branchId === "D2"
-                      ? (language === "vi" ? `${allowance.bonusWasherUsesPerMonth} giặt` : `${allowance.bonusWasherUsesPerMonth} washer`)
-                      : (language === "vi" ? `${allowance.bonusWasherUsesPerMonth} giặt / ${allowance.bonusDryerUsesPerMonth} sấy` : `${allowance.bonusWasherUsesPerMonth} washer / ${allowance.bonusDryerUsesPerMonth} dryer`)}
-                  </span>
-                </div>
-                <div className="mt-1">
-                  {language === "vi" ? "Số dư coins sau đặt lệnh" : "Available coins after future bookings"}:{" "}
-                  <span className="font-medium">{allowance.availableCoinBalance}</span>
-                </div>
-                {allowance.floor ? (
-                  <div className="mt-1">
-                    {language === "vi" ? "Tầng" : "Floor"}: <span className="font-medium">{allowance.floor}</span>
+                  <svg
+                    className={`h-4 w-4 text-slate-500 transition-transform ${showAllowanceDetails ? "rotate-180" : ""}`}
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {showAllowanceDetails && (
+                  <div className="border-t border-slate-200 px-4 pb-4 pt-3 text-sm text-slate-700 space-y-1">
+                    {timeZone ? (
+                      <div>
+                        <span className="text-slate-500">{language === "vi" ? "Múi giờ" : "Timezone"}:</span>{" "}
+                        <span className="font-medium">{getTimeZoneLabel(timeZone)} ({timeZone})</span>
+                      </div>
+                    ) : null}
+                    {allowance ? (
+                      <>
+                        <div className="pt-1 font-medium text-slate-900">{language === "vi" ? "Ưu đãi giặt miễn phí hằng tháng" : "Monthly Free Laundry"}</div>
+                        <div>
+                          {language === "vi" ? "Hạng thành viên" : "Recorded member"}: <span className="font-medium">{allowance.recordedMember}</span>
+                        </div>
+                        <div>
+                          {language === "vi" ? "Lượt miễn phí cơ bản" : "Base free uses"}: <span className="font-medium">{allowance.baseFreeUsesPerMonth}</span>
+                        </div>
+                        <div>
+                          {language === "vi" ? "Đã dùng tháng này" : "Used free laundry this month"}: <span className="font-medium">{allowance.usedFreeLaundryThisMonth}</span>
+                        </div>
+                        <div>
+                          {language === "vi" ? "Số lượt miễn phí còn lại" : "Remaining free laundry"}:{" "}
+                          <span className="font-medium">
+                            {allowance.branchId === "D2"
+                              ? (language === "vi"
+                                ? `${allowance.remainingBaseFreeUses} cơ bản+coupon / ${allowance.remainingCouponFreeUses} coupon / ${allowance.remainingBonusWasherUses} giặt thêm`
+                                : `${allowance.remainingBaseFreeUses} base+coupon / ${allowance.remainingCouponFreeUses} coupon / ${allowance.remainingBonusWasherUses} washer bonus`)
+                              : (language === "vi"
+                                ? `${allowance.remainingBaseFreeUses} cơ bản+coupon / ${allowance.remainingCouponFreeUses} coupon / ${allowance.remainingBonusWasherUses} giặt thêm / ${allowance.remainingBonusDryerUses} sấy thêm`
+                                : `${allowance.remainingBaseFreeUses} base+coupon / ${allowance.remainingCouponFreeUses} coupon / ${allowance.remainingBonusWasherUses} washer bonus / ${allowance.remainingBonusDryerUses} dryer bonus`)}
+                          </span>
+                        </div>
+                        <div>
+                          {language === "vi" ? "Số lượt coupon trong tháng" : "Coupon free uses this month"}: <span className="font-medium">{allowance.couponFreeUsesPerMonth}</span>
+                        </div>
+                        <div>
+                          {language === "vi" ? "Khuyến mãi thành viên" : "Member bonus"}:{" "}
+                          <span className="font-medium">
+                            {allowance.branchId === "D2"
+                              ? (language === "vi" ? `${allowance.bonusWasherUsesPerMonth} giặt` : `${allowance.bonusWasherUsesPerMonth} washer`)
+                              : (language === "vi" ? `${allowance.bonusWasherUsesPerMonth} giặt / ${allowance.bonusDryerUsesPerMonth} sấy` : `${allowance.bonusWasherUsesPerMonth} washer / ${allowance.bonusDryerUsesPerMonth} dryer`)}
+                          </span>
+                        </div>
+                        <div>
+                          {language === "vi" ? "Số dư coins sau đặt lệnh" : "Available coins after future bookings"}:{" "}
+                          <span className="font-medium">{allowance.availableCoinBalance}</span>
+                        </div>
+                        {allowance.floor ? (
+                          <div>
+                            {language === "vi" ? "Tầng" : "Floor"}: <span className="font-medium">{allowance.floor}</span>
+                          </div>
+                        ) : null}
+                        <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-slate-500">
+                          {allowance.notes.map((note) => {
+                            const parts = note.split(" / ");
+                            const display = language === "vi" && parts.length >= 2 ? parts.slice(1).join(" / ") : parts[0] ?? note;
+                            return <li key={note}>{display}</li>;
+                          })}
+                        </ul>
+                      </>
+                    ) : null}
                   </div>
-                ) : null}
-                <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-slate-500">
-                  {allowance.notes.map((note) => {
-                    const parts = note.split(" / ");
-                    const display = language === "vi" && parts.length >= 2 ? parts.slice(1).join(" / ") : parts[0] ?? note;
-                    return <li key={note}>{display}</li>;
-                  })}
-                </ul>
+                )}
               </div>
             ) : null}
 

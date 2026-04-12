@@ -161,6 +161,7 @@ export function AdminCleaningClient() {
   const [autoAssignPreview, setAutoAssignPreview] = useState<AutoAssignPreview[]>([]);
   const [selectedAutoAssignDates, setSelectedAutoAssignDates] = useState<string[]>([]);
   const [showAllUsers, setShowAllUsers] = useState(false);
+  const [showSchedulerHelp, setShowSchedulerHelp] = useState(false);
   const [auditingTaskId, setAuditingTaskId] = useState<string | null>(null);
   const [auditNote, setAuditNote] = useState("");
   const [rejectFineDialog, setRejectFineDialog] = useState<{ taskId: string; userEmail: string; scheduledDate: string } | null>(null);
@@ -593,10 +594,22 @@ export function AdminCleaningClient() {
   return (
     <div className="mx-auto max-w-7xl space-y-6">
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-        <h1 className="text-2xl font-semibold text-slate-900">Admin Cleaning</h1>
-        <p className="mt-2 text-sm text-slate-600">
-          Admin and manager share this cleaning scheduler. View each cleaning calendar, inspect existing assignments, and assign future cleaning dates.
-        </p>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-semibold text-slate-900">Admin Cleaning</h1>
+          <button
+            type="button"
+            onClick={() => setShowSchedulerHelp((v) => !v)}
+            className="flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 bg-slate-100 text-xs font-semibold text-slate-500 hover:bg-slate-200"
+            aria-label="About this scheduler"
+          >
+            ?
+          </button>
+        </div>
+        {showSchedulerHelp && (
+          <div className="mt-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
+            Admin and manager share this cleaning scheduler. View each cleaning calendar, inspect existing assignments, and assign future cleaning dates.
+          </div>
+        )}
 
         <form onSubmit={handleLoad} className="mt-6 grid gap-4 md:grid-cols-2">
           <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">

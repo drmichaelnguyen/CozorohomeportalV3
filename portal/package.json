@@ -3,7 +3,7 @@
   "version": "3.6.4",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3002 --webpack",
+    "dev": "next dev -p 3000 --webpack",
     "dev:refresh": "cmd /c refresh-portal.cmd",
     "build": "next build --webpack",
     "start": "next start",

@@ -9,6 +9,7 @@ import { ManagerSupportInbox } from "./manager-support-inbox";
 import { LaundryScheduleManager } from "./laundry-schedule-manager";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
+import { usePortalTheme } from "./portal-theme";
 import Link from "next/link";
 import { InlineHelp } from "./inline-help";
 
@@ -816,6 +817,7 @@ function chatRoleLabel(role: ClientChatMessage["senderRole"]) {
 export function ManagerClient({ initialView = "overview" }: { initialView?: ManagerView }) {
 
   const { language, setLanguage, t } = usePortalLanguage();
+  const { theme, toggleTheme } = usePortalTheme();
   const { sessionEmail, sessionRole } = usePortalSession();
   const normalizedEmail = sessionEmail.trim().toLowerCase();
   const isStaffSession = Boolean(sessionRole && sessionRole !== "user" && normalizedEmail);
@@ -1021,6 +1023,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [laundryMachines, setLaundryMachines] = useState<any[]>([]);
   const [airfryers, setAirfryers] = useState<SmartDevice[]>([]);
   const [controllerLoading, setControllerLoading] = useState(false);
+  const [controllerGroupCollapsed, setControllerGroupCollapsed] = useState<Record<string, boolean>>({});
   const [showControllerHistory, setShowControllerHistory] = useState(false);
   const [controllerHistoryLoading, setControllerHistoryLoading] = useState(false);
   const [controllerHistory, setControllerHistory] = useState<ControllerHistoryEntry[]>([]);
@@ -5926,20 +5929,34 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
           <div className="mt-8 rounded-2xl border border-slate-200 bg-slate-50 p-6 shadow-sm">
             <h3 className="text-lg font-semibold text-slate-900">
-              {t("languagePreference")}
+              {t("preferences", "Preferences")}
             </h3>
-            <div className="mt-4 flex items-center justify-between">
-              <p className="text-sm text-slate-600">
-                {t("chooseDisplayLanguage")}
-              </p>
-              <select
-                value={language}
-                onChange={(e) => setLanguage(e.target.value as "en" | "vi")}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-              >
-                <option value="en">{t("english", "English")}</option>
-                <option value="vi">{t("vietnamese", "Vietnamese")}</option>
-              </select>
+            <div className="mt-4 divide-y divide-slate-200">
+              <div className="flex items-center justify-between py-3">
+                <p className="text-sm text-slate-600">{t("chooseDisplayLanguage")}</p>
+                <select
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value as "en" | "vi")}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                >
+                  <option value="en">{t("english", "English")}</option>
+                  <option value="vi">{t("vietnamese", "Vietnamese")}</option>
+                </select>
+              </div>
+              <div className="flex items-center justify-between py-3">
+                <p className="text-sm text-slate-600">{t("darkMode", "Dark mode")}</p>
+                <button
+                  type="button"
+                  onClick={toggleTheme}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${theme === "dark" ? "bg-slate-700" : "bg-slate-200"}`}
+                  role="switch"
+                  aria-checked={theme === "dark"}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${theme === "dark" ? "translate-x-6" : "translate-x-1"}`}
+                  />
+                </button>
+              </div>
             </div>
           </div>
 
@@ -6436,7 +6453,20 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           </div>
 
           {supportSubTab === "messages" ? (
-            <ManagerSupportInbox operatorEmail={normalizedEmail} enabled={isStaffSession} />
+            <ManagerSupportInbox
+              operatorEmail={normalizedEmail}
+              enabled={isStaffSession}
+              onViewClient={(email) => {
+                const client = clients.find((c) => c.email?.toLowerCase() === email.toLowerCase())
+                  ?? inactiveClients.find((c) => c.email?.toLowerCase() === email.toLowerCase());
+                if (client) {
+                  setSelectedMaHd(client.maHd);
+                  fillClientForm(client);
+                  setClientSubTab("details");
+                  setActiveManagerView("client_list");
+                }
+              }}
+            />
           ) : supportSubTab === "feedbacks" ? (
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -6630,178 +6660,246 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               </div>
             </div>
 
-            <div className="space-y-8">
-              {/* Branch D7 - AC Units */}
-              <div>
-                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                  <span className="h-px w-8 bg-slate-200"></span>
-                  Branch D7 - Air Conditioning
-                </h3>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {acRooms.filter(r => r.branchId === "D7").map(room => (
-                    <div key={room.id} className="group relative rounded-2xl border border-slate-100 bg-slate-50/50 p-4 transition-all hover:bg-white hover:shadow-md">
-                      {(() => {
-                        const actionKey = `ac:${room.id}`;
-                        const pendingAction = controllerActionPending[actionKey];
-                        const feedback = controllerActionFeedback[actionKey];
-                        return (
-                          <>
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <div className="font-bold text-slate-900">{room.label}</div>
-                          <div className="text-[10px] text-slate-400 font-medium">IoT ID: {room.id}</div>
-                        </div>
-                        <div className={`h-2.5 w-2.5 rounded-full ${room.lastRequestedAction === "ON" ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : "bg-slate-300"}`}></div>
-                      </div>
-                      
-                      <div className="mt-4 flex gap-2">
-                        <button 
-                          onClick={() => handleAcControl(room.id, "ON")}
-                          disabled={Boolean(pendingAction)}
-                          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-60 ${room.lastRequestedAction === "ON" ? "bg-emerald-600 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-emerald-500 hover:text-emerald-600"}`}
-                        >
-                          {pendingAction === "ON" ? "SENDING..." : "ON"}
-                        </button>
-                        <button 
-                          onClick={() => handleAcControl(room.id, "OFF")}
-                          disabled={Boolean(pendingAction)}
-                          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-60 ${room.lastRequestedAction === "OFF" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-slate-400"}`}
-                        >
-                          {pendingAction === "OFF" ? "SENDING..." : "OFF"}
-                        </button>
-                      </div>
-                      {feedback ? (
-                        <div className={`mt-3 text-xs font-medium ${feedback.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}>
-                          {feedback.message}
-                        </div>
-                      ) : null}
-                          </>
-                        );
-                      })()}
-                    </div>
-                  ))}
-                </div>
-              </div>
+            {(() => {
+              function toggleGroup(key: string) {
+                setControllerGroupCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
+              }
+              function groupCollapsed(key: string) {
+                return controllerGroupCollapsed[key] !== false;
+              }
 
-              {/* Branch D2 - AC Units */}
-              <div>
-                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                  <span className="h-px w-8 bg-slate-200"></span>
-                  Branch D2 - Air Conditioning
-                </h3>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {acRooms.filter(r => r.branchId === "D2").map(room => (
-                    <div key={room.id} className="group relative rounded-2xl border border-slate-100 bg-slate-50/50 p-4 transition-all hover:bg-white hover:shadow-md">
-                      {(() => {
-                        const actionKey = `ac:${room.id}`;
-                        const pendingAction = controllerActionPending[actionKey];
-                        const feedback = controllerActionFeedback[actionKey];
-                        return (
-                          <>
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <div className="font-bold text-slate-900">{room.label}</div>
-                          <div className="text-[10px] text-slate-400 font-medium">IoT ID: {room.id}</div>
-                        </div>
-                        <div className={`h-2.5 w-2.5 rounded-full ${room.lastRequestedAction === "ON" ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : "bg-slate-300"}`}></div>
-                      </div>
-                      
-                      <div className="mt-4 flex gap-2">
-                        <button 
-                          onClick={() => handleAcControl(room.id, "ON")}
-                          disabled={Boolean(pendingAction)}
-                          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-60 ${room.lastRequestedAction === "ON" ? "bg-emerald-600 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-emerald-500 hover:text-emerald-600"}`}
-                        >
-                          {pendingAction === "ON" ? "SENDING..." : "ON"}
-                        </button>
-                        <button 
-                          onClick={() => handleAcControl(room.id, "OFF")}
-                          disabled={Boolean(pendingAction)}
-                          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-60 ${room.lastRequestedAction === "OFF" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-slate-400"}`}
-                        >
-                          {pendingAction === "OFF" ? "SENDING..." : "OFF"}
-                        </button>
-                      </div>
-                      {feedback ? (
-                        <div className={`mt-3 text-xs font-medium ${feedback.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}>
-                          {feedback.message}
-                        </div>
-                      ) : null}
-                          </>
-                        );
-                      })()}
-                    </div>
-                  ))}
-                </div>
-              </div>
+              // Derive floor from room code (D7 "X.Y" → floor X; D2 → no floor)
+              function getRoomFloor(room: any): string | null {
+                const code = (room.roomCodes?.[0] ?? "");
+                const match = code.match(/^(\d+)\./);
+                return match ? `Floor ${match[1]}` : null;
+              }
 
-              {/* Other Smart Devices */}
-              <div>
-                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                  <span className="h-px w-8 bg-slate-200"></span>
-                  Smart Appliances & Laundry
-                </h3>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                   {/* Airfryers */}
-                   {airfryers.map(af => (
-                     <div key={af.id} className="rounded-2xl border border-amber-100 bg-amber-50/30 p-4">
-                        {(() => {
-                          const actionKey = `airfryer:${af.id}`;
-                          const pendingAction = controllerActionPending[actionKey];
-                          const feedback = controllerActionFeedback[actionKey];
-                          return (
-                            <>
-                        <div className="font-bold text-amber-900">{af.label}</div>
-                        <div className="text-[10px] text-amber-500 font-bold uppercase mt-0.5">Branch {af.branchId} Appliance</div>
-                        <button 
-                          onClick={() => handleMachineTrigger(af.id, "airfryer")}
-                          disabled={Boolean(pendingAction)}
-                          className="mt-4 w-full rounded-xl bg-amber-600 py-2.5 text-xs font-black text-white shadow-lg shadow-amber-200 hover:bg-amber-700 active:scale-95 transition-all disabled:cursor-not-allowed disabled:opacity-60"
+              const branches = ["D7", "D2"] as const;
+
+              return (
+                <div className="space-y-4">
+                  {branches.map((branch) => {
+                    const branchKey = `branch:${branch}`;
+                    const branchCollapsed = groupCollapsed(branchKey);
+                    const branchAcRooms = acRooms.filter((r) => r.branchId === branch);
+                    const branchLaundry = laundryMachines.filter((m) => m.branchId === branch);
+                    const branchAirfryers = airfryers.filter((af) => af.branchId === branch);
+
+                    // Group AC rooms by floor
+                    const floorMap = new Map<string, any[]>();
+                    branchAcRooms.forEach((room) => {
+                      const floor = getRoomFloor(room) ?? "Rooms";
+                      if (!floorMap.has(floor)) floorMap.set(floor, []);
+                      floorMap.get(floor)!.push(room);
+                    });
+                    const floors = Array.from(floorMap.entries()).sort(([a], [b]) => a.localeCompare(b));
+
+                    return (
+                      <div key={branch} className="rounded-2xl border border-slate-200 bg-slate-50 overflow-hidden">
+                        {/* Branch header */}
+                        <button
+                          type="button"
+                          onClick={() => toggleGroup(branchKey)}
+                          className="w-full flex items-center justify-between px-5 py-3 text-left hover:bg-slate-100 transition-colors"
                         >
-                          {pendingAction ? "TRIGGERING..." : `TRIGGER ${af.label.toUpperCase()}`}
+                          <span className="text-sm font-bold text-slate-900">Branch {branch}</span>
+                          <svg
+                            className={`h-4 w-4 text-slate-400 transition-transform ${branchCollapsed ? "" : "rotate-180"}`}
+                            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                          </svg>
                         </button>
-                        {feedback ? (
-                          <div className={`mt-3 text-xs font-medium ${feedback.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}>
-                            {feedback.message}
+
+                        {!branchCollapsed && (
+                          <div className="px-5 pb-5 space-y-4">
+                            {/* Room area grouped by floor */}
+                            {floors.length > 0 && (
+                              <div>
+                                <div className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">Rooms — Air Conditioning</div>
+                                <div className="space-y-3">
+                                  {floors.map(([floor, rooms]) => {
+                                    const floorKey = `floor:${branch}:${floor}`;
+                                    const floorCollapsed = groupCollapsed(floorKey);
+                                    return (
+                                      <div key={floor} className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleGroup(floorKey)}
+                                          className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-slate-50 transition-colors"
+                                        >
+                                          <span className="text-xs font-semibold text-slate-700">{floor}</span>
+                                          <svg
+                                            className={`h-3.5 w-3.5 text-slate-400 transition-transform ${floorCollapsed ? "" : "rotate-180"}`}
+                                            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                                          >
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                                          </svg>
+                                        </button>
+                                        {!floorCollapsed && (
+                                          <div className="px-4 pb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                                            {rooms.map((room: any) => {
+                                              const actionKey = `ac:${room.id}`;
+                                              const pendingAction = controllerActionPending[actionKey];
+                                              const feedback = controllerActionFeedback[actionKey];
+                                              return (
+                                                <div key={room.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                                                  <div className="flex justify-between items-start">
+                                                    <div>
+                                                      <div className="text-sm font-bold text-slate-900">{room.label}</div>
+                                                      <div className="text-[10px] text-slate-400">IoT ID: {room.id}</div>
+                                                    </div>
+                                                    <div className={`h-2 w-2 rounded-full mt-1 ${room.lastRequestedAction === "ON" ? "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]" : "bg-slate-300"}`} />
+                                                  </div>
+                                                  <div className="mt-3 flex gap-2">
+                                                    <button
+                                                      onClick={() => handleAcControl(room.id, "ON")}
+                                                      disabled={Boolean(pendingAction)}
+                                                      className={`flex-1 rounded-lg py-1.5 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-60 ${room.lastRequestedAction === "ON" ? "bg-emerald-600 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-emerald-500 hover:text-emerald-600"}`}
+                                                    >
+                                                      {pendingAction === "ON" ? "..." : "ON"}
+                                                    </button>
+                                                    <button
+                                                      onClick={() => handleAcControl(room.id, "OFF")}
+                                                      disabled={Boolean(pendingAction)}
+                                                      className={`flex-1 rounded-lg py-1.5 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-60 ${room.lastRequestedAction === "OFF" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-slate-400"}`}
+                                                    >
+                                                      {pendingAction === "OFF" ? "..." : "OFF"}
+                                                    </button>
+                                                  </div>
+                                                  {feedback ? (
+                                                    <div className={`mt-2 text-xs font-medium ${feedback.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}>
+                                                      {feedback.message}
+                                                    </div>
+                                                  ) : null}
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Laundry area */}
+                            {branchLaundry.length > 0 && (
+                              <div>
+                                <div className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">Laundry</div>
+                                {(() => {
+                                  const laundryKey = `laundry:${branch}`;
+                                  const laundryCollapsed = groupCollapsed(laundryKey);
+                                  return (
+                                    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleGroup(laundryKey)}
+                                        className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-slate-50 transition-colors"
+                                      >
+                                        <span className="text-xs font-semibold text-slate-700">Machines</span>
+                                        <svg
+                                          className={`h-3.5 w-3.5 text-slate-400 transition-transform ${laundryCollapsed ? "" : "rotate-180"}`}
+                                          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                                        >
+                                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                                        </svg>
+                                      </button>
+                                      {!laundryCollapsed && (
+                                        <div className="px-4 pb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                                          {branchLaundry.map((machine) => {
+                                            const actionKey = `laundry:${machine.id}`;
+                                            const pendingAction = controllerActionPending[actionKey];
+                                            const feedback = controllerActionFeedback[actionKey];
+                                            return (
+                                              <div key={machine.id} className="rounded-xl border border-sky-100 bg-sky-50/30 p-3">
+                                                <div className="text-sm font-bold text-sky-900">{machine.label}</div>
+                                                <button
+                                                  onClick={() => handleMachineTrigger(machine.id, "laundry")}
+                                                  disabled={Boolean(pendingAction)}
+                                                  className="mt-3 w-full rounded-lg bg-sky-600 py-2 text-xs font-black text-white hover:bg-sky-700 active:scale-95 transition-all disabled:cursor-not-allowed disabled:opacity-60"
+                                                >
+                                                  {pendingAction ? "TRIGGERING..." : "TRIGGER"}
+                                                </button>
+                                                {feedback ? (
+                                                  <div className={`mt-2 text-xs font-medium ${feedback.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}>
+                                                    {feedback.message}
+                                                  </div>
+                                                ) : null}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            )}
+
+                            {/* Common Area (kitchen: airfryers, microwave etc.) */}
+                            {branchAirfryers.length > 0 && (
+                              <div>
+                                <div className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">Common Area — Kitchen</div>
+                                {(() => {
+                                  const appKey = `kitchen:${branch}`;
+                                  const appCollapsed = groupCollapsed(appKey);
+                                  return (
+                                    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleGroup(appKey)}
+                                        className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-slate-50 transition-colors"
+                                      >
+                                        <span className="text-xs font-semibold text-slate-700">Kitchen Appliances</span>
+                                        <svg
+                                          className={`h-3.5 w-3.5 text-slate-400 transition-transform ${appCollapsed ? "" : "rotate-180"}`}
+                                          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                                        >
+                                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                                        </svg>
+                                      </button>
+                                      {!appCollapsed && (
+                                        <div className="px-4 pb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                                          {branchAirfryers.map((af) => {
+                                            const actionKey = `airfryer:${af.id}`;
+                                            const pendingAction = controllerActionPending[actionKey];
+                                            const feedback = controllerActionFeedback[actionKey];
+                                            return (
+                                              <div key={af.id} className="rounded-xl border border-amber-100 bg-amber-50/30 p-3">
+                                                <div className="text-sm font-bold text-amber-900">{af.label}</div>
+                                                <button
+                                                  onClick={() => handleMachineTrigger(af.id, "airfryer")}
+                                                  disabled={Boolean(pendingAction)}
+                                                  className="mt-3 w-full rounded-lg bg-amber-600 py-2 text-xs font-black text-white hover:bg-amber-700 active:scale-95 transition-all disabled:cursor-not-allowed disabled:opacity-60"
+                                                >
+                                                  {pendingAction ? "TRIGGERING..." : "TRIGGER"}
+                                                </button>
+                                                {feedback ? (
+                                                  <div className={`mt-2 text-xs font-medium ${feedback.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}>
+                                                    {feedback.message}
+                                                  </div>
+                                                ) : null}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            )}
                           </div>
-                        ) : null}
-                            </>
-                          );
-                        })()}
-                     </div>
-                   ))}
-
-                   {/* Laundry Machines */}
-                   {laundryMachines.map(machine => (
-                    <div key={machine.id} className="rounded-2xl border border-sky-100 bg-sky-50/30 p-4">
-                      {(() => {
-                        const actionKey = `laundry:${machine.id}`;
-                        const pendingAction = controllerActionPending[actionKey];
-                        const feedback = controllerActionFeedback[actionKey];
-                        return (
-                          <>
-                      <div className="font-bold text-sky-900">{machine.label}</div>
-                      <div className="text-[10px] text-sky-400 font-bold uppercase mt-0.5">Branch {machine.branchId} Unit</div>
-                      <button 
-                        onClick={() => handleMachineTrigger(machine.id, "laundry")}
-                        disabled={Boolean(pendingAction)}
-                        className="mt-4 w-full rounded-xl bg-sky-600 py-2.5 text-xs font-black text-white shadow-lg shadow-sky-200 hover:bg-sky-700 active:scale-95 transition-all disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {pendingAction ? "TRIGGERING..." : `TRIGGER ${machine.label.toUpperCase()}`}
-                      </button>
-                      {feedback ? (
-                        <div className={`mt-3 text-xs font-medium ${feedback.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}>
-                          {feedback.message}
-                        </div>
-                      ) : null}
-                          </>
-                        );
-                      })()}
-                    </div>
-                   ))}
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-              </div>
-            </div>
+              );
+            })()}
           </section>
 
           {showControllerHistory ? (

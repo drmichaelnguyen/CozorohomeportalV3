@@ -13,8 +13,8 @@ CozoroHome is a resident management portal for co-living housing (branches D2 an
 
 | Environment | Portal | API | Folder | Branch |
 |-------------|--------|-----|--------|--------|
+| **Dev (this machine)** | :3000 | :4000 | `cozorohome webapp` | `sandboxing` |
 | **Production (public)** | :3000 | :4000 | `cozorohome-prod` (git worktree) | `main` |
-| **Sandbox (dev)** | :3002 | :4002 | `cozorohome webapp` | `sandboxing` |
 
 ### Start production (public app)
 ```cmd
@@ -26,14 +26,14 @@ Starts API (:4000), portal (:3000), and Cloudflare tunnel in separate windows.
 - Public URL: https://app.cozorohome.com
 - API URL: https://api.cozorohome.com
 
-### Start sandbox (dev)
+### Start dev
 ```bash
 bash start-sandbox.sh
 # or on Windows:
 start-sandbox.cmd
 ```
-- Portal: http://localhost:3002
-- API: http://localhost:4002
+- Portal: http://localhost:3000
+- API: http://localhost:4000
 
 ### Git worktree setup
 Production runs as a git worktree of the same repo:

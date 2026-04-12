@@ -266,6 +266,7 @@ export function CleaningScheduleClient() {
   const [optOutModal, setOptOutModal] = useState(false);
   const [optOutPayment, setOptOutPayment] = useState<"VND" | "COINS">("VND");
   const [optOutLoading, setOptOutLoading] = useState(false);
+  const [showPolicyHelp, setShowPolicyHelp] = useState(false);
   const canSelfAssignSelectedDate = isTodayOrFuture(selectedDate);
   const activeEmail = sessionEmail.trim().toLowerCase();
 
@@ -1594,11 +1595,24 @@ export function CleaningScheduleClient() {
 
           <section className="grid gap-6 lg:grid-cols-2">
             <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-              <h2 className="text-lg font-semibold text-slate-900">Upcoming Tasks</h2>
-              <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-                Reschedule policy: 5+ days notice has no fine, 1–4 days notice has a 50% fine, same-day notice has a 75% fine, and missing the work is a full fine.
-                Late completion: You may mark a task done up to 10 hours after the deadline and still earn 50% of the normal coin reward. After 10 hours the task is marked missed and a fine is issued automatically.
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-semibold text-slate-900">Upcoming Tasks</h2>
+                <button
+                  type="button"
+                  onClick={() => setShowPolicyHelp((v) => !v)}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-300 text-sm font-semibold text-slate-700"
+                  aria-label="Show reschedule and completion policy"
+                  title="Reschedule & completion policy"
+                >
+                  ?
+                </button>
               </div>
+              {showPolicyHelp && (
+                <div className="mt-2 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-slate-700 space-y-2">
+                  <p><span className="font-semibold">Reschedule policy:</span> 5+ days notice has no fine, 1–4 days notice has a 50% fine, same-day notice has a 75% fine, and missing the work is a full fine.</p>
+                  <p><span className="font-semibold">Late completion:</span> You may mark a task done up to 10 hours after the deadline and still earn 50% of the normal coin reward. After 10 hours the task is marked missed and a fine is issued automatically.</p>
+                </div>
+              )}
               <div className="mt-4 space-y-3">
                 {futureTasks.length === 0 ? <p className="text-sm text-slate-600">No upcoming tasks.</p> : null}
                 {futureTasks.map((task) => {

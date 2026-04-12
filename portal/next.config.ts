@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const configDir = path.dirname(fileURLToPath(import.meta.url));
+const workspaceRoot = path.resolve(configDir, "..");
 
 const publicApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim() || "";
 const publicApiOrigin = /^https?:\/\//i.test(publicApiBaseUrl) ? publicApiBaseUrl.replace(/\/+$/, "") : "";
@@ -20,7 +21,7 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["app.cozorohome.com"],
   devIndicators: { position: "top-left" },
   turbopack: {
-    root: configDir
+    root: workspaceRoot
   },
   async rewrites() {
     return [
