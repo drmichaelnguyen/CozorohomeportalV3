@@ -171,6 +171,7 @@ export function AdminCleaningClient() {
   const [rejectFineAmount, setRejectFineAmount] = useState("50000");
   const [autoSchedulerConfig, setAutoSchedulerConfig] = useState<AutoSchedulerConfig | null>(null);
   const [autoSchedulerSaving, setAutoSchedulerSaving] = useState(false);
+  const [showAutoScheduler, setShowAutoScheduler] = useState(false);
   const selectedCalendar =
     calendars.find((entry) => calendarKey(entry) === selectedCalendarKey) ?? calendars[0] ?? null;
   const selectedSchedulerJob =
@@ -718,11 +719,23 @@ export function AdminCleaningClient() {
 
               {autoSchedulerConfig && selectedSchedulerJob ? (
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowAutoScheduler((v) => !v)}
+                    className="flex w-full items-center justify-between gap-3 text-left"
+                  >
                     <div>
                       <h3 className="text-sm font-semibold text-slate-900">{t("backgroundAutoScheduler")}</h3>
                       <p className="mt-1 text-sm text-slate-600">{t("controlSystemJob", "Control the system job for")} {getSchedulerJobLabel(selectedSchedulerJob)}.</p>
                     </div>
+                    <svg className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${showAutoScheduler ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+
+                  {showAutoScheduler && (
+                  <>
+                  <div className="mt-4 flex justify-end">
                     <button
                       type="button"
                       onClick={() => void saveAutoSchedulerConfig()}
@@ -813,6 +826,8 @@ export function AdminCleaningClient() {
                     {t("lastUpdatedBy", "Last updated by")} {autoSchedulerConfig.updatedBy || t("system")} at{" "}
                     {autoSchedulerConfig.updatedAt ? new Date(autoSchedulerConfig.updatedAt).toLocaleString("vi-VN") : t("unknown")}.
                   </p>
+                  </>
+                  )}
                 </div>
               ) : null}
 
