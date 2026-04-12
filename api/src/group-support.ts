@@ -138,7 +138,7 @@ export async function postGroupMessage(input: {
 
   const senderName = senderRole === SupportMessageSenderRole.RESIDENT
     ? (await getActiveClientByEmail(normalizedSenderEmail))?.["Họ và tên"] ?? "Resident"
-    : sender.name ?? sender.email;
+    : "Cozoro";
 
   return prisma.groupMessage.create({
     data: {

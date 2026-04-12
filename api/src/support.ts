@@ -982,7 +982,7 @@ export async function postOperatorSupportMessage(input: {
   }
 
   const senderRole = actor.role === "owner" ? SupportMessageSenderRole.OWNER : SupportMessageSenderRole.MANAGER;
-  const senderName = actor.name ?? normalizedOperatorEmail;
+  const senderName = "Cozoro";
   clearNotificationCaches(normalizedOperatorEmail, existingConversation.residentEmail);
 
   const result = await prisma.$transaction(async (tx) => {
@@ -1007,10 +1007,9 @@ export async function postOperatorSupportMessage(input: {
     return { conversation: updatedConversation, message };
   });
 
-  const senderLabel = actor.role === "owner" ? "Owner" : "Manager";
   void sendPushToEmail(
     existingConversation.residentEmail,
-    `New message from ${senderLabel}`,
+    "New message from Cozoro",
     trimmedBody.length > 100 ? trimmedBody.slice(0, 97) + "…" : trimmedBody,
     "/support"
   ).catch(() => {});

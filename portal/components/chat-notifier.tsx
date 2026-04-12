@@ -54,12 +54,14 @@ function isSoundEnabled(): boolean {
 }
 
 export function ChatNotifier() {
-  const { sessionEmail, isLoggedIn } = usePortalSession();
+  const { sessionEmail, sessionRole, isLoggedIn } = usePortalSession();
   const groupContextRef = useRef<{ groupIds: Record<string, string> } | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    if (!isLoggedIn || !sessionEmail.trim()) return;
+    // Staff accounts (manager/owner/app_admin/mechanic) are not residents — skip group chat polling
+    const isStaff = sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin" || sessionRole === "mechanic";
+    if (!isLoggedIn || !sessionEmail.trim() || isStaff) return;
 
     const email = sessionEmail.trim().toLowerCase();
 
