@@ -230,7 +230,7 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
           </div>
         )}
       </main>
-      {isLoggedIn && !isLoginPage ? <MobileNav /> : null}
+      <MobileNav />
       {isLoggedIn ? <ChatNotifier /> : null}
       {isLoggedIn && sessionEmail ? <PushSubscription email={sessionEmail} /> : null}
       <VersionBadge />

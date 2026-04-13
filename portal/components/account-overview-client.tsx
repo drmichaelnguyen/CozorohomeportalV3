@@ -229,6 +229,13 @@ export function AccountOverviewClient() {
   const [aboutExpanded, setAboutExpanded] = useState(false);
   const [bookingsExpanded, setBookingsExpanded] = useState(false);
   const [securityExpanded, setSecurityExpanded] = useState(false);
+  const [infoExpanded, setInfoExpanded] = useState(false);
+  const [summaryExpanded, setSummaryExpanded] = useState(false);
+  const [memberExpanded, setMemberExpanded] = useState(false);
+  const [paymentsExpanded, setPaymentsExpanded] = useState(false);
+  const [finesExpanded, setFinesExpanded] = useState(false);
+  const [coinsExpanded, setCoinsExpanded] = useState(false);
+  const [showAllCoins, setShowAllCoins] = useState(false);
   const [rangeStart, setRangeStart] = useState("");
   const [rangeEnd, setRangeEnd] = useState("");
   const [showAllInformation, setShowAllInformation] = useState(false);
@@ -253,6 +260,13 @@ export function AccountOverviewClient() {
       setEmail(sessionEmail);
     }
   }, [sessionEmail]);
+
+  useEffect(() => {
+    if (sessionEmail && isLoggedIn) {
+      void loadAccountData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionEmail, isLoggedIn]);
 
   const clientWithDerivedRoom = useMemo(() => {
     if (!client) {
@@ -728,32 +742,47 @@ export function AccountOverviewClient() {
         {message ? <p className="mt-4 text-sm text-slate-700">{message}</p> : null}
       </section>
 
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-        <h2 className="text-lg font-semibold text-slate-900">
-          {language === "vi" ? "Thông tin của tôi" : "My Information"}
-        </h2>
-
-        {!client ? (
-          <p className="mt-3 text-sm text-slate-600">
-            Enter your email to load your account information.
-          </p>
-        ) : (
-          <div className="mt-4 space-y-3">
-            {visibleFields.map(([label, value]) => (
-              <div key={label} className="rounded-xl border border-slate-200 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-                <div className="mt-1 text-sm text-slate-900">{value}</div>
+      <section className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+        <button
+          type="button"
+          onClick={() => setInfoExpanded((v) => !v)}
+          className="flex w-full items-center justify-between p-6 text-left"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">
+            {language === "vi" ? "Thông tin của tôi" : "My Information"}
+          </h2>
+          <svg
+            className={`h-5 w-5 text-slate-500 transition-transform ${infoExpanded ? "rotate-180" : ""}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {infoExpanded && (
+          <div className="px-6 pb-6">
+            {!client ? (
+              <p className="text-sm text-slate-600">
+                {loading ? "Loading..." : "Account information will appear here once loaded."}
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {visibleFields.map(([label, value]) => (
+                  <div key={label} className="rounded-xl border border-slate-200 p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
+                    <div className="mt-1 text-sm text-slate-900">{value}</div>
+                  </div>
+                ))}
+                {shownFields.length > 8 ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllInformation((current) => !current)}
+                    className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
+                  >
+                    {showAllInformation ? "Show less" : `Expand details (${shownFields.length - 8} more)`}
+                  </button>
+                ) : null}
               </div>
-            ))}
-            {shownFields.length > 8 ? (
-              <button
-                type="button"
-                onClick={() => setShowAllInformation((current) => !current)}
-                className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
-              >
-                {showAllInformation ? "Show less" : `Expand details (${shownFields.length - 8} more)`}
-              </button>
-            ) : null}
+            )}
           </div>
         )}
       </section>
@@ -766,15 +795,28 @@ export function AccountOverviewClient() {
         />
       )}
 
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-        <h2 className="text-lg font-semibold text-slate-900">
-          {language === "vi" ? "Tóm tắt nhanh" : "Quick Summary"}
-        </h2>
-
+      <section className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+        <button
+          type="button"
+          onClick={() => setSummaryExpanded((v) => !v)}
+          className="flex w-full items-center justify-between p-6 text-left"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">
+            {language === "vi" ? "Tóm tắt nhanh" : "Quick Summary"}
+          </h2>
+          <svg
+            className={`h-5 w-5 text-slate-500 transition-transform ${summaryExpanded ? "rotate-180" : ""}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {summaryExpanded && (
+        <div className="px-6 pb-6">
         {!client ? (
-          <p className="mt-3 text-sm text-slate-600">Load your account first to see the upcoming summary items.</p>
+          <p className="text-sm text-slate-600">{loading ? "Loading..." : "Account information will appear here once loaded."}</p>
         ) : (
-            <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               <div className="rounded-xl border border-slate-200 p-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Next Payment Date</div>
                 <div className="mt-2 text-lg font-semibold text-slate-900">
@@ -850,25 +892,45 @@ export function AccountOverviewClient() {
               </div>
             </div>
         )}
+        </div>
+        )}
       </section>
 
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-        <div className="flex items-center gap-2">
-          <h2 className="text-lg font-semibold text-slate-900">Cozoro Member</h2>
-          <button
-            type="button"
-            onClick={() => setShowMemberRuleHelp((current) => !current)}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-300 text-sm font-semibold text-slate-700"
-            aria-label="Show Cozoro Member ranking details"
-            title="How Cozoro Member ranking is calculated"
+      <section className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => setMemberExpanded((v) => !v)}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setMemberExpanded((v) => !v); }}
+          className="flex w-full cursor-pointer items-center justify-between p-6 text-left"
+        >
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-slate-900">Cozoro Member</h2>
+          </div>
+          <svg
+            className={`h-5 w-5 text-slate-500 transition-transform ${memberExpanded ? "rotate-180" : ""}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
           >
-            ?
-          </button>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
         </div>
-
-        {!client ? (
-          <p className="mt-3 text-sm text-slate-600">Load your account first to see your member level and progress.</p>
-        ) : (
+        {memberExpanded && (
+        <div className="px-6 pb-6">
+          <div className="flex items-center gap-2 mb-4">
+            <button
+              type="button"
+              onClick={() => setShowMemberRuleHelp((current) => !current)}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-300 text-sm font-semibold text-slate-700"
+              aria-label="Show Cozoro Member ranking details"
+              title="How Cozoro Member ranking is calculated"
+            >
+              ?
+            </button>
+            <span className="text-sm text-slate-500">How ranking is calculated</span>
+          </div>
+          {!client ? (
+            <p className="text-sm text-slate-600">{loading ? "Loading..." : "Account information will appear here once loaded."}</p>
+          ) : (
           <>
             {showMemberRuleHelp ? (
               <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-slate-700">
@@ -1023,6 +1085,8 @@ export function AccountOverviewClient() {
               ) : null}
             </div>
           </>
+          )}
+        </div>
         )}
       </section>
 
@@ -1173,66 +1237,180 @@ export function AccountOverviewClient() {
       </section>
 
       {/* Payments Section */}
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-        <div className="flex items-center justify-between">
+      <section className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+        <button
+          type="button"
+          onClick={() => setPaymentsExpanded((v) => !v)}
+          className="flex w-full items-center justify-between p-6 text-left"
+        >
           <h2 className="text-lg font-semibold text-slate-900">
             {language === "vi" ? "Lịch sử thanh toán" : "Payment History"}
           </h2>
-          <Link href="/payments" className="text-sm font-medium text-sky-600 hover:underline">
-            {language === "vi" ? "Xem tất cả" : "View all"}
-          </Link>
-        </div>
-
-        {!client ? (
-          <p className="mt-3 text-sm text-slate-600">Load account to see recent payments.</p>
-        ) : payments.length === 0 ? (
-          <p className="mt-3 text-sm text-slate-500 italic">No recent payments found.</p>
-        ) : (
-          <div className="mt-4 space-y-3">
-            {payments.slice(0, 3).map((payment, idx) => (
-              <div key={idx} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 p-3 text-sm">
-                <div>
-                  <div className="font-medium text-slate-900">{payment.row["MỤC ĐÍCH"] || "Payment"}</div>
-                  <div className="text-xs text-slate-500">{payment.parsedTimestamp ? new Date(payment.parsedTimestamp).toLocaleDateString() : ""}</div>
-                </div>
-                <div className="font-semibold text-slate-900">{payment.row["SỐ TIỀN"]}</div>
+          <div className="flex items-center gap-3">
+            <Link
+              href="/payments"
+              onClick={(e) => e.stopPropagation()}
+              className="text-sm font-medium text-sky-600 hover:underline"
+            >
+              {language === "vi" ? "Xem tất cả" : "View all"}
+            </Link>
+            <svg
+              className={`h-5 w-5 text-slate-500 transition-transform ${paymentsExpanded ? "rotate-180" : ""}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
+        </button>
+        {paymentsExpanded && (
+          <div className="px-6 pb-6">
+            {!client ? (
+              <p className="text-sm text-slate-600">{loading ? "Loading..." : "Account information will appear here once loaded."}</p>
+            ) : payments.length === 0 ? (
+              <p className="text-sm text-slate-500 italic">No recent payments found.</p>
+            ) : (
+              <div className="space-y-3">
+                {payments.slice(0, 3).map((payment, idx) => (
+                  <div key={idx} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 p-3 text-sm">
+                    <div>
+                      <div className="font-medium text-slate-900">{payment.row["MỤC ĐÍCH"] || "Payment"}</div>
+                      <div className="text-xs text-slate-500">{payment.parsedTimestamp ? new Date(payment.parsedTimestamp).toLocaleDateString() : ""}</div>
+                    </div>
+                    <div className="font-semibold text-slate-900">{payment.row["SỐ TIỀN"]}</div>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
         )}
       </section>
 
       {/* Fines Section */}
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-        <div className="flex items-center justify-between">
+      <section className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+        <button
+          type="button"
+          onClick={() => setFinesExpanded((v) => !v)}
+          className="flex w-full items-center justify-between p-6 text-left"
+        >
           <h2 className="text-lg font-semibold text-slate-900">
             {language === "vi" ? "Vi phạm & Tiền phạt" : "Fines & Violations"}
           </h2>
-          <Link href="/fines" className="text-sm font-medium text-sky-600 hover:underline">
-            {language === "vi" ? "Xem tất cả" : "View all"}
-          </Link>
-        </div>
+          <div className="flex items-center gap-3">
+            <Link
+              href="/fines"
+              onClick={(e) => e.stopPropagation()}
+              className="text-sm font-medium text-sky-600 hover:underline"
+            >
+              {language === "vi" ? "Xem tất cả" : "View all"}
+            </Link>
+            <svg
+              className={`h-5 w-5 text-slate-500 transition-transform ${finesExpanded ? "rotate-180" : ""}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
+        </button>
+        {finesExpanded && (
+          <div className="px-6 pb-6">
+            {!client ? (
+              <p className="text-sm text-slate-600">{loading ? "Loading..." : "Account information will appear here once loaded."}</p>
+            ) : fines.length === 0 ? (
+              <p className="text-sm text-green-600 italic">No violations found. Great job!</p>
+            ) : (
+              <div className="space-y-3">
+                {fines.slice(0, 3).map((fine, idx) => (
+                  <div key={idx} className="rounded-xl border border-red-100 bg-red-50/30 p-3 text-sm">
+                    <div className="flex items-center justify-between font-medium text-slate-900">
+                      <span>{fine.row["NỘI DUNG VI PHẠM"]}</span>
+                      <span className="text-red-600">{fine.row["CHI PHÍ THANH TOÁN CHO VI PHẠM"]}</span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+                      <span>{fine.parsedTimestamp ? new Date(fine.parsedTimestamp).toLocaleDateString() : ""}</span>
+                      <span className={fine.row["ĐÃ THANH TOÁN?"] === "1" ? "text-green-600 font-medium" : "text-amber-600 font-medium"}>
+                        {fine.row["ĐÃ THANH TOÁN?"] === "1" ? "Paid" : "Unpaid"}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
 
-        {!client ? (
-          <p className="mt-3 text-sm text-slate-600">Load account to see recent fines.</p>
-        ) : fines.length === 0 ? (
-          <p className="mt-3 text-sm text-green-600 italic">No violations found. Great job!</p>
-        ) : (
-          <div className="mt-4 space-y-3">
-            {fines.slice(0, 3).map((fine, idx) => (
-              <div key={idx} className="rounded-xl border border-red-100 bg-red-50/30 p-3 text-sm">
-                <div className="flex items-center justify-between font-medium text-slate-900">
-                  <span>{fine.row["NỘI DUNG VI PHẠM"]}</span>
-                  <span className="text-red-600">{fine.row["CHI PHÍ THANH TOÁN CHO VI PHẠM"]}</span>
-                </div>
-                <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
-                  <span>{fine.parsedTimestamp ? new Date(fine.parsedTimestamp).toLocaleDateString() : ""}</span>
-                  <span className={fine.row["ĐÃ THANH TOÁN?"] === "1" ? "text-green-600 font-medium" : "text-amber-600 font-medium"}>
-                    {fine.row["ĐÃ THANH TOÁN?"] === "1" ? "Paid" : "Unpaid"}
+      {/* Coins Section */}
+      <section className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+        <button
+          type="button"
+          onClick={() => setCoinsExpanded((v) => !v)}
+          className="flex w-full items-center justify-between p-6 text-left"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">
+            {language === "vi" ? "Lịch sử Coins" : "Coins History"}
+          </h2>
+          <svg
+            className={`h-5 w-5 text-slate-500 transition-transform ${coinsExpanded ? "rotate-180" : ""}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {coinsExpanded && (
+          <div className="px-6 pb-6">
+            {!client ? (
+              <p className="text-sm text-slate-600">{loading ? "Loading..." : "Account information will appear here once loaded."}</p>
+            ) : coinEntries.length === 0 ? (
+              <p className="text-sm text-slate-500 italic">No coin entries found.</p>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-slate-500">{coinEntries.length} entries total</span>
+                  <span className="text-sm font-semibold text-slate-900">
+                    {language === "vi" ? "Số dư: " : "Balance: "}
+                    <span className={currentCoins >= 0 ? "text-emerald-600" : "text-red-600"}>
+                      {new Intl.NumberFormat().format(currentCoins)}
+                    </span>
                   </span>
                 </div>
+                {(showAllCoins ? coinEntries : coinEntries.slice(0, 5)).map((entry, idx) => {
+                  const amount = parseCoinAmount(entry.row["COINS"]);
+                  const isPositive = amount > 0;
+                  return (
+                    <div key={idx} className="rounded-xl border border-slate-100 bg-slate-50/50 p-3 text-sm">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1 min-w-0 pr-3">
+                          <div className="font-medium text-slate-900 truncate">
+                            {entry.row["Sự kiện"] || "—"}
+                          </div>
+                          <div className="mt-0.5 text-xs text-slate-500">
+                            {entry.parsedTimestamp ? new Date(entry.parsedTimestamp).toLocaleDateString() : ""}
+                            {entry.row["Người thao tác"] ? ` · ${entry.row["Người thao tác"]}` : ""}
+                          </div>
+                        </div>
+                        <div className={`shrink-0 font-semibold ${isPositive ? "text-emerald-600" : "text-red-600"}`}>
+                          {isPositive ? "+" : ""}{new Intl.NumberFormat().format(amount)}
+                        </div>
+                      </div>
+                      {entry.row["Số Coins hiện có"] ? (
+                        <div className="mt-1 text-right text-xs text-slate-400">
+                          Balance: {entry.row["Số Coins hiện có"]}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+                {coinEntries.length > 5 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllCoins((v) => !v)}
+                    className="mt-1 rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 w-full"
+                  >
+                    {showAllCoins ? "Show less" : `Show all (${coinEntries.length - 5} more)`}
+                  </button>
+                )}
               </div>
-            ))}
+            )}
           </div>
         )}
       </section>
@@ -1344,7 +1522,7 @@ export function AccountOverviewClient() {
       </section>
 
       {/* About Section */}
-      <section className="mt-8 rounded-2xl bg-gradient-to-br from-sky-50 to-slate-50 shadow-sm ring-1 ring-slate-200">
+      <section className="mt-8 rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
         <button
           type="button"
           onClick={() => setAboutExpanded((v) => !v)}
@@ -1370,11 +1548,11 @@ export function AccountOverviewClient() {
                 ? "Đây là phiên bản thay thế cho ứng dụng web CozoroHome 7 năm tuổi vốn đã trở nên chậm chạp theo thời gian. Ứng dụng mới được xây dựng với hiệu suất cao, hệ thống tự động hóa tiên tiến và trải nghiệm sống hiện đại cho cư dân."
                 : "This app is the replacement for the 7-year-old CozoroHome web app, which had become slow over time. It was built for speed, high automation, and a modern living experience for residents."}
             </p>
-            <div className="mt-3 inline-flex rounded-full border border-sky-200 bg-white px-3 py-1 text-xs font-semibold text-sky-700 shadow-sm">
+            <div className="mt-3 inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm">
               {language === "vi" ? `Phiên bản ứng dụng: v${APP_VERSION}` : `App version: v${APP_VERSION}`}
             </div>
             <div className="mt-5 flex items-start gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sky-700 text-xl font-bold select-none">T</div>
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-700 text-xl font-bold select-none">T</div>
               <div>
                 <p className="text-sm font-semibold text-slate-900">Dr. Trong Nguyen</p>
                 <p className="mt-0.5 text-xs text-slate-500">
@@ -1391,7 +1569,7 @@ export function AccountOverviewClient() {
                   href="https://www.facebook.com/nguyentrong265"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mt-3 inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white px-4 py-1.5 text-xs font-semibold text-sky-700 shadow-sm hover:bg-sky-50 transition-colors"
+                  className="mt-3 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors"
                 >
                   <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.41c0-3.025 1.792-4.697 4.533-4.697 1.312 0 2.686.235 2.686.235v2.97h-1.513c-1.491 0-1.956.93-1.956 1.886v2.268h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z"/>
