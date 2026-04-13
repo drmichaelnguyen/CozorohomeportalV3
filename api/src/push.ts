@@ -1,13 +1,15 @@
 import webpush from "web-push";
 import { prisma } from "./prisma.js";
 
-webpush.setVapidDetails(
-  "mailto:admin@cozorohome.com",
-  process.env.VAPID_PUBLIC_KEY!,
-  process.env.VAPID_PRIVATE_KEY!
-);
+const vapidPublic = process.env.VAPID_PUBLIC_KEY?.trim() ?? "";
+const vapidPrivate = process.env.VAPID_PRIVATE_KEY?.trim() ?? "";
+const vapidConfigured = Boolean(vapidPublic && vapidPrivate);
 
-export const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY ?? "";
+if (vapidConfigured) {
+  webpush.setVapidDetails("mailto:admin@cozorohome.com", vapidPublic, vapidPrivate);
+}
+
+export const VAPID_PUBLIC_KEY = vapidPublic;
 
 export async function savePushSubscription(email: string, subscription: {
   endpoint: string;
@@ -32,6 +34,8 @@ export async function sendPushToEmail(
   body: string,
   url?: string
 ) {
+  if (!vapidConfigured) return;
+
   const subs = await prisma.$queryRaw<PushRow[]>`
     SELECT id, email, endpoint, p256dh, auth FROM PushSubscription WHERE email = ${email}
   `;

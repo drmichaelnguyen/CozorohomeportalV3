@@ -1,0 +1,36 @@
+Portable Node.js (Windows, no administrator)
+
+1) Download the official ZIP (not the .msi installer)
+   - Open https://nodejs.org/en/download
+   - Under "Prebuilt Installer", pick Windows / x64 and use the **Windows Binary (.zip)** link,
+     or go directly to https://nodejs.org/dist/latest-v20.x/
+     and download **node-v20.*.*-win-x64.zip** (LTS 20 is fine for this repo).
+
+2) Extract the ZIP
+   - Open the zip; inside is one folder named like **node-v20.19.0-win-x64**.
+   - Put that folder HERE, next to this file, so you have:
+       tools\nodejs-portable\node-v20.19.0-win-x64\node.exe
+     (your version number may differ — any **node-v*-win-x64** folder works.)
+
+   Optional: you may instead copy only the contents of that folder into
+   tools\nodejs-portable\ so **node.exe** sits directly in tools\nodejs-portable\
+
+3) Use it from a Command Prompt (each new window must "load" PATH again)
+   From the repo root:
+       scripts\portable-node-env.cmd
+       node -v
+       corepack enable
+       corepack pnpm install
+       corepack pnpm --filter cozorohome-api dev
+   Second terminal for the portal:
+       scripts\portable-node-env.cmd
+       corepack pnpm --filter cozorohome-portal dev
+   Portal dev listens on http://localhost:3000 (see portal\package.json).
+
+4) Optional — persist for your user (still no admin)
+   - Windows Search → "environment variables" → Edit **user** environment variables
+   - Edit **Path** → New → add the folder that contains **node.exe**
+     (e.g. ...\CozorohomeportalV3\tools\nodejs-portable\node-v20.19.0-win-x64)
+   - New Command Prompt windows will then have node on PATH automatically.
+
+5) This folder is gitignored so the zip contents are not committed to git.
