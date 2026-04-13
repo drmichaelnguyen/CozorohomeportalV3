@@ -651,15 +651,15 @@ export function ControllerClient({
                 {language === "vi" ? "Nồi chiên không dầu D7" : "D7 Air Fryer"}
               </h2>
               <>
-                  <p className="mt-2 text-sm text-slate-600">
+                  <p className="mt-2 text-sm text-slate-700">
                     {language === "vi"
                       ? `Thiết bị dùng chung với thời gian chờ ${airFryerContext.cooldownMinutes} phút mỗi lượt.`
                       : `Shared appliance with a ${airFryerContext.cooldownMinutes}-minute cooldown per use.`}
                   </p>
 
-                  <div className="mt-4 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
+                  <div className="mt-4 grid gap-3 text-sm text-slate-900 md:grid-cols-2">
                     <div>
-                      <span className="font-medium">{language === "vi" ? "Trạng thái" : "Status"}:</span>{" "}
+                      <span className="font-medium text-slate-800">{language === "vi" ? "Trạng thái" : "Status"}:</span>{" "}
                       {airFryerContext.status.availableNow
                         ? language === "vi"
                           ? "Sẵn sàng"
@@ -683,7 +683,7 @@ export function ControllerClient({
                   </div>
 
                   {airFryerContext.status.currentUse ? (
-                    <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                    <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-slate-900">
                       <p className="font-semibold">
                         {language === "vi"
                           ? `${airFryerContext.status.currentUse.startedByName || airFryerContext.status.currentUse.startedByEmail} đang sử dụng nồi chiên không dầu.`
@@ -702,8 +702,8 @@ export function ControllerClient({
 
                   <div className="mt-5 space-y-5">
                     {!airFryerContext.status.currentUse && airFryerContext.status.availableNow && (
-                      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
-                        <p className="text-xs font-bold text-amber-900 uppercase tracking-tight">Inspection *</p>
+                      <div className="rounded-xl border border-amber-300 bg-white p-4 shadow-sm">
+                        <p className="text-xs font-bold uppercase tracking-tight text-slate-900">Inspection *</p>
                         <div className="mt-3 grid grid-cols-1 gap-2 text-sm">
                           {[
                             { vi: "Dơ / Chưa rửa / Dirty", value: "Dirty" },
@@ -717,22 +717,26 @@ export function ControllerClient({
                               onClick={() => setSelectedInspection(opt.vi)}
                               className={`flex items-center justify-between rounded-lg border p-3 text-left transition-all ${
                                 selectedInspection === opt.vi
-                                  ? "border-amber-500 bg-white ring-2 ring-amber-200"
-                                  : "border-amber-100 bg-white/50 hover:bg-white"
+                                  ? "border-amber-500 bg-amber-50 ring-2 ring-amber-300"
+                                  : "border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-slate-100"
                               }`}
                             >
-                              <span className={selectedInspection === opt.vi ? "font-bold text-amber-900" : "text-slate-600"}>
+                              <span
+                                className={
+                                  selectedInspection === opt.vi ? "font-bold text-slate-950" : "font-medium text-slate-900"
+                                }
+                              >
                                 {opt.vi}
                               </span>
                               {selectedInspection === opt.vi && (
-                                <svg className="h-4 w-4 text-amber-600" fill="currentColor" viewBox="0 0 20 20">
+                                <svg className="h-4 w-4 shrink-0 text-amber-700" fill="currentColor" viewBox="0 0 20 20">
                                   <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                                 </svg>
                               )}
                             </button>
                           ))}
                         </div>
-                        <p className="mt-4 text-[11px] leading-relaxed text-amber-800 font-medium">
+                        <p className="mt-4 text-xs leading-relaxed font-medium text-slate-900">
                           {language === "vi"
                             ? "Vui lòng nêu tình trạng nồi chiên không dầu trước khi bạn sử dụng. Cozoro sẽ dựa vào lịch sử sử dụng để tính toán hao phí để tăng tuổi thọ cho nồi chiên. Nếu bạn phát hiện nồi dơ hoặc có dấu hiệu hư hỏng xin báo NGAY cho Cozoro biết. Việc không thông báo hoặc thông báo trễ có thể sẽ dẫn đến phí hư hại dành cho bạn."
                             : "Please state the condition of the airfryer before you use it. Cozoro will rely on use history to calculate wear and tear to increase the life of the fryer. If you find the pot dirty or showing signs of damage, please report it IMMEDIATELY to Cozoro. Failure to notify or late notification may result in a damage fee for you."}
