@@ -41,6 +41,9 @@ async function main() {
       await runStop({ quietWhenMissing: true });
       await runStart();
       return;
+    case "deploy":
+      await runDeploy();
+      return;
     case "status":
       runStatus();
       return;
@@ -51,7 +54,7 @@ async function main() {
 }
 
 function printUsage() {
-  console.log("Usage: node scripts/host-manager.mjs <doctor|build|start|stop|restart|status>");
+  console.log("Usage: node scripts/host-manager.mjs <doctor|build|deploy|start|stop|restart|status>");
 }
 
 function readEnvFile(relativePath) {
@@ -367,6 +370,26 @@ function runDoctor() {
   if (missing.length) {
     process.exitCode = 1;
   }
+}
+
+/** Stop managed services, clean-rebuild, apply Prisma schema to the DB, then start (Mac/Linux prod refresh). */
+async function runDeploy() {
+  console.log("Deploy: stopping any managed stack...");
+  await runStop({ quietWhenMissing: true });
+  await wait(500);
+
+  if (!existsSync(path.join(repoRoot, "api/.env"))) {
+    throw new Error("api/.env is missing. Copy env files before deploy.");
+  }
+
+  await runBuild();
+
+  console.log("Deploy: syncing database schema (prisma db push)...");
+  await runCorepack(["pnpm", "--filter", "cozorohome-api", "exec", "prisma", "db", "push"]);
+
+  console.log("Deploy: starting services...");
+  await runStart();
+  console.log("Deploy finished. Use host:status to verify.");
 }
 
 async function runBuild() {
