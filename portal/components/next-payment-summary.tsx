@@ -44,6 +44,17 @@ function BreakdownRows({
     { label: t("fines", "Fines"), value: breakdown.finesVnd }
   ];
 
+  const coinCreditVnd = breakdown.recommendedCoinValueVnd ?? 0;
+  if (coinCreditVnd > 0) {
+    rows.push({
+      label: t("coinUsageLabel", "Coin usage ({count} coins)").replace(
+        /\{count\}/g,
+        String(breakdown.recommendedCoinUsage ?? 0)
+      ),
+      value: -coinCreditVnd
+    });
+  }
+
   return (
     <div className="mt-3 space-y-2 rounded-xl border border-amber-200/80 bg-white/80 p-4">
       <p className="text-xs font-semibold uppercase tracking-wide text-amber-800/90">
@@ -103,6 +114,9 @@ export function NextPaymentSummary({
   const breakdown = rentPaidStatus?.breakdown ?? null;
   const showAmountRow =
     Boolean(breakdown) && rentPaidStatus && !rentPaidStatus.isPaid && !rentPaidStatus.onPrepaidPlan;
+  const coinCreditVnd = breakdown?.recommendedCoinValueVnd ?? 0;
+  const cashDueZeroButBillPositive =
+    Boolean(breakdown) && breakdown.finalTotalVnd === 0 && coinCreditVnd > 0;
 
   return (
     <section className={`${rounded} border border-amber-200 bg-amber-50 shadow-sm ${pad}`}>
@@ -157,6 +171,9 @@ export function NextPaymentSummary({
               <div className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">
                 {new Intl.NumberFormat("vi-VN").format(breakdown.finalTotalVnd)} ₫
               </div>
+              {cashDueZeroButBillPositive ? (
+                <p className="mt-2 max-w-md text-xs font-medium text-emerald-800">{t("rentCashDueZeroCoinNote")}</p>
+              ) : null}
             </div>
             <button
               type="button"

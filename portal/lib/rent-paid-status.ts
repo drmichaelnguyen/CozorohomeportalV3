@@ -4,6 +4,12 @@ export type RentBreakdownPayload = {
   gateParkingFeeVnd?: number;
   laundryFeeVnd: number;
   finesVnd: number;
+  /** Bill total before applying Cozoro Coin credit toward rent */
+  totalBeforeCoinsVnd?: number;
+  /** Coins applied toward this bill (VND equivalent at member tier rate) */
+  recommendedCoinValueVnd?: number;
+  /** Raw coin count applied toward rent */
+  recommendedCoinUsage?: number;
   finalTotalVnd: number;
   tenureSurchargeVnd: number;
   tenureSurchargeRate?: number;

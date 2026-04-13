@@ -62,6 +62,10 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "Amount details will appear here once your billing profile is synced.",
     vi: "Chi tiết số tiền sẽ hiển thị khi hồ sơ thanh toán của bạn được đồng bộ."
   },
+  rentCashDueZeroCoinNote: {
+    en: "Cash due is 0₫ because your Cozoro Coins are applied toward this bill. Open Details to see the full breakdown.",
+    vi: "Số tiền mặt cần trả là 0₫ vì Cozoro Coin đã được dùng để khấu trừ vào hóa đơn này. Mở Chi tiết để xem đầy đủ."
+  },
   rentBlockingTitle: { en: "Rent payment required", vi: "Cần thanh toán tiền thuê" },
   rentBlockingSub: {
     en: "Your monthly rent is due and unpaid. Review the amount below, then tap Hide to continue using the portal.",
