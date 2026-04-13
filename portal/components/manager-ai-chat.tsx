@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 
@@ -13,23 +13,16 @@ type Message = {
 const MAX_STORED_MESSAGES = 20;
 const STORAGE_KEY = "cozoro-manager-ai-chat";
 
-const VIEW_LABELS: Record<string, string> = {
-  client_list: "Client List",
-  coins: "Coins",
-  fines: "Fines",
-  payments: "Payments",
-  support_chat: "Support Chat",
-  admin_cleaning: "Cleaning",
-  settings: "Settings",
-  controller: "Device Controller"
+const VIEW_LABEL_KEYS: Record<string, string> = {
+  client_list: "managerAiViewClientList",
+  coins: "managerAiViewCoins",
+  fines: "managerAiViewFines",
+  payments: "managerAiViewPayments",
+  support_chat: "managerAiViewSupportChat",
+  admin_cleaning: "managerAiViewAdminCleaning",
+  settings: "managerAiViewSettings",
+  controller: "managerAiViewController"
 };
-
-const QUICK_PROMPTS = [
-  "Which beds are available in D7?",
-  "Add 5 coins to bed 12 D7",
-  "Fine bed 3 D2 — 50,000 VND for messy kitchen",
-  "Create rent receipt for bed 7 D7 — 1,500,000 VND"
-];
 
 function loadStoredMessages(): Message[] {
   try {
@@ -60,7 +53,17 @@ function ChatBody({
   onNavigate?: (view: string) => void;
   onClose?: () => void;
 }) {
-  const { t } = usePortalLanguage();
+  const { t, language } = usePortalLanguage();
+  const quickPrompts = useMemo(
+    () => [t("managerAiQuick1"), t("managerAiQuick2"), t("managerAiQuick3"), t("managerAiQuick4")],
+    [language, t]
+  );
+
+  function viewLabel(viewKey: string) {
+    const key = VIEW_LABEL_KEYS[viewKey];
+    return key ? t(key) : viewKey;
+  }
+
   const [messages, setMessages] = useState<Message[]>(() => loadStoredMessages());
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -97,6 +100,7 @@ function ChatBody({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           operatorEmail,
+          language,
           history: contextWindow.map((m) => ({ role: m.role, text: m.text }))
         })
       });
@@ -104,7 +108,7 @@ function ChatBody({
       const data = await res.json() as { reply?: string; navigateTo?: string; error?: string };
 
       if (!res.ok || data.error) {
-        const errMessages = [...nextMessages, { role: "model" as const, text: data.error ?? "Something went wrong. Please try again." }];
+        const errMessages = [...nextMessages, { role: "model" as const, text: data.error ?? t("errorSomethingWrong") }];
         updateMessages(errMessages);
         return;
       }
@@ -121,7 +125,7 @@ function ChatBody({
         onNavigate(data.navigateTo);
       }
     } catch {
-      const errMessages = [...nextMessages, { role: "model" as const, text: "Network error. Please check your connection." }];
+      const errMessages = [...nextMessages, { role: "model" as const, text: t("errorConnection") }];
       updateMessages(errMessages);
     } finally {
       setLoading(false);
@@ -147,8 +151,10 @@ function ChatBody({
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
           </svg>
-          <span className="text-sm font-semibold">Cozoro AI</span>
-          <span className="rounded-full bg-sky-500 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide">Beta</span>
+          <span className="text-sm font-semibold">{t("managerAiTitle")}</span>
+          <span className="rounded-full bg-sky-500 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide">
+            {t("managerAiBadgeBeta")}
+          </span>
         </div>
         <div className="flex items-center gap-2">
           {messages.length > 0 && (
@@ -157,7 +163,7 @@ function ChatBody({
               onClick={clearChat}
               className="rounded-full px-2 py-0.5 text-[10px] font-medium text-sky-200 hover:bg-sky-500 transition-colors"
             >
-              Clear
+              {t("managerAiClear")}
             </button>
           )}
           {onClose && (
@@ -178,9 +184,9 @@ function ChatBody({
       <div className="flex max-h-96 min-h-48 flex-col gap-2 overflow-y-auto p-4">
         {messages.length === 0 ? (
           <div className="space-y-3">
-            <p className="text-xs text-slate-500 text-center">Ask me to add coins, create fines, receipts, or check bed availability.</p>
+            <p className="text-xs text-slate-500 text-center">{t("managerAiHintEmpty")}</p>
             <div className="flex flex-col gap-1.5">
-              {QUICK_PROMPTS.map((q) => (
+              {quickPrompts.map((q) => (
                 <button
                   key={q}
                   type="button"
@@ -209,7 +215,7 @@ function ChatBody({
                     onClick={() => onNavigate(msg.navigateTo!)}
                     className="mt-2 inline-flex items-center gap-1 rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-200 transition-colors"
                   >
-                    Go to {VIEW_LABELS[msg.navigateTo] ?? msg.navigateTo}
+                    {t("managerAiGoTo", undefined, { view: msg.navigateTo ? viewLabel(msg.navigateTo) : "" })}
                     <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                     </svg>
@@ -241,7 +247,7 @@ function ChatBody({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask anything… (Enter to send)"
+            placeholder={t("askAnythingPlaceholder")}
             rows={1}
             className="flex-1 resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-400 max-h-24 overflow-y-auto"
             style={{ minHeight: "38px" }}
@@ -260,7 +266,7 @@ function ChatBody({
         </div>
         {messages.length > 0 && (
           <p className="mt-1 text-[10px] text-slate-400">
-            {messages.length} message{messages.length !== 1 ? "s" : ""} · history saved locally (last {MAX_STORED_MESSAGES})
+            {t("managerAiHistoryNote", undefined, { count: String(messages.length), max: String(MAX_STORED_MESSAGES) })}
           </p>
         )}
       </div>
@@ -277,6 +283,7 @@ export function ManagerAiChat({
   onNavigate?: (view: string) => void;
   inline?: boolean;
 }) {
+  const { t } = usePortalLanguage();
   const [open, setOpen] = useState(false);
 
   // Inline mode: render the chat body directly (no floating button)
@@ -295,8 +302,8 @@ export function ManagerAiChat({
         type="button"
         onClick={() => setOpen((v) => !v)}
         className="fixed bottom-24 right-4 z-[60] flex h-12 w-12 items-center justify-center rounded-full bg-sky-600 text-white shadow-lg hover:bg-sky-700 transition-colors sm:bottom-24 sm:right-6"
-        aria-label="AI Assistant"
-        title="AI Assistant"
+        aria-label={t("managerAiOpenAria")}
+        title={t("managerAiOpenAria")}
       >
         {open ? (
           <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

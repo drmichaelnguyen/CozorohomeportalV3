@@ -837,6 +837,44 @@ const translations: Record<string, { en: string; vi: string }> = {
   middleBunk: { en: "Middle", vi: "Giữa" },
   bottomBunk: { en: "Bottom", vi: "Dưới" },
   setSuffix: { en: "set", vi: "đã đặt" },
+  managerAiTitle: { en: "Cozoro AI", vi: "Cozoro AI" },
+  managerAiBadgeBeta: { en: "Beta", vi: "Beta" },
+  managerAiClear: { en: "Clear", vi: "Xóa hội thoại" },
+  managerAiCloseAria: { en: "Close AI assistant", vi: "Đóng trợ lý AI" },
+  managerAiOpenAria: { en: "Open AI assistant", vi: "Mở trợ lý AI" },
+  managerAiHintEmpty: {
+    en: "Ask me to add coins, create fines, receipts, or check bed availability.",
+    vi: "Bạn có thể nhờ cộng/trừ coin, tạo phiếu phạt, biên lai thanh toán, hoặc kiểm tra giường trống/đã có người."
+  },
+  managerAiGoTo: { en: "Go to {view}", vi: "Mở {view}" },
+  managerAiHistoryNote: {
+    en: "{count} message(s) · history saved locally (last {max})",
+    vi: "{count} tin nhắn · lịch sử lưu trên máy (tối đa {max} tin gần nhất)"
+  },
+  managerAiQuick1: {
+    en: "Which beds are available in D7?",
+    vi: "Chi nhánh D7 còn những giường nào trống?"
+  },
+  managerAiQuick2: {
+    en: "Add 5 coins to bed 12 D7",
+    vi: "Cộng 5 coin cho giường 12 chi nhánh D7"
+  },
+  managerAiQuick3: {
+    en: "Fine bed 3 D2 — 50,000 VND for messy kitchen",
+    vi: "Phạt giường 3 D2 — 50.000 đồng vì bếp bừa bộn"
+  },
+  managerAiQuick4: {
+    en: "Create rent receipt for bed 7 D7 — 1,500,000 VND",
+    vi: "Tạo biên lai tiền phòng cho giường 7 D7 — 1.500.000 đồng"
+  },
+  managerAiViewClientList: { en: "Client List", vi: "Danh sách khách" },
+  managerAiViewCoins: { en: "Coins", vi: "Coin" },
+  managerAiViewFines: { en: "Fines", vi: "Tiền phạt" },
+  managerAiViewPayments: { en: "Payments", vi: "Thanh toán" },
+  managerAiViewSupportChat: { en: "Support Chat", vi: "Tin nhắn hỗ trợ" },
+  managerAiViewAdminCleaning: { en: "Cleaning", vi: "Vệ sinh" },
+  managerAiViewSettings: { en: "Settings", vi: "Cài đặt" },
+  managerAiViewController: { en: "Device Controller", vi: "Điều khiển thiết bị" }
 };
 
 const PortalLanguageContext = createContext<PortalLanguageContextValue | null>(null);

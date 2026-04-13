@@ -256,10 +256,39 @@ async function executeTool(
 
 // ─── System prompt ─────────────────────────────────────────────────────────────
 
-function buildSystemPrompt(clients: Awaited<ReturnType<typeof buildClientContext>>) {
+type UiLanguage = "en" | "vi";
+
+function buildSystemPrompt(clients: Awaited<ReturnType<typeof buildClientContext>>, language: UiLanguage) {
   const clientList = clients
     .map((c) => `  • ${c.name} | email: ${c.email} | bed: ${c.bed} | branch: ${c.branch} | maHd: ${c.maHd}`)
     .join("\n");
+
+  if (language === "vi") {
+    return `Bạn là trợ lý AI cho quản lý và chủ sở hữu CozoroHome — ký túc xá co-living tại TP. Hồ Chí Minh, Việt Nam. Bạn giúp họ thao tác nhanh qua đoạn chat.
+
+## Cư dân đang ở (${clients.length} người)
+${clientList || "  (chưa tải được danh sách)"}
+
+## Việc bạn có thể làm
+- Cộng hoặc trừ coin cho cư dân (công cụ add_coins)
+- Tạo phiếu phạt (create_fine)
+- Tạo biên lai thanh toán / dịch vụ (create_payment)
+- Kiểm tra giường trống hoặc đang có người (query_beds)
+- Chuyển quản lý sang màn hình phù hợp khi việc phức tạp hơn khả năng tự động (navigate)
+
+## Quy tắc
+- Luôn nhận diện cư dân bằng tên, email, số giường, hoặc mã hợp đồng (maHd) trong danh sách trên.
+- Nếu không chắc chắn một người, hỏi lại quản lý trước khi gọi công cụ.
+- Thiếu số tiền, lý do, v.v. thì hỏi bổ sung trước khi thực hiện.
+- Sau khi công cụ chạy thành công, xác nhận ngắn gọn đã làm gì.
+- Việc ngoài phạm vi công cụ (sửa ngày hợp đồng, đặt giặt, v.v.) — dùng navigate và hướng dẫn quản lý bước tiếp theo.
+
+## Ngôn ngữ (quan trọng)
+- Giao diện đang là **tiếng Việt**: mọi câu trả lời cho quản lý phải bằng **tiếng Việt** rõ ràng, tự nhiên, ưu tiên văn phong quản lý nhà ở chia sẻ (có thể dùng thuật ngữ tiếng Anh chuyên ngành khi cần: coin, bed, branch D2/D7).
+- Dù quản lý nhập tiếng Việt hay tiếng Anh, bạn vẫn trả lời bằng **tiếng Việt**.
+- Kết quả thô từ công cụ có thể là tiếng Anh — hãy **diễn giải lại** cho quản lý bằng tiếng Việt, ngắn gọn.
+- Giữ câu trả lời gọn, dễ đọc trên điện thoại.`;
+  }
 
   return `You are a helpful assistant for the managers and owners of CozoroHome, a co-living apartment in Ho Chi Minh City, Vietnam. You help them take actions quickly via chat.
 
@@ -279,7 +308,10 @@ ${clientList || "  (no active residents loaded)"}
 - If required fields are missing (e.g. amount, reason), ask for them before executing.
 - After a successful tool call, confirm what was done in plain language.
 - For actions beyond your tools (e.g. editing contract dates, booking laundry), use the navigate tool to send the manager to the right view, explaining what to do there.
-- Respond in the same language the manager uses (Vietnamese or English).
+
+## Language
+- The manager UI is set to **English**: reply in **clear English** unless they explicitly ask for Vietnamese.
+- If tool responses are in mixed form, summarize clearly for the manager.
 - Keep replies concise.`;
 }
 
@@ -287,12 +319,14 @@ ${clientList || "  (no active residents loaded)"}
 
 export async function handleManagerAiChat(
   operatorEmail: string,
-  history: AiChatMessage[]
+  history: AiChatMessage[],
+  options?: { language?: UiLanguage }
 ): Promise<{ reply: string; navigateTo?: string }> {
   await requirePortalRole(operatorEmail, ["manager", "owner", "app_admin"], "Only managers can use the AI assistant.");
 
+  const language: UiLanguage = options?.language === "vi" ? "vi" : "en";
   const clients = await buildClientContext();
-  const systemPrompt = buildSystemPrompt(clients);
+  const systemPrompt = buildSystemPrompt(clients, language);
 
   // Convert chat history to Gemini content format
   const contents: GeminiContent[] = history.map((msg) => ({

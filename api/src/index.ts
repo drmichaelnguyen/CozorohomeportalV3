@@ -2968,6 +2968,7 @@ app.post("/manager/fines/resolve", async (request, response) => {
 app.post("/manager/ai-chat", async (request, response) => {
   const parsed = z.object({
     operatorEmail: z.string().email(),
+    language: z.enum(["en", "vi"]).optional(),
     history: z.array(z.object({ role: z.enum(["user", "model"]), text: z.string() })).min(1)
   }).safeParse(request.body);
 
@@ -2976,10 +2977,9 @@ app.post("/manager/ai-chat", async (request, response) => {
   }
 
   try {
-    const result = await handleManagerAiChat(
-      parsed.data.operatorEmail,
-      parsed.data.history as AiChatMessage[]
-    );
+    const result = await handleManagerAiChat(parsed.data.operatorEmail, parsed.data.history as AiChatMessage[], {
+      language: parsed.data.language
+    });
     return response.json(result);
   } catch (error) {
     return response.status(400).json({
