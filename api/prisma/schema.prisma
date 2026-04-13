@@ -323,6 +323,18 @@ model MonthlyRentStatus {
   updatedAt DateTime @updatedAt
   updatedBy String   @default("")
 
+  /// When a rent receipt was recorded via pay-rent (or manual backfill)
+  paidRecordedAt DateTime?
+
+  /// Portion of the bill attributable to rent + surcharges − discounts (excludes parking, gate, laundry, fines)
+  snapshotRentSubtotalVnd Int?
+  snapshotParkingVnd     Int?
+  snapshotGateParkingVnd Int?
+  snapshotLaundryVnd      Int?
+  snapshotFinesVnd       Int?
+  snapshotFinalTotalVnd   Int?
+  snapshotCoinValueVnd    Int?
+
   @@unique([email, month])
   @@index([email])
 }

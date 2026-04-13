@@ -208,6 +208,7 @@ type RentBreakdown = {
   planDiscountVnd: number;
   managerDiscountVnd: number;
   parkingFeeVnd: number;
+  gateParkingFeeVnd: number;
   laundryFeeVnd: number;
   finesVnd: number;
   totalBeforeCoinsVnd: number;
@@ -242,6 +243,7 @@ function normalizeRentBreakdown(input: Partial<RentBreakdown> | null | undefined
     planDiscountVnd: Number(input.planDiscountVnd ?? 0),
     managerDiscountVnd: Number(input.managerDiscountVnd ?? 0),
     parkingFeeVnd: Number(input.parkingFeeVnd ?? 0),
+    gateParkingFeeVnd: Number(input.gateParkingFeeVnd ?? 0),
     laundryFeeVnd: Number(input.laundryFeeVnd ?? 0),
     finesVnd: Number(input.finesVnd ?? 0),
     totalBeforeCoinsVnd: Number(input.totalBeforeCoinsVnd ?? 0),
@@ -270,6 +272,11 @@ function normalizeRentBreakdown(input: Partial<RentBreakdown> | null | undefined
 
 function formatPercentInput(rate: number | null | undefined): string {
   return String(Math.round(Number(rate ?? 0) * 10000) / 100);
+}
+
+function isClientOnPrepaidPlan(row: Record<string, unknown> | undefined): boolean {
+  const plan = String(row?.["Bạn muốn thanh toán chi phí như thế nào?"] ?? "");
+  return plan.includes("03 tháng") || plan.includes("06 tháng");
 }
 
 type WorkspacePayload = {
@@ -857,7 +864,10 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [infoManagerDiscount, setInfoManagerDiscount] = useState("0");
   const [infoShortTermSurchargeRate, setInfoShortTermSurchargeRate] = useState("0");
   const [infoParkingFee, setInfoParkingFee] = useState("0");
+  const [infoGateParkingFee, setInfoGateParkingFee] = useState("0");
   const [infoRentCalculating, setInfoRentCalculating] = useState(false);
+  const [monthlyRentPaidByEmail, setMonthlyRentPaidByEmail] = useState<Record<string, boolean>>({});
+  const [monthlyRentPaidMapLoaded, setMonthlyRentPaidMapLoaded] = useState(false);
   const [clientNewPassword, setClientNewPassword] = useState("");
   const [clientPasswordLoading, setClientPasswordLoading] = useState(false);
   const [messageDraft, setMessageDraft] = useState("");
@@ -1013,6 +1023,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [managerDiscountInput, setManagerDiscountInput] = useState("0");
   const [shortTermSurchargeRateInput, setShortTermSurchargeRateInput] = useState("0");
   const [parkingFeeInput, setParkingFeeInput] = useState("0");
+  const [gateParkingFeeInput, setGateParkingFeeInput] = useState("0");
   const [targetMonthInput, setTargetMonthInput] = useState(new Date().toISOString().slice(0, 7));
   
   // New subtab states
@@ -1100,6 +1111,17 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         .includes(keyword)
     );
   }, [clients, search]);
+
+  const showUnpaidRentMarker = useCallback(
+    (client: ManagerClientRecord | null | undefined) => {
+      if (!client || !monthlyRentPaidMapLoaded) return false;
+      if (String(client.activeStay ?? "").trim() !== "1") return false;
+      if (isClientOnPrepaidPlan(client.row)) return false;
+      return monthlyRentPaidByEmail[client.email.trim().toLowerCase()] !== true;
+    },
+    [monthlyRentPaidByEmail, monthlyRentPaidMapLoaded]
+  );
+
   // Inactive clients (moved out = "0", left = "-1")
   const inactiveBranches = useMemo(() => {
     const raw = [...new Set(inactiveClients.map((c) => String(c.branch ?? "").trim()).filter(Boolean))];
@@ -1488,6 +1510,34 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }
   }, [activeManagerView, filteredQuickNav, selectedBranch, selectedClient, selectedRoom]);
 
+  async function refreshMonthlyRentPaidMap(forMonth?: string) {
+    if (!isStaffSession || !normalizedEmail) {
+      return;
+    }
+    const month =
+      forMonth || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+    setMonthlyRentPaidMapLoaded(false);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/manager/monthly-rent-paid-map?actorEmail=${encodeURIComponent(normalizedEmail)}&month=${encodeURIComponent(month)}`
+      );
+      const data = (await res.json()) as { byEmail?: Record<string, { isPaid: boolean }>; error?: string };
+      if (!res.ok) {
+        setMonthlyRentPaidByEmail({});
+        return;
+      }
+      const map: Record<string, boolean> = {};
+      for (const [em, row] of Object.entries(data.byEmail ?? {})) {
+        map[em.trim().toLowerCase()] = row.isPaid === true;
+      }
+      setMonthlyRentPaidByEmail(map);
+    } catch {
+      setMonthlyRentPaidByEmail({});
+    } finally {
+      setMonthlyRentPaidMapLoaded(true);
+    }
+  }
+
   function fillClientForm(client: ManagerClientRecord | null) {
     if (!client) {
       setClientForm({});
@@ -1536,6 +1586,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       setStatus(syncFirst ? t("clientDataRefreshed") : t("clientListLoaded"));
       // Reload duplicates after client sync
       loadDuplicateClients();
+      void refreshMonthlyRentPaidMap();
     } catch {
       setStatus(t("unableToLoadClients"));
     } finally {
@@ -1678,6 +1729,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     setInfoManagerDiscount("0");
     setInfoShortTermSurchargeRate("0");
     setInfoParkingFee("0");
+    setInfoGateParkingFee("0");
     try {
       const [statusResponse, breakdownResponse] = await Promise.all([
         fetch(`${API_BASE_URL}/manager/rent-paid-status?actorEmail=${encodeURIComponent(normalizedEmail)}&email=${encodeURIComponent(clientEmail)}&month=${month}`),
@@ -1697,13 +1749,20 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         setInfoManagerDiscount(String(data?.managerDiscountVnd || 0));
         setInfoShortTermSurchargeRate(formatPercentInput(data?.tenureSurchargeRate));
         setInfoParkingFee(String(data?.parkingFeeVnd || 0));
+        setInfoGateParkingFee(String(data?.gateParkingFeeVnd || 0));
       }
     } catch {
       // ignore
     }
   }
 
-  async function recalcInfoBreakdown(clientEmail: string, discount: string, surchargeRatePercent: string, parkingFee: string) {
+  async function recalcInfoBreakdown(
+    clientEmail: string,
+    discount: string,
+    surchargeRatePercent: string,
+    parkingFee: string,
+    gateParkingFee: string
+  ) {
     setInfoRentCalculating(true);
     try {
       const response = await fetch(`${API_BASE_URL}/calculate-rent`, {
@@ -1714,7 +1773,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           targetMonth: rentPaidMonth,
           managerDiscountVnd: Number(discount) || 0,
           shortTermSurchargeRate: (Number(surchargeRatePercent) || 0) / 100,
-          parkingFeeVnd: Number(parkingFee) || 0
+          parkingFeeVnd: Number(parkingFee) || 0,
+          gateParkingFeeVnd: Number(gateParkingFee) || 0
         })
       });
       if (response.ok) {
@@ -1722,6 +1782,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         setInfoRentBreakdown(data);
         setInfoShortTermSurchargeRate(formatPercentInput(data?.tenureSurchargeRate));
         setInfoParkingFee(String(data?.parkingFeeVnd || 0));
+        setInfoGateParkingFee(String(data?.gateParkingFeeVnd || 0));
       }
     } catch {
       // ignore
@@ -1741,6 +1802,10 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       if (response.ok) {
         const data = (await response.json()) as { isPaid: boolean };
         setRentPaidStatus(data.isPaid);
+        setMonthlyRentPaidByEmail((prev) => ({
+          ...prev,
+          [clientEmail.trim().toLowerCase()]: data.isPaid
+        }));
       }
     } catch {
       // ignore
@@ -1756,6 +1821,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     managerDiscount: string;
     shortTermSurchargeRate: string;
     parkingFee: string;
+    gateParkingFee: string;
     payerName?: string;
     closePaymentPanel?: boolean;
   }) {
@@ -1772,6 +1838,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           managerDiscountVnd: Number(options.managerDiscount) || 0,
           shortTermSurchargeRate: (Number(options.shortTermSurchargeRate) || 0) / 100,
           parkingFeeVnd: Number(options.parkingFee) || 0,
+          gateParkingFeeVnd: Number(options.gateParkingFee) || 0,
           coinUsage: options.breakdown.recommendedCoinUsage,
           payerName,
           receiverName: selfDisplayName || normalizedEmail,
@@ -1815,6 +1882,10 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         setRentBreakdown(null);
       }
       await loadWorkspace("payments", options.client.maHd);
+      setMonthlyRentPaidByEmail((prev) => ({
+        ...prev,
+        [options.client.email.trim().toLowerCase()]: true
+      }));
       alert("Payment recorded, receipt sent via Gmail, and monthly rent marked as paid.");
     } catch (err) {
       alert(err instanceof Error ? err.message : "Error");
@@ -1965,8 +2036,18 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       setManagerDiscountInput(infoManagerDiscount);
       setShortTermSurchargeRateInput(infoShortTermSurchargeRate);
       setParkingFeeInput(infoParkingFee);
+      setGateParkingFeeInput(infoGateParkingFee);
     }
-  }, [activeAction, infoManagerDiscount, infoParkingFee, infoRentBreakdown, infoShortTermSurchargeRate, rentBreakdown, rentPaidMonth]);
+  }, [
+    activeAction,
+    infoGateParkingFee,
+    infoManagerDiscount,
+    infoParkingFee,
+    infoRentBreakdown,
+    infoShortTermSurchargeRate,
+    rentBreakdown,
+    rentPaidMonth
+  ]);
 
   useEffect(() => {
     if (activeManagerView === "feedbacks") {
@@ -2000,9 +2081,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       setInfoManagerDiscount("0");
       setInfoShortTermSurchargeRate("0");
       setInfoParkingFee("0");
+      setInfoGateParkingFee("0");
       setManagerDiscountInput("0");
       setShortTermSurchargeRateInput("0");
       setParkingFeeInput("0");
+      setGateParkingFeeInput("0");
       setRentBreakdown(null);
     }
     if (selectedClient?.maHd) {
@@ -2523,7 +2606,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                           {slot.bedNumber}
                                         </span>
                                       )}
-                                      {client ? getLastName(client.name) : slot.bedNumber}
+                                      <span className="flex items-center gap-0.5">
+                                        {client ? getLastName(client.name) : slot.bedNumber}
+                                        {client && showUnpaidRentMarker(client) ? (
+                                          <span className="text-[8px] font-black leading-none text-red-600" title="Rent not marked paid">
+                                            $
+                                          </span>
+                                        ) : null}
+                                      </span>
                                     </button>
                                   );
                                 })}
@@ -2546,7 +2636,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                     }}
                                     className="w-full text-left"
                                   >
-                                    <div className="text-sm font-medium text-slate-900">{client.name}</div>
+                                    <div className="flex items-center gap-1 text-sm font-medium text-slate-900">
+                                      <span>{client.name}</span>
+                                      {showUnpaidRentMarker(client) ? (
+                                        <span className="text-xs font-black text-red-600" title="Rent not marked paid">
+                                          $
+                                        </span>
+                                      ) : null}
+                                    </div>
                                     <div className="text-xs text-slate-500">
                                       {client.email}
                                       {client.bed ? ` • Bed ${client.bed}` : ""}
@@ -2616,7 +2713,16 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           }}
                           className={`cursor-pointer transition-colors hover:bg-slate-50 ${selectedMaHd === client.maHd ? "bg-sky-50" : ""}`}
                         >
-                          <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-slate-900">{client.name}</td>
+                          <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-slate-900">
+                            <span className="inline-flex items-center gap-1">
+                              {client.name}
+                              {showUnpaidRentMarker(client) ? (
+                                <span className="font-black text-red-600" title="Rent not marked paid">
+                                  $
+                                </span>
+                              ) : null}
+                            </span>
+                          </td>
                           <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{client.branch}</td>
                           <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{resolveClientRoom(client)}</td>
                           <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{client.bed}</td>
@@ -3184,7 +3290,19 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">{t("selectedClient")}</h2>
                 <p className="mt-1 text-sm text-slate-600">
-                  {selectedClient ? `${selectedClient.name || selectedClient.email} • ${selectedClient.maHd}` : t("chooseClientPrompt")}
+                  {selectedClient ? (
+                    <span className="inline-flex flex-wrap items-center gap-1.5">
+                      <span>{selectedClient.name || selectedClient.email}</span>
+                      {showUnpaidRentMarker(selectedClient) ? (
+                        <span className="font-black text-red-600" title="This month's rent is not marked paid in the portal">
+                          $
+                        </span>
+                      ) : null}
+                      <span className="text-slate-400">• {selectedClient.maHd}</span>
+                    </span>
+                  ) : (
+                    t("chooseClientPrompt")
+                  )}
                 </p>
               </div>
               <div className="flex flex-wrap gap-3">
@@ -3589,6 +3707,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             ...((infoRentBreakdown.planDiscountVnd ?? 0) > 0 ? [{ label: "Plan discount", value: -(infoRentBreakdown.planDiscountVnd ?? 0), color: "text-emerald-600" }] : []),
                             ...((infoRentBreakdown.managerDiscountVnd ?? 0) > 0 ? [{ label: "Manager discount", value: -(infoRentBreakdown.managerDiscountVnd ?? 0), color: "text-emerald-600" }] : []),
                             { label: "Parking", value: infoRentBreakdown.parkingFeeVnd ?? 0, color: "" },
+                            { label: "Gate parking", value: infoRentBreakdown.gateParkingFeeVnd ?? 0, color: "" },
                             { label: `Laundry (${infoRentBreakdown.details?.laundryCount?.cash ?? 0} washes)`, value: infoRentBreakdown.laundryFeeVnd ?? 0, color: "" },
                             { label: `Fines (${infoRentBreakdown.details?.unpaidFinesCount ?? 0} unpaid)`, value: infoRentBreakdown.finesVnd ?? 0, color: "" },
                           ].filter(item => item.value !== 0).map((item) => (
@@ -3618,6 +3737,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                       managerDiscount: infoManagerDiscount,
                                       shortTermSurchargeRate: infoShortTermSurchargeRate,
                                       parkingFee: infoParkingFee,
+                                      gateParkingFee: infoGateParkingFee,
                                       payerName: selectedClient.name
                                     });
                                   }}
@@ -3635,43 +3755,63 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       )}
 
                       {!rentSectionCollapsed ? (
-                      <div className="grid gap-2 border-t border-slate-200 pt-3 md:grid-cols-[1fr_1fr_1fr_auto]">
-                        <div className="flex-1">
-                          <label className="block text-xs font-medium text-slate-500 mb-1">Manager discount (₫)</label>
-                          <input
-                            type="number"
-                            value={infoManagerDiscount}
-                            onChange={(e) => setInfoManagerDiscount(e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
-                            min="0"
-                          />
-                        </div>
-                        <div className="flex-1">
-                          <label className="block text-xs font-medium text-slate-500 mb-1">Short-term surcharge (%)</label>
-                          <input
-                            type="number"
-                            value={infoShortTermSurchargeRate}
-                            onChange={(e) => setInfoShortTermSurchargeRate(e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
-                            min="0"
-                            step="0.01"
-                          />
-                        </div>
-                        <div className="flex-1">
-                          <label className="block text-xs font-medium text-slate-500 mb-1">Parking fee (₫)</label>
-                          <input
-                            type="number"
-                            value={infoParkingFee}
-                            onChange={(e) => setInfoParkingFee(e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
-                            min="0"
-                          />
+                      <div className="space-y-2 border-t border-slate-200 pt-3">
+                        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                          <div className="flex-1">
+                            <label className="block text-xs font-medium text-slate-500 mb-1">Manager discount (₫)</label>
+                            <input
+                              type="number"
+                              value={infoManagerDiscount}
+                              onChange={(e) => setInfoManagerDiscount(e.target.value)}
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                              min="0"
+                            />
+                          </div>
+                          <div className="flex-1">
+                            <label className="block text-xs font-medium text-slate-500 mb-1">Short-term surcharge (%)</label>
+                            <input
+                              type="number"
+                              value={infoShortTermSurchargeRate}
+                              onChange={(e) => setInfoShortTermSurchargeRate(e.target.value)}
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                              min="0"
+                              step="0.01"
+                            />
+                          </div>
+                          <div className="flex-1">
+                            <label className="block text-xs font-medium text-slate-500 mb-1">Parking fee (₫)</label>
+                            <input
+                              type="number"
+                              value={infoParkingFee}
+                              onChange={(e) => setInfoParkingFee(e.target.value)}
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                              min="0"
+                            />
+                          </div>
+                          <div className="flex-1">
+                            <label className="block text-xs font-medium text-slate-500 mb-1">Gate parking (₫)</label>
+                            <input
+                              type="number"
+                              value={infoGateParkingFee}
+                              onChange={(e) => setInfoGateParkingFee(e.target.value)}
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                              min="0"
+                            />
+                          </div>
                         </div>
                         <button
                           type="button"
                           disabled={infoRentCalculating || !selectedClient}
-                          onClick={() => void recalcInfoBreakdown(selectedClient.email, infoManagerDiscount, infoShortTermSurchargeRate, infoParkingFee)}
-                          className="self-end rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                          onClick={() =>
+                            void recalcInfoBreakdown(
+                              selectedClient.email,
+                              infoManagerDiscount,
+                              infoShortTermSurchargeRate,
+                              infoParkingFee,
+                              infoGateParkingFee
+                            )
+                          }
+                          className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                         >
                           {infoRentCalculating ? "…" : "Recalc"}
                         </button>
@@ -4072,6 +4212,16 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             />
                           </label>
                         </div>
+                        <label className="block text-sm font-medium text-slate-700">
+                          Gate parking fee (₫)
+                          <input
+                            type="number"
+                            value={gateParkingFeeInput}
+                            onChange={(e) => setGateParkingFeeInput(e.target.value)}
+                            className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                            min="0"
+                          />
+                        </label>
 
                         <button
                           type="button"
@@ -4086,7 +4236,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                   targetMonth: targetMonthInput,
                                   managerDiscountVnd: Number(managerDiscountInput),
                                   shortTermSurchargeRate: (Number(shortTermSurchargeRateInput) || 0) / 100,
-                                  parkingFeeVnd: Number(parkingFeeInput) || 0
+                                  parkingFeeVnd: Number(parkingFeeInput) || 0,
+                                  gateParkingFeeVnd: Number(gateParkingFeeInput) || 0
                                 })
                               });
                               if (!response.ok) throw new Error(t("requestFailed"));
@@ -4155,6 +4306,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               </div>
 
                               <div className="flex justify-between">
+                                <span className="text-slate-600">Gate parking</span>
+                                <span className="font-medium">{rentBreakdown.gateParkingFeeVnd.toLocaleString()} VND</span>
+                              </div>
+
+                              <div className="flex justify-between">
                                 <span className="text-slate-600">{t("laundryFeeLabel").replace("{count}", String(rentBreakdown.details?.laundryCount?.cash ?? 0))}</span>
                                 <span className="font-medium">{rentBreakdown.laundryFeeVnd.toLocaleString()} VND</span>
                               </div>
@@ -4205,6 +4361,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                     managerDiscount: managerDiscountInput,
                                     shortTermSurchargeRate: shortTermSurchargeRateInput,
                                     parkingFee: parkingFeeInput,
+                                    gateParkingFee: gateParkingFeeInput,
                                     payerName: paymentPayer || selectedClient.name,
                                     closePaymentPanel: true
                                   });

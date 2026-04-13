@@ -39,6 +39,7 @@ export interface RentBreakdown {
   planDiscountVnd: number;
   managerDiscountVnd: number;
   parkingFeeVnd: number;
+  gateParkingFeeVnd: number;
   laundryFeeVnd: number;
   finesVnd: number;
   totalBeforeCoinsVnd: number;
@@ -61,6 +62,7 @@ export interface RentCalculationOptions {
   managerDiscountVnd?: number;
   shortTermSurchargeRate?: number | null;
   parkingFeeVnd?: number | null;
+  gateParkingFeeVnd?: number | null;
 }
 
 function parseVndAmount(value: unknown): number {
@@ -70,6 +72,25 @@ function parseVndAmount(value: unknown): number {
   }
   const parsed = Number.parseInt(digits, 10);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+const GATE_PARKING_SHEET_KEYS = [
+  "Phí gửi xe cổng",
+  "Phí gửi xe tại cổng",
+  "Phí để xe cổng",
+  "Phí cổng (gửi xe)",
+  "Gate parking fee",
+  "Phí cổng"
+] as const;
+
+function parseGateParkingFeeVndFromClient(client: ClientRow): number {
+  for (const key of GATE_PARKING_SHEET_KEYS) {
+    const v = parseVndAmount(client[key]);
+    if (v > 0) {
+      return v;
+    }
+  }
+  return 0;
 }
 
 /**
@@ -177,6 +198,11 @@ export async function calculateRentBreakdown(
     }
   }
 
+  let gateParkingFeeVnd =
+    typeof options.gateParkingFeeVnd === "number" && Number.isFinite(options.gateParkingFeeVnd)
+      ? options.gateParkingFeeVnd
+      : parseGateParkingFeeVndFromClient(client);
+
   // 5. Laundry Fee (Optimized)
   const bookings = await getLaundryBookingsForEmail(email);
   // Filter bookings for the target month
@@ -223,7 +249,13 @@ export async function calculateRentBreakdown(
   
   const totalBeforeCoinsVnd = Math.max(
     0,
-    rentWithSurcharges + monthlyAdjustmentSurchargeVnd - totalDiscounts + parkingFeeVnd + laundryFeeVnd + finesVnd
+    rentWithSurcharges +
+      monthlyAdjustmentSurchargeVnd -
+      totalDiscounts +
+      parkingFeeVnd +
+      gateParkingFeeVnd +
+      laundryFeeVnd +
+      finesVnd
   );
 
   // 8. Coin Usage (Cap: 10% of rent part)
@@ -254,6 +286,7 @@ export async function calculateRentBreakdown(
     planDiscountVnd,
     managerDiscountVnd,
     parkingFeeVnd,
+    gateParkingFeeVnd,
     laundryFeeVnd,
     finesVnd,
     totalBeforeCoinsVnd,

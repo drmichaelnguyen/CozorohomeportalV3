@@ -45,6 +45,7 @@ type FineEntry = {
 type RentBreakdown = {
   baseRent: number;
   parkingFeeVnd: number;
+  gateParkingFeeVnd?: number;
   laundryFeeVnd: number;
   finesVnd: number;
   finalTotalVnd: number;
@@ -630,6 +631,9 @@ export function HomeDashboardClient() {
                 ...(rentStatus.breakdown.planDiscountVnd > 0 ? [{ label: t("planDiscount", "Plan discount"), value: -rentStatus.breakdown.planDiscountVnd }] : []),
                 ...(rentStatus.breakdown.managerDiscountVnd > 0 ? [{ label: t("managerDiscount", "Manager discount"), value: -rentStatus.breakdown.managerDiscountVnd }] : []),
                 { label: t("parking", "Parking"), value: rentStatus.breakdown.parkingFeeVnd },
+                ...((rentStatus.breakdown.gateParkingFeeVnd ?? 0) > 0
+                  ? [{ label: t("gateParking", "Gate parking"), value: rentStatus.breakdown.gateParkingFeeVnd ?? 0 }]
+                  : []),
                 { label: t("laundryServices", "Laundry services"), value: rentStatus.breakdown.laundryFeeVnd },
                 { label: t("fines", "Fines"), value: rentStatus.breakdown.finesVnd }
               ].filter(item => item.value !== 0).map((item) => (

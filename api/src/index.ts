@@ -4014,7 +4014,7 @@ app.post("/client/maintenance/feedback", async (req, res) => {
 });
 
 app.post("/calculate-rent", async (req, res) => {
-  const { email, targetMonth, managerDiscountVnd, shortTermSurchargeRate, parkingFeeVnd } = req.body;
+  const { email, targetMonth, managerDiscountVnd, shortTermSurchargeRate, parkingFeeVnd, gateParkingFeeVnd } = req.body;
   if (!email || !targetMonth) {
     return res.status(400).json({ error: "email and targetMonth are required" });
   }
@@ -4035,6 +4035,10 @@ app.post("/calculate-rent", async (req, res) => {
       parkingFeeVnd:
         typeof parkingFeeVnd === "number" && Number.isFinite(parkingFeeVnd)
           ? parkingFeeVnd
+          : undefined,
+      gateParkingFeeVnd:
+        typeof gateParkingFeeVnd === "number" && Number.isFinite(gateParkingFeeVnd)
+          ? gateParkingFeeVnd
           : undefined
     });
     res.json(breakdown);
@@ -4050,6 +4054,7 @@ app.post("/pay-rent", async (req, res) => {
     managerDiscountVnd,
     shortTermSurchargeRate,
     parkingFeeVnd,
+    gateParkingFeeVnd,
     coinUsage,
     payerName,
     receiverName,
@@ -4080,6 +4085,10 @@ app.post("/pay-rent", async (req, res) => {
       parkingFeeVnd:
         typeof parkingFeeVnd === "number" && Number.isFinite(parkingFeeVnd)
           ? parkingFeeVnd
+          : undefined,
+      gateParkingFeeVnd:
+        typeof gateParkingFeeVnd === "number" && Number.isFinite(gateParkingFeeVnd)
+          ? gateParkingFeeVnd
           : undefined
     });
     
@@ -4104,6 +4113,7 @@ app.post("/pay-rent", async (req, res) => {
         `Surcharge: ${breakdown.tenureSurchargeVnd.toLocaleString("vi-VN")} VND`,
         `Monthly adjustment: ${breakdown.monthlyAdjustmentVnd.toLocaleString("vi-VN")} VND`,
         `Parking: ${breakdown.parkingFeeVnd.toLocaleString("vi-VN")} VND`,
+        `Gate parking: ${breakdown.gateParkingFeeVnd.toLocaleString("vi-VN")} VND`,
         `Laundry: ${breakdown.laundryFeeVnd.toLocaleString("vi-VN")} VND`,
         `Fines: ${breakdown.finesVnd.toLocaleString("vi-VN")} VND`,
         `Coins used: ${resolvedCoinUsage}`,
@@ -4143,6 +4153,45 @@ Cảm ơn bạn đã đồng hành cùng Cozoro Home!
       to: email,
       subject,
       body
+    });
+
+    const emailKey = String(email).trim().toLowerCase();
+    const rentSubtotalVnd = Math.max(
+      0,
+      breakdown.totalBeforeCoinsVnd -
+        breakdown.parkingFeeVnd -
+        breakdown.gateParkingFeeVnd -
+        breakdown.laundryFeeVnd -
+        breakdown.finesVnd
+    );
+    await prisma.monthlyRentStatus.upsert({
+      where: { email_month: { email: emailKey, month: targetMonth } },
+      create: {
+        email: emailKey,
+        month: targetMonth,
+        isPaid: true,
+        updatedBy: String(recipientEmail || "").trim() || "pay-rent",
+        paidRecordedAt: new Date(),
+        snapshotRentSubtotalVnd: rentSubtotalVnd,
+        snapshotParkingVnd: breakdown.parkingFeeVnd,
+        snapshotGateParkingVnd: breakdown.gateParkingFeeVnd,
+        snapshotLaundryVnd: breakdown.laundryFeeVnd,
+        snapshotFinesVnd: breakdown.finesVnd,
+        snapshotFinalTotalVnd: breakdown.finalTotalVnd,
+        snapshotCoinValueVnd: resolvedCoinValue
+      },
+      update: {
+        isPaid: true,
+        updatedBy: String(recipientEmail || "").trim() || "pay-rent",
+        paidRecordedAt: new Date(),
+        snapshotRentSubtotalVnd: rentSubtotalVnd,
+        snapshotParkingVnd: breakdown.parkingFeeVnd,
+        snapshotGateParkingVnd: breakdown.gateParkingFeeVnd,
+        snapshotLaundryVnd: breakdown.laundryFeeVnd,
+        snapshotFinesVnd: breakdown.finesVnd,
+        snapshotFinalTotalVnd: breakdown.finalTotalVnd,
+        snapshotCoinValueVnd: resolvedCoinValue
+      }
     });
 
     res.json({ success: true, message: "Payment recorded and receipt sent" });
@@ -4200,7 +4249,21 @@ app.get("/manager/rent-paid-status", async (req, res) => {
   const record = await prisma.monthlyRentStatus.findUnique({
     where: { email_month: { email, month } }
   });
-  return res.json({ email, month, isPaid: record?.isPaid ?? false, updatedAt: record?.updatedAt ?? null, updatedBy: record?.updatedBy ?? "" });
+  return res.json({
+    email,
+    month,
+    isPaid: record?.isPaid ?? false,
+    updatedAt: record?.updatedAt ?? null,
+    updatedBy: record?.updatedBy ?? "",
+    paidRecordedAt: record?.paidRecordedAt ?? null,
+    snapshotRentSubtotalVnd: record?.snapshotRentSubtotalVnd ?? null,
+    snapshotParkingVnd: record?.snapshotParkingVnd ?? null,
+    snapshotGateParkingVnd: record?.snapshotGateParkingVnd ?? null,
+    snapshotLaundryVnd: record?.snapshotLaundryVnd ?? null,
+    snapshotFinesVnd: record?.snapshotFinesVnd ?? null,
+    snapshotFinalTotalVnd: record?.snapshotFinalTotalVnd ?? null,
+    snapshotCoinValueVnd: record?.snapshotCoinValueVnd ?? null
+  });
 });
 
 // POST /manager/rent-paid-status — manager toggles monthly rent paid flag
@@ -4223,6 +4286,33 @@ app.post("/manager/rent-paid-status", async (req, res) => {
     update: { isPaid, updatedBy: actorEmail }
   });
   return res.json({ email: record.email, month: record.month, isPaid: record.isPaid });
+});
+
+// GET /manager/monthly-rent-paid-map — batch paid flags for a calendar month (bed diagram, etc.)
+app.get("/manager/monthly-rent-paid-map", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim();
+  const month = String(req.query.month ?? "").trim();
+
+  if (!actorEmail || !month || !/^\d{4}-\d{2}$/.test(month)) {
+    return res.status(400).json({ error: "actorEmail and month (YYYY-MM) are required" });
+  }
+  if (!(await isPrivilegedSupportOperator(actorEmail))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  try {
+    const rows = await prisma.monthlyRentStatus.findMany({
+      where: { month },
+      select: { email: true, isPaid: true }
+    });
+    const byEmail: Record<string, { isPaid: boolean }> = {};
+    for (const row of rows) {
+      byEmail[row.email.toLowerCase()] = { isPaid: row.isPaid };
+    }
+    return res.json({ month, byEmail });
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to load rent map" });
+  }
 });
 
 // GET /rent-paid-status — client reads current month rent status + breakdown if unpaid
