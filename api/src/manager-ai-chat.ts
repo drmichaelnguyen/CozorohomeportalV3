@@ -175,7 +175,13 @@ async function executeTool(
     });
     const data = await res.json();
     if (!res.ok) return { result: { error: (data as any).error ?? "Failed to adjust coins" } };
-    return { result: { success: true, message: `Coins adjusted: ${args.delta > 0 ? "+" : ""}${args.delta} for contract ${args.maHd}` } };
+    const delta = Number(args.delta);
+    return {
+      result: {
+        success: true,
+        message: `Coins adjusted: ${delta > 0 ? "+" : ""}${delta} for contract ${String(args.maHd ?? "")}`
+      }
+    };
   }
 
   if (toolName === "create_fine") {

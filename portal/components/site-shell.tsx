@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import type { Route } from "next";
 import { usePathname } from "next/navigation";
@@ -54,8 +55,16 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto max-w-5xl px-4 py-3 sm:px-6 sm:py-4">
           <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-            <Link href="/" className="text-lg font-semibold text-slate-900">
-              {t("portalTitle")}
+            <Link href="/" className="inline-flex items-center shrink-0 rounded-lg outline-offset-4 hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500">
+              <Image
+                src="/cozorohome-logo.png"
+                alt={t("portalTitle")}
+                width={220}
+                height={88}
+                className="h-9 w-auto sm:h-10"
+                priority
+              />
+              <span className="sr-only">{t("portalTitle")}</span>
             </Link>
             <div className="flex flex-col items-start gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
               {isStaffSession ? (
@@ -110,10 +119,20 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
             {/* Hero */}
             <section className="rounded-3xl bg-gradient-to-br from-sky-600 to-slate-800 p-7 text-white shadow-lg sm:p-10">
               <div className="max-w-2xl">
+                <div className="mb-5 inline-block rounded-2xl bg-white p-4 shadow-md ring-1 ring-white/40">
+                  <Image
+                    src="/cozorohome-logo.png"
+                    alt={language === "vi" ? "Cozoro Home — ký túc xá co-living" : "Cozoro Home — co-living housing"}
+                    width={320}
+                    height={128}
+                    className="h-24 w-auto sm:h-28"
+                    priority
+                  />
+                </div>
                 <p className="text-xs font-semibold uppercase tracking-widest text-sky-300">
-                  {language === "vi" ? "Chào mừng đến với" : "Welcome to"}
+                  {language === "vi" ? "Cổng thông tin cư dân" : "Resident portal"}
                 </p>
-                <h1 className="mt-2 text-3xl font-bold leading-tight sm:text-4xl">CozoroHome</h1>
+                <h1 className="sr-only">CozoroHome</h1>
                 <p className="mt-3 text-base leading-relaxed text-sky-100">
                   {language === "vi"
                     ? "Không gian sống cộng đồng hiện đại — giá cả phải chăng, tiện nghi đầy đủ, môi trường bình yên và văn minh, được vận hành bởi hệ thống tự động hóa và công nghệ quản lý tiên tiến."

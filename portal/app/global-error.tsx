@@ -36,9 +36,13 @@ export default function GlobalError({
               boxShadow: "0 1px 4px rgba(0,0,0,0.06)"
             }}
           >
-            <p style={{ fontSize: 13, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", margin: 0 }}>
-              CozoroHome Portal
-            </p>
+            <img
+              src="/cozorohome-logo.png"
+              alt="CozoroHome"
+              width={200}
+              height={80}
+              style={{ height: 40, width: "auto", display: "block", marginBottom: "0.5rem" }}
+            />
             <h1 style={{ fontSize: 20, fontWeight: 600, color: "#0f172a", margin: "0.75rem 0 0.5rem" }}>
               Something went wrong
             </h1>
