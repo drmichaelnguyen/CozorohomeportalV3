@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import Link from "next/link";
 import type { Route } from "next";
 import { usePathname } from "next/navigation";
@@ -230,7 +231,9 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
           </div>
         )}
       </main>
-      <MobileNav />
+      <Suspense fallback={null}>
+        <MobileNav />
+      </Suspense>
       {isLoggedIn ? <ChatNotifier /> : null}
       {isLoggedIn && sessionEmail ? <PushSubscription email={sessionEmail} /> : null}
       <VersionBadge />
