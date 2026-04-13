@@ -320,6 +320,7 @@ const translations: Record<string, { en: string; vi: string }> = {
   newFineTicket: { en: "New fine ticket", vi: "Tạo phiếu phạt" },
   newCoinsEntry: { en: "New coins entry", vi: "Tạo mục nhập coin" },
   newPaymentReceipt: { en: "New payment receipt", vi: "Tạo biên lai thanh toán" },
+  gateParkingTickets: { en: "Gate parking tickets", vi: "Vé gửi xe cổng" },
   closeLabel: { en: "Close", vi: "Đóng" },
   clientChatTitle: { en: "Client Chat", vi: "Trò chuyện với Khách hàng" },
   createPaymentReceipt: { en: "Create Payment Receipt", vi: "Tạo biên lai thanh toán" },
