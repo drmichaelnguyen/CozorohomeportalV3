@@ -104,7 +104,8 @@ import {
   MAINTENANCE_SATISFACTION_COLUMN,
   MAINTENANCE_FEEDBACK_COLUMN,
   logMicrowaveUse,
-  getDuplicateActiveClients
+  getDuplicateActiveClients,
+  appendCheckoutSheetRow
 } from "./google-sheets.js";
 import {
   checkProspectReferralEligibility,
@@ -151,7 +152,9 @@ import {
   getTerminationByMaHd,
   submitCheckOut,
   ensureCheckoutPhotosDir,
-  checkoutPhotosDirPath
+  checkoutPhotosDirPath,
+  getCheckoutContext,
+  verifyCheckoutPhotoAccess
 } from "./checkout.js";
 import { getShortTermConfig, updateShortTermConfig } from "./short-term-config.js";
 import { handleManagerAiChat, type AiChatMessage } from "./manager-ai-chat.js";
@@ -190,6 +193,7 @@ import {
   postOperatorSupportMessage,
   postOperatorSupportMessageToResident,
   postResidentSupportMessage,
+  tryAppendAssistantAfterResidentMessage,
   updateSupportConversationStatus
 } from "./support.js";
 
@@ -2099,6 +2103,39 @@ app.post("/manager/controller/airfryer/trigger", async (request, response) => {
   }
 });
 
+app.post("/manager/controller/microwave/trigger", async (_request, response) => {
+  try {
+    const eventName = process.env.MICROWAVE_D2_IFTTT_EVENT || "microwaveD2";
+    const key = process.env.IFTTT_WEBHOOK_KEY;
+    if (!key) {
+      throw new Error("IFTTT_WEBHOOK_KEY is not configured.");
+    }
+    const iftttUrl = `https://maker.ifttt.com/trigger/${eventName}/json/with/key/${key}`;
+    const result = await fetch(iftttUrl, { method: "POST" });
+    if (!result.ok) {
+      throw new Error(`IFTTT trigger failed with status ${result.status}`);
+    }
+
+    await appendControllerHistoryEntry({
+      actorRole: "manager",
+      actorEmail: null,
+      actorName: "Manager",
+      deviceType: "microwave",
+      deviceId: "d2-microwave",
+      deviceLabel: "Microwave D2",
+      branchId: "D2",
+      action: "TRIGGER",
+      details: eventName
+    });
+
+    return response.json({ ok: true, message: "Microwave triggered" });
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to trigger microwave"
+    });
+  }
+});
+
 app.get("/controller/microwave/d2", async (request, response) => {
   const email = String(request.query.email ?? "").trim().toLowerCase();
   if (!email) return response.status(400).json({ error: "email required" });
@@ -2180,7 +2217,16 @@ app.post("/support/messages", async (request, response) => {
 
   try {
     const result = await postResidentSupportMessage(parsed.data);
-    return response.status(201).json(result);
+    let assistantMessage: Awaited<ReturnType<typeof tryAppendAssistantAfterResidentMessage>> = null;
+    try {
+      assistantMessage = await tryAppendAssistantAfterResidentMessage({
+        conversationId: result.conversation.id,
+        residentEmail: parsed.data.email
+      });
+    } catch (assistantError) {
+      console.warn("[support/messages] Assistant reply skipped", assistantError);
+    }
+    return response.status(201).json({ ...result, assistantMessage });
   } catch (error) {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to send support message"
@@ -4016,10 +4062,14 @@ app.post("/client/maintenance/feedback", async (req, res) => {
 });
 
 app.post("/calculate-rent", async (req, res) => {
-  const { email, targetMonth, managerDiscountVnd, shortTermSurchargeRate, parkingFeeVnd, gateParkingFeeVnd } = req.body;
+  const { email, targetMonth, managerDiscountVnd, shortTermSurchargeRate, parkingFeeVnd, gateParkingFeeVnd, applyCoinsTowardRent } =
+    req.body;
   if (!email || !targetMonth) {
     return res.status(400).json({ error: "email and targetMonth are required" });
   }
+
+  const applyCoins =
+    typeof applyCoinsTowardRent === "boolean" ? applyCoinsTowardRent : true;
 
   try {
     const cache = (await readCachedClients()) ?? (await syncClientsFromSheet());
@@ -4041,7 +4091,8 @@ app.post("/calculate-rent", async (req, res) => {
       gateParkingFeeVnd:
         typeof gateParkingFeeVnd === "number" && Number.isFinite(gateParkingFeeVnd)
           ? gateParkingFeeVnd
-          : undefined
+          : undefined,
+      applyCoinsTowardRent: applyCoins
     });
     res.json(breakdown);
   } catch (error) {
@@ -4078,6 +4129,10 @@ app.post("/pay-rent", async (req, res) => {
       return res.status(404).json({ error: "Client not found" });
     }
 
+    const emailKey = String(email).trim().toLowerCase();
+    const rentPrefRow = await prisma.monthlyRentStatus.findUnique({
+      where: { email_month: { email: emailKey, month: targetMonth } }
+    });
     const breakdown = await calculateRentBreakdown(client, targetMonth, {
       managerDiscountVnd: Number(managerDiscountVnd) || 0,
       shortTermSurchargeRate:
@@ -4091,15 +4146,21 @@ app.post("/pay-rent", async (req, res) => {
       gateParkingFeeVnd:
         typeof gateParkingFeeVnd === "number" && Number.isFinite(gateParkingFeeVnd)
           ? gateParkingFeeVnd
-          : undefined
+          : undefined,
+      applyCoinsTowardRent: rentPrefRow?.applyCoinsTowardRent === true
     });
-    
+
     const maHd = client["MÃ HD"] || client["MÃ HD".normalize("NFC")] || "";
     const resolvedDiscountAmount =
       typeof discountAmount === "number" && Number.isFinite(discountAmount)
         ? discountAmount
         : breakdown.professionalDiscountVnd + breakdown.planDiscountVnd + (Number(managerDiscountVnd) || 0);
-    const resolvedCoinUsage = coinUsage || breakdown.recommendedCoinUsage;
+    const coinsAllowedForResident = rentPrefRow?.applyCoinsTowardRent === true;
+    const resolvedCoinUsage = coinsAllowedForResident
+      ? typeof coinUsage === "number" && Number.isFinite(coinUsage)
+        ? coinUsage
+        : breakdown.recommendedCoinUsage
+      : 0;
     const resolvedCoinValue =
       breakdown.totalBeforeCoinsVnd > 0
         ? Math.round(resolvedCoinUsage * (breakdown.finalTotalVnd / breakdown.totalBeforeCoinsVnd))
@@ -4157,7 +4218,6 @@ Cảm ơn bạn đã đồng hành cùng Cozoro Home!
       body
     });
 
-    const emailKey = String(email).trim().toLowerCase();
     const rentSubtotalVnd = Math.max(
       0,
       breakdown.totalBeforeCoinsVnd -
@@ -4266,7 +4326,8 @@ app.get("/manager/rent-paid-status", async (req, res) => {
     snapshotLaundryVnd: record?.snapshotLaundryVnd ?? null,
     snapshotFinesVnd: record?.snapshotFinesVnd ?? null,
     snapshotFinalTotalVnd: record?.snapshotFinalTotalVnd ?? null,
-    snapshotCoinValueVnd: record?.snapshotCoinValueVnd ?? null
+    snapshotCoinValueVnd: record?.snapshotCoinValueVnd ?? null,
+    applyCoinsTowardRent: record?.applyCoinsTowardRent ?? false
   });
 });
 
@@ -4435,6 +4496,53 @@ app.get("/manager/monthly-rent-paid-map", async (req, res) => {
   }
 });
 
+// POST /rent-paid-status/apply-coins — resident opts in/out of applying coins toward the current month bill
+app.post("/rent-paid-status/apply-coins", async (req, res) => {
+  const email = String(req.body.email ?? "").trim().toLowerCase();
+  const applyCoinsTowardRent = req.body.applyCoinsTowardRent;
+  const now = new Date();
+  const defaultMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const monthRaw = String(req.body.month ?? "").trim();
+  const month = /^\d{4}-\d{2}$/.test(monthRaw) ? monthRaw : defaultMonth;
+
+  if (!email || !email.includes("@") || typeof applyCoinsTowardRent !== "boolean") {
+    return res.status(400).json({ error: "email and applyCoinsTowardRent (boolean) are required" });
+  }
+
+  try {
+    const client = await getActiveClientByEmail(email);
+    if (!client) {
+      return res.status(404).json({ error: "Client not found" });
+    }
+
+    const existing = await prisma.monthlyRentStatus.findUnique({
+      where: { email_month: { email, month } }
+    });
+    if (existing?.isPaid) {
+      return res.status(400).json({ error: "Rent is already recorded as paid for this month; coin preference cannot be changed." });
+    }
+
+    await prisma.monthlyRentStatus.upsert({
+      where: { email_month: { email, month } },
+      create: {
+        email,
+        month,
+        isPaid: false,
+        applyCoinsTowardRent,
+        updatedBy: "resident-apply-coins"
+      },
+      update: {
+        applyCoinsTowardRent,
+        updatedBy: "resident-apply-coins"
+      }
+    });
+
+    return res.json({ email, month, applyCoinsTowardRent });
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to save preference" });
+  }
+});
+
 // GET /rent-paid-status — client reads current month rent status + breakdown if unpaid
 app.get("/rent-paid-status", async (req, res) => {
   const email = String(req.query.email ?? "").trim().toLowerCase();
@@ -4452,12 +4560,15 @@ app.get("/rent-paid-status", async (req, res) => {
       getPortalUxSettings()
     ]);
 
+    const applyCoinsTowardRent = record?.applyCoinsTowardRent === true;
+
     const client = clientCache?.rows.find((r) => (r["Địa chỉ email"] ?? "").toLowerCase() === email);
     if (!client) {
       return res.json({
         email,
         month,
         isPaid: record?.isPaid ?? false,
+        applyCoinsTowardRent,
         breakdown: null,
         onPrepaidPlan: false,
         blockingRentDuePopupEnabled: portalUx.blockingRentDuePopupEnabled
@@ -4472,17 +4583,22 @@ app.get("/rent-paid-status", async (req, res) => {
         email,
         month,
         isPaid: record?.isPaid ?? onPrepaidPlan,
+        applyCoinsTowardRent,
         breakdown: null,
         onPrepaidPlan,
         blockingRentDuePopupEnabled: portalUx.blockingRentDuePopupEnabled
       });
     }
 
-    const breakdown = await calculateRentBreakdown(client, month, { managerDiscountVnd: 0 });
+    const breakdown = await calculateRentBreakdown(client, month, {
+      managerDiscountVnd: 0,
+      applyCoinsTowardRent
+    });
     return res.json({
       email,
       month,
       isPaid: false,
+      applyCoinsTowardRent,
       breakdown,
       onPrepaidPlan: false,
       blockingRentDuePopupEnabled: portalUx.blockingRentDuePopupEnabled
@@ -5158,15 +5274,33 @@ app.get("/client/termination-status", async (request, response) => {
   }
 });
 
+app.get("/client/checkout-context", async (request, response) => {
+  const email = String(request.query.email ?? "").trim().toLowerCase();
+  if (!email) return response.status(400).json({ error: "email required" });
+  try {
+    const ctx = await getCheckoutContext(email);
+    return response.json(ctx);
+  } catch (error) {
+    return response.status(500).json({ error: error instanceof Error ? error.message : "Unable to load checkout context" });
+  }
+});
+
 app.post("/client/checkout/upload-photo", express.raw({ type: "*/*", limit: "15mb" }), async (request, response) => {
   const email = String(request.query.email ?? "");
   const maHd = String(request.query.maHd ?? "");
   const originalName = String(request.query.filename ?? "photo.jpg");
+  const step = String(request.query.step ?? "").trim();
   if (!email || !maHd) return response.status(400).json({ error: "email and maHd required" });
   try {
+    const allowed = await verifyCheckoutPhotoAccess(email.trim().toLowerCase(), maHd);
+    if (!allowed) {
+      return response.status(403).json({ error: "Check-out is not available for this account or contract." });
+    }
     const photosDir = await ensureCheckoutPhotosDir();
     const ext = path.extname(originalName) || ".jpg";
-    const fileName = `checkout-${maHd.replace(/[^a-zA-Z0-9-]/g, "_")}-${randomUUID()}${ext}`;
+    const safeMa = maHd.replace(/[^a-zA-Z0-9-]/g, "_");
+    const stepPart = step && /^[1-4]$/.test(step) ? `-step${step}` : "";
+    const fileName = `checkout-${safeMa}${stepPart}-${randomUUID()}${ext}`;
     const filePath = path.join(photosDir, fileName);
     await new Promise<void>((resolve, reject) => {
       const ws = createWriteStream(filePath);
@@ -5181,14 +5315,69 @@ app.post("/client/checkout/upload-photo", express.raw({ type: "*/*", limit: "15m
 });
 
 app.post("/client/checkout", express.json(), async (request, response) => {
-  const { email, maHd, steps, photos } = request.body as {
-    email: string; maHd: string;
-    steps: { luggage: boolean; bedding: boolean; keys: boolean; photoNote: string };
+  const { email, maHd, steps, photos, source } = request.body as {
+    email: string;
+    maHd: string;
+    steps: {
+      luggage: boolean;
+      bedding: boolean;
+      keys: boolean;
+      photoNote: string;
+      optionalStepPhotos?: Record<string, string[]>;
+    };
     photos: string[];
+    source?: "termination" | "contract_due";
   };
   if (!email || !maHd) return response.status(400).json({ error: "email and maHd required" });
   try {
-    const record = await submitCheckOut({ email, maHd, steps: steps ?? { luggage: false, bedding: false, keys: false, photoNote: "" }, photos: photos ?? [] });
+    const ctx = await getCheckoutContext(String(email).trim().toLowerCase());
+    if (!ctx.eligible || ctx.completed || !ctx.maHd || ctx.maHd !== String(maHd).trim()) {
+      return response.status(403).json({ error: "Check-out is not available for this account." });
+    }
+    const resolvedSource = source ?? ctx.kind ?? "termination";
+    if (resolvedSource !== ctx.kind) {
+      return response.status(400).json({ error: "Checkout source does not match your eligibility." });
+    }
+    const record = await submitCheckOut({
+      email,
+      maHd,
+      steps: steps ?? { luggage: false, bedding: false, keys: false, photoNote: "" },
+      photos: photos ?? [],
+      source: resolvedSource
+    });
+    const optional = steps?.optionalStepPhotos ?? {};
+    const allLocals = [
+      ...Object.values(optional).flat(),
+      ...(photos ?? [])
+    ].filter(Boolean);
+    const quyTrinh = JSON.stringify(
+      {
+        luggage: Boolean(steps?.luggage),
+        bedding: Boolean(steps?.bedding),
+        keys: Boolean(steps?.keys),
+        photoNote: String(steps?.photoNote ?? ""),
+        optionalStepPhotos: optional,
+        finalPhotos: photos ?? []
+      },
+      null,
+      0
+    );
+    try {
+      await appendCheckoutSheetRow({
+        user: ctx.name ?? "",
+        email: String(email).trim().toLowerCase(),
+        maHd: String(maHd).trim(),
+        name: ctx.name ?? "",
+        dateTimeCheckout: record.submittedAt,
+        quyTrinh,
+        photosLocalPaths: allLocals.join("; "),
+        branch: ctx.branch ?? "",
+        bed: ctx.bed ?? "",
+        source: resolvedSource
+      });
+    } catch (sheetErr) {
+      console.error("[checkout] Google Sheet append failed:", sheetErr);
+    }
     return response.json({ ok: true, record });
   } catch (error) {
     return response.status(400).json({ error: error instanceof Error ? error.message : "Unable to submit check-out" });

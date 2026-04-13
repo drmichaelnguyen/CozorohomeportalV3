@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
 import { parseVietnamDate } from "../lib/contract-utils";
@@ -22,6 +22,22 @@ export function NextPaymentPreviewClient() {
   const [rentPaidStatus, setRentPaidStatus] = useState<RentPaidStatusPayload | null>(null);
   const [packageExpiryRaw, setPackageExpiryRaw] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const refetchRentPaidStatusOnly = useCallback(async () => {
+    if (!sessionEmail) {
+      return;
+    }
+    try {
+      const rentRes = await fetch(
+        `${API_BASE_URL}/rent-paid-status?email=${encodeURIComponent(sessionEmail)}`
+      );
+      if (rentRes.ok) {
+        setRentPaidStatus((await rentRes.json()) as RentPaidStatusPayload);
+      }
+    } catch (e) {
+      console.error("Failed to refresh rent status", e);
+    }
+  }, [sessionEmail]);
 
   useEffect(() => {
     if (!sessionEmail) {
@@ -70,6 +86,8 @@ export function NextPaymentPreviewClient() {
     <NextPaymentSummary
       nextPaymentDate={nextPaymentDate}
       rentPaidStatus={rentPaidStatus}
+      residentEmail={sessionEmail ?? undefined}
+      onRentPaidStatusRefresh={() => void refetchRentPaidStatusOnly()}
       packageExpiryNote={
         packageExpiryRaw
           ? language === "vi"

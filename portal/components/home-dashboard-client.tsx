@@ -65,6 +65,7 @@ type RentBreakdown = {
 type RentStatus = {
   month: string;
   isPaid: boolean;
+  applyCoinsTowardRent?: boolean;
   onPrepaidPlan: boolean;
   breakdown: RentBreakdown | null;
   blockingRentDuePopupEnabled?: boolean;
@@ -240,6 +241,11 @@ export function HomeDashboardClient() {
   const [showCoinDetail, setShowCoinDetail] = useState(false);
   const [rentStatus, setRentStatus] = useState<RentStatus | null>(null);
   const [terminationRecord, setTerminationRecord] = useState<{ maHd: string; terminatedAt: string; depositNote: string; checkOut: { submittedAt: string } | null } | null>(null);
+  const [checkoutFlow, setCheckoutFlow] = useState<{
+    eligible: boolean;
+    kind?: "termination" | "contract_due";
+    completed?: boolean;
+  } | null>(null);
   const [extensionExpanded, setExtensionExpanded] = useState(false);
   const activeEmail = sessionEmail.trim().toLowerCase();
 
@@ -277,7 +283,17 @@ export function HomeDashboardClient() {
     setMessage("");
 
     try {
-      const [clientResponse, laundryResponse, cleaningResponse, finesResponse, coinsResponse, maintenanceResponse, rentStatusResponse, terminationResponse] = await Promise.all([
+      const [
+        clientResponse,
+        laundryResponse,
+        cleaningResponse,
+        finesResponse,
+        coinsResponse,
+        maintenanceResponse,
+        rentStatusResponse,
+        terminationResponse,
+        checkoutCtxResponse
+      ] = await Promise.all([
         fetch(`${API_BASE_URL}/clients?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/clients/laundry-bookings?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/cleaning/me?email=${encodeURIComponent(activeEmail)}`),
@@ -285,7 +301,8 @@ export function HomeDashboardClient() {
         fetch(`${API_BASE_URL}/coins?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/client/maintenance/tickets?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/rent-paid-status?email=${encodeURIComponent(activeEmail)}`),
-        fetch(`${API_BASE_URL}/client/termination-status?email=${encodeURIComponent(activeEmail)}`)
+        fetch(`${API_BASE_URL}/client/termination-status?email=${encodeURIComponent(activeEmail)}`),
+        fetch(`${API_BASE_URL}/client/checkout-context?email=${encodeURIComponent(activeEmail)}`)
       ]);
 
       const clientData = (await clientResponse.json()) as ClientRecord | { error?: string };
@@ -296,6 +313,9 @@ export function HomeDashboardClient() {
       const maintenanceData = (await maintenanceResponse.json()) as { tickets?: MaintenanceTicket[]; error?: string };
       const rentStatusData = rentStatusResponse.ok ? (await rentStatusResponse.json()) as RentStatus : null;
       const terminationData = terminationResponse.ok ? (await terminationResponse.json()) as { record?: { maHd: string; terminatedAt: string; depositNote: string; checkOut: { submittedAt: string } | null } | null } : null;
+      const checkoutCtxData = checkoutCtxResponse.ok
+        ? ((await checkoutCtxResponse.json()) as { eligible: boolean; kind?: "termination" | "contract_due"; completed?: boolean })
+        : null;
 
       if (!clientResponse.ok) {
         setMessage(
@@ -320,6 +340,7 @@ export function HomeDashboardClient() {
       setMaintenanceTickets(maintenanceResponse.ok ? maintenanceData.tickets ?? [] : []);
       setRentStatus(rentStatusData);
       setTerminationRecord(terminationData?.record ?? null);
+      setCheckoutFlow(checkoutCtxData);
 
       if (!laundryResponse.ok || !cleaningResponse.ok || !finesResponse.ok || !coinsResponse.ok || !maintenanceResponse.ok) {
         setMessage(t("dashboardPartialData", "Dashboard loaded with partial data."));
@@ -328,6 +349,22 @@ export function HomeDashboardClient() {
       setMessage(t("unableToLoadRightNow", "Unable to load dashboard right now."));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function refetchRentStatusOnly() {
+    if (!activeEmail) {
+      return;
+    }
+    try {
+      const rentStatusResponse = await fetch(
+        `${API_BASE_URL}/rent-paid-status?email=${encodeURIComponent(activeEmail)}`
+      );
+      if (rentStatusResponse.ok) {
+        setRentStatus((await rentStatusResponse.json()) as RentStatus);
+      }
+    } catch {
+      // ignore
     }
   }
 
@@ -565,7 +602,7 @@ export function HomeDashboardClient() {
                 <p className="mt-2 text-xs font-medium text-rose-700">⚠️ {terminationRecord.depositNote}</p>
               )}
               <Link
-                href="/checkout"
+                href="/check-out"
                 className="mt-3 inline-block rounded-xl bg-rose-700 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-800"
               >
                 {t("startCheckOut", "Start check-out →")}
@@ -575,12 +612,32 @@ export function HomeDashboardClient() {
         </section>
       )}
 
+      {!terminationRecord && checkoutFlow?.eligible && !checkoutFlow.completed && checkoutFlow.kind === "contract_due" && !isRemoved && (
+        <section className="rounded-3xl border border-amber-300 bg-amber-50 p-5 shadow-sm sm:p-6">
+          <p className="text-sm font-bold text-amber-900">{t("checkoutDueTitle", "Check-out")}</p>
+          <p className="mt-1 text-xs text-amber-800">
+            {t(
+              "checkoutDueSub",
+              "Your contract end date is within 7 days. Complete the step-by-step check-out on the Check-out page (photos are saved on our server; summary is sent to Google Sheet)."
+            )}
+          </p>
+          <Link
+            href="/check-out"
+            className="mt-3 inline-block rounded-xl bg-amber-800 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-900"
+          >
+            {t("openCheckOut", "Open check-out →")}
+          </Link>
+        </section>
+      )}
+
       {!isRemoved && (
         <NextPaymentSummary
           variant="dashboard"
           nextPaymentDate={nextPaymentDate}
           rentPaidStatus={rentStatus}
           rentLoading={loading}
+          residentEmail={activeEmail}
+          onRentPaidStatusRefresh={() => void refetchRentStatusOnly()}
           showPaymentsLink
         />
       )}

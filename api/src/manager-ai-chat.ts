@@ -124,14 +124,30 @@ const TOOLS: GeminiTool[] = [
       },
       {
         name: "navigate",
-        description: "Navigate the manager to a specific view in the portal when the action is too complex for AI to complete automatically.",
+        description:
+          "Navigate the manager UI. Top-level views: overview, scheduling, short_term, etc. Values coins/fines/payments open the Client list with that resident's stats tab (same as clicking Coins/Fines/Payments on a selected client — pick client_list + tab when a client is already in context).",
         parameters: {
           type: "OBJECT",
           properties: {
             view: {
               type: "STRING",
-              description: "The manager view to navigate to",
-              enum: ["client_list", "coins", "fines", "payments", "support_chat", "admin_cleaning", "settings", "controller"]
+              description:
+                "Portal view key. Use overview, client_list, scheduling, support_chat, settings, controller, admin_cleaning, short_term, feedbacks, owners_employees for main tabs. Use coins, fines, or payments only to jump to those stats subtabs under Client list.",
+              enum: [
+                "overview",
+                "client_list",
+                "scheduling",
+                "support_chat",
+                "settings",
+                "controller",
+                "admin_cleaning",
+                "short_term",
+                "feedbacks",
+                "owners_employees",
+                "coins",
+                "fines",
+                "payments"
+              ]
             },
             reason: { type: "STRING", description: "Why navigation is needed" }
           },

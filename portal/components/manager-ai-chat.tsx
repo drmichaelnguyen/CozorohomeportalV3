@@ -14,7 +14,12 @@ const MAX_STORED_MESSAGES = 20;
 const STORAGE_KEY = "cozoro-manager-ai-chat";
 
 const VIEW_LABEL_KEYS: Record<string, string> = {
+  overview: "managerAiViewOverview",
   client_list: "managerAiViewClientList",
+  scheduling: "managerAiViewScheduling",
+  short_term: "managerAiViewShortTerm",
+  feedbacks: "managerAiViewFeedbacks",
+  owners_employees: "managerAiViewOwnersEmployees",
   coins: "managerAiViewCoins",
   fines: "managerAiViewFines",
   payments: "managerAiViewPayments",

@@ -66,6 +66,11 @@ export interface RentCalculationOptions {
   shortTermSurchargeRate?: number | null;
   parkingFeeVnd?: number | null;
   gateParkingFeeVnd?: number | null;
+  /**
+   * When true, apply automatic coin credit up to the 10% cap (resident opted in for this month).
+   * When false/omitted, no coin amount is deducted from the bill (managers pass true from calculate-rent by default).
+   */
+  applyCoinsTowardRent?: boolean;
 }
 
 function parseVndAmount(value: unknown): number {
@@ -264,11 +269,16 @@ export async function calculateRentBreakdown(
 
   const coinRate = RENT_COIN_RATES[memberTier] || 0.6;
   const currentCoins = await getCoinsForEmail(email);
-  
-  // Recommended = min(maxAllowed, currentCoins * rate)
-  const availableCoinValueVnd = Math.round(Number(currentCoins) * coinRate);
-  const recommendedCoinValueVnd = Math.min(maxAllowedFromCoinsVnd, availableCoinValueVnd);
-  const recommendedCoinUsage = Math.ceil(recommendedCoinValueVnd / coinRate);
+
+  const useCoinCredit = options.applyCoinsTowardRent === true;
+
+  let recommendedCoinValueVnd = 0;
+  let recommendedCoinUsage = 0;
+  if (useCoinCredit) {
+    const availableCoinValueVnd = Math.round(Number(currentCoins) * coinRate);
+    recommendedCoinValueVnd = Math.min(maxAllowedFromCoinsVnd, availableCoinValueVnd);
+    recommendedCoinUsage = Math.ceil(recommendedCoinValueVnd / coinRate);
+  }
 
   const finalTotalVnd = totalBeforeCoinsVnd - (recommendedCoinUsage * coinRate);
 
@@ -289,7 +299,7 @@ export async function calculateRentBreakdown(
     totalBeforeCoinsVnd,
     maxCoinUsageVnd: maxAllowedFromCoinsVnd,
     recommendedCoinUsage,
-    recommendedCoinValueVnd: Math.round(recommendedCoinUsage * coinRate),
+    recommendedCoinValueVnd: useCoinCredit ? Math.round(recommendedCoinUsage * coinRate) : 0,
     finalTotalVnd: Math.max(0, finalTotalVnd),
     details: {
       durationMonths,

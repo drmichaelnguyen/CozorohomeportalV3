@@ -394,6 +394,13 @@ export async function sendAcCommandToRoom(input: { roomId: string; action: "ON" 
   return saveRoomStateAndReturn(room, input.action);
 }
 
+/** D2 common-area microwave (IFTTT); not stored in devices-map.json — always exposed for manager UI. */
+const MANAGER_MICROWAVE_D2 = { id: "d2-microwave", label: "Microwave D2", branchId: "D2" as const };
+
 export async function listAllDevices() {
-  return readDevicesMap();
+  const base = await readDevicesMap();
+  return {
+    ...base,
+    microwaves: [MANAGER_MICROWAVE_D2]
+  };
 }

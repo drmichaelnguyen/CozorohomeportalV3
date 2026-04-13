@@ -27,6 +27,8 @@ export type RentPaidStatusPayload = {
   email?: string;
   month: string;
   isPaid: boolean;
+  /** Resident opt-in: apply coins toward this month’s bill (capped in engine). */
+  applyCoinsTowardRent?: boolean;
   onPrepaidPlan: boolean;
   breakdown: RentBreakdownPayload | null;
   blockingRentDuePopupEnabled?: boolean;

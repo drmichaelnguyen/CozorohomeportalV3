@@ -55,50 +55,54 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen">
       <header className="border-b border-slate-200 bg-white">
-        <div className={`mx-auto max-w-5xl px-4 sm:px-6 ${isStaffSession ? "py-2 sm:py-2.5" : "py-3 sm:py-4"}`}>
-          <div className={`flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between ${isStaffSession ? "gap-2" : "gap-4"}`}>
-            <Link href="/" className="inline-flex items-center shrink-0 rounded-lg outline-offset-4 hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500">
+        <div className={`mx-auto max-w-5xl px-3 sm:px-6 ${isStaffSession ? "py-1.5 sm:py-2" : "py-2 sm:py-3"}`}>
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+            <Link
+              href="/"
+              className="inline-flex shrink-0 items-center rounded-lg outline-offset-4 hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+            >
               <Image
                 src="/cozorohome-logo.png"
                 alt={t("portalTitle")}
                 width={220}
                 height={88}
-                className="h-9 w-auto sm:h-10"
+                className="h-7 w-auto sm:h-9 sm:h-10"
                 priority
               />
               <span className="sr-only">{t("portalTitle")}</span>
             </Link>
-            <div className={`flex flex-col items-stretch sm:items-center sm:justify-end sm:flex-row sm:flex-wrap ${isStaffSession ? "gap-1.5" : "gap-3 items-start"}`}>
-              {isStaffSession ? (
-                <div className="flex w-full min-w-0 items-center justify-between gap-1.5 rounded-full border border-slate-200 bg-white p-0.5 shadow-sm sm:w-auto">
-                  <Link
-                    href="/"
-                    className={`rounded-full px-2.5 py-0.5 text-center text-xs font-medium sm:px-3 sm:text-sm ${
-                      !isStaffWorkspace
-                        ? "border border-sky-200 bg-sky-50 text-sky-900 shadow-sm"
-                        : "border border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50"
-                    }`}
-                  >
-                    {t("userView", "User view")}
-                  </Link>
-                  <Link
-                    href={sessionRole === "mechanic" ? "/mechanic" : "/manager"}
-                    className={`rounded-full px-2.5 py-0.5 text-center text-xs font-medium sm:px-3 sm:text-sm ${
-                      isStaffWorkspace
-                        ? "border border-sky-200 bg-sky-50 text-sky-900 shadow-sm"
-                        : "border border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50"
-                    }`}
-                  >
-                    {sessionRole === "mechanic" ? t("staffView", "Staff view") : t("managerView", "Manager view")}
-                  </Link>
-                </div>
-              ) : null}
+            {isStaffSession ? (
+              <div className="flex shrink-0 items-center gap-0.5 rounded-full border border-slate-200 bg-white p-0.5 shadow-sm">
+                <Link
+                  href="/"
+                  className={`rounded-full px-2 py-0.5 text-center text-[11px] font-medium sm:px-2.5 sm:text-xs ${
+                    !isStaffWorkspace
+                      ? "border border-sky-200 bg-sky-50 text-sky-900 shadow-sm"
+                      : "border border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50"
+                  }`}
+                >
+                  {t("userView", "User view")}
+                </Link>
+                <Link
+                  href={sessionRole === "mechanic" ? "/mechanic" : "/manager"}
+                  className={`rounded-full px-2 py-0.5 text-center text-[11px] font-medium sm:px-2.5 sm:text-xs ${
+                    isStaffWorkspace
+                      ? "border border-sky-200 bg-sky-50 text-sky-900 shadow-sm"
+                      : "border border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50"
+                  }`}
+                >
+                  {sessionRole === "mechanic" ? t("staffView", "Staff view") : t("managerView", "Manager view")}
+                </Link>
+              </div>
+            ) : null}
+            <div className="flex min-w-0 flex-1 items-center justify-end gap-1 sm:gap-2">
               {isLoggedIn ? (
-                <div className="flex min-w-0 max-w-full items-center gap-1 rounded-full border border-slate-200 bg-slate-50 py-0.5 pl-2 pr-1 sm:max-w-[min(100%,22rem)]">
-                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-700 sm:text-sm" title={sessionEmail}>
+                <div className="flex min-w-0 max-w-[min(100%,52vw)] flex-1 items-center gap-0.5 rounded-full border border-slate-200 bg-slate-50 py-0.5 pl-1.5 pr-0.5 sm:max-w-[min(100%,22rem)] sm:pl-2 sm:pr-1">
+                  <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-slate-700 sm:text-xs md:text-sm" title={sessionEmail}>
                     {sessionEmail}
                   </span>
                   <InlineHelp
+                    className="shrink-0"
                     label={t("sessionDetailsHelpLabel")}
                     title={t("portalTitle")}
                     body={`${t("signedInAs", "Signed in as")} ${sessionEmail}${sessionRole ? `\n${language === "vi" ? "Vai trò" : "Role"}: ${sessionRole}` : ""}`}
@@ -108,11 +112,13 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
               <button
                 type="button"
                 onClick={() => setLanguage(language === "vi" ? "en" : "vi")}
-                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm font-medium text-slate-700 hover:border-slate-300 hover:bg-slate-50 transition-colors"
+                className="shrink-0 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50 sm:px-3 sm:py-1 sm:text-sm"
               >
                 {language === "vi" ? "EN" : "VI"}
               </button>
-              <NotificationBell />
+              <div className="shrink-0">
+                <NotificationBell />
+              </div>
             </div>
           </div>
 

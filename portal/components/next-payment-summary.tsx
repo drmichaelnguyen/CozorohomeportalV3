@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 
+import { API_BASE_URL } from "../lib/api-base-url";
 import type { RentBreakdownPayload, RentPaidStatusPayload } from "../lib/rent-paid-status";
 import { formatBillingMonthLabel } from "../lib/rent-paid-status";
 import { usePortalLanguage } from "./portal-language";
@@ -90,6 +91,10 @@ type NextPaymentSummaryProps = {
   variant?: "default" | "dashboard";
   /** Optional link row */
   showPaymentsLink?: boolean;
+  /** When set with an unpaid breakdown, shows coin opt-in for this month’s bill. */
+  residentEmail?: string;
+  /** Refetch rent-paid-status after saving coin preference (e.g. reload dashboard / account). */
+  onRentPaidStatusRefresh?: () => void | Promise<void>;
 };
 
 export function NextPaymentSummary({
@@ -98,10 +103,43 @@ export function NextPaymentSummary({
   rentLoading,
   packageExpiryNote,
   variant = "default",
-  showPaymentsLink
+  showPaymentsLink,
+  residentEmail,
+  onRentPaidStatusRefresh
 }: NextPaymentSummaryProps) {
   const { t, language } = usePortalLanguage();
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [coinPrefSaving, setCoinPrefSaving] = useState(false);
+  const [coinPrefError, setCoinPrefError] = useState("");
+
+  async function handleApplyCoinsChange(next: boolean) {
+    if (!residentEmail || !rentPaidStatus?.month) {
+      return;
+    }
+    setCoinPrefError("");
+    setCoinPrefSaving(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/rent-paid-status/apply-coins`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: residentEmail,
+          applyCoinsTowardRent: next,
+          month: rentPaidStatus.month
+        })
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setCoinPrefError(typeof data.error === "string" ? data.error : t("useCoinsTowardRentError"));
+        return;
+      }
+      await onRentPaidStatusRefresh?.();
+    } catch {
+      setCoinPrefError(t("useCoinsTowardRentError"));
+    } finally {
+      setCoinPrefSaving(false);
+    }
+  }
 
   const isDashboard = variant === "dashboard";
   const pad = isDashboard ? "p-5 sm:p-6" : "p-6";
@@ -163,6 +201,25 @@ export function NextPaymentSummary({
 
       {showAmountRow && breakdown ? (
         <div className="mt-4 space-y-3">
+          {residentEmail ? (
+            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-amber-200/80 bg-white/70 p-3 text-sm text-slate-800 shadow-sm">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4 shrink-0 rounded border-amber-400 text-amber-700 focus:ring-amber-500 disabled:opacity-50"
+                checked={rentPaidStatus?.applyCoinsTowardRent === true}
+                disabled={coinPrefSaving}
+                onChange={(e) => void handleApplyCoinsChange(e.target.checked)}
+              />
+              <span className="min-w-0">
+                <span className="font-semibold text-slate-900">{t("useCoinsTowardRentLabel")}</span>
+                <span className="mt-1 block text-xs leading-relaxed text-slate-600">{t("useCoinsTowardRentHelp")}</span>
+                {coinPrefSaving ? (
+                  <span className="mt-1 block text-xs font-medium text-amber-800">{t("useCoinsTowardRentSaving")}</span>
+                ) : null}
+                {coinPrefError ? <span className="mt-1 block text-xs text-rose-700">{coinPrefError}</span> : null}
+              </span>
+            </label>
+          ) : null}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-xs font-semibold uppercase tracking-wide text-amber-800/90">

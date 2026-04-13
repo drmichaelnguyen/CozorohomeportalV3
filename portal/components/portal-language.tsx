@@ -66,6 +66,19 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "Cash due is 0₫ because your Cozoro Coins are applied toward this bill. Open Details to see the full breakdown.",
     vi: "Số tiền mặt cần trả là 0₫ vì Cozoro Coin đã được dùng để khấu trừ vào hóa đơn này. Mở Chi tiết để xem đầy đủ."
   },
+  useCoinsTowardRentLabel: {
+    en: "Use Cozoro Coins toward this month’s bill (up to 10% of rent + short-term surcharge, tier rate applies).",
+    vi: "Dùng Cozoro Coin cho hóa đơn tháng này (tối đa 10% tiền phòng + phụ phí ngắn hạn, theo hạng thành viên)."
+  },
+  useCoinsTowardRentHelp: {
+    en: "When this is off, coins are not applied to the amount below. Turn it on before the month is marked paid if you want the discount.",
+    vi: "Khi tắt, coin sẽ không được khấu trừ vào số tiền bên dưới. Bật trước khi tháng được ghi nhận đã thanh toán nếu bạn muốn dùng coin."
+  },
+  useCoinsTowardRentSaving: { en: "Saving preference…", vi: "Đang lưu…" },
+  useCoinsTowardRentError: {
+    en: "Could not update coin preference. Try again or contact your manager.",
+    vi: "Không thể cập nhật tùy chọn coin. Thử lại hoặc liên hệ quản lý."
+  },
   rentBlockingTitle: { en: "Rent payment required", vi: "Cần thanh toán tiền thuê" },
   rentBlockingSub: {
     en: "Your monthly rent is due and unpaid. Review the amount below, then tap Hide to continue using the portal.",
@@ -279,6 +292,11 @@ const translations: Record<string, { en: string; vi: string }> = {
   reportNewIssue: { en: "Report in Messages", vi: "Báo cáo qua Tin nhắn" },
   noActiveTickets: { en: "No active maintenance tickets.", vi: "Không có phiếu bảo trì nào đang hoạt động." },
   cozoroLabel: { en: "Cozoro", vi: "Cozoro" },
+  cozoroAssistant: { en: "Cozoro Assistant", vi: "Trợ lý Cozoro" },
+  supportCallbackTitle: { en: "Callback details (from chat)", vi: "Thông tin liên hệ (từ chat)" },
+  supportCallbackPhone: { en: "Phone", vi: "Điện thoại" },
+  supportCallbackFacebook: { en: "Facebook", vi: "Facebook" },
+  supportCallbackOther: { en: "Other", vi: "Khác" },
   anonymous: { en: "Anonymous", vi: "Ẩn danh" },
   unableToLoadChat: { en: "Unable to load chat.", vi: "Không thể tải đoạn hội thoại." },
   unableToLoadGroupMessages: { en: "Unable to load group messages.", vi: "Không thể tải tin nhắn nhóm." },
@@ -903,6 +921,11 @@ const translations: Record<string, { en: string; vi: string }> = {
     vi: "Tạo biên lai tiền phòng cho giường 7 D7 — 1.500.000 đồng"
   },
   managerAiViewClientList: { en: "Client List", vi: "Danh sách khách" },
+  managerAiViewOverview: { en: "Overview", vi: "Tổng quan" },
+  managerAiViewScheduling: { en: "Scheduling", vi: "Lịch trình" },
+  managerAiViewShortTerm: { en: "Short-term", vi: "Ngắn hạn" },
+  managerAiViewFeedbacks: { en: "Feedbacks", vi: "Phản hồi" },
+  managerAiViewOwnersEmployees: { en: "Staff & owners", vi: "Nhân sự & chủ" },
   managerAiViewCoins: { en: "Coins", vi: "Coin" },
   managerAiViewFines: { en: "Fines", vi: "Tiền phạt" },
   managerAiViewPayments: { en: "Payments", vi: "Thanh toán" },

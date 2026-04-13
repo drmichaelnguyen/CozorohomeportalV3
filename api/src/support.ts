@@ -12,6 +12,7 @@ import {
   ClientRow,
 } from "./google-sheets.js";
 import { prisma } from "./prisma.js";
+import { ASSISTANT_SENDER_EMAIL, runResidentSupportAssistantTurn } from "./resident-support-ai.js";
 import { requirePortalRole, resolvePortalLogin } from "./staff-access.js";
 import { sendPushToEmail } from "./push.js";
 import { getClientGroupContext } from "./group-support.js";
@@ -48,7 +49,11 @@ function normalizeEmail(email: string) {
 
 function messageTargetsViewer(message: { senderRole: SupportMessageSenderRole }, viewerRole: SupportViewerRoleValue) {
   if (viewerRole === "RESIDENT") {
-    return message.senderRole === SupportMessageSenderRole.MANAGER || message.senderRole === SupportMessageSenderRole.OWNER;
+    return (
+      message.senderRole === SupportMessageSenderRole.MANAGER ||
+      message.senderRole === SupportMessageSenderRole.OWNER ||
+      message.senderRole === SupportMessageSenderRole.ASSISTANT
+    );
   }
 
   return message.senderRole === SupportMessageSenderRole.RESIDENT;
@@ -953,6 +958,49 @@ export async function postResidentSupportMessage(input: {
 
     return { conversation: updatedConversation, message };
   });
+}
+
+export async function tryAppendAssistantAfterResidentMessage(input: {
+  conversationId: string;
+  residentEmail: string;
+}) {
+  const normalizedEmail = normalizeEmail(input.residentEmail);
+  const { replyText } = await runResidentSupportAssistantTurn({
+    conversationId: input.conversationId,
+    residentEmail: normalizedEmail
+  });
+
+  if (!replyText?.trim()) {
+    return null;
+  }
+
+  const trimmed = replyText.trim().length > 8000 ? replyText.trim().slice(0, 8000) : replyText.trim();
+
+  const message = await prisma.supportMessage.create({
+    data: {
+      conversationId: input.conversationId,
+      senderEmail: ASSISTANT_SENDER_EMAIL,
+      senderName: "Cozoro Assistant",
+      senderRole: SupportMessageSenderRole.ASSISTANT,
+      body: trimmed
+    }
+  });
+
+  await prisma.supportConversation.update({
+    where: { id: input.conversationId },
+    data: { lastMessageAt: message.createdAt }
+  });
+
+  clearNotificationCaches(normalizedEmail);
+
+  void sendPushToEmail(
+    normalizedEmail,
+    "New message from Cozoro",
+    trimmed.length > 100 ? trimmed.slice(0, 97) + "…" : trimmed,
+    "/support"
+  ).catch(() => {});
+
+  return { message };
 }
 
 export async function postOperatorSupportMessage(input: {

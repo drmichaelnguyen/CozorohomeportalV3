@@ -1,5 +1,6 @@
-import { CheckoutFormClient } from "../../components/checkout-form-client";
+import { redirect } from "next/navigation";
 
-export default function CheckoutPage() {
-  return <CheckoutFormClient />;
+/** Canonical URL is `/check-out` (matches app.cozorohome.com/check-out). */
+export default function CheckoutLegacyRedirectPage() {
+  redirect("/check-out");
 }

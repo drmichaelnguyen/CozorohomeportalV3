@@ -61,7 +61,7 @@ type SupportMessage = {
   id: string;
   senderEmail: string;
   senderName: string | null;
-  senderRole: "RESIDENT" | "MANAGER" | "OWNER";
+  senderRole: "RESIDENT" | "MANAGER" | "OWNER" | "ASSISTANT";
   body: string;
   isAnonymous?: boolean;
   pagePath: string | null;
@@ -95,6 +95,9 @@ function formatDateTime(value: string) {
 function senderLabel(message: SupportMessage, sessionEmail: string, t: (key: string, fallback?: string) => string) {
   if (message.senderRole === "OWNER" || message.senderRole === "MANAGER") {
     return t("cozoroLabel", "Cozoro");
+  }
+  if (message.senderRole === "ASSISTANT") {
+    return t("cozoroAssistant", "Cozoro Assistant");
   }
 
   return message.senderEmail === sessionEmail ? t("you", "You") : message.senderName || t("userViewShort", "Cozoronian");
@@ -562,9 +565,11 @@ export function SupportClient() {
           messages.map((message, idx) => {
             const isResident = message.senderRole === "RESIDENT";
             const isMe = message.senderEmail === sessionEmail.trim().toLowerCase();
-            const isCozoro = !isResident;
+            const isAssistant = message.senderRole === "ASSISTANT";
+            const isHumanStaff = message.senderRole === "OWNER" || message.senderRole === "MANAGER";
+            const isCozoro = isAssistant || isHumanStaff;
             const prevMsg = idx > 0 ? messages[idx - 1] : null;
-            const sameSender = prevMsg?.senderEmail === message.senderEmail;
+            const sameSender = prevMsg?.senderEmail === message.senderEmail && prevMsg?.senderRole === message.senderRole;
 
             return (
               <div
@@ -573,7 +578,7 @@ export function SupportClient() {
               >
                 {!sameSender && (
                   <span className="mb-1 px-2 text-[10px] font-bold text-slate-400">
-                    {isMe ? t("you", "You") : isCozoro ? t("cozoroLabel", "Cozoro") : (message.senderName || t("neighbor", "Neighbor"))}
+                    {isMe ? t("you", "You") : isCozoro ? senderLabel(message, sessionEmail.trim().toLowerCase(), t) : (message.senderName || t("neighbor", "Neighbor"))}
                   </span>
                 )}
                 
@@ -581,7 +586,9 @@ export function SupportClient() {
                   className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm shadow-sm ${
                     isMe 
                       ? "bg-slate-900 text-white rounded-tr-none" 
-                      : isCozoro 
+                      : isAssistant
+                        ? "bg-violet-100 text-violet-900 border border-violet-200 rounded-tl-none"
+                        : isHumanStaff
                         ? "bg-amber-100 text-amber-900 border border-amber-200 rounded-tl-none" 
                         : "bg-white text-slate-700 border border-slate-200 rounded-tl-none"
                   }`}

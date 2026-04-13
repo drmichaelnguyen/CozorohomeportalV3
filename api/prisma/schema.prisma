@@ -69,6 +69,7 @@ enum SupportMessageSenderRole {
   RESIDENT
   MANAGER
   OWNER
+  ASSISTANT
 }
 
 enum SupportViewerRole {
@@ -183,15 +184,19 @@ model CleaningAudit {
 }
 
 model SupportConversation {
-  id              String                    @id @default(cuid())
-  residentEmail   String                    @unique
-  residentName    String?
-  status          SupportConversationStatus @default(OPEN)
-  lastMessageAt   DateTime                  @default(now())
-  createdAt       DateTime                  @default(now())
-  updatedAt       DateTime                  @updatedAt
-  messages        SupportMessage[]
-  readStates      SupportReadState[]
+  id                       String                    @id @default(cuid())
+  residentEmail            String                    @unique
+  residentName             String?
+  status                   SupportConversationStatus @default(OPEN)
+  lastMessageAt            DateTime                  @default(now())
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  /// Callback details the AI may collect for staff (phone, Facebook link/username, or free-text e.g. Zalo).
+  residentContactPhone     String?                   @db.VarChar(48)
+  residentContactFacebook  String?                   @db.VarChar(191)
+  residentContactOther     String?                   @db.VarChar(255)
+  messages                 SupportMessage[]
+  readStates               SupportReadState[]
 
   @@index([status, lastMessageAt])
 }
@@ -337,6 +342,9 @@ model MonthlyRentStatus {
   isPaid    Boolean  @default(false)
   updatedAt DateTime @updatedAt
   updatedBy String   @default("")
+
+  /// Resident opt-in: apply Cozoro Coins toward this month’s bill (up to 10% of rent+surcharge, tier rate).
+  applyCoinsTowardRent Boolean @default(false)
 
   /// When a rent receipt was recorded via pay-rent (or manual backfill)
   paidRecordedAt DateTime?

@@ -12,6 +12,7 @@ import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 import { usePortalTheme } from "./portal-theme";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { InlineHelp } from "./inline-help";
 
 
@@ -87,7 +88,7 @@ type ClientChatMessage = {
   id: string;
   senderEmail: string;
   senderName: string | null;
-  senderRole: "RESIDENT" | "MANAGER" | "OWNER";
+  senderRole: "RESIDENT" | "MANAGER" | "OWNER" | "ASSISTANT";
   body: string;
   createdAt: string;
 };
@@ -843,12 +844,16 @@ function chatRoleLabel(role: ClientChatMessage["senderRole"]) {
   if (role === "MANAGER") {
     return "Staff";
   }
+  if (role === "ASSISTANT") {
+    return "Assistant";
+  }
   return "Resident";
 }
 
 
 export function ManagerClient({ initialView = "overview" }: { initialView?: ManagerView }) {
 
+  const router = useRouter();
   const { language, setLanguage, t } = usePortalLanguage();
   const { theme, toggleTheme } = usePortalTheme();
   const { sessionEmail, sessionRole } = usePortalSession();
@@ -1091,6 +1096,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [acRooms, setAcRooms] = useState<any[]>([]);
   const [laundryMachines, setLaundryMachines] = useState<any[]>([]);
   const [airfryers, setAirfryers] = useState<SmartDevice[]>([]);
+  const [microwaves, setMicrowaves] = useState<SmartDevice[]>([]);
   const [controllerLoading, setControllerLoading] = useState(false);
   const [controllerGroupCollapsed, setControllerGroupCollapsed] = useState<Record<string, boolean>>({});
   const [showControllerHistory, setShowControllerHistory] = useState(false);
@@ -1112,20 +1118,22 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     direction: "desc"
   });
 
-  const loadMaintenanceTickets = async () => {
-    setMaintenanceLoading(true);
+  const loadMaintenanceTickets = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setMaintenanceLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/staff/maintenance/tickets`);
       if (!response.ok) throw new Error("Failed to load maintenance tickets");
       const data = await response.json();
-      const activeOnly = (data.tickets || []).filter((t: any) => t.status === "REPORTED" || t.status === "ASSIGNED");
+      const activeOnly = (data.tickets || []).filter(
+        (t: MaintenanceTicket) => t.status === "REPORTED" || t.status === "ASSIGNED"
+      );
       setMaintenanceTickets(activeOnly);
     } catch (err) {
       console.error(err);
     } finally {
-      setMaintenanceLoading(false);
+      if (!opts?.silent) setMaintenanceLoading(false);
     }
-  };
+  }, []);
 
   const resolveMaintenanceTicket = async (ticketId: string) => {
     try {
@@ -1155,6 +1163,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       return 0;
     });
   }, [maintenanceTickets, maintenanceSort]);
+
+  /** Open REPORTED + ASSIGNED tickets (same filter as the maintenance table). */
+  const unsolvedMaintenanceTicketCount = maintenanceTickets.length;
 
   const filteredClients = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -1777,6 +1788,37 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }
   }
 
+  /** Manager AI returns navigate targets; map client stats tabs to client_list + activeTab. */
+  function handleManagerAiNavigate(raw: string) {
+    const view = String(raw || "").trim();
+    if (view === "coins" || view === "payments" || view === "fines") {
+      setActiveManagerView("client_list");
+      setActiveTab(view);
+      if (selectedMaHd) {
+        void loadWorkspace(view, selectedMaHd);
+      }
+      router.replace("/manager?view=client_list");
+      return;
+    }
+
+    const validTop: ManagerView[] = [
+      "overview",
+      "client_list",
+      "owners_employees",
+      "support_chat",
+      "feedbacks",
+      "admin_cleaning",
+      "scheduling",
+      "controller",
+      "short_term",
+      "settings"
+    ];
+    if (validTop.includes(view as ManagerView)) {
+      setActiveManagerView(view as ManagerView);
+      router.replace(`/manager?view=${encodeURIComponent(view)}`);
+    }
+  }
+
   async function loadRentPaidStatus(clientEmail: string) {
     const now = new Date();
     const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -2184,7 +2226,10 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     if (activeManagerView === "settings") {
       void loadPricingConfig();
     }
-  }, [activeManagerView]);
+    if (activeManagerView === "support_chat") {
+      void loadMaintenanceTickets({ silent: true });
+    }
+  }, [activeManagerView, loadMaintenanceTickets]);
 
   useEffect(() => {
     setActiveManagerView(initialView);
@@ -2236,6 +2281,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         setAcRooms(data.acRooms || []);
         setLaundryMachines(data.laundry || []);
         setAirfryers(data.airfryers || []);
+        setMicrowaves(data.microwaves || []);
       }
     } catch (err) {
       console.error("Failed to fetch devices", err);
@@ -2319,7 +2365,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }
   };
 
-  const handleMachineTrigger = async (machineId: string, deviceType: "laundry" | "airfryer") => {
+  const handleMachineTrigger = async (machineId: string, deviceType: "laundry" | "airfryer" | "microwave") => {
     const actionKey = `${deviceType}:${machineId}`;
     // AntiGravity: Manager manual override warning
     if (!window.confirm(t("manualOverrideWarning").replace("{id}", machineId))) {
@@ -2327,14 +2373,17 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }
     setControllerActionPending((current) => ({ ...current, [actionKey]: "TRIGGER" }));
     try {
-      const endpoint = deviceType === "laundry"
-        ? `${API_BASE_URL}/manager/controller/laundry/trigger`
-        : `${API_BASE_URL}/manager/controller/airfryer/trigger`;
+      const endpoint =
+        deviceType === "laundry"
+          ? `${API_BASE_URL}/manager/controller/laundry/trigger`
+          : deviceType === "microwave"
+            ? `${API_BASE_URL}/manager/controller/microwave/trigger`
+            : `${API_BASE_URL}/manager/controller/airfryer/trigger`;
 
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ machineId })
+        body: JSON.stringify(deviceType === "microwave" ? {} : { machineId })
       });
       if (response.ok) {
         setControllerFeedback(actionKey, {
@@ -2460,9 +2509,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
   useEffect(() => {
     void fetchUnreadCounts();
-    const interval = setInterval(() => void fetchUnreadCounts(), 30000);
+    void loadMaintenanceTickets({ silent: true });
+    const interval = setInterval(() => {
+      void fetchUnreadCounts();
+      void loadMaintenanceTickets({ silent: true });
+    }, 30000);
     return () => clearInterval(interval);
-  }, [fetchUnreadCounts]);
+  }, [fetchUnreadCounts, loadMaintenanceTickets]);
 
   async function uploadFineImage(file: File) {
     if (!selectedClient || !normalizedEmail) {
@@ -4227,6 +4280,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       {clientChatMessages.length ? (
                         clientChatMessages.map((message) => {
                           const isResident = message.senderRole === "RESIDENT";
+                          const isAssistant = message.senderRole === "ASSISTANT";
                           return (
                             <div
                               key={message.id}
@@ -4236,14 +4290,24 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm ${
                                   isResident
                                     ? "bg-slate-100 text-slate-900"
-                                    : "bg-slate-900 text-white"
+                                    : isAssistant
+                                      ? "bg-violet-700 text-white"
+                                      : "bg-slate-900 text-white"
                                 }`}
                               >
-                                <div className={`text-xs font-semibold ${isResident ? "text-slate-500" : "text-slate-200"}`}>
+                                <div
+                                  className={`text-xs font-semibold ${
+                                    isResident ? "text-slate-500" : isAssistant ? "text-violet-200" : "text-slate-200"
+                                  }`}
+                                >
                                   {chatRoleLabel(message.senderRole)} · {message.senderName?.trim() || message.senderEmail}
                                 </div>
                                 <div className="mt-1 whitespace-pre-wrap">{message.body}</div>
-                                <div className={`mt-2 text-xs ${isResident ? "text-slate-500" : "text-slate-300"}`}>
+                                <div
+                                  className={`mt-2 text-xs ${
+                                    isResident ? "text-slate-500" : isAssistant ? "text-violet-200" : "text-slate-300"
+                                  }`}
+                                >
                                   {formatDateTime(message.createdAt)}
                                 </div>
                               </div>
@@ -6845,60 +6909,68 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       ) : null}
 
       {activeManagerView === "support_chat" ? (
-        <section className="space-y-6">
-          <div className="flex flex-wrap gap-3 rounded-full border border-slate-100 bg-white p-1 shadow-sm w-fit">
-            <button
-              type="button"
-              onClick={() => setSupportSubTab("messages")}
-              className={`rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
-                supportSubTab === "messages"
-                  ? "bg-slate-900 text-white shadow-sm"
-                  : "text-slate-600 hover:bg-slate-50"
-              }`}
-            >
-              {t("messagesTab")}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSupportSubTab("feedbacks");
-                void loadFeedbacks();
-              }}
-              className={`rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
-                supportSubTab === "feedbacks"
-                  ? "bg-slate-900 text-white shadow-sm"
-                  : "text-slate-600 hover:bg-slate-50"
-              }`}
-            >
-              {t("feedbacksTab")}
-            </button>
-            <button
-              type="button"
-              onClick={() => setSupportSubTab("assistant")}
-              className={`rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
-                supportSubTab === "assistant"
-                  ? "bg-slate-900 text-white shadow-sm"
-                  : "text-slate-600 hover:bg-slate-50"
-              }`}
-            >
-              {t("chatAssistantTab")}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSupportSubTab("maintenance");
-                void loadMaintenanceTickets();
-              }}
-              className={`rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
-                supportSubTab === "maintenance"
-                  ? "bg-slate-900 text-white shadow-sm"
-                  : "text-slate-600 hover:bg-slate-50"
-              }`}
-            >
-              {t("maintenanceTickets")}
-            </button>
+        <section className="flex min-h-[320px] flex-col gap-0 rounded-3xl border border-slate-200 bg-slate-50/90 p-2 shadow-sm ring-1 ring-slate-100 max-h-[min(82dvh,calc(100dvh-9.5rem))]">
+          <div className="sticky top-0 z-20 shrink-0 rounded-2xl border border-slate-200/80 bg-white/95 px-1.5 py-1 shadow-sm backdrop-blur-sm">
+            <div className="flex gap-1 overflow-x-auto pb-0.5 no-scrollbar sm:flex-wrap sm:overflow-visible">
+              <button
+                type="button"
+                onClick={() => setSupportSubTab("messages")}
+                className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold transition-all sm:text-sm ${
+                  supportSubTab === "messages"
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                {t("messagesTab")}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSupportSubTab("feedbacks");
+                  void loadFeedbacks();
+                }}
+                className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold transition-all sm:text-sm ${
+                  supportSubTab === "feedbacks"
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                {t("feedbacksTab")}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSupportSubTab("assistant")}
+                className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold transition-all sm:text-sm ${
+                  supportSubTab === "assistant"
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                {t("chatAssistantTab")}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSupportSubTab("maintenance");
+                  void loadMaintenanceTickets();
+                }}
+                className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold transition-all sm:text-sm ${
+                  supportSubTab === "maintenance"
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                <span>{t("maintenanceTickets")}</span>
+                {unsolvedMaintenanceTicketCount > 0 ? (
+                  <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white tabular-nums ring-2 ring-white">
+                    {unsolvedMaintenanceTicketCount > 99 ? "99+" : unsolvedMaintenanceTicketCount}
+                  </span>
+                ) : null}
+              </button>
+            </div>
           </div>
 
+          <div className="mt-2 min-h-0 flex-1 overflow-y-auto overflow-x-hidden rounded-2xl">
           {supportSubTab === "messages" ? (
             <ManagerSupportInbox
               operatorEmail={normalizedEmail}
@@ -6929,7 +7001,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     : "Add coins, create fines or receipts, or ask which beds are free — the assistant uses live data from tools."}
                 </p>
               </div>
-              <ManagerAiChat operatorEmail={normalizedEmail} onNavigate={(view) => setActiveManagerView(view as ManagerView)} inline />
+              <ManagerAiChat operatorEmail={normalizedEmail} onNavigate={handleManagerAiNavigate} inline />
             </section>
           ) : supportSubTab === "feedbacks" ? (
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -7057,6 +7129,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               </div>
             </section>
           )}
+          </div>
         </section>
       ) : null}
 
@@ -7149,6 +7222,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     const branchAcRooms = acRooms.filter((r) => r.branchId === branch);
                     const branchLaundry = laundryMachines.filter((m) => m.branchId === branch);
                     const branchAirfryers = airfryers.filter((af) => af.branchId === branch);
+                    const branchMicrowaves = microwaves.filter((m) => m.branchId === branch);
 
                     // Group AC rooms by floor
                     const floorMap = new Map<string, any[]>();
@@ -7303,8 +7377,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               </div>
                             )}
 
-                            {/* Common Area (kitchen: airfryers, microwave etc.) */}
-                            {branchAirfryers.length > 0 && (
+                            {/* Common Area (kitchen: air fryers, microwave) */}
+                            {(branchAirfryers.length > 0 || branchMicrowaves.length > 0) && (
                               <div>
                                 <div className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">{t("kitchenTitle")}</div>
                                 {(() => {
@@ -7338,6 +7412,28 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                                   onClick={() => handleMachineTrigger(af.id, "airfryer")}
                                                   disabled={Boolean(pendingAction)}
                                                   className="mt-3 w-full rounded-lg bg-amber-600 py-2 text-xs font-black text-white hover:bg-amber-700 active:scale-95 transition-all disabled:cursor-not-allowed disabled:opacity-60"
+                                                >
+                                                  {pendingAction ? t("triggering") : t("trigger")}
+                                                </button>
+                                                {feedback ? (
+                                                  <div className={`mt-2 text-xs font-medium ${feedback.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}>
+                                                    {feedback.message}
+                                                  </div>
+                                                ) : null}
+                                              </div>
+                                            );
+                                          })}
+                                          {branchMicrowaves.map((mw) => {
+                                            const actionKey = `microwave:${mw.id}`;
+                                            const pendingAction = controllerActionPending[actionKey];
+                                            const feedback = controllerActionFeedback[actionKey];
+                                            return (
+                                              <div key={mw.id} className="rounded-xl border border-violet-100 bg-violet-50/30 p-3">
+                                                <div className="text-sm font-bold text-violet-900">{mw.label}</div>
+                                                <button
+                                                  onClick={() => handleMachineTrigger(mw.id, "microwave")}
+                                                  disabled={Boolean(pendingAction)}
+                                                  className="mt-3 w-full rounded-lg bg-violet-600 py-2 text-xs font-black text-white hover:bg-violet-700 active:scale-95 transition-all disabled:cursor-not-allowed disabled:opacity-60"
                                                 >
                                                   {pendingAction ? t("triggering") : t("trigger")}
                                                 </button>

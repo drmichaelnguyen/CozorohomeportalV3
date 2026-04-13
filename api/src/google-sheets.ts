@@ -17,6 +17,7 @@ const finesDriveFolderId = process.env.GOOGLE_FINE_IMAGE_FOLDER_ID ?? "";
 const maintenanceSheetName = process.env.GOOGLE_MAINTENANCE_SHEET_NAME ?? "MAINTENANCE";
 const maintenanceSheetId = Number.parseInt(process.env.GOOGLE_MAINTENANCE_SHEET_ID ?? "0", 10);
 const discountsSheetName = process.env.GOOGLE_DISCOUNTS_SHEET_NAME ?? "DISCOUNTS";
+const checkoutSheetName = process.env.GOOGLE_CHECKOUT_SHEET_NAME ?? "check-out";
 
 export const MAINTENANCE_TICKET_ID_COLUMN = "TICKET ID";
 export const MAINTENANCE_RESIDENT_EMAIL_COLUMN = "RESIDENT EMAIL";
@@ -157,15 +158,15 @@ export const laundryMachines = [
 
 const EMAIL_COLUMN = "\u0110\u1ecba ch\u1ec9 email";
 const HIDDEN_EMAIL_COLUMN = "\u0110\u1ecba ch\u1ec9 email - Hidden";
-const ACTIVE_STAYING_COLUMN = "Hi\u1ec7n c\u00f2n \u1edf";
+export const ACTIVE_STAYING_COLUMN = "Hi\u1ec7n c\u00f2n \u1edf";
 export const CONTRACT_CODE_COLUMN = "M\u00c3 HD";
-const CLIENT_NAME_COLUMN = "T\u00ean";
-const CLIENT_BED_COLUMN = "s\u1ed1 gi\u01b0\u1eddng";
+export const CLIENT_NAME_COLUMN = "T\u00ean";
+export const CLIENT_BED_COLUMN = "s\u1ed1 gi\u01b0\u1eddng";
 const CLIENT_GENDER_COLUMN = "Gi\u1edbi t\u00ednh";
-const CLIENT_BRANCH_COLUMN = "Chi nh\u00e1nh Cozoro dorm";
+export const CLIENT_BRANCH_COLUMN = "Chi nh\u00e1nh Cozoro dorm";
 const CLIENT_PHONE_COLUMN = "S\u1ed1 \u0111i\u1ec7n tho\u1ea1i li\u00ean h\u1ec7";
 const CLIENT_CONTRACT_START_COLUMN = "Ng\u00e0y b\u1eaft \u0111\u1ea7u h\u1ee3p \u0111\u1ed3ng";
-const CLIENT_CONTRACT_END_COLUMN = "Ng\u00e0y h\u1ebft h\u1ea1n h\u1ee3p \u0111\u1ed3ng";
+export const CLIENT_CONTRACT_END_COLUMN = "Ng\u00e0y h\u1ebft h\u1ea1n h\u1ee3p \u0111\u1ed3ng";
 export const CLIENT_CLEANING_FEE_COLUMN = "Cleaning fee";
 const CLIENT_SHORT_TERM_FEE_COLUMN = "Ph\u00ed ng\u1eafn h\u1ea1n";
 const CLIENT_SHORT_TERM_FREE_COLUMN = "Mi\u1ec5n ph\u00ed ng\u1eafn h\u1ea1n?";
@@ -5379,4 +5380,70 @@ export async function upsertDiscountToSheet(discount: SheetDiscount, actorEmail:
 /** @deprecated use queueDiscountDelete instead */
 export async function deleteDiscountFromSheet(discountId: string): Promise<void> {
   queueDiscountDelete(discountId);
+}
+
+export type CheckoutSheetAppendPayload = {
+  user: string;
+  email: string;
+  maHd: string;
+  name: string;
+  dateTimeCheckout: string;
+  quyTrinh: string;
+  photosLocalPaths: string;
+  branch: string;
+  bed: string;
+  source: string;
+};
+
+function checkoutCellForHeader(rawHeader: string, p: CheckoutSheetAppendPayload): string {
+  const normalized = repairMojibake(rawHeader)
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, "")
+    .replace(/\s+/g, "");
+  if (normalized === "user") return p.user;
+  if (normalized === "email") return p.email;
+  if (normalized === "mahd" || normalized === "mãhd") return p.maHd;
+  if (normalized === "name") return p.name;
+  if (normalized.includes("datetimecheckout") || normalized.includes("datecheckout")) {
+    return p.dateTimeCheckout;
+  }
+  if (normalized.includes("quytr") || normalized.includes("quytrình")) {
+    return p.quyTrinh;
+  }
+  if (normalized.includes("photoslocal") || normalized.includes("photopath")) {
+    return p.photosLocalPaths;
+  }
+  if (normalized.includes("branch")) return p.branch;
+  if (normalized === "bed" || normalized.includes("sốgiường") || normalized.includes("sogi")) {
+    return p.bed;
+  }
+  if (normalized === "source") return p.source;
+  return "";
+}
+
+/** Append one row to the `check-out` tab; header row must exist (User, Email, MaHD, …). */
+export async function appendCheckoutSheetRow(p: CheckoutSheetAppendPayload): Promise<void> {
+  if (!spreadsheetId) {
+    throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
+  }
+  const sheets = await getAuthorizedSheetsClient();
+  const quoted = `'${checkoutSheetName.replace(/'/g, "''")}'`;
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${quoted}!A:ZZ`
+  });
+  const rows = response.data.values ?? [];
+  if (rows.length === 0) {
+    throw new Error(`Sheet "${checkoutSheetName}" is empty — add a header row.`);
+  }
+  const rawHeaders = (rows[0] ?? []).map((c) => repairMojibake(String(c ?? "")).trim());
+  const row = rawHeaders.map((h) => checkoutCellForHeader(h, p));
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${quoted}!A:ZZ`,
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values: [row] }
+  });
 }

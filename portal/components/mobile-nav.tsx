@@ -14,13 +14,14 @@ type NavBadges = {
   message: number;   // support button top-left
   account: number;   // account button top-right
   managerMessage: number; // manager message button top-left
+  managerMaintenance: number; // open maintenance tickets (manager Messages nav, badge right)
 };
 
 const BADGE_CACHE_TTL = 30 * 1000; // 30 seconds
 const BADGE_POLL_INTERVAL = 30 * 1000; // poll every 30 seconds
 
 function useCachedBadges(cacheKey: string): [NavBadges, (b: NavBadges) => void] {
-  const empty: NavBadges = { laundry: 0, cleaning: 0, message: 0, account: 0, managerMessage: 0 };
+  const empty: NavBadges = { laundry: 0, cleaning: 0, message: 0, account: 0, managerMessage: 0, managerMaintenance: 0 };
 
   function load(): NavBadges {
     if (typeof window === "undefined") return empty;
@@ -61,20 +62,31 @@ function useNavBadges(
 
     try {
       if (isAdminSession) {
-        // Manager: fetch unread support request count
-        const res = await fetch(
-          `${API_BASE_URL}/manager/support/notifications?operatorEmail=${encodeURIComponent(normalizedEmail)}`
-        );
-        if (!res.ok) return;
-        const data = (await res.json()) as {
-          unreadCount?: number;
-          notifications?: { unreadCount?: number }[];
-        };
-        const total =
-          data.notifications?.reduce((sum, n) => sum + (n.unreadCount ?? 0), 0) ??
-          data.unreadCount ??
-          0;
-        setBadges({ ...badges, managerMessage: total });
+        // Manager: unread support + open maintenance tickets
+        const [supportRes, maintRes] = await Promise.all([
+          fetch(`${API_BASE_URL}/manager/support/notifications?operatorEmail=${encodeURIComponent(normalizedEmail)}`),
+          fetch(`${API_BASE_URL}/staff/maintenance/tickets`)
+        ]);
+        let managerMessage = 0;
+        if (supportRes.ok) {
+          const data = (await supportRes.json()) as {
+            unreadCount?: number;
+            notifications?: { unreadCount?: number }[];
+          };
+          managerMessage =
+            data.notifications?.reduce((sum, n) => sum + (n.unreadCount ?? 0), 0) ??
+            data.unreadCount ??
+            0;
+        }
+        let managerMaintenance = 0;
+        if (maintRes.ok) {
+          const maintData = (await maintRes.json()) as { tickets?: { status?: string }[] };
+          const tickets = maintData.tickets ?? [];
+          managerMaintenance = tickets.filter(
+            (t) => String(t.status).toUpperCase() === "REPORTED" || String(t.status).toUpperCase() === "ASSIGNED"
+          ).length;
+        }
+        setBadges((prev) => ({ ...prev, managerMessage, managerMaintenance }));
       } else {
         // Resident: split by notification type
         const res = await fetch(
@@ -91,13 +103,15 @@ function useNavBadges(
             .filter((n) => types.includes(n.type))
             .reduce((s, n) => s + (n.unreadCount ?? 0), 0);
 
-        setBadges({
+        setBadges((prev) => ({
+          ...prev,
           laundry: sum(["LAUNDRY_REMINDER"]),
           cleaning: sum(["CLEANING_REMINDER", "CLEANING_AUDIT_RESULT"]),
           message: sum(["SUPPORT_REPLY"]),
           account: sum(["PAYMENT_DUE", "NEW_FINE"]),
           managerMessage: 0,
-        });
+          managerMaintenance: 0,
+        }));
       }
     } catch {}
   }
@@ -317,6 +331,7 @@ export function MobileNav() {
       href: "/manager?view=support_chat",
       label: t("message", "Message"),
       badgeLeft: badges.managerMessage,
+      badgeRight: badges.managerMaintenance,
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />

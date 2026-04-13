@@ -28,13 +28,16 @@ type SupportConversation = {
   status: "OPEN" | "CLOSED";
   lastMessageAt: string;
   createdAt?: string;
+  residentContactPhone?: string | null;
+  residentContactFacebook?: string | null;
+  residentContactOther?: string | null;
 };
 
 type SupportMessage = {
   id: string;
   senderEmail: string;
   senderName: string | null;
-  senderRole: "RESIDENT" | "MANAGER" | "OWNER";
+  senderRole: "RESIDENT" | "MANAGER" | "OWNER" | "ASSISTANT";
   body: string;
   pagePath: string | null;
   createdAt: string;
@@ -65,10 +68,13 @@ function formatConversationTime(value: string) {
 }
 
 function isStaffRole(role: SupportMessage["senderRole"]) {
-  return role === "MANAGER" || role === "OWNER";
+  return role === "MANAGER" || role === "OWNER" || role === "ASSISTANT";
 }
 
 function senderShortName(message: SupportMessage, t: (key: any, ...args: any[]) => string) {
+  if (message.senderRole === "ASSISTANT") {
+    return t("cozoroAssistant", "Cozoro Assistant");
+  }
   if (isStaffRole(message.senderRole)) {
     return message.senderName?.trim() || (message.senderRole === "OWNER" ? t("roleOwner", "Owner") : t("roleManager", "Manager"));
   }
@@ -264,6 +270,7 @@ export function ManagerSupportInbox({
     messages.forEach((message, index) => {
       const dateLabel = formatDateLabel(message.createdAt, t);
       const isStaff = isStaffRole(message.senderRole);
+      const isAssistant = message.senderRole === "ASSISTANT";
       const prevMessage = messages[index - 1];
       const nextMessage = messages[index + 1];
 
@@ -306,13 +313,19 @@ export function ManagerSupportInbox({
             <div
               className={`rounded-2xl px-4 py-2.5 ${
                 isStaff
-                  ? `bg-blue-500 text-white ${isFirstInGroup ? "rounded-tr-sm" : ""}`
+                  ? isAssistant
+                    ? `bg-violet-600 text-white ${isFirstInGroup ? "rounded-tr-sm" : ""}`
+                    : `bg-blue-500 text-white ${isFirstInGroup ? "rounded-tr-sm" : ""}`
                   : `bg-slate-100 text-slate-900 ${isFirstInGroup ? "rounded-tl-sm" : ""}`
               }`}
             >
               <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.body}</p>
               {message.pagePath ? (
-                <p className={`mt-1 text-[10px] ${isStaff ? "text-blue-200" : "text-slate-400"}`}>
+                <p
+                  className={`mt-1 text-[10px] ${
+                    isStaff ? (isAssistant ? "text-violet-200" : "text-blue-200") : "text-slate-400"
+                  }`}
+                >
                   {t("fromLabel", "from")} {message.pagePath}
                 </p>
               ) : null}
@@ -476,6 +489,37 @@ export function ManagerSupportInbox({
                   </button>
                 </div>
               </div>
+
+              {selectedConversation &&
+              !selectedConversationId.startsWith("BRANCH_") &&
+              !selectedConversationId.startsWith("FLOOR_") &&
+              !selectedConversationId.startsWith("ROOM_") &&
+              (selectedConversation.residentContactPhone ||
+                selectedConversation.residentContactFacebook ||
+                selectedConversation.residentContactOther) ? (
+                <div className="border-b border-violet-100 bg-violet-50/80 px-5 py-2.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-violet-700">
+                    {t("supportCallbackTitle", "Callback details (from chat)")}
+                  </p>
+                  <div className="mt-1 flex flex-wrap gap-2 text-xs text-violet-950">
+                    {selectedConversation.residentContactPhone ? (
+                      <span className="rounded-lg bg-white/80 px-2 py-1 ring-1 ring-violet-200">
+                        {t("supportCallbackPhone", "Phone")}: {selectedConversation.residentContactPhone}
+                      </span>
+                    ) : null}
+                    {selectedConversation.residentContactFacebook ? (
+                      <span className="rounded-lg bg-white/80 px-2 py-1 ring-1 ring-violet-200">
+                        {t("supportCallbackFacebook", "Facebook")}: {selectedConversation.residentContactFacebook}
+                      </span>
+                    ) : null}
+                    {selectedConversation.residentContactOther ? (
+                      <span className="rounded-lg bg-white/80 px-2 py-1 ring-1 ring-violet-200">
+                        {t("supportCallbackOther", "Other")}: {selectedConversation.residentContactOther}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
 
               {status ? (
                 <p className="px-5 py-2 text-xs text-slate-500">{status}</p>

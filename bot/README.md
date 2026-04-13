@@ -41,6 +41,25 @@ In practice:
 - `api/` remains the source of truth for live business data
 - `bot/` handles Facebook, retrieval, and LLM orchestration independently
 
+## `chatbot.cozorohome.com` vs portal manager Messages
+
+The **Facebook Messenger bot** (`bot/`, served at `chatbot.cozorohome.com`) was originally **its own thing**—public fanpage chat, local knowledge and `bot/data/` storage—not built as a feature inside the resident/manager portal. The portal (`portal/` + `api/`) is a separate product; they only touch each other where you **deliberately** wire them (today mainly **prospect** calls via `BOT_API_BASE_URL`, not shared chat threads).
+
+These are **two different systems** today:
+
+| | **This repo’s `bot/`** (public: `https://chatbot.cozorohome.com`) | **Portal** (`app.cozorohome.com` + `api/`) |
+|---|--------|--------|
+| **Channel** | Facebook Messenger (Page webhook) | Logged-in resident **Messages** / manager **Support** inbox (`SupportConversation` in the DB) |
+| **Identity** | Facebook **PSID** (sender id), plus local learning files under `bot/data/` | Resident **email** on the portal account |
+| **Where chats live** | `bot/data/*` (e.g. chat history, learning state) | MariaDB via Prisma |
+| **LLM** | Configured here (`BOT_LLM_PROVIDER`, Gemini/OpenAI) | Separate flows in `api/` (e.g. manager AI, optional in-portal resident assistant) |
+
+The hostname **`chatbot.cozorohome.com`** points at this **`bot/`** process (see tunnel → `127.0.0.1:4111`). It does **not** automatically share threads with the manager support UI in the portal.
+
+`BOT_API_BASE_URL` / `BOT_API_SHARED_TOKEN` in `bot/.env` are used for **prospect** checks against the main API (`bot/src/prospect.ts`), not for posting Messenger traffic into `SupportConversation`.
+
+**If you want Facebook + manager inbox in one thread**, a dedicated integration is still needed, for example: map PSID → resident email (or a synthetic `fb+<psid>@…` mirror account), add authenticated API routes for append-only messages, call them from `bot/src/index.ts` after `recordCustomerMessage` / admin replies, and optionally send staff replies back through the Page token from the bot or API.
+
 ## Safe knowledge sources
 
 Only load customer-safe documents into the bot. Do not point it at internal runbooks, secrets, or operational notes.
