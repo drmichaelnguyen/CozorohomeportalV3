@@ -664,8 +664,6 @@ const translations: Record<string, { en: string; vi: string }> = {
   feedbacksTab: { en: "Feedbacks", vi: "Phản hồi" },
   maintenanceTickets: { en: "Maintenance Tickets", vi: "Yêu cầu sửa chữa" },
   maintenanceTicketsDesc: { en: "Manage active malfunction and maintenance reports.", vi: "Quản lý các báo cáo sự cố và bảo trì đang hoạt động." },
-  residentFeedbacks: { en: "Resident Feedbacks", vi: "Phản hồi từ cư dân" },
-  reviewNotesDesc: { en: "Review notes and suggestions from residents.", vi: "Xem lại các ghi chú và đề xuất từ cư dân." },
   loadingFeedbacks: { en: "Loading feedbacks...", vi: "Đang tải phản hồi..." },
   noFeedbacks: { en: "No feedbacks yet.", vi: "Chưa có phản hồi nào." },
   loadingTickets: { en: "Loading tickets...", vi: "Đang tải yêu cầu..." },
