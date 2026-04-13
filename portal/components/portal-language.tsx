@@ -933,25 +933,6 @@ export function PortalLanguageProvider({ children }: { children: React.ReactNode
     document.documentElement.lang = language === "vi" ? "vi" : "en";
   }, [language]);
 
-  // #region agent log
-  useEffect(() => {
-    if (typeof window === "undefined" || process.env.NODE_ENV === "production") return;
-    const keyCount = Object.keys(translations).length;
-    fetch("http://127.0.0.1:7386/ingest/2d0b8dfe-73b5-48f2-82fb-087a4a208e01", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "10ee7e" },
-      body: JSON.stringify({
-        sessionId: "10ee7e",
-        hypothesisId: "H-translations-shape",
-        location: "portal-language.tsx:PortalLanguageProvider",
-        message: "runtime_translation_key_count",
-        data: { keyCount },
-        timestamp: Date.now()
-      })
-    }).catch(() => {});
-  }, []);
-  // #endregion
-
   const value = useMemo<PortalLanguageContextValue>(
     () => ({
       language,
