@@ -17,6 +17,8 @@ import { usePortalSession } from "./portal-session";
 import { usePortalTheme } from "./portal-theme";
 import { LaundryController } from "./laundry-controller";
 import { ContractExtension } from "./contract-extension";
+import { NextPaymentSummary } from "./next-payment-summary";
+import type { RentPaidStatusPayload } from "../lib/rent-paid-status";
 
 type ClientRecord = Record<string, string>;
 
@@ -245,6 +247,7 @@ export function AccountOverviewClient() {
   const [completingCleaningTaskId, setCompletingCleaningTaskId] = useState("");
   const [payments, setPayments] = useState<PaymentEntry[]>([]);
   const [fines, setFines] = useState<FineEntry[]>([]);
+  const [rentPaidStatus, setRentPaidStatus] = useState<RentPaidStatusPayload | null>(null);
   
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -288,6 +291,7 @@ export function AccountOverviewClient() {
     setCoinEntries([]);
     setPayments([]);
     setFines([]);
+    setRentPaidStatus(null);
     setCleaningOverview(null);
     setExpandedBookingIds([]);
     setCalendarFilter("all");
@@ -312,12 +316,13 @@ export function AccountOverviewClient() {
 
       setClient(data as ClientRecord);
       login(activeEmail);
-      const [laundryResponse, coinsResponse, cleaningResponse, paymentsResponse, finesResponse] = await Promise.all([
+      const [laundryResponse, coinsResponse, cleaningResponse, paymentsResponse, finesResponse, rentPaidResponse] = await Promise.all([
         fetch(`${API_BASE_URL}/clients/laundry-bookings?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/coins?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/cleaning/me?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/payments?email=${encodeURIComponent(activeEmail)}`),
-        fetch(`${API_BASE_URL}/fines?email=${encodeURIComponent(activeEmail)}`)
+        fetch(`${API_BASE_URL}/fines?email=${encodeURIComponent(activeEmail)}`),
+        fetch(`${API_BASE_URL}/rent-paid-status?email=${encodeURIComponent(activeEmail)}`)
       ]);
       const laundryPayload = (await laundryResponse.json()) as
         | { bookings?: LaundryBooking[]; error?: string }
@@ -357,6 +362,10 @@ export function AccountOverviewClient() {
 
       if (finesResponse.ok) {
         setFines(finesPayload?.entries ?? []);
+      }
+
+      if (rentPaidResponse.ok) {
+        setRentPaidStatus((await rentPaidResponse.json()) as RentPaidStatusPayload);
       }
 
       setMessage("Account information loaded.");
@@ -593,7 +602,7 @@ export function AccountOverviewClient() {
     }
 
     return expiry;
-  }, [client]);
+  }, [client, clientWithDerivedRoom]);
   const currentCoins = useMemo(() => {
     let earned = 0;
     let used = 0;
@@ -794,6 +803,24 @@ export function AccountOverviewClient() {
           onExtended={() => void loadAccountData()}
         />
       )}
+
+      {client && client["Hiện còn ở"] !== "-1" ? (
+        <NextPaymentSummary
+          nextPaymentDate={nextPaymentDate}
+          rentPaidStatus={rentPaidStatus}
+          rentLoading={loading}
+          packageExpiryNote={
+            client["Ngày hết hạn gói đã thanh toán"]
+              ? language === "vi"
+                ? `Ngày hết hạn gói đã thanh toán: ${client["Ngày hết hạn gói đã thanh toán"]}`
+                : `Paid package expires: ${client["Ngày hết hạn gói đã thanh toán"]}`
+              : language === "vi"
+                ? "Không có ngày hết hạn gói trong hồ sơ — kỳ thanh toán tiếp theo mặc định là ngày đầu tháng sau."
+                : "No paid-package expiry on file — next cycle defaults to the first day of next month."
+          }
+          showPaymentsLink
+        />
+      ) : null}
 
       <section className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
         <button

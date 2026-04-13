@@ -106,12 +106,18 @@ const TOOLS: GeminiTool[] = [
       },
       {
         name: "query_beds",
-        description: "Find available or occupied beds. Can filter by branch (D2 or D7).",
+        description:
+          "Report bed occupancy against the fixed inventory (D2: beds 1–21, D7: beds 1–63). Active residents (Hiện còn ở = 1) occupy beds. Always use this tool for counts or lists of free beds — do not infer from the chat resident list alone.",
         parameters: {
           type: "OBJECT",
           properties: {
             branch: { type: "STRING", description: "Optional branch filter: D2 or D7", enum: ["D2", "D7"] },
-            status: { type: "STRING", description: "Filter: 'available' (empty beds) or 'occupied' (all active clients)", enum: ["available", "occupied", "all"] }
+            status: {
+              type: "STRING",
+              description:
+                "'available' returns empty beds; 'occupied' lists active residents on beds; 'all' returns totalInventoryBeds plus available and occupied summaries",
+              enum: ["available", "occupied", "all"]
+            }
           },
           required: ["status"]
         }
@@ -223,31 +229,82 @@ async function executeTool(
 
   if (toolName === "query_beds") {
     const clients = await buildClientContext();
-    const branch = args.branch as string | undefined;
-    const status = args.status as string;
+    const branchArg = (args.branch as string | undefined)?.trim().toUpperCase();
+    const branchFilter: "D2" | "D7" | null =
+      branchArg === "D2" || branchArg === "D7" ? branchArg : null;
+    const status = String(args.status ?? "available");
 
-    function normBranch(b: string) {
-      return b.toUpperCase().replace(/^D/, "");
+    function canonicalBranch(raw: string): "D2" | "D7" {
+      const n = String(raw ?? "")
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, "");
+      if (n === "7" || n === "D7" || n.includes("D7") || n.includes("AD7")) {
+        return "D7";
+      }
+      return "D2";
     }
-    const filtered = branch
-      ? clients.filter((c) => normBranch(c.branch) === normBranch(branch))
-      : clients;
-    const occupiedBeds = new Set(filtered.map((c) => `${normBranch(c.branch)}:${c.bed}`));
 
-    if (status === "occupied" || status === "all") {
-      const rows = filtered.map((c) => `${c.name} — Bed ${c.bed}, Branch ${c.branch} (${c.maHd})`);
-      return { result: { occupied: rows, count: rows.length } };
+    function parseBedNum(bed: string): number | null {
+      const n = Number.parseInt(String(bed ?? "").replace(/\D/g, ""), 10);
+      if (!Number.isFinite(n) || n < 1) {
+        return null;
+      }
+      return n;
     }
 
-    // Available beds: enumerate all known beds per branch and subtract occupied
-    const allBeds: { branch: string; bed: number }[] = [];
-    const d2Beds = Array.from({ length: 21 }, (_, i) => ({ branch: "D2", bed: i + 1 }));
-    const d7Beds = Array.from({ length: 63 }, (_, i) => ({ branch: "D7", bed: i + 1 }));
-    (branch === "D2" ? d2Beds : branch === "D7" ? d7Beds : [...d2Beds, ...d7Beds]).forEach((b) => allBeds.push(b));
+    const scoped = branchFilter ? clients.filter((c) => canonicalBranch(c.branch) === branchFilter) : clients;
 
-    const available = allBeds.filter((b) => !occupiedBeds.has(`${b.branch}:${b.bed}`) && !occupiedBeds.has(`${b.branch}:${String(b.bed)}`));
-    const rows = available.map((b) => `Branch ${b.branch} Bed ${b.bed}`);
-    return { result: { available: rows, count: rows.length } };
+    const occupiedKeys = new Set<string>();
+    for (const c of scoped) {
+      const b = canonicalBranch(c.branch);
+      const n = parseBedNum(String(c.bed));
+      if (n != null) {
+        occupiedKeys.add(`${b}:${n}`);
+      }
+    }
+
+    const d2Beds = Array.from({ length: 21 }, (_, i) => ({ branch: "D2" as const, bed: i + 1 }));
+    const d7Beds = Array.from({ length: 63 }, (_, i) => ({ branch: "D7" as const, bed: i + 1 }));
+    const inventory =
+      branchFilter === "D2" ? d2Beds : branchFilter === "D7" ? d7Beds : [...d2Beds, ...d7Beds];
+
+    if (status === "occupied") {
+      const rows = scoped.map((c) => `${c.name} — ${canonicalBranch(c.branch)} bed ${c.bed} (maHd ${c.maHd})`);
+      return {
+        result: {
+          occupiedCount: rows.length,
+          occupied: rows,
+          branchFilter: branchFilter ?? "all"
+        }
+      };
+    }
+
+    const available = inventory.filter((slot) => !occupiedKeys.has(`${slot.branch}:${slot.bed}`));
+    const availableRows = available.map((slot) => `${slot.branch} bed ${slot.bed}`);
+
+    if (status === "all") {
+      const occRows = scoped.map((c) => `${c.name} — ${canonicalBranch(c.branch)} bed ${c.bed} (maHd ${c.maHd})`);
+      return {
+        result: {
+          branchFilter: branchFilter ?? "all",
+          totalInventoryBeds: inventory.length,
+          occupiedCount: occRows.length,
+          occupied: occRows,
+          availableCount: available.length,
+          availableBeds: availableRows
+        }
+      };
+    }
+
+    return {
+      result: {
+        branchFilter: branchFilter ?? "all",
+        totalInventoryBeds: inventory.length,
+        availableCount: available.length,
+        availableBeds: availableRows
+      }
+    };
   }
 
   if (toolName === "navigate") {
@@ -279,7 +336,7 @@ ${clientList || "  (chưa tải được danh sách)"}
 - Cộng hoặc trừ coin cho cư dân (công cụ add_coins)
 - Tạo phiếu phạt (create_fine)
 - Tạo biên lai thanh toán / dịch vụ (create_payment)
-- Kiểm tra giường trống hoặc đang có người (query_beds)
+- Kiểm tra giường trống hoặc đang có người (query_beds — luôn gọi công cụ này khi hỏi số giường trống/đang ở; đừng đoán từ danh sách cư dân)
 - Chuyển quản lý sang màn hình phù hợp khi việc phức tạp hơn khả năng tự động (navigate)
 
 ## Quy tắc
@@ -305,7 +362,7 @@ ${clientList || "  (no active residents loaded)"}
 - Add or deduct coins for a resident (use the add_coins tool)
 - Create a fine for a resident (use the create_fine tool)
 - Create a payment receipt for a resident (use the create_payment tool)
-- Check which beds are available or occupied (use the query_beds tool)
+- Check which beds are available or occupied (use the query_beds tool — always call it for counts or lists of empty beds; do not infer availability only from the resident list)
 - Navigate to a specific manager view for complex actions (use the navigate tool)
 
 ## Rules

@@ -14,6 +14,8 @@ import { MobileNav } from "./mobile-nav";
 import { ChatNotifier } from "./chat-notifier";
 import { VersionBadge } from "./version-badge";
 import { PushSubscription } from "./push-subscription";
+import { InlineHelp } from "./inline-help";
+import { RentDueBlockingOverlay } from "./rent-due-blocking-overlay";
 
 function SiteChrome({ children }: { children: React.ReactNode }) {
   const { language, setLanguage, t } = usePortalLanguage();
@@ -53,8 +55,8 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen">
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto max-w-5xl px-4 py-3 sm:px-6 sm:py-4">
-          <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className={`mx-auto max-w-5xl px-4 sm:px-6 ${isStaffSession ? "py-2 sm:py-2.5" : "py-3 sm:py-4"}`}>
+          <div className={`flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between ${isStaffSession ? "gap-2" : "gap-4"}`}>
             <Link href="/" className="inline-flex items-center shrink-0 rounded-lg outline-offset-4 hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500">
               <Image
                 src="/cozorohome-logo.png"
@@ -66,12 +68,12 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
               />
               <span className="sr-only">{t("portalTitle")}</span>
             </Link>
-            <div className="flex flex-col items-start gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+            <div className={`flex flex-col items-stretch sm:items-center sm:justify-end sm:flex-row sm:flex-wrap ${isStaffSession ? "gap-1.5" : "gap-3 items-start"}`}>
               {isStaffSession ? (
-                <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white p-1 shadow-sm">
+                <div className="flex w-full min-w-0 items-center justify-between gap-1.5 rounded-full border border-slate-200 bg-white p-0.5 shadow-sm sm:w-auto">
                   <Link
                     href="/"
-                    className={`rounded-full px-3 py-1 text-sm font-medium ${
+                    className={`rounded-full px-2.5 py-0.5 text-center text-xs font-medium sm:px-3 sm:text-sm ${
                       !isStaffWorkspace
                         ? "border border-sky-200 bg-sky-50 text-sky-900 shadow-sm"
                         : "border border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50"
@@ -81,7 +83,7 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
                   </Link>
                   <Link
                     href={sessionRole === "mechanic" ? "/mechanic" : "/manager"}
-                    className={`rounded-full px-3 py-1 text-sm font-medium ${
+                    className={`rounded-full px-2.5 py-0.5 text-center text-xs font-medium sm:px-3 sm:text-sm ${
                       isStaffWorkspace
                         ? "border border-sky-200 bg-sky-50 text-sky-900 shadow-sm"
                         : "border border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50"
@@ -92,9 +94,15 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
                 </div>
               ) : null}
               {isLoggedIn ? (
-                <div className="max-w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 break-all sm:rounded-full sm:py-1">
-                  {t("signedInAs", "Signed in as")} {sessionEmail}
-                  {sessionRole ? ` (${sessionRole})` : ""}
+                <div className="flex min-w-0 max-w-full items-center gap-1 rounded-full border border-slate-200 bg-slate-50 py-0.5 pl-2 pr-1 sm:max-w-[min(100%,22rem)]">
+                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-700 sm:text-sm" title={sessionEmail}>
+                    {sessionEmail}
+                  </span>
+                  <InlineHelp
+                    label={t("sessionDetailsHelpLabel")}
+                    title={t("portalTitle")}
+                    body={`${t("signedInAs", "Signed in as")} ${sessionEmail}${sessionRole ? `\n${language === "vi" ? "Vai trò" : "Role"}: ${sessionRole}` : ""}`}
+                  />
                 </div>
               ) : null}
               <button
@@ -111,7 +119,11 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
           {/* Primary and Utility links are now replaced by the Unified Bottom/Floating Nav */}
         </div>
       </header>
-      <main className="mx-auto max-w-5xl px-4 py-6 pb-32 sm:px-6 sm:pt-10 sm:pb-40">
+      <main
+        className={`mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:pt-10 ${
+          isSessionLoaded && isLoggedIn ? "pb-32 sm:pb-40" : "pb-8 sm:pb-10"
+        }`}
+      >
         {!isSessionLoaded ? null : isLoggedIn || isPublicStandalonePage ? (
           children
         ) : (
@@ -140,11 +152,10 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
                 </p>
                 <Link
                   href="/client-login"
-                  className="mt-6 inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-semibold shadow hover:bg-sky-50 transition-colors"
-                  style={{ color: "#0f172a" }}
+                  className="mt-6 inline-flex items-center gap-2 rounded-full bg-[#ffffff] px-6 py-3 text-sm font-semibold !text-[#0f172a] shadow-md shadow-slate-900/10 ring-1 ring-slate-200/90 transition-colors hover:bg-slate-100 hover:!text-[#020617] dark:bg-[#f8fafc] dark:shadow-black/25 dark:ring-white/25 dark:hover:bg-slate-200 dark:hover:!text-[#020617]"
                 >
                   {language === "vi" ? "Đăng nhập tài khoản" : "Sign in to your account"}
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                   </svg>
                 </Link>
@@ -250,11 +261,14 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
           </div>
         )}
       </main>
-      <Suspense fallback={null}>
-        <MobileNav />
-      </Suspense>
+      {isSessionLoaded && isLoggedIn ? (
+        <Suspense fallback={null}>
+          <MobileNav />
+        </Suspense>
+      ) : null}
       {isLoggedIn ? <ChatNotifier /> : null}
       {isLoggedIn && sessionEmail ? <PushSubscription email={sessionEmail} /> : null}
+      <RentDueBlockingOverlay />
       <VersionBadge />
     </div>
   );

@@ -13,6 +13,7 @@ export default function GlobalError({
     <html lang="vi">
       <head>
         <meta charSet="utf-8" />
+        <link rel="icon" href="/cozorohome-logo.png" type="image/png" />
         <title>CozoroHome Portal</title>
       </head>
       <body style={{ margin: 0, fontFamily: "system-ui, sans-serif", background: "#f8fafc" }}>

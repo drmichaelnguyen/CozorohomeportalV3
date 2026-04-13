@@ -38,6 +38,7 @@ import { adminSetPortalPassword, changePortalPassword, loginWithPortalPassword, 
 import { getAccountLockOverride, setAccountLockOverride } from "./account-lock-overrides.js";
 import { getClientGroupContext, getGroupMessages, markGroupRead, postGroupMessage } from "./group-support.js";
 import { VAPID_PUBLIC_KEY, savePushSubscription, deletePushSubscription } from "./push.js";
+import { getPortalUxSettings, updatePortalUxSettings } from "./portal-ux-settings.js";
 import { 
   calculateRentBreakdown 
 } from "./calculation-engine.js";
@@ -4445,27 +4446,83 @@ app.get("/rent-paid-status", async (req, res) => {
   const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
   try {
-    const [record, clientCache] = await Promise.all([
+    const [record, clientCache, portalUx] = await Promise.all([
       prisma.monthlyRentStatus.findUnique({ where: { email_month: { email, month } } }),
-      readCachedClients()
+      readCachedClients(),
+      getPortalUxSettings()
     ]);
 
     const client = clientCache?.rows.find((r) => (r["Địa chỉ email"] ?? "").toLowerCase() === email);
     if (!client) {
-      return res.json({ email, month, isPaid: record?.isPaid ?? false, breakdown: null, onPrepaidPlan: false });
+      return res.json({
+        email,
+        month,
+        isPaid: record?.isPaid ?? false,
+        breakdown: null,
+        onPrepaidPlan: false,
+        blockingRentDuePopupEnabled: portalUx.blockingRentDuePopupEnabled
+      });
     }
 
     const paymentPlan = String(client["Bạn muốn thanh toán chi phí như thế nào?"] ?? "");
     const onPrepaidPlan = paymentPlan.includes("03 tháng") || paymentPlan.includes("06 tháng");
 
     if (onPrepaidPlan || (record?.isPaid ?? false)) {
-      return res.json({ email, month, isPaid: record?.isPaid ?? onPrepaidPlan, breakdown: null, onPrepaidPlan });
+      return res.json({
+        email,
+        month,
+        isPaid: record?.isPaid ?? onPrepaidPlan,
+        breakdown: null,
+        onPrepaidPlan,
+        blockingRentDuePopupEnabled: portalUx.blockingRentDuePopupEnabled
+      });
     }
 
     const breakdown = await calculateRentBreakdown(client, month, { managerDiscountVnd: 0 });
-    return res.json({ email, month, isPaid: false, breakdown, onPrepaidPlan: false });
+    return res.json({
+      email,
+      month,
+      isPaid: false,
+      breakdown,
+      onPrepaidPlan: false,
+      blockingRentDuePopupEnabled: portalUx.blockingRentDuePopupEnabled
+    });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to load rent status" });
+  }
+});
+
+// GET /manager/portal-ux-settings — staff reads portal UX toggles
+app.get("/manager/portal-ux-settings", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim();
+  if (!actorEmail) {
+    return res.status(400).json({ error: "actorEmail is required" });
+  }
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const settings = await getPortalUxSettings();
+    return res.json(settings);
+  } catch (error) {
+    return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+// PUT /manager/portal-ux-settings — staff updates portal UX toggles
+app.put("/manager/portal-ux-settings", async (req, res) => {
+  const body = req.body as Record<string, unknown>;
+  const actorEmail = String(body.actorEmail ?? "").trim();
+  const blockingRentDuePopupEnabled = body.blockingRentDuePopupEnabled;
+  if (!actorEmail) {
+    return res.status(400).json({ error: "actorEmail is required" });
+  }
+  if (typeof blockingRentDuePopupEnabled !== "boolean") {
+    return res.status(400).json({ error: "blockingRentDuePopupEnabled (boolean) is required" });
+  }
+  try {
+    const settings = await updatePortalUxSettings(actorEmail, { blockingRentDuePopupEnabled });
+    return res.json(settings);
+  } catch (error) {
+    return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
   }
 });
 

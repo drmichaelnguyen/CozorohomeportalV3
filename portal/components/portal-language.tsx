@@ -40,6 +40,45 @@ const translations: Record<string, { en: string; vi: string }> = {
   purpose: { en: "Purpose", vi: "Mục đích" },
   sort: { en: "Sort", vi: "Sắp xếp" },
   nextPayment: { en: "Next Payment", vi: "Kỳ thanh toán tiếp theo" },
+  rent: { en: "Rent", vi: "Tiền phòng" },
+  parking: { en: "Parking", vi: "Phí gửi xe" },
+  monthlyAdjustmentSurcharge: { en: "Monthly adjustment surcharge", vi: "Phụ thu điều chỉnh tháng" },
+  gateParking: { en: "Gate parking (unpaid tickets)", vi: "Gửi xe cổng (vé chưa thanh toán)" },
+  laundryServices: { en: "Laundry services", vi: "Dịch vụ giặt sấy" },
+  contactManagerForPayment: {
+    en: "Contact your manager to arrange payment or for any questions about this breakdown.",
+    vi: "Liên hệ quản lý để thanh toán hoặc hỏi thêm về chi tiết này."
+  },
+  totalPaymentNeeded: { en: "Total payment needed", vi: "Tổng cần thanh toán" },
+  paymentDetails: { en: "Details", vi: "Chi tiết" },
+  hideDetails: { en: "Hide details", vi: "Ẩn chi tiết" },
+  billForMonth: { en: "Bill", vi: "Hóa đơn" },
+  nextPaymentUnavailable: { en: "Next payment date is not available yet.", vi: "Chưa xác định được ngày thanh toán tiếp theo." },
+  rentOnPrepaidPlan: {
+    en: "You are on a multi-month prepaid plan. Monthly rent notices may not apply each month.",
+    vi: "Bạn đang dùng gói trả trước nhiều tháng. Thông báo tiền phòng hàng tháng có thể không áp dụng mỗi tháng."
+  },
+  rentBreakdownPending: {
+    en: "Amount details will appear here once your billing profile is synced.",
+    vi: "Chi tiết số tiền sẽ hiển thị khi hồ sơ thanh toán của bạn được đồng bộ."
+  },
+  rentBlockingTitle: { en: "Rent payment required", vi: "Cần thanh toán tiền thuê" },
+  rentBlockingSub: {
+    en: "Your monthly rent is due and unpaid. Review the amount below, then tap Hide to continue using the portal.",
+    vi: "Tiền thuê tháng hiện tại đã đến hạn và chưa được ghi nhận thanh toán. Xem số tiền bên dưới, sau đó nhấn Ẩn để tiếp tục dùng cổng thông tin."
+  },
+  hideNotice: { en: "Hide", vi: "Ẩn" },
+  residentPortalUxTitle: { en: "Resident portal notices", vi: "Thông báo cổng cư dân" },
+  blockingRentDuePopupLabel: {
+    en: "Block portal with rent-due notice",
+    vi: "Chặn cổng bằng thông báo tiền thuê đến hạn"
+  },
+  blockingRentDuePopupHelp: {
+    en: "When enabled, residents with unpaid rent for the current month must tap Hide on a full-screen notice before using the app.",
+    vi: "Khi bật, cư dân chưa đóng tiền thuê tháng hiện tại phải nhấn Ẩn trên thông báo toàn màn hình trước khi dùng tiếp ứng dụng."
+  },
+  savePortalUxSettings: { en: "Save notice setting", vi: "Lưu cài đặt thông báo" },
+  portalUxSettingsSaved: { en: "Saved successfully.", vi: "Đã lưu thành công." },
   coinsTitle: { en: "Coins", vi: "Cozoro Coins" },
   viewCoinHistory: { en: "View coin history", vi: "Xem lịch sử coin" },
   refreshCoins: { en: "Refresh coins", vi: "Làm mới coin" },
@@ -290,6 +329,8 @@ const translations: Record<string, { en: string; vi: string }> = {
   staffLoginRequired: { en: "Sign in with a Cozoro, manager, or owner account to search clients, send messages, create fine tickets, add coin entries, and review client statistics.", vi: "Đăng nhập bằng tài khoản Cozoro, quản lý hoặc chủ sở hữu để tìm kiếm khách hàng, gửi tin nhắn, tạo phiếu phạt, thêm coin và xem thống kê khách hàng." },
   managementWorkspace: { en: "Management Workspace", vi: "Không gian quản lý" },
   managementWorkspaceDesc: { en: "Search clients, edit their profile, send messages, create fine tickets and coin entries, then open laundry, coins, payments, or fines from latest to oldest.", vi: "Tìm kiếm khách hàng, chỉnh sửa hồ sơ, gửi tin nhắn, tạo phiếu phạt và mục nhập coin, sau đó xem lịch sử giặt ủi, coin, thanh toán hoặc tiền phạt từ mới nhất đến cũ nhất." },
+  managementWorkspaceHelpLabel: { en: "Help: management workspace", vi: "Trợ giúp: không gian quản lý" },
+  sessionDetailsHelpLabel: { en: "Session details", vi: "Chi tiết phiên đăng nhập" },
   refreshData: { en: "Refresh data", vi: "Làm mới dữ liệu" },
   browseList: { en: "1. Browse List", vi: "1. Xem danh sách" },
   clientDetailsTab: { en: "2. Client Details", vi: "2. Chi tiết khách hàng" },
@@ -662,6 +703,7 @@ const translations: Record<string, { en: string; vi: string }> = {
   iotIdLabel: { en: "IoT ID", vi: "Mã IoT" },
   messagesTab: { en: "Messages", vi: "Tin nhắn" },
   feedbacksTab: { en: "Feedbacks", vi: "Phản hồi" },
+  chatAssistantTab: { en: "AI assistant", vi: "Trợ lý AI" },
   maintenanceTickets: { en: "Maintenance Tickets", vi: "Yêu cầu sửa chữa" },
   maintenanceTicketsDesc: { en: "Manage active malfunction and maintenance reports.", vi: "Quản lý các báo cáo sự cố và bảo trì đang hoạt động." },
   loadingFeedbacks: { en: "Loading feedbacks...", vi: "Đang tải phản hồi..." },

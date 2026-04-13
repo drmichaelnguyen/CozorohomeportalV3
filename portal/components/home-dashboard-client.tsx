@@ -7,6 +7,7 @@ import { usePortalSession } from "./portal-session";
 import Link from "next/link";
 import { ContractExtension } from "./contract-extension";
 import { InlineHelp } from "./inline-help";
+import { NextPaymentSummary } from "./next-payment-summary";
 import { isContractExpired, daysUntilContractEnd } from "../lib/contract-utils";
 
 type ClientRecord = Record<string, string>;
@@ -66,6 +67,7 @@ type RentStatus = {
   isPaid: boolean;
   onPrepaidPlan: boolean;
   breakdown: RentBreakdown | null;
+  blockingRentDuePopupEnabled?: boolean;
 };
 
 type CoinEntry = {
@@ -94,8 +96,6 @@ const COINS_COLUMN = "COINS";
 const COIN_EVENT_COLUMN = "S\u1ef0 KI\u1ec6N";
 
 const DASHBOARD_HELP = {
-  rent:
-    "Monthly Rent shows the current unpaid month and a line-item breakdown (zeros are shown). Gate parking comes from manager-created tickets until rent is paid; laundry reflects cash washes from the previous calendar month; unpaid fines stay on the bill until settled.\n\nThis aligns with Cozorohome policy by showing what is due before payment and asking residents to work with their manager for final receipt creation.",
   nextLaundry:
     "Next Laundry shows the resident's upcoming booked laundry slot.\n\nThis aligns with Cozorohome policy by encouraging residents to use machines only during their reserved time.",
   support:
@@ -239,7 +239,6 @@ export function HomeDashboardClient() {
   const [feedbackComment, setFeedbackComment] = useState("");
   const [showCoinDetail, setShowCoinDetail] = useState(false);
   const [rentStatus, setRentStatus] = useState<RentStatus | null>(null);
-  const [showRentBreakdown, setShowRentBreakdown] = useState(false);
   const [terminationRecord, setTerminationRecord] = useState<{ maHd: string; terminatedAt: string; depositNote: string; checkOut: { submittedAt: string } | null } | null>(null);
   const [extensionExpanded, setExtensionExpanded] = useState(false);
   const activeEmail = sessionEmail.trim().toLowerCase();
@@ -576,106 +575,14 @@ export function HomeDashboardClient() {
         </section>
       )}
 
-      {rentStatus && !rentStatus.isPaid && !rentStatus.onPrepaidPlan && !isRemoved && (
-        <section className="rounded-3xl border border-amber-200 bg-amber-50 p-5 shadow-sm sm:p-6">
-          <div className="flex items-start gap-3">
-            <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-600">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                <rect x="2" y="5" width="20" height="14" rx="2" strokeLinecap="round" strokeLinejoin="round" />
-                <line x1="2" y1="10" x2="22" y2="10" strokeLinecap="round" />
-              </svg>
-            </div>
-            <div className="flex-1">
-              <p className="text-sm font-bold text-amber-800">
-                {t("rentDueWarning", "Your rent is due for")} {rentStatus.month}
-              </p>
-              <p className="mt-1 text-xs text-amber-700">
-                {t("rentDueSubtext", "Please settle your payment as soon as possible to avoid late fees.")}
-              </p>
-              {rentStatus.breakdown && (
-                <div className="mt-3 flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowRentBreakdown(true)}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 active:scale-95 transition-all"
-                  >
-                    {new Intl.NumberFormat("vi-VN").format(rentStatus.breakdown.finalTotalVnd)} ₫
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                    </svg>
-                  </button>
-                  <InlineHelp
-                    label="How monthly rent works"
-                    title="Monthly Rent"
-                    body={DASHBOARD_HELP.rent}
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-      )}
-
-      {showRentBreakdown && rentStatus?.breakdown && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm sm:items-center" onClick={() => setShowRentBreakdown(false)}>
-          <div className="w-full max-w-md rounded-t-3xl bg-white p-6 shadow-2xl sm:rounded-3xl" onClick={(e) => e.stopPropagation()}>
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-bold text-slate-900">
-                {t("paymentDue", "Payment Due")} — {rentStatus.month}
-              </h3>
-              <button type="button" onClick={() => setShowRentBreakdown(false)} className="rounded-full p-1 text-slate-400 hover:text-slate-700">
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="space-y-3">
-              {[
-                { label: t("rent", "Rent"), value: rentStatus.breakdown.baseRent },
-                {
-                  label: `${t("tenureSurcharge", "Short-term surcharge")} (${((rentStatus.breakdown.tenureSurchargeRate ?? 0) * 100).toFixed(0)}%)`,
-                  value: rentStatus.breakdown.tenureSurchargeVnd
-                },
-                {
-                  label: t("monthlyAdjustmentSurcharge", "Monthly adjustment surcharge"),
-                  value: Math.max(0, rentStatus.breakdown.monthlyAdjustmentVnd ?? 0)
-                },
-                {
-                  label: t("professionalDiscount", "Monthly adjustment discount (professional)"),
-                  value: -rentStatus.breakdown.professionalDiscountVnd
-                },
-                { label: t("planDiscount", "Plan discount"), value: -rentStatus.breakdown.planDiscountVnd },
-                { label: t("managerDiscount", "Manager discount"), value: -rentStatus.breakdown.managerDiscountVnd },
-                { label: t("parking", "Parking"), value: rentStatus.breakdown.parkingFeeVnd },
-                {
-                  label: t("gateParking", "Gate parking (unpaid tickets)"),
-                  value: rentStatus.breakdown.gateParkingFeeVnd ?? 0
-                },
-                {
-                  label: `${t("laundryServices", "Laundry services")} — ${rentStatus.breakdown.details?.billingPrevMonth || "—"} (${rentStatus.breakdown.details?.laundryCount?.cash ?? 0} cash)`,
-                  value: rentStatus.breakdown.laundryFeeVnd
-                },
-                { label: t("fines", "Fines"), value: rentStatus.breakdown.finesVnd }
-              ].map((item) => (
-                <div key={item.label} className="flex items-center justify-between text-sm">
-                  <span className={item.value < 0 ? "text-emerald-700" : "text-slate-700"}>{item.label}</span>
-                  <span className={`font-semibold ${item.value < 0 ? "text-emerald-700" : "text-slate-900"}`}>
-                    {item.value < 0 ? "-" : ""}{new Intl.NumberFormat("vi-VN").format(Math.abs(item.value))} ₫
-                  </span>
-                </div>
-              ))}
-              <div className="border-t border-slate-200 pt-3 flex items-center justify-between">
-                <span className="font-bold text-slate-900">{t("totalDue", "Total Due")}</span>
-                <span className="text-lg font-bold text-amber-700">
-                  {new Intl.NumberFormat("vi-VN").format(rentStatus.breakdown.finalTotalVnd)} ₫
-                </span>
-              </div>
-            </div>
-            <p className="mt-4 text-xs text-slate-500">
-              {t("contactManagerForPayment", "Contact your manager to arrange payment or for any questions about this breakdown.")}
-            </p>
-          </div>
-        </div>
+      {!isRemoved && (
+        <NextPaymentSummary
+          variant="dashboard"
+          nextPaymentDate={nextPaymentDate}
+          rentPaidStatus={rentStatus}
+          rentLoading={loading}
+          showPaymentsLink
+        />
       )}
 
       {isRemoved ? (

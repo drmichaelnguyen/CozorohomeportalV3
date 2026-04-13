@@ -5,6 +5,8 @@ import { API_BASE_URL } from "../lib/api-base-url";
 import { parseVietnamDate } from "../lib/contract-utils";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
+import { NextPaymentSummary } from "./next-payment-summary";
+import type { RentPaidStatusPayload } from "../lib/rent-paid-status";
 const TIMESTAMP_COLUMN = "DẤU THỜI GIAN";
 const EMAIL_COLUMN = "Địa chỉ email";
 const AMOUNT_COLUMN = "SỐ TIỀN";
@@ -80,6 +82,7 @@ export function PaymentsClient() {
   const [message, setMessage] = useState("");
   const [entries, setEntries] = useState<PaymentEntry[]>([]);
   const [client, setClient] = useState<ClientRecord | null>(null);
+  const [rentPaidStatus, setRentPaidStatus] = useState<RentPaidStatusPayload | null>(null);
   const [monthFilter, setMonthFilter] = useState("all");
   const [yearFilter, setYearFilter] = useState("all");
   const [dayFilter, setDayFilter] = useState("all");
@@ -147,6 +150,7 @@ export function PaymentsClient() {
     setMessage("");
     setEntries([]);
     setClient(null);
+    setRentPaidStatus(null);
 
     try {
       const clientResponse = await fetch(`${API_BASE_URL}/clients?email=${encodeURIComponent(activeEmail)}`);
@@ -154,6 +158,11 @@ export function PaymentsClient() {
 
       if (clientResponse.ok) {
         setClient(clientData as ClientRecord);
+      }
+
+      const rentRes = await fetch(`${API_BASE_URL}/rent-paid-status?email=${encodeURIComponent(activeEmail)}`);
+      if (rentRes.ok) {
+        setRentPaidStatus((await readJsonSafely<RentPaidStatusPayload>(rentRes)) as RentPaidStatusPayload);
       }
 
       const cached = loadLocalCache(activeEmail);
@@ -214,6 +223,10 @@ export function PaymentsClient() {
       const clientData = await readJsonSafely<ClientRecord | { error?: string }>(clientResponse);
       if (clientResponse.ok) {
         setClient(clientData as ClientRecord);
+      }
+      const rentRes = await fetch(`${API_BASE_URL}/rent-paid-status?email=${encodeURIComponent(activeEmail)}`);
+      if (rentRes.ok) {
+        setRentPaidStatus((await readJsonSafely<RentPaidStatusPayload>(rentRes)) as RentPaidStatusPayload);
       }
       const response = await fetch(`${API_BASE_URL}/payments?email=${encodeURIComponent(activeEmail)}`);
       const data = await readJsonSafely<{ entries?: PaymentEntry[]; error?: string }>(response);
@@ -337,6 +350,7 @@ export function PaymentsClient() {
   }, [DEFAULT_VISIBLE_ENTRIES, dayFilter, monthFilter, purposeFilter, sortDirection, yearFilter]);
 
   const nextPayment = useMemo(() => computeNextPaymentDate(client), [client]);
+  const nextPaymentDate = nextPayment?.date ?? null;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -369,28 +383,20 @@ export function PaymentsClient() {
       </section>
 
       {nextPayment ? (
-        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
-          <div className="text-sm font-medium uppercase tracking-wide text-amber-800">{t("nextPayment")}</div>
-          <div className="mt-2 text-2xl font-semibold text-slate-900">
-            {nextPayment.date.toLocaleDateString()}
-          </div>
-          <div className="mt-2 text-sm text-slate-700">
-            {language === "vi"
-              ? `${nextPayment.label} dựa trên ${nextPayment.source}.`
-              : `${nextPayment.label} based on ${nextPayment.source}.`}
-          </div>
-          {client?.[PACKAGE_EXPIRY_COLUMN] ? (
-            <div className="mt-1 text-sm text-slate-600">
-              {language === "vi" ? "Hiện tại" : "Current"} <code>{PACKAGE_EXPIRY_COLUMN}</code>: {client[PACKAGE_EXPIRY_COLUMN]}
-            </div>
-          ) : (
-            <div className="mt-1 text-sm text-slate-600">
-              {language === "vi"
-                ? "Không tìm thấy ngày hết hạn gói, nên kỳ thanh toán tiếp theo sẽ là ngày đầu tiên của tháng tới."
-                : "No package expiry date found, so the next payment defaults to the first day of next month."}
-            </div>
-          )}
-        </section>
+        <NextPaymentSummary
+          nextPaymentDate={nextPaymentDate}
+          rentPaidStatus={rentPaidStatus}
+          rentLoading={loading}
+          packageExpiryNote={
+            client?.[PACKAGE_EXPIRY_COLUMN]
+              ? language === "vi"
+                ? `${nextPayment.label} (${nextPayment.source}). Hiện tại ${PACKAGE_EXPIRY_COLUMN}: ${client[PACKAGE_EXPIRY_COLUMN]}`
+                : `${nextPayment.label} (${nextPayment.source}). Current ${PACKAGE_EXPIRY_COLUMN}: ${client[PACKAGE_EXPIRY_COLUMN]}`
+              : language === "vi"
+                ? `${nextPayment.label} (${nextPayment.source}). Không có ngày hết hạn gói — kỳ thanh toán mặc định là ngày đầu tháng sau.`
+                : `${nextPayment.label} (${nextPayment.source}). No package expiry on file — next cycle defaults to the first of next month.`
+          }
+        />
       ) : null}
 
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">

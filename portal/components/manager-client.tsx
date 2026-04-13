@@ -147,6 +147,7 @@ type FeedbackEntry = {
 
 type PricingSettingsSectionKey =
   | "branch_fees"
+  | "resident_portal"
   | "bed_prices"
   | "long_term_discounts"
   | "nightly_bed_prices"
@@ -983,6 +984,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [bedPricingExpanded, setBedPricingExpanded] = useState(false);
   const [pricingSettingsExpanded, setPricingSettingsExpanded] = useState<Record<PricingSettingsSectionKey, boolean>>({
     branch_fees: false,
+    resident_portal: false,
     bed_prices: false,
     long_term_discounts: false,
     nightly_bed_prices: false,
@@ -1036,6 +1038,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [activeManagerView, setActiveManagerView] = useState<ManagerView>(initialView);
   const [feedbackEntries, setFeedbackEntries] = useState<FeedbackEntry[]>([]);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [portalUxBlockingRent, setPortalUxBlockingRent] = useState(false);
+  const [portalUxSaving, setPortalUxSaving] = useState(false);
+  const [portalUxMessage, setPortalUxMessage] = useState("");
 
   const togglePricingSettingsSection = useCallback((section: PricingSettingsSectionKey) => {
     setPricingSettingsExpanded((current) => ({
@@ -1043,6 +1048,31 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       [section]: !current[section]
     }));
   }, []);
+
+  useEffect(() => {
+    if (!pricingSettingsExpanded.resident_portal || !normalizedEmail) {
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/manager/portal-ux-settings?actorEmail=${encodeURIComponent(normalizedEmail)}`
+        );
+        const data = (await res.json()) as { blockingRentDuePopupEnabled?: boolean; error?: string };
+        if (cancelled || !res.ok) {
+          return;
+        }
+        setPortalUxBlockingRent(Boolean(data.blockingRentDuePopupEnabled));
+        setPortalUxMessage("");
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pricingSettingsExpanded.resident_portal, normalizedEmail]);
 
   // v3.1.0 Rent States
   const [rentPaymentMode, setRentPaymentMode] = useState<"simple" | "rent">("rent");
@@ -1069,7 +1099,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [controllerActionPending, setControllerActionPending] = useState<Record<string, string>>({});
   const [controllerActionFeedback, setControllerActionFeedback] = useState<Record<string, { tone: "success" | "error"; message: string }>>({});
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
-  const [supportSubTab, setSupportSubTab] = useState<"messages" | "feedbacks" | "maintenance">("messages");
+  const [supportSubTab, setSupportSubTab] = useState<"messages" | "feedbacks" | "maintenance" | "assistant">("messages");
   const [clientSubTab, setClientSubTab] = useState<"list" | "details">("list");
   const [clientTermTab, setClientTermTab] = useState<"long_term" | "short_term" | "inactive">(
     initialView === "short_term" ? "short_term" : "long_term"
@@ -2509,13 +2539,15 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
   return (
     <div className="space-y-6">
-        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h1 className="text-2xl font-semibold text-slate-900">{t("managementWorkspace")}</h1>
-              <p className="mt-2 text-sm text-slate-600">
-                {t("managementWorkspaceDesc")}
-              </p>
+        <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <h1 className="truncate text-base font-semibold text-slate-900 sm:text-lg">{t("manager")}</h1>
+              <InlineHelp
+                label={t("managementWorkspaceHelpLabel")}
+                title={t("managementWorkspace")}
+                body={t("managementWorkspaceDesc")}
+              />
             </div>
           <button
             type="button"
@@ -5538,6 +5570,60 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     )}
                   </CollapsibleSettingsSection>
 
+                  <CollapsibleSettingsSection
+                    title={t("residentPortalUxTitle")}
+                    description={t("blockingRentDuePopupHelp")}
+                    expanded={pricingSettingsExpanded.resident_portal}
+                    onToggle={() => togglePricingSettingsSection("resident_portal")}
+                  >
+                    <div className="space-y-4">
+                      <label className="flex cursor-pointer items-start gap-3">
+                        <input
+                          type="checkbox"
+                          checked={portalUxBlockingRent}
+                          onChange={(event) => setPortalUxBlockingRent(event.target.checked)}
+                          className="mt-1 h-4 w-4 rounded border-slate-300"
+                        />
+                        <span className="text-sm font-medium text-slate-800">{t("blockingRentDuePopupLabel")}</span>
+                      </label>
+                      {portalUxMessage === "__ok__" ? (
+                        <p className="text-sm font-medium text-emerald-700">{t("portalUxSettingsSaved")}</p>
+                      ) : portalUxMessage ? (
+                        <p className="text-sm font-medium text-rose-700">{portalUxMessage}</p>
+                      ) : null}
+                      <button
+                        type="button"
+                        disabled={portalUxSaving || !normalizedEmail}
+                        onClick={async () => {
+                          setPortalUxSaving(true);
+                          setPortalUxMessage("");
+                          try {
+                            const res = await fetch(`${API_BASE_URL}/manager/portal-ux-settings`, {
+                              method: "PUT",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                actorEmail: normalizedEmail,
+                                blockingRentDuePopupEnabled: portalUxBlockingRent
+                              })
+                            });
+                            const data = (await res.json()) as { error?: string };
+                            if (!res.ok) {
+                              throw new Error(data.error ?? "Failed to save");
+                            }
+                            setPortalUxMessage("__ok__");
+                          } catch (err) {
+                            setPortalUxMessage(err instanceof Error ? err.message : "Failed");
+                          } finally {
+                            setPortalUxSaving(false);
+                          }
+                        }}
+                        className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                      >
+                        {portalUxSaving ? t("saving") : t("savePortalUxSettings")}
+                      </button>
+                    </div>
+                  </CollapsibleSettingsSection>
+
                   {/* ── Bed pricing diagram (collapsible) ── */}
                   <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
                     <button type="button" onClick={() => setBedPricingExpanded((v) => !v)}
@@ -6242,17 +6328,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             </CollapsibleSettingsSection>
           ) : null}
 
-          <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-6 shadow-sm">
-            <h3 className="text-lg font-semibold text-slate-900">AI Assistant <span className="ml-1.5 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-700">Beta</span></h3>
-            <p className="mt-1 text-sm text-slate-600">Ask the assistant to add coins, create fines, make receipts, or check bed availability.</p>
-            <div className="mt-4">
-              <ManagerAiChat
-                operatorEmail={normalizedEmail}
-                onNavigate={(view) => setActiveManagerView(view as ManagerView)}
-                inline
-              />
-            </div>
-          </div>
         </section>
       ) : null}
 
@@ -6797,6 +6872,31 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             >
               {t("feedbacksTab")}
             </button>
+            <button
+              type="button"
+              onClick={() => setSupportSubTab("assistant")}
+              className={`rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
+                supportSubTab === "assistant"
+                  ? "bg-slate-900 text-white shadow-sm"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              {t("chatAssistantTab")}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSupportSubTab("maintenance");
+                void loadMaintenanceTickets();
+              }}
+              className={`rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
+                supportSubTab === "maintenance"
+                  ? "bg-slate-900 text-white shadow-sm"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              {t("maintenanceTickets")}
+            </button>
           </div>
 
           {supportSubTab === "messages" ? (
@@ -6814,6 +6914,23 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 }
               }}
             />
+          ) : supportSubTab === "assistant" ? (
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="mb-4">
+                <h2 className="text-lg font-semibold text-slate-900">
+                  {t("chatAssistantTab")}{" "}
+                  <span className="ml-1.5 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-700">
+                    Beta
+                  </span>
+                </h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  {language === "vi"
+                    ? "Thêm coin, tạo phạt, tạo biên lai, hoặc hỏi giường trống — trợ lý gọi dữ liệu thực từ hệ thống."
+                    : "Add coins, create fines or receipts, or ask which beds are free — the assistant uses live data from tools."}
+                </p>
+              </div>
+              <ManagerAiChat operatorEmail={normalizedEmail} onNavigate={(view) => setActiveManagerView(view as ManagerView)} inline />
+            </section>
           ) : supportSubTab === "feedbacks" ? (
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-3">

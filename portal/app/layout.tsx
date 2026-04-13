@@ -11,7 +11,11 @@ const beVietnamPro = Be_Vietnam_Pro({
 
 export const metadata: Metadata = {
   title: "CozoroHome Portal",
-  description: "Local-first booking portal for CozoroHome"
+  description: "Local-first booking portal for CozoroHome",
+  icons: {
+    icon: [{ url: "/cozorohome-logo.png", type: "image/png" }],
+    apple: [{ url: "/cozorohome-logo.png", type: "image/png" }]
+  }
 };
 
 export default function RootLayout({
