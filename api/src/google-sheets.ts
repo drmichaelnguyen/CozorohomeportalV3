@@ -2441,7 +2441,7 @@ export async function listCleaningCalendarEvents(
   const startTime = from.getTime();
   const endTime = to.getTime();
   const events = options?.forceRefresh
-    ? await syncCleaningCalendarsToLocalCache()
+    ? await syncCleaningCalendarsToLocalCache({ forceRefresh: true })
     : await readOrSyncCleaningCalendarCache();
 
   return events
@@ -3307,7 +3307,7 @@ async function readOrSyncCleaningCalendarCache() {
   }
 
   try {
-    return await syncCleaningCalendarsToLocalCache();
+    return await syncCleaningCalendarsToLocalCache({ forceRefresh: true });
   } catch (error) {
     if (cache?.events?.length) {
       return cache.events;
