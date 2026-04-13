@@ -1190,7 +1190,7 @@ export function AdminCleaningClient() {
                 onChange={(e) => setRejectFineCreate(e.target.checked)}
                 className="h-4 w-4 rounded border-slate-300 text-rose-600"
               />
-              <span className="text-sm font-medium text-slate-700">{t("createFineTicket")}</span>
+              <span className="text-sm font-medium text-slate-700">{t("alsoCreateFineTicket")}</span>
             </label>
 
             {rejectFineCreate && (
