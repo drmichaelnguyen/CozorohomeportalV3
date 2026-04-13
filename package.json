@@ -17,7 +17,7 @@
     "host:stop": "node scripts/host-manager.mjs stop",
     "host:restart": "node scripts/host-manager.mjs restart",
     "host:deploy": "node scripts/host-manager.mjs deploy",
-    "host:pull-deploy": "git pull --ff-only && node scripts/host-manager.mjs deploy",
+    "host:pull-deploy": "node scripts/host-manager.mjs pull-deploy",
     "host:status": "node scripts/host-manager.mjs status",
     "export:mac": "powershell -ExecutionPolicy Bypass -File scripts/export-mac-deploy.ps1"
   }

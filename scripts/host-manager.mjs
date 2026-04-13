@@ -44,6 +44,9 @@ async function main() {
     case "deploy":
       await runDeploy();
       return;
+    case "pull-deploy":
+      await runPullDeploy();
+      return;
     case "status":
       runStatus();
       return;
@@ -54,7 +57,7 @@ async function main() {
 }
 
 function printUsage() {
-  console.log("Usage: node scripts/host-manager.mjs <doctor|build|deploy|start|stop|restart|status>");
+  console.log("Usage: node scripts/host-manager.mjs <doctor|build|deploy|pull-deploy|start|stop|restart|status>");
 }
 
 function readEnvFile(relativePath) {
@@ -372,7 +375,20 @@ function runDoctor() {
   }
 }
 
-/** Stop managed services, clean-rebuild, apply Prisma schema to the DB, then start (Mac/Linux prod refresh). */
+/** Same as deploy, but runs `git pull --ff-only` first (Windows + Mac + Linux). */
+async function runPullDeploy() {
+  console.log("Pull-deploy: git pull --ff-only...");
+  const pull = spawnSync("git", ["pull", "--ff-only"], {
+    cwd: repoRoot,
+    stdio: "inherit"
+  });
+  if (pull.status !== 0) {
+    throw new Error("git pull --ff-only failed. Fix the repo state and retry.");
+  }
+  await runDeploy();
+}
+
+/** Stop managed services, clean-rebuild, apply Prisma schema to the DB, then start (Windows + Mac + Linux). */
 async function runDeploy() {
   console.log("Deploy: stopping any managed stack...");
   await runStop({ quietWhenMissing: true });
