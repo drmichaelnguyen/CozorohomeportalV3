@@ -1,6 +1,10 @@
 # Cozorohome Bot
 
-This package is the isolated customer-support bot service for Facebook Messenger. It is intentionally separate from the main portal and API so chatbot failures do not interrupt the live web app.
+This package is a **standalone** customer-support bot service (HTTP APIs, knowledge base, LLM). It is intentionally separate from the main portal and API so bot outages do not take down the web app.
+
+Public entrypoint today: **`https://chatbot.cozorohome.com`** (own Cloudflare tunnel → typically `127.0.0.1:4111` on the host). That is **not** the same product as `app.cozorohome.com`; no shared login or chat DB with the portal unless you build a bridge.
+
+**Facebook Messenger** is supported **in code** (webhook routes, Page token send helpers), but wiring Meta (app review, tokens, webhooks) is optional. Many teams skip it or finish it later; the bot is still useful via **`POST /ask`**, **`POST /prospect/ask`**, admin trainer routes, and imports.
 
 ## Runtime separation
 
@@ -8,7 +12,7 @@ The chatbot is a separate service from the main app:
 
 - `portal/` is the customer-facing web app
 - `api/` is the main backend for portal business data
-- `bot/` is the Messenger chatbot service
+- `bot/` is this bot service (hosted at `chatbot.cozorohome.com`; Facebook is an optional channel)
 
 Important runtime note:
 
@@ -25,40 +29,40 @@ In practice:
 ## What it does now
 
 - exposes a health endpoint
-- exposes Facebook webhook verify + receive endpoints
+- exposes **optional** Facebook webhook verify + receive endpoints (only if you configure Meta)
 - loads a curated knowledge base from local files and optional remote text URLs
 - performs lightweight retrieval before answer generation
 - can use a hosted LLM provider, with Gemini free tier as the preferred default
 - uses a small model route check before sending deeper approved questions to the larger answer model
 - uses local prompt-tuning data for both the router model and the answer model
 - denies off-topic questions early to save tokens
-- can learn new Q&A pairs from Facebook admin replies and imported chat history
+- can learn new Q&A pairs from optional Facebook admin replies and imported chat history
 - refuses personalized account-style questions by default until identity verification is added
 
 ## Why this shape
 
 - `portal/` stays focused on customer UI
 - `api/` remains the source of truth for live business data
-- `bot/` handles Facebook, retrieval, and LLM orchestration independently
+- `bot/` handles retrieval and LLM orchestration independently (optional Facebook send/receive when configured)
 
 ## `chatbot.cozorohome.com` vs portal manager Messages
 
-The **Facebook Messenger bot** (`bot/`, served at `chatbot.cozorohome.com`) was originally **its own thing**—public fanpage chat, local knowledge and `bot/data/` storage—not built as a feature inside the resident/manager portal. The portal (`portal/` + `api/`) is a separate product; they only touch each other where you **deliberately** wire them (today mainly **prospect** calls via `BOT_API_BASE_URL`, not shared chat threads).
+The service at **`chatbot.cozorohome.com`** is **`bot/`** as its **own** deployment—HTTP bot, local knowledge and `bot/data/`—not the resident/manager portal. It was never required to be “inside” the app. The portal (`portal/` + `api/`) is a separate product; they only touch each other where you **deliberately** wire them (today mainly **prospect** calls via `BOT_API_BASE_URL`, not shared chat threads).
 
 These are **two different systems** today:
 
 | | **This repo’s `bot/`** (public: `https://chatbot.cozorohome.com`) | **Portal** (`app.cozorohome.com` + `api/`) |
 |---|--------|--------|
-| **Channel** | Facebook Messenger (Page webhook) | Logged-in resident **Messages** / manager **Support** inbox (`SupportConversation` in the DB) |
-| **Identity** | Facebook **PSID** (sender id), plus local learning files under `bot/data/` | Resident **email** on the portal account |
+| **Channel** | **HTTPS** to this service (`/ask`, `/prospect/ask`, admin routes, etc.); **optional** Facebook Page webhooks if you complete Meta setup | Logged-in resident **Messages** / manager **Support** inbox (`SupportConversation` in the DB) |
+| **Identity** | Whatever you pass in API bodies or (if enabled) Facebook **PSID**; plus local files under `bot/data/` | Resident **email** on the portal account |
 | **Where chats live** | `bot/data/*` (e.g. chat history, learning state) | MariaDB via Prisma |
 | **LLM** | Configured here (`BOT_LLM_PROVIDER`, Gemini/OpenAI) | Separate flows in `api/` (e.g. manager AI, optional in-portal resident assistant) |
 
 The hostname **`chatbot.cozorohome.com`** points at this **`bot/`** process (see tunnel → `127.0.0.1:4111`). It does **not** automatically share threads with the manager support UI in the portal.
 
-`BOT_API_BASE_URL` / `BOT_API_SHARED_TOKEN` in `bot/.env` are used for **prospect** checks against the main API (`bot/src/prospect.ts`), not for posting Messenger traffic into `SupportConversation`.
+`BOT_API_BASE_URL` / `BOT_API_SHARED_TOKEN` in `bot/.env` are used for **prospect** checks against the main API (`bot/src/prospect.ts`), not for posting public bot traffic into `SupportConversation`.
 
-**If you want Facebook + manager inbox in one thread**, a dedicated integration is still needed, for example: map PSID → resident email (or a synthetic `fb+<psid>@…` mirror account), add authenticated API routes for append-only messages, call them from `bot/src/index.ts` after `recordCustomerMessage` / admin replies, and optionally send staff replies back through the Page token from the bot or API.
+**If you ever want** this bot’s traffic and the manager inbox in **one** thread (with or without Facebook), that still needs a **dedicated** design: stable visitor/resident key, authenticated API append routes, and (if Facebook is on) send/receive via Page tokens.
 
 ## Safe knowledge sources
 
@@ -115,14 +119,14 @@ Notes:
 
 - keep referral name and phone checks on the server-side prospect API only
 - do not send current-client identity, account, or phone details to the LLM
-- Gemini free tier is suitable for a low-volume Messenger pilot, but it is still a provider free tier and can change
+- Gemini free tier is fine for a low-volume bot, but it is still a provider free tier and can change
 
 ## Chat Learning
 
 The bot now supports a lightweight learning layer separate from the main curated knowledge file:
 
 - customer messages and replies are stored in local learning files under `bot/data/`
-- if a customer asks on Facebook and a page admin replies manually afterward, the bot can pair that Q&A and store it as learned knowledge
+- if Facebook is connected and a customer asks there and a page admin replies afterward, the bot can pair that Q&A and store it as learned knowledge (same idea can apply to imported transcripts)
 - bot-generated replies are tracked so the bot does not accidentally learn from its own echoed messages
 - historical chats can be imported later and converted into learned Q&A pairs
 - router training examples are stored locally in `bot/data/router-training.json`
