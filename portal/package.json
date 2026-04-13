@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev -p 3000 --webpack",
     "dev:refresh": "cmd /c refresh-portal.cmd",
-    "build": "next build --webpack",
+    "check:lang-keys": "node ../scripts/check-portal-language-keys.mjs",
+    "build": "node ../scripts/check-portal-language-keys.mjs && next build --webpack",
     "start": "next start",
     "lint": "next lint"
   },
