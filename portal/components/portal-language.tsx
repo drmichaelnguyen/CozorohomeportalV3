@@ -349,7 +349,6 @@ const translations: Record<string, { en: string; vi: string }> = {
   activeStatus: { en: "Active", vi: "Đang hoạt động" },
   selectedClient: { en: "Selected Client", vi: "Khách hàng đang chọn" },
   chooseClientPrompt: { en: "Choose a client from the list.", vi: "Xem danh sách để chọn khách hàng." },
-  hideDetails: { en: "Hide details", vi: "Ẩn chi tiết" },
   showDetails: { en: "Show details", vi: "Hiện chi tiết" },
   editProfile: { en: "Edit profile", vi: "Sửa hồ sơ" },
   messageRoom: { en: "Message Room", vi: "Nhắn tin cho phòng" },
