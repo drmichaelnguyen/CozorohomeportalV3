@@ -50,9 +50,15 @@ type RentBreakdown = {
   finesVnd: number;
   finalTotalVnd: number;
   tenureSurchargeVnd: number;
+  tenureSurchargeRate?: number;
+  monthlyAdjustmentVnd?: number;
   professionalDiscountVnd: number;
   planDiscountVnd: number;
   managerDiscountVnd: number;
+  details?: {
+    laundryCount?: { cash?: number };
+    billingPrevMonth?: string;
+  };
 };
 
 type RentStatus = {
@@ -89,7 +95,7 @@ const COIN_EVENT_COLUMN = "S\u1ef0 KI\u1ec6N";
 
 const DASHBOARD_HELP = {
   rent:
-    "Monthly Rent shows the current unpaid month and the calculated breakdown for rent, parking, laundry, and fines.\n\nThis aligns with Cozorohome policy by showing what is due before payment and asking residents to work with their manager for final receipt creation.",
+    "Monthly Rent shows the current unpaid month and a line-item breakdown (zeros are shown). Gate parking comes from manager-created tickets until rent is paid; laundry reflects cash washes from the previous calendar month; unpaid fines stay on the bill until settled.\n\nThis aligns with Cozorohome policy by showing what is due before payment and asking residents to work with their manager for final receipt creation.",
   nextLaundry:
     "Next Laundry shows the resident's upcoming booked laundry slot.\n\nThis aligns with Cozorohome policy by encouraging residents to use machines only during their reserved time.",
   support:
@@ -626,17 +632,31 @@ export function HomeDashboardClient() {
             <div className="space-y-3">
               {[
                 { label: t("rent", "Rent"), value: rentStatus.breakdown.baseRent },
-                ...(rentStatus.breakdown.tenureSurchargeVnd > 0 ? [{ label: t("tenureSurcharge", "Short-term surcharge"), value: rentStatus.breakdown.tenureSurchargeVnd }] : []),
-                ...(rentStatus.breakdown.professionalDiscountVnd > 0 ? [{ label: t("professionalDiscount", "Professional discount"), value: -rentStatus.breakdown.professionalDiscountVnd }] : []),
-                ...(rentStatus.breakdown.planDiscountVnd > 0 ? [{ label: t("planDiscount", "Plan discount"), value: -rentStatus.breakdown.planDiscountVnd }] : []),
-                ...(rentStatus.breakdown.managerDiscountVnd > 0 ? [{ label: t("managerDiscount", "Manager discount"), value: -rentStatus.breakdown.managerDiscountVnd }] : []),
+                {
+                  label: `${t("tenureSurcharge", "Short-term surcharge")} (${((rentStatus.breakdown.tenureSurchargeRate ?? 0) * 100).toFixed(0)}%)`,
+                  value: rentStatus.breakdown.tenureSurchargeVnd
+                },
+                {
+                  label: t("monthlyAdjustmentSurcharge", "Monthly adjustment surcharge"),
+                  value: Math.max(0, rentStatus.breakdown.monthlyAdjustmentVnd ?? 0)
+                },
+                {
+                  label: t("professionalDiscount", "Monthly adjustment discount (professional)"),
+                  value: -rentStatus.breakdown.professionalDiscountVnd
+                },
+                { label: t("planDiscount", "Plan discount"), value: -rentStatus.breakdown.planDiscountVnd },
+                { label: t("managerDiscount", "Manager discount"), value: -rentStatus.breakdown.managerDiscountVnd },
                 { label: t("parking", "Parking"), value: rentStatus.breakdown.parkingFeeVnd },
-                ...((rentStatus.breakdown.gateParkingFeeVnd ?? 0) > 0
-                  ? [{ label: t("gateParking", "Gate parking"), value: rentStatus.breakdown.gateParkingFeeVnd ?? 0 }]
-                  : []),
-                { label: t("laundryServices", "Laundry services"), value: rentStatus.breakdown.laundryFeeVnd },
+                {
+                  label: t("gateParking", "Gate parking (unpaid tickets)"),
+                  value: rentStatus.breakdown.gateParkingFeeVnd ?? 0
+                },
+                {
+                  label: `${t("laundryServices", "Laundry services")} — ${rentStatus.breakdown.details?.billingPrevMonth || "—"} (${rentStatus.breakdown.details?.laundryCount?.cash ?? 0} cash)`,
+                  value: rentStatus.breakdown.laundryFeeVnd
+                },
                 { label: t("fines", "Fines"), value: rentStatus.breakdown.finesVnd }
-              ].filter(item => item.value !== 0).map((item) => (
+              ].map((item) => (
                 <div key={item.label} className="flex items-center justify-between text-sm">
                   <span className={item.value < 0 ? "text-emerald-700" : "text-slate-700"}>{item.label}</span>
                   <span className={`font-semibold ${item.value < 0 ? "text-emerald-700" : "text-slate-900"}`}>

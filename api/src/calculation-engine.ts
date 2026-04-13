@@ -1,4 +1,5 @@
 import { ClientRow, getLaundryBookingsForEmail, getFinesForEmail, laundryMachines, getLaundryAllowance, getCoinsForEmail, LaundryCalendarEvent, FineEntry } from "./google-sheets.js";
+import { sumUnpaidGateParkingVndBeforeMonth } from "./gate-parking-tickets.js";
 
 /**
  * Cozoro Payment Calculation Engine (v3.1.0)
@@ -55,6 +56,8 @@ export interface RentBreakdown {
     parkingCount: { motorbikes: number; bicycles: number };
     laundryCount: { free: number; coins: number; cash: number };
     unpaidFinesCount: number;
+    /** Calendar month whose cash laundry usage is included in laundryFeeVnd (previous month vs. billing targetMonth). */
+    billingPrevMonth: string;
   };
 }
 
@@ -74,23 +77,15 @@ function parseVndAmount(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-const GATE_PARKING_SHEET_KEYS = [
-  "Phí gửi xe cổng",
-  "Phí gửi xe tại cổng",
-  "Phí để xe cổng",
-  "Phí cổng (gửi xe)",
-  "Gate parking fee",
-  "Phí cổng"
-] as const;
-
-function parseGateParkingFeeVndFromClient(client: ClientRow): number {
-  for (const key of GATE_PARKING_SHEET_KEYS) {
-    const v = parseVndAmount(client[key]);
-    if (v > 0) {
-      return v;
-    }
+/** Previous calendar month (YYYY-MM) relative to billing month. */
+export function billingPrevMonth(billingMonth: string): string {
+  const [y, m] = billingMonth.split("-").map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) {
+    return billingMonth;
   }
-  return 0;
+  const d = new Date(y, m - 1, 1);
+  d.setMonth(d.getMonth() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
 /**
@@ -198,15 +193,17 @@ export async function calculateRentBreakdown(
     }
   }
 
+  const ticketGateVnd = await sumUnpaidGateParkingVndBeforeMonth(email, targetMonth);
   let gateParkingFeeVnd =
     typeof options.gateParkingFeeVnd === "number" && Number.isFinite(options.gateParkingFeeVnd)
       ? options.gateParkingFeeVnd
-      : parseGateParkingFeeVndFromClient(client);
+      : ticketGateVnd;
 
-  // 5. Laundry Fee (Optimized)
+  const prevMonth = billingPrevMonth(targetMonth);
+
+  // 5. Laundry fee — cash usage for the **previous** calendar month (rolled into this bill)
   const bookings = await getLaundryBookingsForEmail(email);
-  // Filter bookings for the target month
-  const monthBookings = bookings.filter((b: LaundryCalendarEvent) => b.start.startsWith(targetMonth));
+  const monthBookings = bookings.filter((b: LaundryCalendarEvent) => b.start.startsWith(prevMonth));
   
   // Get Allowance
   const branchId = (client["Chi nhánh Cozoro dorm"] || "").includes("7") ? "D7" : "D2";
@@ -306,7 +303,8 @@ export async function calculateRentBreakdown(
       memberTier,
       parkingCount: { motorbikes, bicycles },
       laundryCount: { free: laundryFreeCount, coins: laundryCoinCount, cash: laundryCashCount },
-      unpaidFinesCount: unpaidFines.length
+      unpaidFinesCount: unpaidFines.length,
+      billingPrevMonth: prevMonth
     }
   };
 }

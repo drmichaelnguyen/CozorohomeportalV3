@@ -143,6 +143,7 @@ import {
   updateCleaningAutoSchedulerConfig
 } from "./cleaning-scheduler-config.js";
 import { prisma } from "./prisma.js";
+import { markGateParkingTicketsPaidForBilling } from "./gate-parking-tickets.js";
 import {
   terminateContract,
   getTerminationByEmail,
@@ -4194,6 +4195,8 @@ Cảm ơn bạn đã đồng hành cùng Cozoro Home!
       }
     });
 
+    await markGateParkingTicketsPaidForBilling(targetMonth, emailKey);
+
     res.json({ success: true, message: "Payment recorded and receipt sent" });
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : "Payment failed" });
@@ -4286,6 +4289,122 @@ app.post("/manager/rent-paid-status", async (req, res) => {
     update: { isPaid, updatedBy: actorEmail }
   });
   return res.json({ email: record.email, month: record.month, isPaid: record.isPaid });
+});
+
+// ── Gate parking tickets (per resident; unpaid amounts roll into monthly rent) ──
+
+app.get("/manager/gate-parking-tickets", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim();
+  const email = String(req.query.email ?? "").trim().toLowerCase();
+  if (!actorEmail || !email || !email.includes("@")) {
+    return res.status(400).json({ error: "actorEmail and a valid resident email are required" });
+  }
+  if (!(await isPrivilegedSupportOperator(actorEmail))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  try {
+    const tickets = await prisma.gateParkingTicket.findMany({
+      where: { residentEmail: email },
+      orderBy: [{ periodMonth: "desc" }, { createdAt: "desc" }]
+    });
+    return res.json({ tickets });
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to load tickets" });
+  }
+});
+
+app.post("/manager/gate-parking-tickets", async (req, res) => {
+  const actorEmail = String(req.body.actorEmail ?? "").trim();
+  const email = String(req.body.email ?? "").trim().toLowerCase();
+  const periodMonth = String(req.body.periodMonth ?? "").trim();
+  const amountVnd = Number(req.body.amountVnd);
+  const note = String(req.body.note ?? "").trim();
+  if (!actorEmail || !email || !periodMonth || !/^\d{4}-\d{2}$/.test(periodMonth)) {
+    return res.status(400).json({ error: "actorEmail, email, and periodMonth (YYYY-MM) are required" });
+  }
+  if (!Number.isFinite(amountVnd) || amountVnd < 0) {
+    return res.status(400).json({ error: "amountVnd must be a non-negative number" });
+  }
+  if (!(await isPrivilegedSupportOperator(actorEmail))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  try {
+    const ticket = await prisma.gateParkingTicket.create({
+      data: {
+        residentEmail: email,
+        periodMonth,
+        amountVnd: Math.round(amountVnd),
+        note: note || null,
+        createdBy: actorEmail
+      }
+    });
+    return res.json({ ticket });
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to create ticket" });
+  }
+});
+
+app.patch("/manager/gate-parking-tickets/:id", async (req, res) => {
+  const actorEmail = String(req.body.actorEmail ?? "").trim();
+  const id = String(req.params.id ?? "").trim();
+  if (!actorEmail || !id) {
+    return res.status(400).json({ error: "actorEmail and ticket id are required" });
+  }
+  if (!(await isPrivilegedSupportOperator(actorEmail))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  const existing = await prisma.gateParkingTicket.findUnique({ where: { id } });
+  if (!existing) {
+    return res.status(404).json({ error: "Ticket not found" });
+  }
+  const data: { periodMonth?: string; amountVnd?: number; note?: string | null; paidAt?: Date | null } = {};
+  if (req.body.periodMonth != null) {
+    const pm = String(req.body.periodMonth).trim();
+    if (!/^\d{4}-\d{2}$/.test(pm)) {
+      return res.status(400).json({ error: "periodMonth must be YYYY-MM" });
+    }
+    data.periodMonth = pm;
+  }
+  if (req.body.amountVnd != null) {
+    const amt = Number(req.body.amountVnd);
+    if (!Number.isFinite(amt) || amt < 0) {
+      return res.status(400).json({ error: "amountVnd must be a non-negative number" });
+    }
+    data.amountVnd = Math.round(amt);
+  }
+  if (req.body.note !== undefined) {
+    const n = req.body.note == null ? "" : String(req.body.note).trim();
+    data.note = n ? n : null;
+  }
+  if (typeof req.body.markPaid === "boolean") {
+    data.paidAt = req.body.markPaid ? new Date() : null;
+  }
+  if (Object.keys(data).length === 0) {
+    return res.status(400).json({ error: "No updates provided" });
+  }
+  try {
+    const ticket = await prisma.gateParkingTicket.update({ where: { id }, data });
+    return res.json({ ticket });
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to update ticket" });
+  }
+});
+
+app.delete("/manager/gate-parking-tickets/:id", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim();
+  const id = String(req.params.id ?? "").trim();
+  if (!actorEmail || !id) {
+    return res.status(400).json({ error: "actorEmail and ticket id are required" });
+  }
+  if (!(await isPrivilegedSupportOperator(actorEmail))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  try {
+    await prisma.gateParkingTicket.delete({ where: { id } });
+    return res.json({ ok: true });
+  } catch {
+    return res.status(404).json({ error: "Ticket not found" });
+  }
 });
 
 // GET /manager/monthly-rent-paid-map — batch paid flags for a calendar month (bed diagram, etc.)

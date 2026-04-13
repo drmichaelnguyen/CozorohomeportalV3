@@ -315,6 +315,21 @@ model PushSubscription {
   @@index([email])
 }
 
+/// Manager-recorded gate / curb parking charges; unpaid rows roll into the next monthly bill until rent clears them.
+model GateParkingTicket {
+  id            String    @id @default(cuid())
+  residentEmail String
+  periodMonth   String
+  amountVnd     Int
+  note          String?   @db.Text
+  createdBy     String
+  createdAt     DateTime  @default(now())
+  paidAt        DateTime?
+
+  @@index([residentEmail, periodMonth])
+  @@index([residentEmail, paidAt])
+}
+
 model MonthlyRentStatus {
   id        Int      @id @default(autoincrement())
   email     String

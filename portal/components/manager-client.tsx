@@ -190,7 +190,7 @@ const MANAGER_FUNCTION_HELP = {
   contractStatus:
     "Contract Status lets a manager see whether the resident is active, terminated, or already checked out.\n\nThis aligns with Cozorohome policy by making termination and check-out steps explicit before access or deposit decisions are changed.",
   monthlyRent:
-    "Monthly Rent shows the current month's breakdown, lets the manager adjust approved inputs, and creates the receipt.\n\nThis aligns with Cozorohome policy by keeping the final receipt based on the sheet-backed rent calculation and recording the paid status when the receipt is created.",
+    "Monthly Rent is collapsed by default. Expand to see line items (zeros are shown). Gate parking is built from gate parking tickets for this client; unpaid ticket totals roll into the bill until rent is paid. Laundry uses cash washes from the previous calendar month; unpaid fines from the sheet are included until settled.\n\nThis aligns with Cozorohome policy by separating recurring rent from prior-period usage and ticketed gate charges.",
   featureLock:
     "Feature Lock controls whether the resident follows the normal automatic restriction rules or has a temporary manager override.\n\nThis aligns with Cozorohome policy by keeping overdue-rent and expired-contract restrictions automatic unless a manager intentionally unlocks access.",
   clientActions:
@@ -224,7 +224,19 @@ type RentBreakdown = {
     parkingCount: { motorbikes: number; bicycles: number };
     laundryCount: { free: number; coins: number; cash: number };
     unpaidFinesCount: number;
+    billingPrevMonth: string;
   };
+};
+
+type GateParkingTicketRow = {
+  id: string;
+  residentEmail: string;
+  periodMonth: string;
+  amountVnd: number;
+  note: string | null;
+  createdBy: string;
+  createdAt: string;
+  paidAt: string | null;
 };
 
 function normalizeRentBreakdown(input: Partial<RentBreakdown> | null | undefined): RentBreakdown | null {
@@ -265,7 +277,8 @@ function normalizeRentBreakdown(input: Partial<RentBreakdown> | null | undefined
         coins: Number(input.details?.laundryCount?.coins ?? 0),
         cash: Number(input.details?.laundryCount?.cash ?? 0)
       },
-      unpaidFinesCount: Number(input.details?.unpaidFinesCount ?? 0)
+      unpaidFinesCount: Number(input.details?.unpaidFinesCount ?? 0),
+      billingPrevMonth: input.details?.billingPrevMonth ?? ""
     }
   };
 }
@@ -859,13 +872,17 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [rentPaidStatus, setRentPaidStatus] = useState<boolean | null>(null);
   const [rentPaidMonth, setRentPaidMonth] = useState("");
   const [rentPaidLoading, setRentPaidLoading] = useState(false);
-  const [rentSectionCollapsed, setRentSectionCollapsed] = useState(false);
+  const [rentSectionCollapsed, setRentSectionCollapsed] = useState(true);
   const [infoRentBreakdown, setInfoRentBreakdown] = useState<RentBreakdown | null>(null);
   const [infoManagerDiscount, setInfoManagerDiscount] = useState("0");
   const [infoShortTermSurchargeRate, setInfoShortTermSurchargeRate] = useState("0");
   const [infoParkingFee, setInfoParkingFee] = useState("0");
-  const [infoGateParkingFee, setInfoGateParkingFee] = useState("0");
   const [infoRentCalculating, setInfoRentCalculating] = useState(false);
+  const [gateParkingTickets, setGateParkingTickets] = useState<GateParkingTicketRow[]>([]);
+  const [gateTicketsLoading, setGateTicketsLoading] = useState(false);
+  const [gateNewPeriodMonth, setGateNewPeriodMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [gateNewAmount, setGateNewAmount] = useState("");
+  const [gateNewNote, setGateNewNote] = useState("");
   const [monthlyRentPaidByEmail, setMonthlyRentPaidByEmail] = useState<Record<string, boolean>>({});
   const [monthlyRentPaidMapLoaded, setMonthlyRentPaidMapLoaded] = useState(false);
   const [clientNewPassword, setClientNewPassword] = useState("");
@@ -1023,7 +1040,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [managerDiscountInput, setManagerDiscountInput] = useState("0");
   const [shortTermSurchargeRateInput, setShortTermSurchargeRateInput] = useState("0");
   const [parkingFeeInput, setParkingFeeInput] = useState("0");
-  const [gateParkingFeeInput, setGateParkingFeeInput] = useState("0");
   const [targetMonthInput, setTargetMonthInput] = useState(new Date().toISOString().slice(0, 7));
   
   // New subtab states
@@ -1729,7 +1745,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     setInfoManagerDiscount("0");
     setInfoShortTermSurchargeRate("0");
     setInfoParkingFee("0");
-    setInfoGateParkingFee("0");
     try {
       const [statusResponse, breakdownResponse] = await Promise.all([
         fetch(`${API_BASE_URL}/manager/rent-paid-status?actorEmail=${encodeURIComponent(normalizedEmail)}&email=${encodeURIComponent(clientEmail)}&month=${month}`),
@@ -1749,20 +1764,105 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         setInfoManagerDiscount(String(data?.managerDiscountVnd || 0));
         setInfoShortTermSurchargeRate(formatPercentInput(data?.tenureSurchargeRate));
         setInfoParkingFee(String(data?.parkingFeeVnd || 0));
-        setInfoGateParkingFee(String(data?.gateParkingFeeVnd || 0));
       }
     } catch {
       // ignore
     }
   }
 
-  async function recalcInfoBreakdown(
-    clientEmail: string,
-    discount: string,
-    surchargeRatePercent: string,
-    parkingFee: string,
-    gateParkingFee: string
-  ) {
+  async function loadGateParkingTickets(clientEmail: string) {
+    if (!isStaffSession || !clientEmail.trim()) {
+      setGateParkingTickets([]);
+      return;
+    }
+    setGateTicketsLoading(true);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/manager/gate-parking-tickets?actorEmail=${encodeURIComponent(normalizedEmail)}&email=${encodeURIComponent(clientEmail.trim().toLowerCase())}`
+      );
+      const data = (await res.json()) as { tickets?: GateParkingTicketRow[] };
+      if (res.ok) {
+        setGateParkingTickets(data.tickets ?? []);
+      } else {
+        setGateParkingTickets([]);
+      }
+    } catch {
+      setGateParkingTickets([]);
+    } finally {
+      setGateTicketsLoading(false);
+    }
+  }
+
+  async function createGateParkingTicketForSelected() {
+    if (!selectedClient?.email) return;
+    const amount = Math.round(Number(gateNewAmount) || 0);
+    if (!/^\d{4}-\d{2}$/.test(gateNewPeriodMonth) || amount <= 0) {
+      alert("Choose period month (YYYY-MM) and a positive amount.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/manager/gate-parking-tickets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actorEmail: normalizedEmail,
+          email: selectedClient.email.trim().toLowerCase(),
+          periodMonth: gateNewPeriodMonth,
+          amountVnd: amount,
+          note: gateNewNote.trim()
+        })
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Failed to add ticket");
+      setGateNewAmount("");
+      setGateNewNote("");
+      await loadGateParkingTickets(selectedClient.email);
+      await loadRentPaidStatus(selectedClient.email);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function updateGateTicketPaid(id: string, paid: boolean) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/manager/gate-parking-tickets/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorEmail: normalizedEmail, markPaid: paid })
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Failed");
+      if (selectedClient?.email) {
+        await loadGateParkingTickets(selectedClient.email);
+        await loadRentPaidStatus(selectedClient.email);
+      }
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed");
+    }
+  }
+
+  async function removeGateTicket(id: string) {
+    if (!window.confirm("Delete this gate parking ticket?")) return;
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/manager/gate-parking-tickets/${encodeURIComponent(id)}?actorEmail=${encodeURIComponent(normalizedEmail)}`,
+        { method: "DELETE" }
+      );
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Failed");
+      if (selectedClient?.email) {
+        await loadGateParkingTickets(selectedClient.email);
+        await loadRentPaidStatus(selectedClient.email);
+      }
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed");
+    }
+  }
+
+  async function recalcInfoBreakdown(clientEmail: string, discount: string, surchargeRatePercent: string, parkingFee: string) {
     setInfoRentCalculating(true);
     try {
       const response = await fetch(`${API_BASE_URL}/calculate-rent`, {
@@ -1773,8 +1873,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           targetMonth: rentPaidMonth,
           managerDiscountVnd: Number(discount) || 0,
           shortTermSurchargeRate: (Number(surchargeRatePercent) || 0) / 100,
-          parkingFeeVnd: Number(parkingFee) || 0,
-          gateParkingFeeVnd: Number(gateParkingFee) || 0
+          parkingFeeVnd: Number(parkingFee) || 0
         })
       });
       if (response.ok) {
@@ -1782,7 +1881,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         setInfoRentBreakdown(data);
         setInfoShortTermSurchargeRate(formatPercentInput(data?.tenureSurchargeRate));
         setInfoParkingFee(String(data?.parkingFeeVnd || 0));
-        setInfoGateParkingFee(String(data?.gateParkingFeeVnd || 0));
       }
     } catch {
       // ignore
@@ -1821,7 +1919,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     managerDiscount: string;
     shortTermSurchargeRate: string;
     parkingFee: string;
-    gateParkingFee: string;
     payerName?: string;
     closePaymentPanel?: boolean;
   }) {
@@ -1838,7 +1935,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           managerDiscountVnd: Number(options.managerDiscount) || 0,
           shortTermSurchargeRate: (Number(options.shortTermSurchargeRate) || 0) / 100,
           parkingFeeVnd: Number(options.parkingFee) || 0,
-          gateParkingFeeVnd: Number(options.gateParkingFee) || 0,
           coinUsage: options.breakdown.recommendedCoinUsage,
           payerName,
           receiverName: selfDisplayName || normalizedEmail,
@@ -1886,6 +1982,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         ...prev,
         [options.client.email.trim().toLowerCase()]: true
       }));
+      void loadGateParkingTickets(options.client.email);
       alert("Payment recorded, receipt sent via Gmail, and monthly rent marked as paid.");
     } catch (err) {
       alert(err instanceof Error ? err.message : "Error");
@@ -2027,8 +2124,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   }, [activeAction, selectedClient?.email]);
 
   useEffect(() => {
-    setRentSectionCollapsed(rentPaidStatus === true);
-  }, [rentPaidStatus, selectedMaHd]);
+    setRentSectionCollapsed(true);
+  }, [selectedMaHd]);
 
   useEffect(() => {
     if (activeAction === "payment" && infoRentBreakdown && !rentBreakdown) {
@@ -2036,18 +2133,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       setManagerDiscountInput(infoManagerDiscount);
       setShortTermSurchargeRateInput(infoShortTermSurchargeRate);
       setParkingFeeInput(infoParkingFee);
-      setGateParkingFeeInput(infoGateParkingFee);
     }
-  }, [
-    activeAction,
-    infoGateParkingFee,
-    infoManagerDiscount,
-    infoParkingFee,
-    infoRentBreakdown,
-    infoShortTermSurchargeRate,
-    rentBreakdown,
-    rentPaidMonth
-  ]);
+  }, [activeAction, infoManagerDiscount, infoParkingFee, infoRentBreakdown, infoShortTermSurchargeRate, rentBreakdown, rentPaidMonth]);
 
   useEffect(() => {
     if (activeManagerView === "feedbacks") {
@@ -2073,20 +2160,20 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   useEffect(() => {
     if (selectedClient?.email) {
       void loadRentPaidStatus(selectedClient.email);
+      void loadGateParkingTickets(selectedClient.email);
     } else {
       setRentPaidStatus(null);
       setRentPaidMonth("");
-      setRentSectionCollapsed(false);
+      setRentSectionCollapsed(true);
       setInfoRentBreakdown(null);
       setInfoManagerDiscount("0");
       setInfoShortTermSurchargeRate("0");
       setInfoParkingFee("0");
-      setInfoGateParkingFee("0");
       setManagerDiscountInput("0");
       setShortTermSurchargeRateInput("0");
       setParkingFeeInput("0");
-      setGateParkingFeeInput("0");
       setRentBreakdown(null);
+      setGateParkingTickets([]);
     }
     if (selectedClient?.maHd) {
       setTerminationStatus("loading");
@@ -3691,9 +3778,84 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         </div>
                       </div>
 
+                      <div className="rounded-xl border border-slate-100 bg-white p-3 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs font-semibold text-slate-600">Gate parking tickets</p>
+                          {gateTicketsLoading ? <span className="text-[10px] text-slate-400">Loading…</span> : null}
+                        </div>
+                        {gateParkingTickets.length === 0 ? (
+                          <p className="text-[11px] text-slate-500">No tickets yet. Add one to bill gate parking for this resident.</p>
+                        ) : (
+                          <div className="max-h-36 overflow-y-auto space-y-1">
+                            {gateParkingTickets.map((tk) => (
+                              <div
+                                key={tk.id}
+                                className="flex flex-wrap items-center justify-between gap-1 rounded-lg border border-slate-100 bg-slate-50/80 px-2 py-1 text-[11px]"
+                              >
+                                <span className="font-mono text-slate-700">{tk.periodMonth}</span>
+                                <span className="font-semibold">{tk.amountVnd.toLocaleString("vi-VN")} ₫</span>
+                                <span className={tk.paidAt ? "text-emerald-600" : "text-amber-600"}>{tk.paidAt ? "Paid" : "Unpaid"}</span>
+                                <div className="flex gap-1 ml-auto">
+                                  <button
+                                    type="button"
+                                    onClick={() => void updateGateTicketPaid(tk.id, !tk.paidAt)}
+                                    className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-100"
+                                  >
+                                    {tk.paidAt ? "Unpay" : "Paid"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void removeGateTicket(tk.id)}
+                                    className="rounded border border-rose-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-rose-600 hover:bg-rose-50"
+                                  >
+                                    Del
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex flex-wrap gap-2 items-end">
+                          <label className="text-[10px] text-slate-500">
+                            Period
+                            <input
+                              type="month"
+                              value={gateNewPeriodMonth}
+                              onChange={(e) => setGateNewPeriodMonth(e.target.value)}
+                              className="ml-1 rounded border border-slate-200 px-1 py-0.5 text-[11px]"
+                            />
+                          </label>
+                          <label className="text-[10px] text-slate-500">
+                            Amount (₫)
+                            <input
+                              type="number"
+                              min={0}
+                              value={gateNewAmount}
+                              onChange={(e) => setGateNewAmount(e.target.value)}
+                              className="ml-1 w-24 rounded border border-slate-200 px-1 py-0.5 text-[11px]"
+                            />
+                          </label>
+                          <input
+                            type="text"
+                            value={gateNewNote}
+                            onChange={(e) => setGateNewNote(e.target.value)}
+                            placeholder="Note"
+                            className="min-w-[100px] flex-1 rounded border border-slate-200 px-2 py-0.5 text-[11px]"
+                          />
+                          <button
+                            type="button"
+                            disabled={loading}
+                            onClick={() => void createGateParkingTicketForSelected()}
+                            className="rounded-lg bg-slate-800 px-2 py-1 text-[10px] font-semibold text-white disabled:opacity-50"
+                          >
+                            Add ticket
+                          </button>
+                        </div>
+                      </div>
+
                       {rentSectionCollapsed ? (
                         <p className="text-xs text-slate-500 border-t border-slate-200 pt-3">
-                          {rentPaidStatus ? "Monthly rent details are collapsed because this month is marked paid." : "Monthly rent details are collapsed."}
+                          Expand for fee breakdown (zeros shown), parking override, and laundry from the prior calendar month. Gate parking total comes from unpaid tickets above until rent is paid.
                         </p>
                       ) : infoRentCalculating ? (
                         <p className="text-xs text-slate-500 border-t border-slate-200 pt-3">Calculating…</p>
@@ -3701,19 +3863,38 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         <div className="space-y-1.5 border-t border-slate-200 pt-3 text-sm">
                           {[
                             { label: "Base rent", value: infoRentBreakdown.baseRent ?? 0, color: "" },
-                            ...((infoRentBreakdown.tenureSurchargeVnd ?? 0) > 0 ? [{ label: `Short-term surcharge (+${((infoRentBreakdown.tenureSurchargeRate ?? 0) * 100).toFixed(0)}%)`, value: infoRentBreakdown.tenureSurchargeVnd ?? 0, color: "text-amber-600" }] : []),
-                            ...((infoRentBreakdown.monthlyAdjustmentVnd ?? 0) > 0 ? [{ label: "Monthly adjustment surcharge", value: infoRentBreakdown.monthlyAdjustmentVnd ?? 0, color: "text-amber-600" }] : []),
-                            ...((infoRentBreakdown.professionalDiscountVnd ?? 0) > 0 ? [{ label: "Monthly adjustment discount", value: -(infoRentBreakdown.professionalDiscountVnd ?? 0), color: "text-emerald-600" }] : []),
-                            ...((infoRentBreakdown.planDiscountVnd ?? 0) > 0 ? [{ label: "Plan discount", value: -(infoRentBreakdown.planDiscountVnd ?? 0), color: "text-emerald-600" }] : []),
-                            ...((infoRentBreakdown.managerDiscountVnd ?? 0) > 0 ? [{ label: "Manager discount", value: -(infoRentBreakdown.managerDiscountVnd ?? 0), color: "text-emerald-600" }] : []),
-                            { label: "Parking", value: infoRentBreakdown.parkingFeeVnd ?? 0, color: "" },
-                            { label: "Gate parking", value: infoRentBreakdown.gateParkingFeeVnd ?? 0, color: "" },
-                            { label: `Laundry (${infoRentBreakdown.details?.laundryCount?.cash ?? 0} washes)`, value: infoRentBreakdown.laundryFeeVnd ?? 0, color: "" },
-                            { label: `Fines (${infoRentBreakdown.details?.unpaidFinesCount ?? 0} unpaid)`, value: infoRentBreakdown.finesVnd ?? 0, color: "" },
-                          ].filter(item => item.value !== 0).map((item) => (
+                            {
+                              label: `Short-term surcharge (+${((infoRentBreakdown.tenureSurchargeRate ?? 0) * 100).toFixed(0)}%)`,
+                              value: infoRentBreakdown.tenureSurchargeVnd ?? 0,
+                              color: "text-amber-600"
+                            },
+                            {
+                              label: "Monthly adjustment surcharge",
+                              value: Math.max(0, infoRentBreakdown.monthlyAdjustmentVnd ?? 0),
+                              color: "text-amber-600"
+                            },
+                            {
+                              label: "Monthly adjustment discount (professional)",
+                              value: -(infoRentBreakdown.professionalDiscountVnd ?? 0),
+                              color: "text-emerald-600"
+                            },
+                            { label: "Plan discount", value: -(infoRentBreakdown.planDiscountVnd ?? 0), color: "text-emerald-600" },
+                            { label: "Manager discount", value: -(infoRentBreakdown.managerDiscountVnd ?? 0), color: "text-emerald-600" },
+                            { label: "Parking (sheet)", value: infoRentBreakdown.parkingFeeVnd ?? 0, color: "" },
+                            { label: "Gate parking (unpaid tickets before billing month)", value: infoRentBreakdown.gateParkingFeeVnd ?? 0, color: "" },
+                            {
+                              label: `Laundry — prior month ${infoRentBreakdown.details?.billingPrevMonth || "—"} (${infoRentBreakdown.details?.laundryCount?.cash ?? 0} cash)`,
+                              value: infoRentBreakdown.laundryFeeVnd ?? 0,
+                              color: ""
+                            },
+                            { label: `Fines (unpaid, sheet)`, value: infoRentBreakdown.finesVnd ?? 0, color: "" }
+                          ].map((item) => (
                             <div key={item.label} className={`flex justify-between ${item.color || "text-slate-700"}`}>
                               <span>{item.label}</span>
-                              <span className="font-medium">{item.value < 0 ? "−" : ""}{Math.abs(item.value).toLocaleString()} ₫</span>
+                              <span className="font-medium">
+                                {item.value < 0 ? "−" : ""}
+                                {Math.abs(item.value).toLocaleString()} ₫
+                              </span>
                             </div>
                           ))}
                           <div className="flex items-center justify-between border-t border-slate-200 pt-2 gap-2">
@@ -3737,7 +3918,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                       managerDiscount: infoManagerDiscount,
                                       shortTermSurchargeRate: infoShortTermSurchargeRate,
                                       parkingFee: infoParkingFee,
-                                      gateParkingFee: infoGateParkingFee,
                                       payerName: selectedClient.name
                                     });
                                   }}
@@ -3756,7 +3936,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
                       {!rentSectionCollapsed ? (
                       <div className="space-y-2 border-t border-slate-200 pt-3">
-                        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                           <div className="flex-1">
                             <label className="block text-xs font-medium text-slate-500 mb-1">Manager discount (₫)</label>
                             <input
@@ -3788,16 +3968,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               min="0"
                             />
                           </div>
-                          <div className="flex-1">
-                            <label className="block text-xs font-medium text-slate-500 mb-1">Gate parking (₫)</label>
-                            <input
-                              type="number"
-                              value={infoGateParkingFee}
-                              onChange={(e) => setInfoGateParkingFee(e.target.value)}
-                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
-                              min="0"
-                            />
-                          </div>
                         </div>
                         <button
                           type="button"
@@ -3807,8 +3977,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               selectedClient.email,
                               infoManagerDiscount,
                               infoShortTermSurchargeRate,
-                              infoParkingFee,
-                              infoGateParkingFee
+                              infoParkingFee
                             )
                           }
                           className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
@@ -4212,16 +4381,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             />
                           </label>
                         </div>
-                        <label className="block text-sm font-medium text-slate-700">
-                          Gate parking fee (₫)
-                          <input
-                            type="number"
-                            value={gateParkingFeeInput}
-                            onChange={(e) => setGateParkingFeeInput(e.target.value)}
-                            className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
-                            min="0"
-                          />
-                        </label>
 
                         <button
                           type="button"
@@ -4236,8 +4395,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                   targetMonth: targetMonthInput,
                                   managerDiscountVnd: Number(managerDiscountInput),
                                   shortTermSurchargeRate: (Number(shortTermSurchargeRateInput) || 0) / 100,
-                                  parkingFeeVnd: Number(parkingFeeInput) || 0,
-                                  gateParkingFeeVnd: Number(gateParkingFeeInput) || 0
+                                  parkingFeeVnd: Number(parkingFeeInput) || 0
                                 })
                               });
                               if (!response.ok) throw new Error(t("requestFailed"));
@@ -4260,65 +4418,55 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             <h4 className="text-sm font-bold text-slate-900">{t("breakdownFor").replace("{month}", rentBreakdown.month)}</h4>
                             
                             <div className="space-y-2 text-sm">
-                              <div className="flex justify-between">
-                                <span className="text-slate-600">{t("baseRent")}</span>
-                                <span className="font-medium">{rentBreakdown.baseRent.toLocaleString()} VND</span>
-                              </div>
-                              
-                              {rentBreakdown.tenureSurchargeVnd > 0 && (
-                                <div className="flex justify-between text-amber-600">
-                                  <span>{t("tenureSurcharge")} ({rentBreakdown.tenureSurchargeRate * 100}%)</span>
-                                  <span>+{rentBreakdown.tenureSurchargeVnd.toLocaleString()} VND</span>
+                              {[
+                                { label: t("baseRent"), value: rentBreakdown.baseRent, tone: "neutral" as const },
+                                {
+                                  label: `${t("tenureSurcharge")} (${(rentBreakdown.tenureSurchargeRate * 100).toFixed(0)}%)`,
+                                  value: rentBreakdown.tenureSurchargeVnd,
+                                  tone: "amber" as const
+                                },
+                                {
+                                  label: "Monthly adjustment surcharge",
+                                  value: Math.max(0, rentBreakdown.monthlyAdjustmentVnd ?? 0),
+                                  tone: "amber" as const
+                                },
+                                {
+                                  label: "Monthly adjustment discount (professional)",
+                                  value: -(rentBreakdown.professionalDiscountVnd ?? 0),
+                                  tone: "discount" as const
+                                },
+                                { label: t("planDiscount"), value: -(rentBreakdown.planDiscountVnd ?? 0), tone: "discount" as const },
+                                { label: t("managerDiscount"), value: -(rentBreakdown.managerDiscountVnd ?? 0), tone: "discount" as const },
+                                { label: t("parkingFee"), value: rentBreakdown.parkingFeeVnd, tone: "neutral" as const },
+                                {
+                                  label: "Gate parking (unpaid tickets before billing month)",
+                                  value: rentBreakdown.gateParkingFeeVnd ?? 0,
+                                  tone: "neutral" as const
+                                },
+                                {
+                                  label: `${t("laundryServices", "Laundry")} — prior month ${rentBreakdown.details?.billingPrevMonth || "—"} (${rentBreakdown.details?.laundryCount?.cash ?? 0} cash)`,
+                                  value: rentBreakdown.laundryFeeVnd,
+                                  tone: "neutral" as const
+                                },
+                                { label: t("unpaidFinesLabel"), value: rentBreakdown.finesVnd, tone: "neutral" as const }
+                              ].map((row) => (
+                                <div
+                                  key={row.label}
+                                  className={`flex justify-between ${
+                                    row.tone === "amber"
+                                      ? "text-amber-600"
+                                      : row.tone === "discount"
+                                        ? "text-emerald-600"
+                                        : ""
+                                  }`}
+                                >
+                                  <span className={row.tone === "neutral" ? "text-slate-600" : ""}>{row.label}</span>
+                                  <span className="font-medium">
+                                    {row.value < 0 ? "−" : ""}
+                                    {Math.abs(row.value).toLocaleString()} VND
+                                  </span>
                                 </div>
-                              )}
-
-                              {rentBreakdown.monthlyAdjustmentVnd > 0 && (
-                                <div className="flex justify-between text-amber-600">
-                                  <span>Monthly adjustment surcharge</span>
-                                  <span>+{rentBreakdown.monthlyAdjustmentVnd.toLocaleString()} VND</span>
-                                </div>
-                              )}
-
-                              {rentBreakdown.professionalDiscountVnd > 0 && (
-                                <div className="flex justify-between text-emerald-600">
-                                  <span>Monthly adjustment discount</span>
-                                  <span>-{rentBreakdown.professionalDiscountVnd.toLocaleString()} VND</span>
-                                </div>
-                              )}
-
-                              {rentBreakdown.planDiscountVnd > 0 && (
-                                <div className="flex justify-between text-emerald-600">
-                                  <span>{t("planDiscount")}</span>
-                                  <span>-{rentBreakdown.planDiscountVnd.toLocaleString()} VND</span>
-                                </div>
-                              )}
-
-                              {rentBreakdown.managerDiscountVnd > 0 && (
-                                <div className="flex justify-between text-emerald-600">
-                                  <span>{t("managerDiscount")}</span>
-                                  <span>-{rentBreakdown.managerDiscountVnd.toLocaleString()} VND</span>
-                                </div>
-                              )}
-
-                              <div className="flex justify-between">
-                                <span className="text-slate-600">{t("parkingFee")}</span>
-                                <span className="font-medium">{rentBreakdown.parkingFeeVnd.toLocaleString()} VND</span>
-                              </div>
-
-                              <div className="flex justify-between">
-                                <span className="text-slate-600">Gate parking</span>
-                                <span className="font-medium">{rentBreakdown.gateParkingFeeVnd.toLocaleString()} VND</span>
-                              </div>
-
-                              <div className="flex justify-between">
-                                <span className="text-slate-600">{t("laundryFeeLabel").replace("{count}", String(rentBreakdown.details?.laundryCount?.cash ?? 0))}</span>
-                                <span className="font-medium">{rentBreakdown.laundryFeeVnd.toLocaleString()} VND</span>
-                              </div>
-
-                              <div className="flex justify-between">
-                                <span className="text-slate-600">{t("unpaidFinesLabel")}</span>
-                                <span className="font-medium">{rentBreakdown.finesVnd.toLocaleString()} VND</span>
-                              </div>
+                              ))}
 
                               <div className="my-2 border-t border-slate-100 pt-2 font-bold flex justify-between">
                                 <span>{t("subtotal")}</span>
@@ -4361,7 +4509,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                     managerDiscount: managerDiscountInput,
                                     shortTermSurchargeRate: shortTermSurchargeRateInput,
                                     parkingFee: parkingFeeInput,
-                                    gateParkingFee: gateParkingFeeInput,
                                     payerName: paymentPayer || selectedClient.name,
                                     closePaymentPanel: true
                                   });
