@@ -87,11 +87,15 @@ function clipJson(value: unknown, maxLen: number): string {
   }
 }
 
-function assertResidentClient(email: string) {
+/** Resident sheet row **or** portal staff (managers browsing user view use the same Messages tab). */
+function assertEligibleForResidentPortalAi(email: string) {
   return resolvePortalLogin(email).then((login) => {
-    if (!login.allowed || login.role !== "user" || login.source !== "client") {
-      throw new Error("Only resident accounts can use Cozoro Bee here.");
+    if (!login.allowed || !login.role) {
+      throw new Error("Cozoro Bee: this login is not allowed.");
     }
+    if (login.source === "client" && login.role === "user") return;
+    if (login.source === "staff") return;
+    throw new Error("Cozoro Bee: this login is not allowed.");
   });
 }
 
@@ -407,8 +411,8 @@ const TOOLS: GeminiTool[] = [
 function buildSystemPrompt(language: UiLanguage, residentEmail: string) {
   const common = `You are **Cozoro Bee**, the friendly bee mascot of CozoroHome — a co-living resident portal in Ho Chi Minh City. You speak in first person as Cozoro Bee (warm, concise, never arrogant).
 
-## Authenticated resident
-- Portal email (the only account you may access): ${residentEmail}
+## Authenticated portal email
+- The only account you may access (resident **or** staff in user view): ${residentEmail}
 
 ## Hard rules
 - You must **never** reveal or infer other residents' names, emails, rooms, fines, or schedules.
@@ -417,7 +421,7 @@ function buildSystemPrompt(language: UiLanguage, residentEmail: string) {
 - Prefer **concise** answers. Offer step-by-step only when booking laundry or interpreting a schedule.
 - For laundry booking: first call get_my_laundry_status, then get_laundry_open_slots for the chosen machine, then book_my_laundry with an exact slot. Confirm date/time in local wording.
 - Payments/rent: summarize amounts and due status clearly; mention if figures are estimates from the roster.
-- This chat is **not** visible to managers as a support ticket — still be professional. For disputes or sensitive issues, suggest they use the normal **Messages / Support** thread.
+- This Bee chat is **not** the same as the human **Messages / Support** thread — still be professional; for disputes or sensitive issues, suggest that thread.
 - When introducing yourself, say you are **Cozoro Bee**, CozoroHome's bee mascot (in Vietnamese you may say "mình là Cozoro Bee, linh vật ong của CozoroHome").`;
 
   if (language === "vi") {
@@ -442,7 +446,7 @@ export async function handleResidentPortalAiChat(
     throw new Error("Cozoro Bee is temporarily disabled.");
   }
 
-  await assertResidentClient(residentEmail);
+  await assertEligibleForResidentPortalAi(residentEmail);
   const language: UiLanguage = options?.language === "vi" ? "vi" : "en";
   const systemPrompt = buildSystemPrompt(language, residentEmail.trim().toLowerCase());
 

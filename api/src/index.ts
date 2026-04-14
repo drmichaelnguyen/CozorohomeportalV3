@@ -3078,7 +3078,12 @@ app.post("/resident/portal-ai-chat", async (request, response) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : "AI assistant error";
     const lower = msg.toLowerCase();
-    const status = lower.includes("only resident") ? 403 : lower.includes("not configured") || lower.includes("disabled") ? 503 : 400;
+    const status =
+      lower.includes("only resident") || lower.includes("not allowed") || lower.includes("cozoro bee:")
+        ? 403
+        : lower.includes("not configured") || lower.includes("disabled")
+          ? 503
+          : 400;
     return response.status(status).json({ error: msg });
   }
 });

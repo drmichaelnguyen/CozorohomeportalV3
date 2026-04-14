@@ -119,7 +119,6 @@ export function SupportClient() {
   const [activeTab, setActiveTab] = useState<ChatTab>("personal");
   const [groupContext, setGroupContext] = useState<GroupContext | null>(null);
   const [isAnonymous, setIsAnonymous] = useState(false);
-  const [isStaff, setIsStaff] = useState(false);
   const [staffOnlyMode, setStaffOnlyMode] = useState(false);
   const [overrideGroupId, setOverrideGroupId] = useState<string | null>(null);
 
@@ -244,8 +243,6 @@ export function SupportClient() {
         Boolean(loginResponse.ok && loginData.allowed) &&
         Boolean(loginData.role) &&
         loginData.role !== "user";
-
-      setIsStaff(isPrivilegedStaff);
 
       // Load group context first if not loaded
       let resolvedGroupContext = groupContext;
@@ -460,7 +457,7 @@ export function SupportClient() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-140px)] flex-col bg-white md:h-[700px] md:rounded-3xl md:border md:border-slate-200 md:shadow-lg overflow-hidden">
+    <div className="flex h-[calc(100vh-140px)] min-h-0 flex-col overflow-hidden bg-white md:h-[700px] md:rounded-3xl md:border md:border-slate-200 md:shadow-lg">
       {/* Header */}
       <header className="shrink-0 border-b border-slate-100 bg-white/80 p-4 backdrop-blur-md">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -469,7 +466,7 @@ export function SupportClient() {
             <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{activeTab === "personal" ? t("cozoroSupport", "Cozoro Support") : `${activeTab} ${t("community", "Community")}`}</p>
           </div>
           <div className="flex items-center gap-2">
-            {!loading && !isStaff && activeTab === "personal" && sessionEmail.trim() ? (
+            {!loading && activeTab === "personal" && sessionEmail.trim() ? (
               <ResidentPortalAiBee email={sessionEmail.trim().toLowerCase()} />
             ) : null}
             <button
@@ -550,20 +547,20 @@ export function SupportClient() {
       </header>
 
       {/* Messages Area */}
-      <main 
+      <main
         ref={scrollRef}
-        className="flex-1 overflow-y-auto bg-slate-50/30 p-4 space-y-4 scroll-smooth"
+        className="min-h-0 flex-1 space-y-4 overflow-y-auto scroll-smooth bg-slate-50/30 p-4"
       >
         {loading ? (
-          <div className="flex h-full items-center justify-center p-12 text-center text-slate-400">
+          <div className="flex flex-col items-center justify-center py-10 text-center text-slate-400">
             <div className="space-y-3">
               <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-slate-800" />
               <p className="text-xs font-medium">{t("loadingMessages", "Loading messages...")}</p>
             </div>
           </div>
         ) : messages.length === 0 ? (
-          <div className="flex h-full items-center justify-center p-12 text-center text-slate-400">
-             <p className="text-xs font-medium max-w-[200px]">{t("startChatDesc", "No messages yet. Start the conversation here.")}</p>
+          <div className="mx-auto max-w-md rounded-2xl border border-dashed border-slate-200 bg-white/80 px-4 py-3 text-center text-slate-500">
+            <p className="text-xs font-medium leading-snug">{t("startChatDesc", "No messages yet. Start the conversation here.")}</p>
           </div>
         ) : (
           messages.map((message, idx) => {

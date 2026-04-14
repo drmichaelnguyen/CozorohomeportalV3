@@ -181,7 +181,7 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
       </button>
 
       {open ? (
-        <div className="fixed inset-0 z-[120] flex flex-col bg-white">
+        <div className="fixed inset-0 z-[120] flex min-h-0 flex-col bg-white">
           <header className="flex shrink-0 items-center justify-between gap-2 border-b border-amber-200 bg-amber-50 px-4 py-3">
             <div className="flex min-w-0 items-center gap-2">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-amber-400 bg-amber-50 p-0.5">
@@ -201,7 +201,7 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
             </button>
           </header>
 
-          <main className="flex-1 overflow-y-auto bg-slate-50 p-4 space-y-3">
+          <main className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4">
             {messages.map((m, i) => (
               <div key={`${i}-${m.text.slice(0, 24)}`} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div
