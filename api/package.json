@@ -1,9 +1,10 @@
-﻿{
+{
   "name": "cozorohome-api",
   "version": "3.7.14",
   "private": true,
   "type": "module",
   "scripts": {
+    "postinstall": "node ../scripts/verify-package-json.mjs",
     "dev": "tsx watch src/index.ts",
     "build": "pnpm run prisma:generate && tsc -p tsconfig.json",
     "start": "node dist/src/index.js",

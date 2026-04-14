@@ -19,6 +19,7 @@
     "host:deploy": "node scripts/host-manager.mjs deploy",
     "host:pull-deploy": "node scripts/host-manager.mjs pull-deploy",
     "host:status": "node scripts/host-manager.mjs status",
-    "export:mac": "powershell -ExecutionPolicy Bypass -File scripts/export-mac-deploy.ps1"
+    "export:mac": "powershell -ExecutionPolicy Bypass -File scripts/export-mac-deploy.ps1",
+    "backup:full": "bash scripts/backup-full-state.sh"
   }
 }
