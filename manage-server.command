@@ -6,8 +6,8 @@
 #   2) Or right-click the file → Open → Open (first time only).
 #   3) Then double-click again, or run:  ./manage-server.command
 #
-# One-liner to free ports 3000 + 4000 (portal + API defaults):
-#   for p in 3000 4000; do for pid in $(lsof -nP -iTCP:$p -sTCP:LISTEN -t 2>/dev/null); do kill -9 "$pid"; done; done
+# One-liner to free default stack ports (portal, API, bot, guest-booking):
+#   for p in 3000 4000 4010 4115; do for pid in $(lsof -nP -iTCP:$p -sTCP:LISTEN -t 2>/dev/null); do kill -9 "$pid"; done; done
 
 cd "$(dirname "$0")"
 REPO_ROOT=$(pwd)
@@ -40,6 +40,16 @@ fi
 if [[ -f portal/.env.local ]]; then
   _p=$(grep -E '^PORT=' portal/.env.local 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' | tr -d '"' | tr -d "'")
   [[ -n "$_p" ]] && portal_port="$_p"
+fi
+bot_port=4010
+guest_port=4115
+if [[ -f bot/.env ]]; then
+  _p=$(grep -E '^PORT=' bot/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' | tr -d '"' | tr -d "'")
+  [[ -n "$_p" ]] && bot_port="$_p"
+fi
+if [[ -f guest-booking-standalone/.env ]]; then
+  _p=$(grep -E '^PORT=' guest-booking-standalone/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' | tr -d '"' | tr -d "'")
+  [[ -n "$_p" ]] && guest_port="$_p"
 fi
 
 check_http() {
@@ -197,8 +207,11 @@ do_restore() {
 }
 
 do_kill_ports() {
-  echo "--- Kill TCP listeners on portal :$portal_port and API :$api_port (SIGKILL) ---"
-  for port in "$portal_port" "$api_port"; do
+  echo "--- Kill TCP listeners (portal :$portal_port, API :$api_port, bot :$bot_port, guest :$guest_port) ---"
+  local seen=""
+  for port in "$portal_port" "$api_port" "$bot_port" "$guest_port"; do
+    [[ " $seen " == *" $port "* ]] && continue
+    seen="$seen $port"
     echo "-- Port $port --"
     local pids
     pids=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)
@@ -221,10 +234,12 @@ do_kill_ports() {
 do_pull_deploy() {
   echo "--- Git pull (main) + full deploy ---"
   if ! git diff-index --quiet HEAD -- 2>/dev/null; then
-    echo "Working tree is dirty. Options:"
-    echo "  a) Discard local changes to tracked files: git checkout -- ."
-    echo "  b) Stash: git stash -u"
-    echo "Then re-run option 8."
+    echo "Working tree is dirty (example: modified scripts, or line-ending churn). First lines of git status:"
+    git status --short | head -20 || true
+    echo ""
+    echo "Fix then re-run option 8:"
+    echo "  a) Discard ALL local changes to tracked files:  git checkout -- ."
+    echo "  b) Stash everything:  git stash push -u -m \"pre-pull\""
     return 0
   fi
   git pull --ff-only origin main
@@ -243,7 +258,7 @@ while true; do
   echo "  7) RESTORE from backup/cozorohome-full-backup-*.tar.gz (destructive)"
   echo "  8) Git pull main + deploy (pnpm host:pull-deploy)"
   echo "  9) Git pull main only (no build)"
-  echo " 10) Kill listeners on portal :$portal_port + API :$api_port (then host:stop)"
+  echo " 10) Kill listeners on :$portal_port :$api_port :$bot_port :$guest_port (then host:stop)"
   echo "  0) Exit"
   echo -n "Choice: "
   read -r choice
@@ -262,5 +277,6 @@ while true; do
     *) echo "Unknown option." ;;
   esac
   echo ""
-  read -r -p "Press Enter to continue..."
+  echo "Press Enter to continue..."
+  read -r
 done

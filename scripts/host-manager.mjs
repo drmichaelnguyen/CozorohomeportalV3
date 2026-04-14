@@ -135,6 +135,53 @@ function isPidRunning(pid) {
   }
 }
 
+/** macOS/Linux: kill any process still LISTENING on this TCP port (clears orphans after crashes). */
+function freeListenersOnPort(port) {
+  if (process.platform === "win32") {
+    return;
+  }
+  const portStr = String(port);
+  try {
+    const r = spawnSync("lsof", ["-nP", `-iTCP:${portStr}`, "-sTCP:LISTEN", "-t"], {
+      encoding: "utf8",
+      shell: false
+    });
+    if (r.error || !r.stdout?.trim()) {
+      return;
+    }
+    const pids = r.stdout
+      .trim()
+      .split(/\n/)
+      .map((s) => Number(String(s).trim()))
+      .filter((n) => Number.isFinite(n) && n > 0 && n !== process.pid);
+    for (const pid of pids) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // ignore
+      }
+    }
+    if (pids.length) {
+      console.warn(`[host-manager] Freed TCP port ${portStr} (SIGKILL PID(s): ${pids.join(", ")})`);
+    }
+  } catch {
+    // lsof missing or failed — ignore
+  }
+}
+
+function freePortsForEnabledServices() {
+  const services = getServices().filter((service) => service.enabled);
+  const seen = new Set();
+  for (const service of services) {
+    const p = service.port;
+    if (seen.has(p)) {
+      continue;
+    }
+    seen.add(p);
+    freeListenersOnPort(p);
+  }
+}
+
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -528,6 +575,9 @@ async function runStart() {
     throw new Error("No services are enabled. Copy env files first, then rerun host:doctor.");
   }
 
+  freePortsForEnabledServices();
+  await wait(400);
+
   const started = [];
 
   try {
@@ -629,6 +679,7 @@ async function runStop(options = {}) {
   }
 
   removeState();
+  freePortsForEnabledServices();
   if (!options.quietWhenMissing) {
     console.log("Stopped managed services.");
   }

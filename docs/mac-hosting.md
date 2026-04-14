@@ -68,13 +68,15 @@ The script also tries `chmod u+x` and `xattr -cr` on itself when it starts (may 
 
 From the menu, choose **`10`** — it kills whatever is **listening** on the **portal** and **API** ports read from `portal/.env.local` and `api/.env` (`PORT=`), then runs **`pnpm host:stop`**.
 
-Default ports are **3000** (portal) and **4000** (API). One‑liner equivalent (only those two ports):
+Default ports are **3000** (portal), **4000** (API), **4010** (bot), **4115** (guest-booking). `host:stop` / `host:start` on **macOS/Linux** now run `lsof` and **SIGKILL** any orphan still listening on those ports so `host:restart` does not fail with “port already in use”.
+
+One‑liner to free all four defaults:
 
 ```bash
-for p in 3000 4000; do for pid in $(lsof -nP -iTCP:$p -sTCP:LISTEN -t 2>/dev/null); do kill -9 "$pid"; done; done
+for p in 3000 4000 4010 4115; do for pid in $(lsof -nP -iTCP:$p -sTCP:LISTEN -t 2>/dev/null); do kill -9 "$pid"; done; done
 ```
 
-If your env uses different `PORT` values, use menu **10** so it reads the correct ports, or adjust the loop.
+If your env uses different `PORT` values, use menu **10** in `manage-server.command` so it reads the correct ports, or adjust the loop.
 
 ### Backups live under `backup/`
 
