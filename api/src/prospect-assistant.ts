@@ -3,7 +3,13 @@ import path from "node:path";
 
 import { readCachedClients, syncClientsFromSheet } from "./google-sheets.js";
 import { requirePortalRole } from "./staff-access.js";
-import { getBedOverrides, getBedParkingFeeOverrides, getBranchPricingSettings } from "./pricing-config.js";
+import {
+  BRANCH_DEFAULT_PARKING_TIER_PREFIX,
+  getBedOverrides,
+  getBedParkingFeeOverrides,
+  getBranchPricingSettings,
+  listActiveParkingTiersForBranch
+} from "./pricing-config.js";
 
 const cacheDirPath = path.join(process.cwd(), "data");
 const settingsFilePath = path.join(cacheDirPath, "prospect-assistant-settings.json");
@@ -41,6 +47,8 @@ type BedAvailabilityRecord = {
     monthlyPrice: number;
     deposit: number;
     parkingFeeVnd: number;
+    /** Motorbike parking choices for this bed (per-bed override, named tiers, or branch default). */
+    parkingOptions: Array<{ id: string; labelEn: string; labelVi: string; feeVnd: number }>;
     cleaningOptOutFeeVnd: number;
   };
 };
@@ -449,11 +457,12 @@ export async function getProspectBedAvailability(input: {
   branchId: BranchId;
   sex: ProspectSex;
 }) {
-  const [cache, overrideRows, parkingOverrides, branchSettings] = await Promise.all([
+  const [cache, overrideRows, parkingOverrides, branchSettings, dbParkingTiers] = await Promise.all([
     getClientCache(),
     getBedOverrides("long_term"),
     getBedParkingFeeOverrides(input.branchId),
-    getBranchPricingSettings(input.branchId)
+    getBranchPricingSettings(input.branchId),
+    listActiveParkingTiersForBranch(input.branchId)
   ]);
   const reservations = buildReservations(cache.rows);
   const pricing = buildPriceStats(cache.rows);
@@ -463,7 +472,7 @@ export async function getProspectBedAvailability(input: {
       .filter((r) => r.branchId === input.branchId)
       .map((r) => [r.bedNumber, r])
   );
-  const parkingOverrideMap = new Map(parkingOverrides.map((r) => [r.bedNumber, r.parkingFeeVnd]));
+  const parkingOverrideByBed = new Map(parkingOverrides.map((r) => [r.bedNumber, r]));
   const today = new Date();
   today.setHours(12, 0, 0, 0);
   const windowEnd = addDays(today, 30);
@@ -515,6 +524,33 @@ export async function getProspectBedAvailability(input: {
           deposit: override?.deposit ?? sheetPrice.deposit
         };
 
+        const bedPark = parkingOverrideByBed.get(bedNumber);
+        const parkingOptions = bedPark
+          ? [
+              {
+                id: `bed-parking-override:${bedPark.id}`,
+                labelEn: "Parking (this bed)",
+                labelVi: "Giữ xe — giường này",
+                feeVnd: bedPark.parkingFeeVnd
+              }
+            ]
+          : dbParkingTiers.length > 0
+            ? dbParkingTiers.map((t) => ({
+                id: t.id,
+                labelEn: t.labelEn,
+                labelVi: t.labelVi,
+                feeVnd: t.feeVnd
+              }))
+            : [
+                {
+                  id: `${BRANCH_DEFAULT_PARKING_TIER_PREFIX}:${input.branchId}`,
+                  labelEn: "Motorbike parking",
+                  labelVi: "Gửi xe máy",
+                  feeVnd: branchSettings.parkingFeeVnd
+                }
+              ];
+        const parkingFeeVnd = parkingOptions[0]?.feeVnd ?? branchSettings.parkingFeeVnd;
+
         return [
           {
             bedNumber,
@@ -523,9 +559,8 @@ export async function getProspectBedAvailability(input: {
             pricing: {
               monthlyPrice: price.monthlyPrice,
               deposit: price.deposit,
-              parkingFeeVnd: parkingOverrideMap.has(bedNumber)
-                ? parkingOverrideMap.get(bedNumber)!
-                : branchSettings.parkingFeeVnd,
+              parkingFeeVnd,
+              parkingOptions,
               cleaningOptOutFeeVnd: branchSettings.cleaningOptOutFeeVnd
             }
           } satisfies BedAvailabilityRecord

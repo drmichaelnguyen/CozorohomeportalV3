@@ -58,6 +58,38 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "You are on a multi-month prepaid plan. Monthly rent notices may not apply each month.",
     vi: "Bạn đang dùng gói trả trước nhiều tháng. Thông báo tiền phòng hàng tháng có thể không áp dụng mỗi tháng."
   },
+  prepaidNextPackageTitle: {
+    en: "Estimated next package payment",
+    vi: "Ước tính thanh toán gói tiếp theo"
+  },
+  prepaidNextPackageAsOf: {
+    en: "Figures use your profile and billing rules as of {month}.",
+    vi: "Số liệu theo hồ sơ và quy tắc tính tiền đến tháng {month}."
+  },
+  prepaidLineRecurringMonthly: {
+    en: "Recurring portion (rent + surcharges + parking, per month)",
+    vi: "Phần định kỳ (tiền phòng + phụ phí + gửi xe, mỗi tháng)"
+  },
+  prepaidLinePackageGross: {
+    en: "Gross for {months}-month package ({months} × monthly)",
+    vi: "Tổng gói {months} tháng ({months} × một tháng)"
+  },
+  prepaidLinePlanDiscount: {
+    en: "Multi-month plan discount (same rule as registration)",
+    vi: "Giảm giá gói nhiều tháng (cùng quy tắc khi đăng ký)"
+  },
+  prepaidLinePackageNet: {
+    en: "Package portion after discount",
+    vi: "Phần gói sau giảm giá"
+  },
+  prepaidEstimateDisclaimer: {
+    en: "This is an estimate for your next prepaid renewal; managers may adjust the final amount. Laundry uses cash usage from the month before the billing month shown.",
+    vi: "Đây là ước tính cho kỳ gia hạn gói trả trước; quản lý có thể điều chỉnh số cuối. Phí giặt dựa trên lượt tiền mặt của tháng trước tháng hóa đơn hiển thị."
+  },
+  prepaidMidCyclePayables: {
+    en: "Other amounts due now (fines, cash laundry, gate): {amount} ₫ — included in the total above.",
+    vi: "Các khoản phải trả ngay (phạt, giặt tiền mặt, gửi xe cổng): {amount} ₫ — đã gồm trong tổng phía trên."
+  },
   rentBreakdownPending: {
     en: "Amount details will appear here once your billing profile is synced.",
     vi: "Chi tiết số tiền sẽ hiển thị khi hồ sơ thanh toán của bạn được đồng bộ."
@@ -360,6 +392,11 @@ const translations: Record<string, { en: string; vi: string }> = {
   branchD7: { en: "Branch D7", vi: "Chi nhánh D7" },
   newGroupMessage: { en: "+ New Group Message", vi: "+ Tin nhắn nhóm mới" },
   diagram: { en: "Diagram", vi: "Sơ đồ" },
+  diagramBedQuickSheetTitle: { en: "Bed", vi: "Giường" },
+  diagramGoToClientDetail: { en: "Open full client detail", vi: "Mở chi tiết khách" },
+  diagramQuickActionsTitle: { en: "Quick actions", vi: "Thao tác nhanh" },
+  diagramCallNow: { en: "Call", vi: "Gọi" },
+  diagramNoPhoneOnFile: { en: "No phone on file", vi: "Chưa có số điện thoại" },
   table: { en: "Table", vi: "Bảng" },
   bedsLabel: { en: "beds", vi: "giường" },
   bedLabel: { en: "Bed", vi: "Giường" },
@@ -596,6 +633,23 @@ const translations: Record<string, { en: string; vi: string }> = {
   shortTermTab: { en: "Short-term", vi: "Ngắn hạn" },
   staffAccountsTab: { en: "Staff Accounts", vi: "Tài khoản nhân viên" },
   pricingRestricted: { en: "Pricing editing is restricted to owners and app admins.", vi: "Việc chỉnh sửa giá chỉ dành cho chủ sở hữu và quản trị viên ứng dụng." },
+  parkingTiersManagerNote: {
+    en: "You can manage motorbike parking plans above. Bed prices, branch default fees, and discounts still require an owner or app admin.",
+    vi: "Bạn có thể quản lý các gói gửi xe ở trên. Giá giường, phí mặc định chi nhánh và giảm giá vẫn cần chủ sở hữu hoặc quản trị viên."
+  },
+  parkingTiersTitle: { en: "Motorbike parking plans (registration)", vi: "Gói gửi xe máy (đăng ký)" },
+  parkingTiersDesc: {
+    en: "Residents pick one plan when they register with a motorbike. If no plans are listed, the branch default parking fee applies. A per-bed parking override replaces these plans for that bed only.",
+    vi: "Cư dân chọn một gói khi đăng ký có xe máy. Nếu không có gói nào, hệ thống dùng phí gửi xe mặc định của chi nhánh. Ghi đè phí theo giường sẽ thay thế các gói này chỉ cho giường đó."
+  },
+  parkingTierLabelEn: { en: "Label (English)", vi: "Nhãn (tiếng Anh)" },
+  parkingTierLabelVi: { en: "Label (Vietnamese)", vi: "Nhãn (tiếng Việt)" },
+  parkingTierFeeVnd: { en: "Fee (₫/month)", vi: "Phí (₫/tháng)" },
+  parkingTierSort: { en: "Sort", vi: "Thứ tự" },
+  parkingTierActive: { en: "Active", vi: "Kích hoạt" },
+  parkingTierAdd: { en: "Add plan", vi: "Thêm gói" },
+  parkingTierSave: { en: "Save plan", vi: "Lưu gói" },
+  parkingTierDelete: { en: "Delete", vi: "Xóa" },
   branchFeeSettings: { en: "Branch Fee Settings", vi: "Cấu hình phí chi nhánh" },
   branchFeeSettingsDesc: { en: "Set the cleaning opt-out fee and default parking fee per branch. Open this only when you need to edit it.", vi: "Thiết lập phí không tham gia vệ sinh và phí gửi xe mặc định cho mỗi chi nhánh. Chỉ mở mục này khi bạn cần chỉnh sửa." },
   cleaningOptOutFeeLabel: { en: "Cleaning opt-out fee (VND/month)", vi: "Phí không tham gia vệ sinh (VND/tháng)" },

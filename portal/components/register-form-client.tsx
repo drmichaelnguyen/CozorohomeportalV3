@@ -50,6 +50,7 @@ type AvailabilityResponse = {
         monthlyPrice: number;
         deposit: number;
         parkingFeeVnd: number;
+        parkingOptions: Array<{ id: string; labelEn: string; labelVi: string; feeVnd: number }>;
         cleaningOptOutFeeVnd: number;
       };
     }>;
@@ -79,6 +80,8 @@ type FormState = {
   contractCleaningOptOut: boolean;
   hasMotorbike: boolean;
   motorbikePlate: string;
+  /** Selected motorbike parking tier id from `pricing.parkingOptions` */
+  parkingOptionId: string;
   idScanFile: File | null;
   agreed: boolean;
 };
@@ -204,6 +207,9 @@ const T = {
     motorbikePlateLabel: "Motorbike licence plate",
     motorbikePlateRequired: "Licence plate is required if you request parking.",
     parkingFeeLabel: "Parking fee",
+    selectParkingPlan: "Choose a parking plan",
+    selectParkingPlanError: "Please choose one of the parking plans.",
+    parkingFrom: "From",
     idScanLabel: "ID / Passport scan",
     idScanDesc: "Upload a scan or photo of your CCCD or Passport (required).",
     idScanUploading: "Uploading…",
@@ -310,6 +316,9 @@ const T = {
     motorbikePlateLabel: "Biển số xe máy",
     motorbikePlateRequired: "Vui lòng nhập biển số xe nếu muốn đăng ký gởi xe.",
     parkingFeeLabel: "Phí gởi xe",
+    selectParkingPlan: "Chọn gói gửi xe",
+    selectParkingPlanError: "Vui lòng chọn một gói gửi xe.",
+    parkingFrom: "Từ",
     idScanLabel: "Ảnh CMND / Căn cước công dân",
     idScanDesc: "Tải lên ảnh chụp CMND hoặc Hộ chiếu của bạn (bắt buộc).",
     idScanUploading: "Đang tải lên…",
@@ -362,6 +371,7 @@ const initialFormState: FormState = {
   contractCleaningOptOut: false,
   hasMotorbike: false,
   motorbikePlate: "",
+  parkingOptionId: "",
   idScanFile: null,
   agreed: false
 };
@@ -556,6 +566,26 @@ export function RegisterFormClient() {
     );
   }, [availability, form.bedNumber]);
 
+  useEffect(() => {
+    if (!availability || !form.bedNumber) {
+      return;
+    }
+    const numericBed = Number(form.bedNumber);
+    const bed = availability.rooms
+      .flatMap((room) => room.beds.map((b) => ({ ...b, room: room.room, floor: room.floor })))
+      .find((b) => b.bedNumber === numericBed);
+    const opts = bed?.pricing.parkingOptions ?? [];
+    if (opts.length === 0) {
+      return;
+    }
+    setForm((f) => {
+      if (opts.some((o) => o.id === f.parkingOptionId)) {
+        return f;
+      }
+      return { ...f, parkingOptionId: opts[0]!.id };
+    });
+  }, [availability, form.bedNumber]);
+
   const contractMonths = Number(form.contractMonths);
 
   // Short-stay surcharge: 1-3 months = 12%, 4-5 months = 8%, 6+ = 0%
@@ -604,7 +634,14 @@ export function RegisterFormClient() {
   const totalMonthlyDiscount = eligibleDiscounts.reduce((sum, d) => sum + d.amountVnd, 0);
 
   const selectedBedCleaningOptOutFee = selectedBed?.pricing.cleaningOptOutFeeVnd ?? 100000;
-  const selectedBedParkingFee = selectedBed?.pricing.parkingFeeVnd ?? 0;
+  const selectedParkingFeeVnd = useMemo(() => {
+    if (!selectedBed || !form.hasMotorbike) {
+      return 0;
+    }
+    const opts = selectedBed.pricing.parkingOptions ?? [];
+    const pick = opts.find((o) => o.id === form.parkingOptionId) ?? opts[0];
+    return pick?.feeVnd ?? selectedBed.pricing.parkingFeeVnd ?? 0;
+  }, [selectedBed, form.hasMotorbike, form.parkingOptionId]);
   const tenureSurchargeVnd = useMemo(() => {
     if (!selectedBed) return 0;
     return Math.round(selectedBed.pricing.monthlyPrice * tenureSurchargeRate);
@@ -612,7 +649,7 @@ export function RegisterFormClient() {
   const pricingSummary = selectedBed
     ? (() => {
         const discountedMonthlyPrice = Math.max(0, selectedBed.pricing.monthlyPrice - totalRecurringDiscount);
-        const parkingFee = form.hasMotorbike ? selectedBedParkingFee : 0;
+        const parkingFee = form.hasMotorbike ? selectedParkingFeeVnd : 0;
         const cleaningFee = form.contractCleaningOptOut ? selectedBedCleaningOptOutFee : 0;
         // Full recurring monthly cost (bed after recurring discounts + fees)
         const monthlyRecurringTotal = discountedMonthlyPrice + tenureSurchargeVnd + parkingFee + cleaningFee;
@@ -698,6 +735,15 @@ export function RegisterFormClient() {
       return;
     }
 
+    if (form.hasMotorbike) {
+      const opts = selectedBed.pricing.parkingOptions ?? [];
+      const ok = opts.length > 0 && opts.some((o) => o.id === form.parkingOptionId);
+      if (!ok) {
+        setSubmitError(t.selectParkingPlanError);
+        return;
+      }
+    }
+
     setSubmitting(true);
 
     try {
@@ -736,6 +782,7 @@ export function RegisterFormClient() {
           contractCleaningOptOut: form.contractCleaningOptOut,
           hasMotorbike: form.hasMotorbike,
           motorbikePlate: form.hasMotorbike ? form.motorbikePlate : undefined,
+          parkingOptionId: form.hasMotorbike ? form.parkingOptionId : undefined,
           idScanUrl,
           claimedDiscounts: eligibleDiscounts.map((d) => d.id)
         })
@@ -929,6 +976,30 @@ export function RegisterFormClient() {
                               <div className="mt-3 space-y-1 text-xs text-slate-600">
                                 <p>{t.monthlyShare} {formatCurrency(bed.pricing.monthlyPrice)}</p>
                                 <p>{t.depositLabel} {formatCurrency(bed.pricing.deposit)}</p>
+                                {(() => {
+                                  const po = bed.pricing.parkingOptions ?? [];
+                                  if (po.length > 1) {
+                                    const fees = po.map((p) => p.feeVnd);
+                                    const lo = Math.min(...fees);
+                                    const hi = Math.max(...fees);
+                                    return (
+                                      <p className="text-amber-800 font-medium">
+                                        {t.parkingFrom} {formatCurrency(lo)}
+                                        {hi !== lo ? ` – ${formatCurrency(hi)}` : ""}
+                                        {t.perMonth}
+                                      </p>
+                                    );
+                                  }
+                                  if (bed.pricing.parkingFeeVnd > 0) {
+                                    return (
+                                      <p className="text-amber-800 font-medium">
+                                        {t.parkingFeeLabel}: {formatCurrency(bed.pricing.parkingFeeVnd)}
+                                        {t.perMonth}
+                                      </p>
+                                    );
+                                  }
+                                  return null;
+                                })()}
                               </div>
                             </button>
                           );
@@ -988,10 +1059,35 @@ export function RegisterFormClient() {
             <label className="flex items-center gap-3 cursor-pointer">
               <input type="checkbox" checked={form.hasMotorbike} onChange={(e) => { updateForm("hasMotorbike", e.target.checked); if (!e.target.checked) updateForm("motorbikePlate", ""); }} className="h-4 w-4 rounded border-slate-300 text-teal-600" />
               <span className="text-sm text-slate-700">{t.hasMotorbikeLabel}</span>
-              {form.hasMotorbike && selectedBed && selectedBed.pricing.parkingFeeVnd > 0 && (
-                <span className="ml-auto rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">+{formatCurrency(selectedBed.pricing.parkingFeeVnd)}{t.perMonth}</span>
+              {form.hasMotorbike && selectedBed && selectedParkingFeeVnd > 0 && (
+                <span className="ml-auto rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">+{formatCurrency(selectedParkingFeeVnd)}{t.perMonth}</span>
               )}
             </label>
+            {form.hasMotorbike && selectedBed && (selectedBed.pricing.parkingOptions?.length ?? 0) > 1 ? (
+              <div className="space-y-2 rounded-2xl border border-amber-200/80 bg-white p-4">
+                <p className="text-sm font-medium text-slate-800">{t.selectParkingPlan}</p>
+                <div className="space-y-2">
+                  {(selectedBed.pricing.parkingOptions ?? []).map((opt) => (
+                    <label
+                      key={opt.id}
+                      className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 text-sm transition-colors ${
+                        form.parkingOptionId === opt.id ? "border-teal-500 bg-teal-50" : "border-slate-200 bg-slate-50 hover:border-teal-200"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="parkingOption"
+                        checked={form.parkingOptionId === opt.id}
+                        onChange={() => updateForm("parkingOptionId", opt.id)}
+                        className="h-4 w-4 border-slate-300 text-teal-600"
+                      />
+                      <span className="flex-1 text-slate-800">{lang === "vi" ? opt.labelVi : opt.labelEn}</span>
+                      <span className="shrink-0 font-semibold text-amber-800">+{formatCurrency(opt.feeVnd)}{t.perMonth}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             {form.hasMotorbike && (
               <label className="space-y-2">
                 <span className="text-sm font-medium text-slate-700">{t.motorbikePlateLabel} <span className="text-rose-500">*</span></span>

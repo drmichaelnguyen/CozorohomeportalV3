@@ -39,9 +39,14 @@ import { getAccountLockOverride, setAccountLockOverride } from "./account-lock-o
 import { getClientGroupContext, getGroupMessages, markGroupRead, postGroupMessage } from "./group-support.js";
 import { VAPID_PUBLIC_KEY, savePushSubscription, deletePushSubscription } from "./push.js";
 import { getPortalUxSettings, updatePortalUxSettings } from "./portal-ux-settings.js";
-import { 
-  calculateRentBreakdown 
-} from "./calculation-engine.js";
+import { calculateRentBreakdown, computePrepaidNextPaymentEstimate } from "./calculation-engine.js";
+import {
+  managerGetPrepaidPackageBilling,
+  managerUpsertPrepaidPackageBilling,
+  managerConfirmPrepaidPackageBilling,
+  managerNotifyPrepaidPackageBilling,
+  getConfirmedPrepaidBillingForResident
+} from "./manager-prepaid-package.js";
 import { 
   createAutomaticFineForEmail,
   sendGmailReceipt,
@@ -171,7 +176,10 @@ import {
   getBedParkingFeeOverrides,
   upsertBedParkingFeeOverride,
   deleteBedParkingFeeOverride,
-  resolveParkingFee,
+  listParkingPricingTiers,
+  upsertParkingPricingTier,
+  deleteParkingPricingTier,
+  resolveParkingTierChoicesForBed,
   type TermType
 } from "./pricing-config.js";
 import { createWriteStream } from "node:fs";
@@ -782,6 +790,8 @@ const publicRegistrationSchema = z.object({
   contractCleaningOptOut: z.boolean().optional().default(false),
   hasMotorbike: z.boolean().optional().default(false),
   motorbikePlate: z.string().trim().optional(),
+  /** Required when hasMotorbike and more than one parking tier exists; otherwise server picks the only option. */
+  parkingOptionId: z.string().trim().optional(),
   idScanUrl: z.string().trim().optional()
 });
 const cleaningAvailabilitySchema = z.object({
@@ -4353,6 +4363,122 @@ app.post("/manager/rent-paid-status", async (req, res) => {
   return res.json({ email: record.email, month: record.month, isPaid: record.isPaid });
 });
 
+// GET /manager/prepaid-package-billing — engine estimate + saved draft for a prepaid resident
+app.get("/manager/prepaid-package-billing", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim();
+  const clientEmail = String(req.query.clientEmail ?? "").trim().toLowerCase();
+  const billingMonth = String(req.query.billingMonth ?? "").trim();
+  if (!actorEmail || !clientEmail || !billingMonth || !/^\d{4}-\d{2}$/.test(billingMonth)) {
+    return res.status(400).json({ error: "actorEmail, clientEmail, and billingMonth (YYYY-MM) are required" });
+  }
+  try {
+    const cache = await readCachedClients();
+    const row = cache?.rows.find((r) => (r["Địa chỉ email"] ?? "").trim().toLowerCase() === clientEmail);
+    if (!row) {
+      return res.status(404).json({ error: "Client not found in cache" });
+    }
+    const result = await managerGetPrepaidPackageBilling({
+      actorEmail,
+      clientEmail,
+      billingMonth,
+      clientRow: row
+    });
+    if ("error" in result && result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to load prepaid billing" });
+  }
+});
+
+// POST /manager/prepaid-package-billing — save draft (recalculates engine snapshot; clears confirmed until re-confirmed)
+app.post("/manager/prepaid-package-billing", async (req, res) => {
+  const actorEmail = String(req.body.actorEmail ?? "").trim();
+  const clientEmail = String(req.body.clientEmail ?? "").trim().toLowerCase();
+  const billingMonth = String(req.body.billingMonth ?? "").trim();
+  const managerPackageTotalVnd = Number(req.body.managerPackageTotalVnd);
+  const managerNote = req.body.managerNote == null ? "" : String(req.body.managerNote);
+  if (!actorEmail || !clientEmail || !billingMonth || !/^\d{4}-\d{2}$/.test(billingMonth)) {
+    return res.status(400).json({ error: "actorEmail, clientEmail, and billingMonth (YYYY-MM) are required" });
+  }
+  if (!Number.isFinite(managerPackageTotalVnd)) {
+    return res.status(400).json({ error: "managerPackageTotalVnd is required" });
+  }
+  try {
+    const cache = await readCachedClients();
+    const row = cache?.rows.find((r) => (r["Địa chỉ email"] ?? "").trim().toLowerCase() === clientEmail);
+    if (!row) {
+      return res.status(404).json({ error: "Client not found in cache" });
+    }
+    const result = await managerUpsertPrepaidPackageBilling({
+      actorEmail,
+      clientEmail,
+      billingMonth,
+      clientRow: row,
+      managerPackageTotalVnd,
+      managerNote
+    });
+    if ("error" in result && result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to save prepaid billing" });
+  }
+});
+
+// POST /manager/prepaid-package-billing/confirm
+app.post("/manager/prepaid-package-billing/confirm", async (req, res) => {
+  const actorEmail = String(req.body.actorEmail ?? "").trim();
+  const clientEmail = String(req.body.clientEmail ?? "").trim().toLowerCase();
+  const billingMonth = String(req.body.billingMonth ?? "").trim();
+  if (!actorEmail || !clientEmail || !billingMonth || !/^\d{4}-\d{2}$/.test(billingMonth)) {
+    return res.status(400).json({ error: "actorEmail, clientEmail, and billingMonth (YYYY-MM) are required" });
+  }
+  try {
+    const result = await managerConfirmPrepaidPackageBilling({ actorEmail, clientEmail, billingMonth });
+    if ("error" in result && result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to confirm" });
+  }
+});
+
+// POST /manager/prepaid-package-billing/notify — in-app + optional Gmail (requires prior confirm)
+app.post("/manager/prepaid-package-billing/notify", async (req, res) => {
+  const actorEmail = String(req.body.actorEmail ?? "").trim();
+  const clientEmail = String(req.body.clientEmail ?? "").trim().toLowerCase();
+  const billingMonth = String(req.body.billingMonth ?? "").trim();
+  const notifyApp = req.body.notifyApp === true;
+  const notifyEmail = req.body.notifyEmail === true;
+  const clientName = req.body.clientName == null ? "" : String(req.body.clientName);
+  if (!actorEmail || !clientEmail || !billingMonth || !/^\d{4}-\d{2}$/.test(billingMonth)) {
+    return res.status(400).json({ error: "actorEmail, clientEmail, and billingMonth (YYYY-MM) are required" });
+  }
+  if (!notifyApp && !notifyEmail) {
+    return res.status(400).json({ error: "Set notifyApp and/or notifyEmail to true" });
+  }
+  try {
+    const result = await managerNotifyPrepaidPackageBilling({
+      actorEmail,
+      clientEmail,
+      billingMonth,
+      clientName: clientName || undefined,
+      notifyApp,
+      notifyEmail
+    });
+    if ("error" in result && result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to send notifications" });
+  }
+});
+
 // ── Gate parking tickets (per resident; unpaid amounts roll into monthly rent) ──
 
 app.get("/manager/gate-parking-tickets", async (req, res) => {
@@ -4579,6 +4705,20 @@ app.get("/rent-paid-status", async (req, res) => {
     const onPrepaidPlan = paymentPlan.includes("03 tháng") || paymentPlan.includes("06 tháng");
 
     if (onPrepaidPlan || (record?.isPaid ?? false)) {
+      const baseEstimate = onPrepaidPlan ? await computePrepaidNextPaymentEstimate(client, month) : null;
+      let prepaidNextPaymentEstimate = baseEstimate;
+      if (baseEstimate) {
+        const billing = await getConfirmedPrepaidBillingForResident(email, month);
+        if (billing?.confirmed) {
+          prepaidNextPaymentEstimate = {
+            ...baseEstimate,
+            engineEstimatedTotalVnd: baseEstimate.estimatedTotalVnd,
+            estimatedTotalVnd: billing.managerPackageTotalVnd,
+            managerPackageNote: billing.managerNote ?? null,
+            prepaidManagerConfirmed: true
+          };
+        }
+      }
       return res.json({
         email,
         month,
@@ -4586,6 +4726,7 @@ app.get("/rent-paid-status", async (req, res) => {
         applyCoinsTowardRent,
         breakdown: null,
         onPrepaidPlan,
+        prepaidNextPaymentEstimate,
         blockingRentDuePopupEnabled: portalUx.blockingRentDuePopupEnabled
       });
     }
@@ -4902,20 +5043,34 @@ app.post("/api/public/register", async (request, response) => {
     const branchSettings = await getBranchPricingSettings(parsed.data.branchId);
     const configuredCleaningFeeVnd = branchSettings.cleaningOptOutFeeVnd;
 
-    // Resolve parking fee for the specific bed (if motorbike requested)
-    const parkingFeeVnd = parsed.data.hasMotorbike
-      ? await resolveParkingFee(parsed.data.branchId, parsed.data.bedNumber)
-      : 0;
+    const tierChoices = await resolveParkingTierChoicesForBed(parsed.data.branchId, parsed.data.bedNumber);
+    let parkingFeeVnd = 0;
+    let parkingPlanSummary: string | undefined;
+    if (parsed.data.hasMotorbike) {
+      const optId = parsed.data.parkingOptionId?.trim();
+      const match =
+        (optId ? tierChoices.find((c) => c.id === optId) : undefined) ??
+        (tierChoices.length === 1 ? tierChoices[0] : undefined);
+      if (!match) {
+        return response.status(400).json({ error: "Select a motorbike parking plan." });
+      }
+      parkingFeeVnd = match.feeVnd;
+      const label = match.labelEn;
+      parkingPlanSummary = `${label} — ${match.feeVnd.toLocaleString("vi-VN")} ₫/month`;
+    }
 
     const result = await runWithWriteGuard({
       key: createWriteGuardKey("/api/public/register", parsed.data),
       duplicateMessage: "This registration was just submitted. Please wait a few seconds before trying again.",
       cooldownMs: 15000,
       action: async () => {
+        const { parkingOptionId: _parkingOptionIdIgnored, ...registrationFields } = parsed.data;
+        void _parkingOptionIdIgnored;
         const registration = await submitPublicRegistration({
-          ...parsed.data,
+          ...registrationFields,
           cleaningOptOutFeeVnd: configuredCleaningFeeVnd,
           parkingFeeVnd,
+          parkingPlanSummary,
           idScanUrl: parsed.data.idScanUrl,
           motorbikePlate: parsed.data.motorbikePlate
         });
@@ -4966,13 +5121,14 @@ app.get("/manager/pricing", async (request, response) => {
   const actorEmail = String(request.query.actorEmail ?? "");
   try {
     await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
-    const [bedOverrides, discounts, branchSettings, parkingOverrides] = await Promise.all([
+    const [bedOverrides, discounts, branchSettings, parkingOverrides, parkingTiers] = await Promise.all([
       getBedOverrides(),
       getDiscounts(),
       getAllBranchPricingSettings(),
-      getBedParkingFeeOverrides()
+      getBedParkingFeeOverrides(),
+      listParkingPricingTiers()
     ]);
-    return response.json({ bedOverrides, discounts, branchSettings, parkingOverrides });
+    return response.json({ bedOverrides, discounts, branchSettings, parkingOverrides, parkingTiers });
   } catch (error) {
     return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to load pricing" });
   }
@@ -5018,6 +5174,55 @@ app.delete("/manager/pricing/parking-beds", async (request, response) => {
     return response.json({ ok: true });
   } catch (error) {
     return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to delete parking fee override" });
+  }
+});
+
+// Manager/owner: upsert a named parking tier per branch (registration choices)
+app.put("/manager/pricing/parking-tiers", async (request, response) => {
+  const body = request.body as Record<string, unknown>;
+  const actorEmail = String(body.actorEmail ?? "");
+  const { id, branchId, labelEn, labelVi, feeVnd, sortOrder, active } = body as {
+    id?: string;
+    branchId: string;
+    labelEn: string;
+    labelVi: string;
+    feeVnd: number;
+    sortOrder?: number;
+    active?: boolean;
+  };
+  try {
+    if (!branchId) {
+      return response.status(400).json({ error: "branchId is required" });
+    }
+    if (typeof feeVnd !== "number" || !Number.isFinite(feeVnd)) {
+      return response.status(400).json({ error: "feeVnd is required" });
+    }
+    const row = await upsertParkingPricingTier(actorEmail, {
+      id,
+      branchId,
+      labelEn: labelEn ?? "",
+      labelVi: labelVi ?? "",
+      feeVnd,
+      sortOrder,
+      active
+    });
+    return response.json({ ok: true, row });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to save parking tier" });
+  }
+});
+
+app.delete("/manager/pricing/parking-tiers", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "");
+  const id = String(request.query.id ?? "");
+  try {
+    if (!id) {
+      return response.status(400).json({ error: "id is required" });
+    }
+    await deleteParkingPricingTier(actorEmail, id);
+    return response.json({ ok: true });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to delete parking tier" });
   }
 });
 

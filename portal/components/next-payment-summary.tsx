@@ -4,7 +4,11 @@ import { useState } from "react";
 import Link from "next/link";
 
 import { API_BASE_URL } from "../lib/api-base-url";
-import type { RentBreakdownPayload, RentPaidStatusPayload } from "../lib/rent-paid-status";
+import type {
+  PrepaidNextPaymentEstimatePayload,
+  RentBreakdownPayload,
+  RentPaidStatusPayload
+} from "../lib/rent-paid-status";
 import { formatBillingMonthLabel } from "../lib/rent-paid-status";
 import { usePortalLanguage } from "./portal-language";
 
@@ -81,6 +85,82 @@ function BreakdownRows({
   );
 }
 
+function PrepaidPackageBreakdownRows({
+  est,
+  billMonthLabel,
+  t
+}: {
+  est: PrepaidNextPaymentEstimatePayload;
+  billMonthLabel: string;
+  t: (key: string, fallback?: string, params?: Record<string, string | number>) => string;
+}) {
+  const fmt = (n: number) => new Intl.NumberFormat("vi-VN").format(n);
+  const gross = est.recurringMonthlyVnd * est.planMonths;
+  const rows: { label: string; value: number }[] = [
+    {
+      label: t("prepaidLineRecurringMonthly"),
+      value: est.recurringMonthlyVnd
+    },
+    {
+      label: t("prepaidLinePackageGross", undefined, { months: est.planMonths }),
+      value: gross
+    }
+  ];
+  if (est.frequencyDiscountVnd > 0) {
+    rows.push({
+      label: t("prepaidLinePlanDiscount"),
+      value: -est.frequencyDiscountVnd
+    });
+  }
+  rows.push({
+    label: t("prepaidLinePackageNet"),
+    value: est.packageRecurringSubtotalVnd
+  });
+  if (est.laundryFeeVnd > 0) {
+    rows.push({
+      label: `${t("laundryServices")} — ${est.laundryBillingPrevMonth || "—"}`,
+      value: est.laundryFeeVnd
+    });
+  }
+  if (est.gateParkingFeeVnd > 0) {
+    rows.push({ label: t("gateParking"), value: est.gateParkingFeeVnd });
+  }
+  if (est.finesVnd > 0) {
+    rows.push({ label: t("fines"), value: est.finesVnd });
+  }
+
+  return (
+    <div className="mt-3 space-y-2 rounded-xl border border-amber-200/80 bg-white/80 p-4">
+      <p className="text-xs font-semibold uppercase tracking-wide text-amber-800/90">
+        {t("prepaidNextPackageTitle")} · {billMonthLabel}
+      </p>
+      {rows.map((item, idx) => (
+        <div key={`prepaid-row-${idx}`} className="flex items-center justify-between gap-3 text-sm">
+          <span className={item.value < 0 ? "text-emerald-700" : "text-slate-700"}>{item.label}</span>
+          <span className={`shrink-0 font-semibold ${item.value < 0 ? "text-emerald-700" : "text-slate-900"}`}>
+            {item.value < 0 ? "-" : ""}
+            {fmt(Math.abs(item.value))} ₫
+          </span>
+        </div>
+      ))}
+      <div className="flex items-center justify-between border-t border-amber-200/80 pt-3 text-sm font-bold text-slate-900">
+        <span>{t("totalDue", "Total Due")}</span>
+        <span className="text-amber-800">{fmt(est.estimatedTotalVnd)} ₫</span>
+      </div>
+      <p className="text-xs text-slate-500">{t("prepaidEstimateDisclaimer")}</p>
+      {est.prepaidManagerConfirmed ? (
+        <p className="text-xs text-slate-500">
+          {t(
+            "prepaidDetailsEngineNote",
+            "Line items reflect the system calculation; the total above may differ if your manager adjusted the package amount."
+          )}
+        </p>
+      ) : null}
+      <p className="text-xs text-slate-500">{t("contactManagerForPayment")}</p>
+    </div>
+  );
+}
+
 type NextPaymentSummaryProps = {
   nextPaymentDate: Date | null;
   rentPaidStatus: RentPaidStatusPayload | null;
@@ -109,6 +189,7 @@ export function NextPaymentSummary({
 }: NextPaymentSummaryProps) {
   const { t, language } = usePortalLanguage();
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [prepaidDetailsOpen, setPrepaidDetailsOpen] = useState(false);
   const [coinPrefSaving, setCoinPrefSaving] = useState(false);
   const [coinPrefError, setCoinPrefError] = useState("");
 
@@ -150,11 +231,14 @@ export function NextPaymentSummary({
     : "";
 
   const breakdown = rentPaidStatus?.breakdown ?? null;
+  const prepaidEst = rentPaidStatus?.prepaidNextPaymentEstimate ?? null;
   const showAmountRow =
     Boolean(breakdown) && rentPaidStatus && !rentPaidStatus.isPaid && !rentPaidStatus.onPrepaidPlan;
+  const showPrepaidEstimateBlock =
+    Boolean(rentPaidStatus?.onPrepaidPlan && prepaidEst && !rentLoading);
   const coinCreditVnd = breakdown?.recommendedCoinValueVnd ?? 0;
   const cashDueZeroButBillPositive =
-    Boolean(breakdown) && breakdown.finalTotalVnd === 0 && coinCreditVnd > 0;
+    breakdown != null && breakdown.finalTotalVnd === 0 && coinCreditVnd > 0;
 
   return (
     <section className={`${rounded} border border-amber-200 bg-amber-50 shadow-sm ${pad}`}>
@@ -189,6 +273,66 @@ export function NextPaymentSummary({
         <p className="mt-3 text-sm text-emerald-800">
           {t("rentOnPrepaidPlan", "You are on a multi-month prepaid plan. Monthly rent notices may not apply each month.")}
         </p>
+      ) : null}
+
+      {showPrepaidEstimateBlock && prepaidEst ? (
+        <div className="mt-4 space-y-2">
+          <p className="text-xs text-slate-600">
+            {t("prepaidNextPackageAsOf", undefined, { month: formatBillingMonthLabel(prepaidEst.billingMonth, language) })}
+          </p>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-amber-800/90">
+                {t("prepaidNextPackageTitle")}
+              </div>
+              <div className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">
+                {new Intl.NumberFormat("vi-VN").format(prepaidEst.estimatedTotalVnd)} ₫
+              </div>
+              {prepaidEst.prepaidManagerConfirmed && prepaidEst.engineEstimatedTotalVnd != null ? (
+                <p className="mt-2 text-xs font-medium text-emerald-900">
+                  {language === "vi"
+                    ? `Quản lý xác nhận số tiền này (ước tính hệ thống: ${new Intl.NumberFormat("vi-VN").format(prepaidEst.engineEstimatedTotalVnd)} ₫).`
+                    : `Your manager confirmed this amount (system estimate was ${new Intl.NumberFormat("vi-VN").format(prepaidEst.engineEstimatedTotalVnd)} ₫).`}
+                </p>
+              ) : null}
+              {prepaidEst.managerPackageNote?.trim() ? (
+                <p className="mt-2 rounded-lg border border-amber-200/80 bg-white/80 p-2 text-xs text-slate-700">{prepaidEst.managerPackageNote.trim()}</p>
+              ) : null}
+              {(prepaidEst.midCyclePayablesVnd ?? 0) > 0 ? (
+                <p className="mt-2 text-xs font-medium text-slate-600">
+                  {t("prepaidMidCyclePayables", undefined, {
+                    amount: new Intl.NumberFormat("vi-VN").format(prepaidEst.midCyclePayablesVnd ?? 0)
+                  })}
+                </p>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={() => setPrepaidDetailsOpen((v) => !v)}
+              className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-900 shadow-sm hover:bg-amber-50"
+            >
+              {prepaidDetailsOpen ? t("hideDetails", "Hide details") : t("paymentDetails", "Details")}
+              <svg
+                className={`h-4 w-4 transition-transform ${prepaidDetailsOpen ? "rotate-180" : ""}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+          </div>
+          {prepaidDetailsOpen ? (
+            <PrepaidPackageBreakdownRows
+              est={prepaidEst}
+              billMonthLabel={formatBillingMonthLabel(prepaidEst.billingMonth, language)}
+              t={t}
+            />
+          ) : null}
+        </div>
+      ) : rentPaidStatus?.onPrepaidPlan && !rentLoading && !prepaidEst ? (
+        <p className="mt-3 text-sm text-amber-900/80">{t("rentBreakdownPending")}</p>
       ) : null}
 
       {rentPaidStatus && !rentPaidStatus.onPrepaidPlan && rentPaidStatus.isPaid && billMonthLabel ? (

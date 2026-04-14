@@ -20,7 +20,9 @@ type NavBadges = {
 const BADGE_CACHE_TTL = 30 * 1000; // 30 seconds
 const BADGE_POLL_INTERVAL = 30 * 1000; // poll every 30 seconds
 
-function useCachedBadges(cacheKey: string): [NavBadges, (b: NavBadges) => void] {
+type SetNavBadges = (next: NavBadges | ((prev: NavBadges) => NavBadges)) => void;
+
+function useCachedBadges(cacheKey: string): [NavBadges, SetNavBadges] {
   const empty: NavBadges = { laundry: 0, cleaning: 0, message: 0, account: 0, managerMessage: 0, managerMaintenance: 0 };
 
   function load(): NavBadges {
@@ -36,11 +38,14 @@ function useCachedBadges(cacheKey: string): [NavBadges, (b: NavBadges) => void] 
 
   const [badges, setBadgesState] = useState<NavBadges>(load);
 
-  function setBadges(next: NavBadges) {
-    setBadgesState(next);
-    try {
-      localStorage.setItem(cacheKey, JSON.stringify({ data: next, timestamp: Date.now() }));
-    } catch {}
+  function setBadges(next: NavBadges | ((prev: NavBadges) => NavBadges)) {
+    setBadgesState((prev) => {
+      const resolved = typeof next === "function" ? next(prev) : next;
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify({ data: resolved, timestamp: Date.now() }));
+      } catch {}
+      return resolved;
+    });
   }
 
   return [badges, setBadges];
@@ -108,7 +113,7 @@ function useNavBadges(
           laundry: sum(["LAUNDRY_REMINDER"]),
           cleaning: sum(["CLEANING_REMINDER", "CLEANING_AUDIT_RESULT"]),
           message: sum(["SUPPORT_REPLY"]),
-          account: sum(["PAYMENT_DUE", "NEW_FINE"]),
+          account: sum(["PAYMENT_DUE", "NEW_FINE", "PREPAID_PACKAGE"]),
           managerMessage: 0,
           managerMaintenance: 0,
         }));

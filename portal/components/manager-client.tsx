@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
 import { parseVietnamDate } from "../lib/contract-utils";
@@ -147,6 +147,7 @@ type FeedbackEntry = {
 };
 
 type PricingSettingsSectionKey =
+  | "parking_tiers"
   | "branch_fees"
   | "resident_portal"
   | "bed_prices"
@@ -900,6 +901,23 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [gateNewPeriodMonth, setGateNewPeriodMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [gateNewAmount, setGateNewAmount] = useState("");
   const [gateNewNote, setGateNewNote] = useState("");
+  const [prepaidPkgLoading, setPrepaidPkgLoading] = useState(false);
+  const [prepaidPkgEstimate, setPrepaidPkgEstimate] = useState<{
+    estimatedTotalVnd: number;
+    planMonths?: number;
+    midCyclePayablesVnd?: number;
+    recurringMonthlyVnd?: number;
+  } | null>(null);
+  const [prepaidPkgBilling, setPrepaidPkgBilling] = useState<{
+    confirmed?: boolean;
+    managerPackageTotalVnd?: number;
+    managerNote?: string | null;
+    lastAppNotifyAt?: string | null;
+    lastEmailNotifyAt?: string | null;
+  } | null>(null);
+  const [prepaidPkgTotalInput, setPrepaidPkgTotalInput] = useState("");
+  const [prepaidPkgNoteInput, setPrepaidPkgNoteInput] = useState("");
+  const [prepaidPkgActionLoading, setPrepaidPkgActionLoading] = useState(false);
   const [monthlyRentPaidByEmail, setMonthlyRentPaidByEmail] = useState<Record<string, boolean>>({});
   const [monthlyRentPaidMapLoaded, setMonthlyRentPaidMapLoaded] = useState(false);
   const [clientNewPassword, setClientNewPassword] = useState("");
@@ -978,16 +996,30 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   type BedParkingFeeOverride = {
     id: number; branchId: string; bedNumber: number; parkingFeeVnd: number; updatedBy: string; updatedAt: string;
   };
+  type ParkingPricingTierRow = {
+    id: string;
+    branchId: string;
+    labelEn: string;
+    labelVi: string;
+    feeVnd: number;
+    sortOrder: number;
+    active: boolean;
+    updatedBy: string;
+    updatedAt: string;
+    createdAt: string;
+  };
   const [pricingData, setPricingData] = useState<{
     bedOverrides: PricingBedOverride[];
     discounts: PricingDiscount[];
     branchSettings: BranchPricingSettings[];
     parkingOverrides: BedParkingFeeOverride[];
+    parkingTiers: ParkingPricingTierRow[];
   } | null>(null);
   const [pricingConfigLoading, setPricingConfigLoading] = useState(false);
   const [pricingSettingsTab, setPricingSettingsTab] = useState<"long_term" | "short_term" | "staff">("long_term");
   const [bedPricingExpanded, setBedPricingExpanded] = useState(false);
   const [pricingSettingsExpanded, setPricingSettingsExpanded] = useState<Record<PricingSettingsSectionKey, boolean>>({
+    parking_tiers: true,
     branch_fees: false,
     resident_portal: false,
     bed_prices: false,
@@ -1002,6 +1034,10 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [parkingBedEdit, setParkingBedEdit] = useState<{
     branchId: string; bedNumber: string; parkingFeeVnd: string; saving: boolean; result: string;
   } | null>(null);
+  const [parkingAddDraft, setParkingAddDraft] = useState<Record<"D2" | "D7", { labelEn: string; labelVi: string; feeVnd: string; sortOrder: string }>>({
+    D2: { labelEn: "", labelVi: "", feeVnd: "0", sortOrder: "0" },
+    D7: { labelEn: "", labelVi: "", feeVnd: "0", sortOrder: "0" }
+  });
   // "per_bed" = click individual beds | "by_room" = branch → floor → room → tier | "by_branch" = branch → tier only
   const [pricingDiagramMode, setPricingDiagramMode] = useState<"per_bed" | "by_room" | "by_branch">("per_bed");
   const [bulkTierEdit, setBulkTierEdit] = useState<{
@@ -1091,6 +1127,25 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   // New subtab states
   const [schedulingTab, setSchedulingTab] = useState<"cleaning" | "laundry">("cleaning");
   const [clientListMode, setClientListMode] = useState<"diagram" | "table">("diagram");
+  /** Long-term diagram: quick sheet after tapping an occupied bed */
+  const [diagramBedQuickSheet, setDiagramBedQuickSheet] = useState<{
+    client: ManagerClientRecord;
+    bedNumber: string;
+  } | null>(null);
+  const managerClientWorkspaceRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!diagramBedQuickSheet) {
+      return;
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setDiagramBedQuickSheet(null);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [diagramBedQuickSheet]);
   const [supportFilterBranch, setSupportFilterBranch] = useState("");
   const [supportSortBy, setSupportSortBy] = useState<"newest" | "oldest_unanswered">("newest");
   const [acRooms, setAcRooms] = useState<any[]>([]);
@@ -1853,6 +1908,73 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }
   }
 
+  useEffect(() => {
+    const client = clients.find((c) => c.maHd === selectedMaHd) ?? null;
+    const email = client?.email?.trim();
+    const plan = String(client?.row?.["Bạn muốn thanh toán chi phí như thế nào?"] ?? "");
+    if (!email || !normalizedEmail || (!plan.includes("03 tháng") && !plan.includes("06 tháng"))) {
+      setPrepaidPkgEstimate(null);
+      setPrepaidPkgBilling(null);
+      setPrepaidPkgTotalInput("");
+      setPrepaidPkgNoteInput("");
+      return;
+    }
+    const month =
+      rentPaidMonth && /^\d{4}-\d{2}$/.test(rentPaidMonth)
+        ? rentPaidMonth
+        : new Date().toISOString().slice(0, 7);
+    let cancelled = false;
+    setPrepaidPkgLoading(true);
+    void (async () => {
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/manager/prepaid-package-billing?actorEmail=${encodeURIComponent(normalizedEmail)}&clientEmail=${encodeURIComponent(email)}&billingMonth=${encodeURIComponent(month)}`
+        );
+        const data = (await res.json()) as {
+          error?: string;
+          estimate?: {
+            estimatedTotalVnd: number;
+            planMonths?: number;
+            midCyclePayablesVnd?: number;
+            recurringMonthlyVnd?: number;
+          };
+          billing?: {
+            confirmed?: boolean;
+            managerPackageTotalVnd?: number;
+            managerNote?: string | null;
+            lastAppNotifyAt?: string | null;
+            lastEmailNotifyAt?: string | null;
+          } | null;
+        };
+        if (cancelled) return;
+        if (!res.ok || data.error) {
+          setPrepaidPkgEstimate(null);
+          setPrepaidPkgBilling(null);
+          setPrepaidPkgTotalInput("");
+          setPrepaidPkgNoteInput("");
+          return;
+        }
+        const est = data.estimate ?? null;
+        setPrepaidPkgEstimate(est);
+        setPrepaidPkgBilling(data.billing ?? null);
+        const bill = data.billing;
+        const defaultTotal = bill?.managerPackageTotalVnd ?? est?.estimatedTotalVnd ?? 0;
+        setPrepaidPkgTotalInput(String(defaultTotal));
+        setPrepaidPkgNoteInput(String(bill?.managerNote ?? ""));
+      } catch {
+        if (!cancelled) {
+          setPrepaidPkgEstimate(null);
+          setPrepaidPkgBilling(null);
+        }
+      } finally {
+        if (!cancelled) setPrepaidPkgLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMaHd, clients, normalizedEmail, rentPaidMonth]);
+
   async function loadGateParkingTickets(clientEmail: string) {
     if (!isStaffSession || !clientEmail.trim()) {
       setGateParkingTickets([]);
@@ -2106,12 +2228,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         discounts?: PricingDiscount[];
         branchSettings?: BranchPricingSettings[];
         parkingOverrides?: BedParkingFeeOverride[];
+        parkingTiers?: ParkingPricingTierRow[];
       };
       if (res.ok) setPricingData({
         bedOverrides: data.bedOverrides ?? [],
         discounts: data.discounts ?? [],
         branchSettings: data.branchSettings ?? [],
-        parkingOverrides: data.parkingOverrides ?? []
+        parkingOverrides: data.parkingOverrides ?? [],
+        parkingTiers: data.parkingTiers ?? []
       });
     } finally {
       setPricingConfigLoading(false);
@@ -2260,6 +2384,10 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       setParkingFeeInput("0");
       setRentBreakdown(null);
       setGateParkingTickets([]);
+      setPrepaidPkgEstimate(null);
+      setPrepaidPkgBilling(null);
+      setPrepaidPkgTotalInput("");
+      setPrepaidPkgNoteInput("");
     }
     if (selectedClient?.maHd) {
       setTerminationStatus("loading");
@@ -2765,7 +2893,15 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                         setSelectedMaHd(client?.maHd ?? "");
                                         if (client) {
                                           fillClientForm(client);
-                                          setClientSubTab("details");
+                                          const bedNum = String(slot.bedNumber);
+                                          setDiagramBedQuickSheet((prev) =>
+                                            prev?.client.maHd === client.maHd && prev.bedNumber === bedNum
+                                              ? null
+                                              : { client, bedNumber: bedNum }
+                                          );
+                                        } else {
+                                          fillClientForm(null);
+                                          setDiagramBedQuickSheet(null);
                                         }
                                       }}
                                       className={`relative flex h-8 items-center justify-center rounded-md border text-[10px] font-bold ${
@@ -2815,6 +2951,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                     onClick={() => {
                                       setSelectedMaHd(client.maHd);
                                       fillClientForm(client);
+                                      setDiagramBedQuickSheet(null);
                                       setClientSubTab("details");
                                     }}
                                     className="w-full text-left"
@@ -2892,6 +3029,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           onClick={() => {
                             setSelectedMaHd(client.maHd);
                             fillClientForm(client);
+                            setDiagramBedQuickSheet(null);
                             setClientSubTab("details");
                           }}
                           className={`cursor-pointer transition-colors hover:bg-slate-50 ${selectedMaHd === client.maHd ? "bg-sky-50" : ""}`}
@@ -3052,7 +3190,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                                           <button
                                                             key={c.maHd}
                                                             type="button"
-                                                            onClick={() => { setSelectedMaHd(c.maHd); fillClientForm(c); setClientSubTab("details"); }}
+                                                            onClick={() => {
+                                                              setSelectedMaHd(c.maHd);
+                                                              fillClientForm(c);
+                                                              setDiagramBedQuickSheet(null);
+                                                              setClientSubTab("details");
+                                                            }}
                                                             className={`w-full text-left px-6 py-2.5 transition-colors hover:bg-sky-50 ${isSelected ? "bg-sky-50 border-l-2 border-sky-400" : ""}`}
                                                           >
                                                             <div className="flex items-center justify-between gap-2">
@@ -3466,7 +3609,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           })()}
           </div>
         ) : (
-          <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+          <div ref={managerClientWorkspaceRef} className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
             {false ? <section /> : null}
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -3837,7 +3980,255 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 {selectedClient && (() => {
                   const paymentPlan = String(selectedClient.row?.["Bạn muốn thanh toán chi phí như thế nào?"] ?? "");
                   const isOnPrepaidPlan = paymentPlan.includes("03 tháng") || paymentPlan.includes("06 tháng");
-                  if (isOnPrepaidPlan) return null;
+                  const billingMonth =
+                    rentPaidMonth && /^\d{4}-\d{2}$/.test(rentPaidMonth)
+                      ? rentPaidMonth
+                      : new Date().toISOString().slice(0, 7);
+
+                  if (isOnPrepaidPlan) {
+                    const est = prepaidPkgEstimate;
+                    const parsedTotal = Math.round(Number(String(prepaidPkgTotalInput).replace(/[^\d.-]/g, "")));
+                    const totalOk = Number.isFinite(parsedTotal) && parsedTotal >= 0;
+                    return (
+                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Multi-month package</div>
+                            <div className="mt-0.5 text-sm font-medium text-slate-700">Billing month {billingMonth}</div>
+                          </div>
+                          {prepaidPkgBilling?.confirmed ? (
+                            <span className="rounded-full bg-emerald-600 px-2.5 py-0.5 text-xs font-semibold text-white">Confirmed</span>
+                          ) : (
+                            <span className="rounded-full bg-amber-500 px-2.5 py-0.5 text-xs font-semibold text-white">Draft</span>
+                          )}
+                        </div>
+
+                        {prepaidPkgLoading ? (
+                          <p className="text-xs text-slate-600 border-t border-emerald-200/80 pt-3">Loading engine estimate…</p>
+                        ) : est ? (
+                          <div className="space-y-2 border-t border-emerald-200/80 pt-3 text-sm">
+                            <div className="flex justify-between text-slate-700">
+                              <span>Engine estimate (package total)</span>
+                              <span className="font-semibold">{est.estimatedTotalVnd.toLocaleString()} ₫</span>
+                            </div>
+                            {(est.midCyclePayablesVnd ?? 0) > 0 ? (
+                              <p className="text-xs text-slate-600">
+                                Includes mid-cycle payables (fines, laundry, gate): {est.midCyclePayablesVnd?.toLocaleString()} ₫
+                              </p>
+                            ) : null}
+                            <label className="block text-xs font-medium text-slate-600">
+                              Manager package total (₫)
+                              <input
+                                type="number"
+                                min={0}
+                                step={1000}
+                                value={prepaidPkgTotalInput}
+                                onChange={(e) => setPrepaidPkgTotalInput(e.target.value)}
+                                className="mt-1 w-full max-w-xs rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                              />
+                            </label>
+                            <label className="block text-xs font-medium text-slate-600">
+                              Note to resident (optional)
+                              <textarea
+                                value={prepaidPkgNoteInput}
+                                onChange={(e) => setPrepaidPkgNoteInput(e.target.value)}
+                                rows={2}
+                                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                              />
+                            </label>
+                            {(prepaidPkgBilling?.lastAppNotifyAt || prepaidPkgBilling?.lastEmailNotifyAt) && (
+                              <p className="text-xs text-slate-500">
+                                Last notify — app: {prepaidPkgBilling?.lastAppNotifyAt ? new Date(prepaidPkgBilling.lastAppNotifyAt).toLocaleString() : "—"} · email:{" "}
+                                {prepaidPkgBilling?.lastEmailNotifyAt ? new Date(prepaidPkgBilling.lastEmailNotifyAt).toLocaleString() : "—"}
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-amber-900 border-t border-emerald-200/80 pt-3">No engine estimate for this client or month.</p>
+                        )}
+
+                        {!prepaidPkgLoading && est ? (
+                          <div className="flex flex-wrap gap-2 border-t border-emerald-200/80 pt-3">
+                            <button
+                              type="button"
+                              disabled={prepaidPkgActionLoading || !totalOk}
+                              onClick={async () => {
+                                setPrepaidPkgActionLoading(true);
+                                try {
+                                  const res = await fetch(`${API_BASE_URL}/manager/prepaid-package-billing`, {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      actorEmail: normalizedEmail,
+                                      clientEmail: selectedClient.email,
+                                      billingMonth,
+                                      managerPackageTotalVnd: parsedTotal,
+                                      managerNote: prepaidPkgNoteInput
+                                    })
+                                  });
+                                  const data = (await res.json()) as { error?: string; billing?: typeof prepaidPkgBilling; estimate?: typeof est };
+                                  if (!res.ok || data.error) {
+                                    setStatus(data.error ?? "Could not save package draft");
+                                    return;
+                                  }
+                                  if (data.estimate) setPrepaidPkgEstimate(data.estimate);
+                                  if (data.billing) setPrepaidPkgBilling(data.billing);
+                                  setStatus("Package draft saved (re-confirm to lock amount).");
+                                } catch {
+                                  setStatus("Could not save package draft");
+                                } finally {
+                                  setPrepaidPkgActionLoading(false);
+                                }
+                              }}
+                              className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                            >
+                              Save draft
+                            </button>
+                            <button
+                              type="button"
+                              disabled={prepaidPkgActionLoading || !prepaidPkgBilling}
+                              onClick={async () => {
+                                setPrepaidPkgActionLoading(true);
+                                try {
+                                  const res = await fetch(`${API_BASE_URL}/manager/prepaid-package-billing/confirm`, {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      actorEmail: normalizedEmail,
+                                      clientEmail: selectedClient.email,
+                                      billingMonth
+                                    })
+                                  });
+                                  const data = (await res.json()) as { error?: string; billing?: typeof prepaidPkgBilling };
+                                  if (!res.ok || data.error) {
+                                    setStatus(data.error ?? "Could not confirm package");
+                                    return;
+                                  }
+                                  if (data.billing) setPrepaidPkgBilling(data.billing);
+                                  setStatus("Package amount confirmed for the portal.");
+                                } catch {
+                                  setStatus("Could not confirm package");
+                                } finally {
+                                  setPrepaidPkgActionLoading(false);
+                                }
+                              }}
+                              className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              type="button"
+                              disabled={prepaidPkgActionLoading || !prepaidPkgBilling?.confirmed}
+                              onClick={async () => {
+                                setPrepaidPkgActionLoading(true);
+                                try {
+                                  const res = await fetch(`${API_BASE_URL}/manager/prepaid-package-billing/notify`, {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      actorEmail: normalizedEmail,
+                                      clientEmail: selectedClient.email,
+                                      billingMonth,
+                                      clientName: selectedClient.name,
+                                      notifyApp: true,
+                                      notifyEmail: false
+                                    })
+                                  });
+                                  const data = (await res.json()) as { error?: string; billing?: typeof prepaidPkgBilling };
+                                  if (!res.ok || data.error) {
+                                    setStatus(data.error ?? "Could not send in-app notification");
+                                    return;
+                                  }
+                                  if (data.billing) setPrepaidPkgBilling(data.billing);
+                                  setStatus("In-app notification sent.");
+                                } catch {
+                                  setStatus("Could not send in-app notification");
+                                } finally {
+                                  setPrepaidPkgActionLoading(false);
+                                }
+                              }}
+                              className="rounded-lg border border-emerald-600 px-3 py-1.5 text-xs font-semibold text-emerald-800 disabled:opacity-50"
+                            >
+                              Notify app
+                            </button>
+                            <button
+                              type="button"
+                              disabled={prepaidPkgActionLoading || !prepaidPkgBilling?.confirmed}
+                              onClick={async () => {
+                                setPrepaidPkgActionLoading(true);
+                                try {
+                                  const res = await fetch(`${API_BASE_URL}/manager/prepaid-package-billing/notify`, {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      actorEmail: normalizedEmail,
+                                      clientEmail: selectedClient.email,
+                                      billingMonth,
+                                      clientName: selectedClient.name,
+                                      notifyApp: false,
+                                      notifyEmail: true
+                                    })
+                                  });
+                                  const data = (await res.json()) as { error?: string; billing?: typeof prepaidPkgBilling };
+                                  if (!res.ok || data.error) {
+                                    setStatus(data.error ?? "Could not send email");
+                                    return;
+                                  }
+                                  if (data.billing) setPrepaidPkgBilling(data.billing);
+                                  setStatus("Email sent.");
+                                } catch {
+                                  setStatus("Could not send email");
+                                } finally {
+                                  setPrepaidPkgActionLoading(false);
+                                }
+                              }}
+                              className="rounded-lg border border-emerald-600 px-3 py-1.5 text-xs font-semibold text-emerald-800 disabled:opacity-50"
+                            >
+                              Notify email
+                            </button>
+                            <button
+                              type="button"
+                              disabled={prepaidPkgActionLoading || !prepaidPkgBilling?.confirmed}
+                              onClick={async () => {
+                                setPrepaidPkgActionLoading(true);
+                                try {
+                                  const res = await fetch(`${API_BASE_URL}/manager/prepaid-package-billing/notify`, {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      actorEmail: normalizedEmail,
+                                      clientEmail: selectedClient.email,
+                                      billingMonth,
+                                      clientName: selectedClient.name,
+                                      notifyApp: true,
+                                      notifyEmail: true
+                                    })
+                                  });
+                                  const data = (await res.json()) as { error?: string; billing?: typeof prepaidPkgBilling };
+                                  if (!res.ok || data.error) {
+                                    setStatus(data.error ?? "Could not notify");
+                                    return;
+                                  }
+                                  if (data.billing) setPrepaidPkgBilling(data.billing);
+                                  setStatus("In-app + email notifications sent.");
+                                } catch {
+                                  setStatus("Could not notify");
+                                } finally {
+                                  setPrepaidPkgActionLoading(false);
+                                }
+                              }}
+                              className="rounded-lg border border-slate-400 px-3 py-1.5 text-xs font-semibold text-slate-800 disabled:opacity-50"
+                            >
+                              Notify both
+                            </button>
+                          </div>
+                        ) : null}
+                        <p className="text-xs text-slate-600">
+                          Save draft recalculates the engine snapshot and clears confirmation until you confirm again. Notifications require a confirmed amount.
+                        </p>
+                      </div>
+                    );
+                  }
                   return (
                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
                       <div className="flex items-center justify-between">
@@ -5561,9 +5952,174 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           {/* ── Long-term tab: bed price diagram + discounts ── */}
           {(pricingSettingsTab === "long_term") ? (
             <section className="space-y-5">
+              {isStaffSession ? (
+                <CollapsibleSettingsSection
+                  title={t("parkingTiersTitle")}
+                  description={t("parkingTiersDesc")}
+                  expanded={pricingSettingsExpanded.parking_tiers}
+                  onToggle={() => togglePricingSettingsSection("parking_tiers")}
+                >
+                  {pricingConfigLoading ? (
+                    <p className="text-sm text-slate-500">{t("refreshing")}</p>
+                  ) : (
+                    <div className="grid gap-6 lg:grid-cols-2">
+                      {(["D2", "D7"] as const).map((branchId) => {
+                        const draft = parkingAddDraft[branchId];
+                        return (
+                          <div key={branchId} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+                            <p className="text-sm font-semibold text-slate-900">{branchId}</p>
+                            <ul className="space-y-2">
+                              {(pricingData?.parkingTiers ?? [])
+                                .filter((x) => x.branchId === branchId)
+                                .map((tier) => (
+                                  <li
+                                    key={tier.id}
+                                    className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <p className="font-medium text-slate-900 truncate">{tier.labelEn}</p>
+                                      <p className="text-xs text-slate-500 truncate">{tier.labelVi}</p>
+                                      <p className="text-xs font-semibold text-amber-800 mt-0.5">
+                                        {tier.feeVnd.toLocaleString("vi-VN")} ₫/mo · #{tier.sortOrder}
+                                        {!tier.active ? (
+                                          <span className="text-rose-600">{language === "vi" ? " (ngưng)" : " (inactive)"}</span>
+                                        ) : null}
+                                      </p>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="shrink-0 rounded-lg border border-rose-200 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50"
+                                      onClick={async () => {
+                                        if (!window.confirm("Delete this parking plan?")) return;
+                                        const res = await fetch(
+                                          `${API_BASE_URL}/manager/pricing/parking-tiers?actorEmail=${encodeURIComponent(normalizedEmail)}&id=${encodeURIComponent(tier.id)}`,
+                                          { method: "DELETE" }
+                                        );
+                                        const data = (await res.json()) as { error?: string };
+                                        if (!res.ok) {
+                                          setStatus(data.error ?? "Delete failed");
+                                          return;
+                                        }
+                                        setPricingData((prev) =>
+                                          prev ? { ...prev, parkingTiers: (prev.parkingTiers ?? []).filter((p) => p.id !== tier.id) } : prev
+                                        );
+                                      }}
+                                    >
+                                      {t("parkingTierDelete")}
+                                    </button>
+                                  </li>
+                                ))}
+                            </ul>
+                            <div className="rounded-xl border border-dashed border-slate-300 bg-white p-3 space-y-2">
+                              <p className="text-xs font-semibold text-slate-700">{t("parkingTierAdd")}</p>
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                <label className="block text-xs text-slate-600">
+                                  {t("parkingTierLabelEn")}
+                                  <input
+                                    value={draft.labelEn}
+                                    onChange={(e) =>
+                                      setParkingAddDraft((prev) => ({
+                                        ...prev,
+                                        [branchId]: { ...prev[branchId], labelEn: e.target.value }
+                                      }))
+                                    }
+                                    className="mt-0.5 w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm"
+                                  />
+                                </label>
+                                <label className="block text-xs text-slate-600">
+                                  {t("parkingTierLabelVi")}
+                                  <input
+                                    value={draft.labelVi}
+                                    onChange={(e) =>
+                                      setParkingAddDraft((prev) => ({
+                                        ...prev,
+                                        [branchId]: { ...prev[branchId], labelVi: e.target.value }
+                                      }))
+                                    }
+                                    className="mt-0.5 w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm"
+                                  />
+                                </label>
+                                <label className="block text-xs text-slate-600">
+                                  {t("parkingTierFeeVnd")}
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={draft.feeVnd}
+                                    onChange={(e) =>
+                                      setParkingAddDraft((prev) => ({
+                                        ...prev,
+                                        [branchId]: { ...prev[branchId], feeVnd: e.target.value }
+                                      }))
+                                    }
+                                    className="mt-0.5 w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm"
+                                  />
+                                </label>
+                                <label className="block text-xs text-slate-600">
+                                  {t("parkingTierSort")}
+                                  <input
+                                    type="number"
+                                    value={draft.sortOrder}
+                                    onChange={(e) =>
+                                      setParkingAddDraft((prev) => ({
+                                        ...prev,
+                                        [branchId]: { ...prev[branchId], sortOrder: e.target.value }
+                                      }))
+                                    }
+                                    className="mt-0.5 w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm"
+                                  />
+                                </label>
+                              </div>
+                              <button
+                                type="button"
+                                className="rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-700"
+                                onClick={async () => {
+                                  const fee = Math.round(Number(draft.feeVnd) || 0);
+                                  if (!draft.labelEn.trim() && !draft.labelVi.trim()) {
+                                    setStatus("Enter at least one label (English or Vietnamese).");
+                                    return;
+                                  }
+                                  const res = await fetch(`${API_BASE_URL}/manager/pricing/parking-tiers`, {
+                                    method: "PUT",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      actorEmail: normalizedEmail,
+                                      branchId,
+                                      labelEn: draft.labelEn.trim() || draft.labelVi.trim(),
+                                      labelVi: draft.labelVi.trim() || draft.labelEn.trim(),
+                                      feeVnd: fee,
+                                      sortOrder: Math.round(Number(draft.sortOrder) || 0),
+                                      active: true
+                                    })
+                                  });
+                                  const data = (await res.json()) as { ok?: boolean; row?: ParkingPricingTierRow; error?: string };
+                                  if (!res.ok || !data.ok || !data.row) {
+                                    setStatus(data.error ?? "Save failed");
+                                    return;
+                                  }
+                                  setPricingData((prev) =>
+                                    prev ? { ...prev, parkingTiers: [...(prev.parkingTiers ?? []), data.row!] } : prev
+                                  );
+                                  setParkingAddDraft((prev) => ({
+                                    ...prev,
+                                    [branchId]: { labelEn: "", labelVi: "", feeVnd: "0", sortOrder: "0" }
+                                  }));
+                                  setStatus("Parking plan saved.");
+                                }}
+                              >
+                                {t("parkingTierSave")}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </CollapsibleSettingsSection>
+              ) : null}
+
               {!canManageOwnersEmployees ? (
                 <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                  <p className="text-sm text-slate-500">{t("pricingRestricted")}</p>
+                  <p className="text-sm text-slate-600">{t("parkingTiersManagerNote")}</p>
                 </div>
               ) : (
                 <>
@@ -6981,6 +7537,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 if (client) {
                   setSelectedMaHd(client.maHd);
                   fillClientForm(client);
+                  setDiagramBedQuickSheet(null);
                   setClientSubTab("details");
                   setActiveManagerView("client_list");
                 }
@@ -7718,6 +8275,122 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           </div>
         </div>
       )}
+
+      {diagramBedQuickSheet ? (
+        <div className="fixed inset-0 z-[180] flex items-end justify-center sm:items-center p-0 sm:p-4" role="dialog" aria-modal="true" aria-labelledby="diagram-bed-sheet-title">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/45"
+            aria-label={t("closeLabel")}
+            onClick={() => setDiagramBedQuickSheet(null)}
+          />
+          <div className="relative z-[181] w-full max-w-md rounded-t-3xl border border-slate-200 bg-white shadow-2xl sm:rounded-3xl max-h-[min(90vh,520px)] flex flex-col">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+              <div className="min-w-0 flex-1">
+                <p id="diagram-bed-sheet-title" className="truncate text-lg font-bold text-slate-900">
+                  {diagramBedQuickSheet.client.name || diagramBedQuickSheet.client.email}
+                </p>
+                <p className="mt-0.5 truncate text-sm text-slate-500">{diagramBedQuickSheet.client.email}</p>
+                <p className="mt-1 text-xs font-medium text-slate-600">
+                  {t("diagramBedQuickSheetTitle")} {diagramBedQuickSheet.bedNumber}
+                  <span className="text-slate-400"> · </span>
+                  {normalizeBranchLabel(diagramBedQuickSheet.client.branch)} · {resolveClientRoom(diagramBedQuickSheet.client)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDiagramBedQuickSheet(null)}
+                className="shrink-0 rounded-full border border-slate-200 p-2 text-slate-500 hover:bg-slate-50"
+                aria-label={t("closeLabel")}
+              >
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 space-y-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setClientSubTab("details");
+                  setShowClientDetails(true);
+                  setDiagramBedQuickSheet(null);
+                  window.setTimeout(() => {
+                    managerClientWorkspaceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }, 80);
+                }}
+                className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-left text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
+              >
+                {t("diagramGoToClientDetail")}
+              </button>
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{t("diagramQuickActionsTitle")}</p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {canCreatePaymentReceipt ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setClientSubTab("details");
+                        setActiveAction("payment");
+                        setDiagramBedQuickSheet(null);
+                        window.setTimeout(() => {
+                          managerClientWorkspaceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                        }, 80);
+                      }}
+                      className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-center text-xs font-semibold text-slate-800 hover:bg-slate-100"
+                    >
+                      {t("newPaymentReceipt")}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setClientSubTab("details");
+                      setActiveAction("fine");
+                      setDiagramBedQuickSheet(null);
+                      window.setTimeout(() => {
+                        managerClientWorkspaceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }, 80);
+                    }}
+                    className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-center text-xs font-semibold text-slate-800 hover:bg-slate-100"
+                  >
+                    {t("newFineTicket")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setClientSubTab("details");
+                      setActiveAction("coins");
+                      setDiagramBedQuickSheet(null);
+                      window.setTimeout(() => {
+                        managerClientWorkspaceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }, 80);
+                    }}
+                    className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-center text-xs font-semibold text-slate-800 hover:bg-slate-100"
+                  >
+                    {t("newCoinsEntry")}
+                  </button>
+                  {(() => {
+                    const tel = toPhoneHref(getClientPhone(diagramBedQuickSheet.client));
+                    return tel ? (
+                      <a
+                        href={tel}
+                        className="flex items-center justify-center rounded-xl bg-emerald-600 px-3 py-2.5 text-center text-xs font-semibold text-white hover:bg-emerald-700"
+                      >
+                        {t("diagramCallNow")}
+                      </a>
+                    ) : (
+                      <span className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 px-3 py-2.5 text-center text-xs font-medium text-slate-400">
+                        {t("diagramNoPhoneOnFile")}
+                      </span>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
     </div>
   );

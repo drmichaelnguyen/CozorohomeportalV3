@@ -9,6 +9,7 @@ import { ContractExtension } from "./contract-extension";
 import { InlineHelp } from "./inline-help";
 import { NextPaymentSummary } from "./next-payment-summary";
 import { isContractExpired, daysUntilContractEnd } from "../lib/contract-utils";
+import type { RentPaidStatusPayload } from "../lib/rent-paid-status";
 
 type ClientRecord = Record<string, string>;
 
@@ -41,34 +42,6 @@ type FineEntry = {
   parsedTimestamp: string | null;
   parsedDueDate: string | null;
   coinPayment: { isPaid: boolean };
-};
-
-type RentBreakdown = {
-  baseRent: number;
-  parkingFeeVnd: number;
-  gateParkingFeeVnd?: number;
-  laundryFeeVnd: number;
-  finesVnd: number;
-  finalTotalVnd: number;
-  tenureSurchargeVnd: number;
-  tenureSurchargeRate?: number;
-  monthlyAdjustmentVnd?: number;
-  professionalDiscountVnd: number;
-  planDiscountVnd: number;
-  managerDiscountVnd: number;
-  details?: {
-    laundryCount?: { cash?: number };
-    billingPrevMonth?: string;
-  };
-};
-
-type RentStatus = {
-  month: string;
-  isPaid: boolean;
-  applyCoinsTowardRent?: boolean;
-  onPrepaidPlan: boolean;
-  breakdown: RentBreakdown | null;
-  blockingRentDuePopupEnabled?: boolean;
 };
 
 type CoinEntry = {
@@ -239,7 +212,7 @@ export function HomeDashboardClient() {
   const [feedbackSatisfaction, setFeedbackSatisfaction] = useState("satisfied");
   const [feedbackComment, setFeedbackComment] = useState("");
   const [showCoinDetail, setShowCoinDetail] = useState(false);
-  const [rentStatus, setRentStatus] = useState<RentStatus | null>(null);
+  const [rentStatus, setRentStatus] = useState<RentPaidStatusPayload | null>(null);
   const [terminationRecord, setTerminationRecord] = useState<{ maHd: string; terminatedAt: string; depositNote: string; checkOut: { submittedAt: string } | null } | null>(null);
   const [checkoutFlow, setCheckoutFlow] = useState<{
     eligible: boolean;
@@ -311,7 +284,7 @@ export function HomeDashboardClient() {
       const finesData = (await finesResponse.json()) as { entries?: FineEntry[]; error?: string };
       const coinsData = (await coinsResponse.json()) as { entries?: CoinEntry[]; error?: string };
       const maintenanceData = (await maintenanceResponse.json()) as { tickets?: MaintenanceTicket[]; error?: string };
-      const rentStatusData = rentStatusResponse.ok ? (await rentStatusResponse.json()) as RentStatus : null;
+      const rentStatusData = rentStatusResponse.ok ? (await rentStatusResponse.json()) as RentPaidStatusPayload : null;
       const terminationData = terminationResponse.ok ? (await terminationResponse.json()) as { record?: { maHd: string; terminatedAt: string; depositNote: string; checkOut: { submittedAt: string } | null } | null } : null;
       const checkoutCtxData = checkoutCtxResponse.ok
         ? ((await checkoutCtxResponse.json()) as { eligible: boolean; kind?: "termination" | "contract_due"; completed?: boolean })
@@ -361,7 +334,7 @@ export function HomeDashboardClient() {
         `${API_BASE_URL}/rent-paid-status?email=${encodeURIComponent(activeEmail)}`
       );
       if (rentStatusResponse.ok) {
-        setRentStatus((await rentStatusResponse.json()) as RentStatus);
+        setRentStatus((await rentStatusResponse.json()) as RentPaidStatusPayload);
       }
     } catch {
       // ignore

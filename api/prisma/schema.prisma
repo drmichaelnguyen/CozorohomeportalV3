@@ -362,6 +362,28 @@ model MonthlyRentStatus {
   @@index([email])
 }
 
+/// Manager-reviewed multi-month (prepaid) package amount for a resident billing month; drives portal total + optional notifications.
+model PrepaidPackageBilling {
+  id                     String    @id @default(cuid())
+  residentEmail          String
+  billingMonth           String
+  /// Engine snapshot when manager last saved (JSON)
+  calculatedSnapshot     Json
+  /// Final total shown to resident after confirm (₫)
+  managerPackageTotalVnd Int
+  managerNote            String?   @db.Text
+  confirmed              Boolean   @default(false)
+  confirmedAt            DateTime?
+  confirmedBy            String?
+  lastAppNotifyAt        DateTime?
+  lastEmailNotifyAt      DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  @@unique([residentEmail, billingMonth])
+  @@index([residentEmail, confirmed])
+}
+
 // ── Unified Pricing ──────────────────────────────────────────────────────────
 
 // Per-branch configurable fees set by owner
@@ -387,6 +409,22 @@ model BedParkingFeeOverride {
 
   @@unique([branchId, bedNumber])
   @@index([branchId])
+}
+
+/// Named motorbike parking rates per branch (registration + resident choice). If none exist, branch `parkingFeeVnd` is used as a single implicit tier.
+model ParkingPricingTier {
+  id        String   @id @default(cuid())
+  branchId  String // "D2" | "D7"
+  labelEn   String   @db.VarChar(200)
+  labelVi   String   @db.VarChar(200)
+  feeVnd    Int
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  updatedBy String
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@index([branchId, active, sortOrder])
 }
 
 model BedPriceOverride {

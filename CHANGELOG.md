@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.6.10] - 2026-04-13
+- **Multi-month prepaid (manager)**: Draft/confirm package totals, optional resident note, notify in-app and/or email; `PrepaidPackageBilling` model; resident next-payment and notifications (`PREPAID_PACKAGE`) reflect confirmed amounts.
+
+## [3.6.9] - 2026-04-13
+- **Support assistant & inbox**: Optional Gemini assistant after resident personal messages, same `SupportConversation` as managers; assistant contact capture fields; manager UI for assistant vs staff and callback strip.
+- **Manager Messages workspace**: Unsolved maintenance ticket badge on Maintenance tab and on mobile nav; support subtab area scroll/sticky layout.
+- **Docs**: `bot/README` — `chatbot.cozorohome.com` vs portal; Facebook Messenger optional.
+
 ## [3.6.3] - 2026-04-10
 - **Collapsed Pricing Settings**: Manager and owner settings menus in the pricing area now start collapsed and expand only on demand, making the settings view easier to scan.
 

@@ -298,10 +298,12 @@ export function ClientLoginClient() {
 
     if (!sessionEmail && savedEmail) {
       setEmail(savedEmail);
-    }
-
-    if (shouldRemember && savedPassword) {
-      setPassword(savedPassword);
+      // Only restore the remembered password together with its email — otherwise a
+      // previous resident's password stays in the field when switching to another account
+      // (e.g. sandbox.manager@local.dev) and login always fails with "incorrect password".
+      if (shouldRemember && savedPassword) {
+        setPassword(savedPassword);
+      }
     }
   }, [sessionEmail]);
 
@@ -992,7 +994,18 @@ export function ClientLoginClient() {
                 <input
                   type="email"
                   value={email}
-                  onChange={(event) => setEmail(event.target.value)}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    if (typeof window !== "undefined") {
+                      const remembered = (window.localStorage.getItem(REMEMBERED_LOGIN_EMAIL_KEY) ?? "")
+                        .trim()
+                        .toLowerCase();
+                      if (remembered && next.trim().toLowerCase() !== remembered) {
+                        setPassword("");
+                      }
+                    }
+                    setEmail(next);
+                  }}
                   autoComplete="username"
                   suppressHydrationWarning
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"

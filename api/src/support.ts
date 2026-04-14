@@ -352,6 +352,10 @@ export function clearAllResidentNotificationCaches() {
   residentNotificationCache.clear();
 }
 
+export function clearResidentNotificationCacheForEmail(email: string) {
+  residentNotificationCache.delete(normalizeEmail(email));
+}
+
 function clearNotificationCaches(email: string, residentEmail?: string) {
   const normalizedEmail = normalizeEmail(email);
   residentNotificationCache.delete(normalizedEmail);
@@ -473,7 +477,8 @@ type ResidentNotificationItem = {
     | "NEW_FINE"
     | "LAUNDRY_REMINDER"
     | "CLEANING_REMINDER"
-    | "CLEANING_AUDIT_RESULT";
+    | "CLEANING_AUDIT_RESULT"
+    | "PREPAID_PACKAGE";
   title: string;
   body: string;
   createdAt: string | Date;
@@ -562,6 +567,32 @@ async function buildResidentReminderNotifications(email: string) {
     })
   ]);
   const notifications: ResidentNotificationItem[] = [];
+
+  const prepaidWindowStart = new Date(now.getTime() - 21 * 24 * 60 * 60 * 1000);
+  const prepaidBillings = await prisma.prepaidPackageBilling.findMany({
+    where: {
+      residentEmail: normalizedEmail,
+      confirmed: true,
+      lastAppNotifyAt: { not: null, gte: prepaidWindowStart }
+    },
+    orderBy: { lastAppNotifyAt: "desc" },
+    take: 5
+  });
+  for (const bill of prepaidBillings) {
+    const when = bill.lastAppNotifyAt?.toISOString() ?? now.toISOString();
+    const amt = bill.managerPackageTotalVnd.toLocaleString("vi-VN");
+    notifications.push({
+      id: `prepaid-pkg-${bill.id}`,
+      type: "PREPAID_PACKAGE",
+      title: "Multi-month package payment",
+      body: bill.managerNote?.trim()
+        ? `${bill.managerNote.trim()} — Confirmed amount: ${amt} ₫ (month ${bill.billingMonth}).`
+        : `Your manager confirmed your package payment amount: ${amt} ₫ (billing month ${bill.billingMonth}).`,
+      createdAt: when,
+      unreadCount: 1,
+      href: "/payments"
+    });
+  }
 
   const paymentDueValue = findClientValue(client, [
     "Ngày hết hạn gói đã thanh toán",

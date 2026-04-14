@@ -304,6 +304,8 @@ export type PublicRegistrationInput = {
   hasMotorbike?: boolean;
   motorbikePlate?: string;
   parkingFeeVnd?: number;
+  /** Appended to registration note when resident picked a named parking tier */
+  parkingPlanSummary?: string;
   idScanUrl?: string;
 };
 
@@ -325,6 +327,11 @@ export type FineEntry = {
     isPaid: boolean;
   };
 };
+
+/** Cash/VND amount from the fines sheet (same column the portal uses for unpaid fine totals). */
+export function getFineAmountVndFromEntry(entry: FineEntry): number {
+  return parseLooseInteger(String(entry.row[FINE_AMOUNT_COLUMN] ?? ""));
+}
 
 export type FinesCache = {
   syncedAt: string;
@@ -3056,7 +3063,12 @@ export async function submitPublicRegistration(input: PublicRegistrationInput) {
     ["Ảnh đính kèm CMND hoặc căn cước công dân"]: input.idScanUrl?.trim() ?? "",
     ["Tổng tiền thanh toán tháng"]: String(totalMonthlyPayment),
     ["Đã đóng phí tháng"]: "FALSE",
-    [CLIENT_NOTE_COLUMN]: "Submitted from app.cozorohome.com/register",
+    [CLIENT_NOTE_COLUMN]: [
+      "Submitted from app.cozorohome.com/register",
+      input.parkingPlanSummary?.trim() ? `Parking: ${input.parkingPlanSummary.trim()}` : ""
+    ]
+      .filter(Boolean)
+      .join(" | "),
     [CONTRACT_CODE_COLUMN]: contractCode,
     [CLIENT_SHORT_TERM_FEE_COLUMN]: "0",
     [CLIENT_SHORT_TERM_FREE_COLUMN]: "FALSE",

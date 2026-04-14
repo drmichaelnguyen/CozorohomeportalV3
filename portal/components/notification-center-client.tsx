@@ -8,7 +8,7 @@ import { usePortalSession } from "./portal-session";
 
 type ResidentNotification = {
   id: string;
-  type: "SUPPORT_REPLY" | "PAYMENT_DUE" | "NEW_FINE" | "LAUNDRY_REMINDER" | "CLEANING_REMINDER";
+  type: "SUPPORT_REPLY" | "PAYMENT_DUE" | "NEW_FINE" | "LAUNDRY_REMINDER" | "CLEANING_REMINDER" | "PREPAID_PACKAGE";
   conversationId?: string;
   title: string;
   body: string;
@@ -92,7 +92,7 @@ export function NotificationCenterClient() {
         <p className="mt-2 text-sm text-slate-600">
           {isAdminSession
             ? "See which residents have unread support requests for your Cozoro team."
-            : "See support replies plus reminders for payment, fines, laundry, and cleaning schedules."}
+            : "See support replies plus reminders for payment, multi-month package notices, fines, laundry, and cleaning schedules."}
         </p>
       </section>
 

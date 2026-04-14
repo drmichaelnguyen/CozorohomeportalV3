@@ -294,6 +294,161 @@ export async function resolveParkingFee(branchId: string, bedNumber: number): Pr
   return branchSettings?.parkingFeeVnd ?? 0;
 }
 
+/** Stable id when only the branch default applies (no DB tiers). */
+export const BRANCH_DEFAULT_PARKING_TIER_PREFIX = "branch-default-parking";
+
+export type ParkingTierChoice = {
+  id: string;
+  labelEn: string;
+  labelVi: string;
+  feeVnd: number;
+};
+
+export type ParkingPricingTierRecord = {
+  id: string;
+  branchId: string;
+  labelEn: string;
+  labelVi: string;
+  feeVnd: number;
+  sortOrder: number;
+  active: boolean;
+  updatedBy: string;
+  updatedAt: Date;
+  createdAt: Date;
+};
+
+function mapParkingTierRow(row: {
+  id: string;
+  branchId: string;
+  labelEn: string;
+  labelVi: string;
+  feeVnd: number;
+  sortOrder: number;
+  active: boolean;
+  updatedBy: string;
+  updatedAt: Date;
+  createdAt: Date;
+}): ParkingPricingTierRecord {
+  return {
+    id: row.id,
+    branchId: row.branchId,
+    labelEn: row.labelEn,
+    labelVi: row.labelVi,
+    feeVnd: row.feeVnd,
+    sortOrder: row.sortOrder,
+    active: row.active,
+    updatedBy: row.updatedBy,
+    updatedAt: row.updatedAt,
+    createdAt: row.createdAt
+  };
+}
+
+export async function listParkingPricingTiers(branchId?: string): Promise<ParkingPricingTierRecord[]> {
+  const rows = await prisma.parkingPricingTier.findMany({
+    where: branchId ? { branchId } : undefined,
+    orderBy: [{ branchId: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }]
+  });
+  return rows.map(mapParkingTierRow);
+}
+
+/**
+ * Tiers shown on registration for a bed: per-bed override → single choice; else active DB tiers; else one synthetic tier from branch default.
+ */
+export async function resolveParkingTierChoicesForBed(branchId: string, bedNumber: number): Promise<ParkingTierChoice[]> {
+  const bedOverride = await prisma.bedParkingFeeOverride.findUnique({
+    where: { branchId_bedNumber: { branchId, bedNumber } }
+  });
+  if (bedOverride) {
+    return [
+      {
+        id: `bed-parking-override:${bedOverride.id}`,
+        labelEn: "Parking (this bed)",
+        labelVi: "Giữ xe — giường này",
+        feeVnd: bedOverride.parkingFeeVnd
+      }
+    ];
+  }
+  const tiers = await prisma.parkingPricingTier.findMany({
+    where: { branchId, active: true },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
+  });
+  if (tiers.length > 0) {
+    return tiers.map((t) => ({
+      id: t.id,
+      labelEn: t.labelEn,
+      labelVi: t.labelVi,
+      feeVnd: t.feeVnd
+    }));
+  }
+  const branch = await getBranchPricingSettings(branchId);
+  return [
+    {
+      id: `${BRANCH_DEFAULT_PARKING_TIER_PREFIX}:${branchId}`,
+      labelEn: "Motorbike parking",
+      labelVi: "Gửi xe máy",
+      feeVnd: branch.parkingFeeVnd
+    }
+  ];
+}
+
+export async function upsertParkingPricingTier(
+  actorEmail: string,
+  input: {
+    id?: string;
+    branchId: string;
+    labelEn: string;
+    labelVi: string;
+    feeVnd: number;
+    sortOrder?: number;
+    active?: boolean;
+  }
+): Promise<ParkingPricingTierRecord> {
+  await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Only staff can edit parking tiers.");
+  const fee = Math.max(0, Math.trunc(input.feeVnd));
+  const sortOrder = input.sortOrder != null ? Math.trunc(input.sortOrder) : 0;
+  const active = input.active !== false;
+  const actor = actorEmail.trim().toLowerCase();
+  if (input.id) {
+    const row = await prisma.parkingPricingTier.update({
+      where: { id: input.id },
+      data: {
+        labelEn: input.labelEn.trim().slice(0, 200),
+        labelVi: input.labelVi.trim().slice(0, 200),
+        feeVnd: fee,
+        sortOrder,
+        active,
+        updatedBy: actor
+      }
+    });
+    return mapParkingTierRow(row);
+  }
+  const row = await prisma.parkingPricingTier.create({
+    data: {
+      branchId: input.branchId,
+      labelEn: input.labelEn.trim().slice(0, 200) || "Parking",
+      labelVi: input.labelVi.trim().slice(0, 200) || "Gửi xe",
+      feeVnd: fee,
+      sortOrder,
+      active,
+      updatedBy: actor
+    }
+  });
+  return mapParkingTierRow(row);
+}
+
+export async function deleteParkingPricingTier(actorEmail: string, id: string): Promise<void> {
+  await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Only staff can delete parking tiers.");
+  await prisma.parkingPricingTier.delete({ where: { id } });
+}
+
+/** Active DB tiers for one branch (empty = use branch default fee as a single synthetic tier on registration). */
+export async function listActiveParkingTiersForBranch(branchId: string) {
+  return prisma.parkingPricingTier.findMany({
+    where: { branchId, active: true },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
+  });
+}
+
 export async function deleteDiscount(
   actorEmail: string,
   discountId: string

@@ -27,6 +27,11 @@ Portable Node.js (Windows, no administrator)
        corepack pnpm --filter cozorohome-portal dev
    Portal dev listens on http://localhost:3000 (see portal\package.json).
 
+   Shortcut (API + portal, Prisma generate + migrate, two windows):
+       portable-dev.cmd
+       portable-dev.cmd stop
+       portable-dev.cmd restart
+
 4) Optional — persist for your user (still no admin)
    - Windows Search → "environment variables" → Edit **user** environment variables
    - Edit **Path** → New → add the folder that contains **node.exe**

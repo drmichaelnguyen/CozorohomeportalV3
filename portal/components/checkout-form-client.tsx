@@ -179,14 +179,10 @@ export function CheckoutFormClient() {
                   type="button"
                   className="shrink-0 text-rose-600 hover:underline"
                   onClick={() => {
-                    if (target.step === "4") {
-                      setFinalPhotos((prev) => prev.filter((x) => x !== p));
-                    } else {
-                      setOptionalStepPhotos((prev) => ({
-                        ...prev,
-                        [target.step]: (prev[target.step] ?? []).filter((x) => x !== p)
-                      }));
-                    }
+                    setOptionalStepPhotos((prev) => ({
+                      ...prev,
+                      [target.step]: (prev[target.step] ?? []).filter((x) => x !== p)
+                    }));
                   }}
                 >
                   Xóa

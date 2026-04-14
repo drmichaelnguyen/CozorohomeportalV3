@@ -23,6 +23,26 @@ export type RentBreakdownPayload = {
   };
 };
 
+/** Server estimate for the next multi-month package renewal (sheet + engine as of billing month). */
+export type PrepaidNextPaymentEstimatePayload = {
+  planMonths: 3 | 6;
+  recurringMonthlyVnd: number;
+  frequencyDiscountVnd: number;
+  packageRecurringSubtotalVnd: number;
+  laundryFeeVnd: number;
+  finesVnd: number;
+  gateParkingFeeVnd: number;
+  /** Unpaid fines + laundry + gate per engine (current billing month) */
+  midCyclePayablesVnd?: number;
+  estimatedTotalVnd: number;
+  /** When manager confirmed a custom package total, engine lump-sum before override. */
+  engineEstimatedTotalVnd?: number;
+  managerPackageNote?: string | null;
+  prepaidManagerConfirmed?: boolean;
+  billingMonth: string;
+  laundryBillingPrevMonth: string;
+};
+
 export type RentPaidStatusPayload = {
   email?: string;
   month: string;
@@ -30,6 +50,8 @@ export type RentPaidStatusPayload = {
   /** Resident opt-in: apply coins toward this month’s bill (capped in engine). */
   applyCoinsTowardRent?: boolean;
   onPrepaidPlan: boolean;
+  /** Present when `onPrepaidPlan` — rough next lump-sum at package renewal. */
+  prepaidNextPaymentEstimate?: PrepaidNextPaymentEstimatePayload | null;
   breakdown: RentBreakdownPayload | null;
   blockingRentDuePopupEnabled?: boolean;
 };

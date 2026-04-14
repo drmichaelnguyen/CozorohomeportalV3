@@ -1,4 +1,14 @@
-import { ClientRow, getLaundryBookingsForEmail, getFinesForEmail, laundryMachines, getLaundryAllowance, getCoinsForEmail, LaundryCalendarEvent, FineEntry } from "./google-sheets.js";
+import {
+  ClientRow,
+  getLaundryBookingsForEmail,
+  getFinesForEmail,
+  getFineAmountVndFromEntry,
+  laundryMachines,
+  getLaundryAllowance,
+  getCoinsForEmail,
+  LaundryCalendarEvent,
+  FineEntry
+} from "./google-sheets.js";
 import { sumUnpaidGateParkingVndBeforeMonth } from "./gate-parking-tickets.js";
 
 /**
@@ -243,7 +253,8 @@ export async function calculateRentBreakdown(
   // 6. Fines
   const fines = await getFinesForEmail(email);
   const unpaidFines = fines.filter((f: FineEntry) => !f.coinPayment.isPaid);
-  const finesVnd = unpaidFines.reduce((sum: number, f: FineEntry) => sum + (f.coinPayment.coinCost * f.coinPayment.multiplier), 0);
+  // Sum sheet VND for unpaid fines (matches portal / account unpaid fine total). Do not use coinCost×multiplier here — that double-counts tier and is not VND.
+  const finesVnd = unpaidFines.reduce((sum: number, f: FineEntry) => sum + getFineAmountVndFromEntry(f), 0);
 
   // 7. Total Before Coins
   const rentWithSurcharges = effectiveBaseRent + tenureSurchargeVnd;
@@ -316,5 +327,96 @@ export async function calculateRentBreakdown(
       unpaidFinesCount: unpaidFines.length,
       billingPrevMonth: prevMonth
     }
+  };
+}
+
+/**
+ * Monthly rent-related sheet charges only (share rent, tenure surcharge, monthly adjustment, parking).
+ * Omits plan-frequency lump discounts, laundry, fines, and gate tickets — used to build prepaid package totals.
+ */
+export function computeRecurringMonthlyRentVndFromSheet(client: ClientRow): number {
+  const baseRentRaw = parseVndAmount(client["Số tiền chia sẻ mỗi tháng"]);
+  const durationMonths = parseInt(String(client["Thời hạn hợp đồng (tháng)"] || "0"), 10);
+  const surchargeRate = getTenureSurchargeRate(durationMonths);
+  const tenureSurchargeVnd = Math.round(baseRentRaw * surchargeRate);
+  const monthlyAdjustmentVnd = getMonthlyAdjustmentVnd(client);
+  const professionalDiscountVnd = monthlyAdjustmentVnd < 0 ? Math.abs(monthlyAdjustmentVnd) : 0;
+  const monthlyAdjustmentSurchargeVnd = monthlyAdjustmentVnd > 0 ? monthlyAdjustmentVnd : 0;
+  let parkingFeeVnd = parseVndAmount(client["Phí gởi xe"]);
+  if (parkingFeeVnd === 0 && client["Biển số xe máy đăng ký gởi xe"]) {
+    parkingFeeVnd = PARKING_PRICES.MOTORBIKE;
+  }
+  return Math.max(
+    0,
+    baseRentRaw +
+      tenureSurchargeVnd +
+      monthlyAdjustmentSurchargeVnd -
+      professionalDiscountVnd +
+      parkingFeeVnd
+  );
+}
+
+export type PrepaidNextPaymentEstimate = {
+  planMonths: 3 | 6;
+  recurringMonthlyVnd: number;
+  frequencyDiscountVnd: number;
+  /** recurringMonthly * planMonths - frequencyDiscount */
+  packageRecurringSubtotalVnd: number;
+  laundryFeeVnd: number;
+  finesVnd: number;
+  gateParkingFeeVnd: number;
+  /** Fines + cash laundry (billing rules) + gate — owed anytime, included in estimatedTotalVnd */
+  midCyclePayablesVnd: number;
+  estimatedTotalVnd: number;
+  /** Present when API merges a manager-confirmed `PrepaidPackageBilling` row */
+  engineEstimatedTotalVnd?: number;
+  managerPackageNote?: string | null;
+  prepaidManagerConfirmed?: boolean;
+  billingMonth: string;
+  laundryBillingPrevMonth: string;
+};
+
+/**
+ * Rough next lump-sum when the prepaid package renews: N × recurring (from sheet today) minus the same
+ * frequency discount used on registration (500k for 3 months; one full recurring month for 6 months),
+ * plus laundry (previous calendar month vs billing month), gate tickets, and unpaid fines as of the engine.
+ */
+export async function computePrepaidNextPaymentEstimate(
+  client: ClientRow,
+  billingMonthYyyyMm: string
+): Promise<PrepaidNextPaymentEstimate | null> {
+  const paymentPlan = String(client["Bạn muốn thanh toán chi phí như thế nào?"] ?? "");
+  const planMonths: 3 | 6 | null = paymentPlan.includes("06 tháng")
+    ? 6
+    : paymentPlan.includes("03 tháng")
+      ? 3
+      : null;
+  if (!planMonths) {
+    return null;
+  }
+
+  const recurringMonthlyVnd = computeRecurringMonthlyRentVndFromSheet(client);
+  const frequencyDiscountVnd = planMonths === 3 ? 500_000 : recurringMonthlyVnd;
+  const packageRecurringSubtotalVnd = Math.max(0, recurringMonthlyVnd * planMonths - frequencyDiscountVnd);
+
+  const bd = await calculateRentBreakdown(client, billingMonthYyyyMm, { applyCoinsTowardRent: false });
+  const laundryFeeVnd = bd.laundryFeeVnd;
+  const finesVnd = bd.finesVnd;
+  const gateParkingFeeVnd = bd.gateParkingFeeVnd;
+  const midCyclePayablesVnd = laundryFeeVnd + finesVnd + gateParkingFeeVnd;
+  const estimatedTotalVnd = Math.max(0, packageRecurringSubtotalVnd + midCyclePayablesVnd);
+
+  return {
+    planMonths,
+    recurringMonthlyVnd,
+    frequencyDiscountVnd,
+    packageRecurringSubtotalVnd,
+    laundryFeeVnd,
+    finesVnd,
+    gateParkingFeeVnd,
+    midCyclePayablesVnd,
+    estimatedTotalVnd,
+    billingMonth: billingMonthYyyyMm,
+    laundryBillingPrevMonth: bd.details.billingPrevMonth
   };
 }
