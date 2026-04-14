@@ -856,23 +856,6 @@ export function AccountOverviewClient() {
         </section>
       ) : null}
 
-      {client &&
-      client["Hiện còn ở"] !== "-1" &&
-      checkoutBanner != null &&
-      (!checkoutBanner.eligible || checkoutBanner.completed) ? (
-        <section className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-          <Link href="/check-out" className="font-medium text-sky-700 underline hover:text-sky-900">
-            {language === "vi" ? "Xem hướng dẫn trả phòng (check-out)" : "View check-out guide"}
-          </Link>
-          <span className="text-slate-500"> — </span>
-          <span className="text-slate-600">
-            {language === "vi"
-              ? "Trang luôn mở để đọc trước; nút gửi chỉ bật khi đến kỳ trả phòng."
-              : "The page is always open to read ahead; submit unlocks when you reach check-out."}
-          </span>
-        </section>
-      ) : null}
-
       {client?.["Ng\u00e0y h\u1ebft h\u1ea1n h\u1ee3p \u0111\u1ed3ng"] && (
         <ContractExtension
           email={sessionEmail}

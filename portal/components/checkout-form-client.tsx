@@ -31,21 +31,13 @@ const STEP_LABELS: Record<Step, string> = {
   5: "Hoàn cọc & lưu ý"
 };
 
-const STEP_LABELS_EN: Record<Step, string> = {
-  1: "Luggage & cleaning",
-  2: "Bedding",
-  3: "Keys & locker",
-  4: "Bed & locker photos",
-  5: "Deposit & notes"
-};
-
 function checkoutNotYetMessage(ctx: CheckoutContext | null, language: "en" | "vi"): string {
   const r = ctx?.reason;
   const days = ctx?.daysUntilContractEnd;
   if (r === "contract_not_due_yet") {
     return language === "vi"
-      ? `Hợp đồng của bạn chưa đến kỳ trả phòng trên cổng (còn ${days ?? "—"} ngày đến ngày hết hạn). Khi còn tối đa 7 ngày trước ngày hết hạn, các nút gửi check-out bên dưới sẽ mở.`
-      : `Your contract is not in the check-out window yet (${days ?? "—"} days until end date). When you are within 7 days of your contract end date, the submit buttons on this page will unlock.`;
+      ? `Hợp đồng của bạn chưa trong kỳ check-out trên cổng (còn ${days ?? "—"} ngày đến ngày hết hạn). Trong tối đa 7 ngày trước ngày hết hạn, hoặc khi hợp đồng bị chấm dứt, bạn sẽ thấy check-out trên Trang chủ / Tài khoản và biểu mẫu đầy đủ sẽ mở tại địa chỉ này.`
+      : `Your contract is not in the check-out window yet (${days ?? "—"} days until end date). Within 7 days of your end date, or if your contract is terminated, check-out will appear on Home / Account and the full form will unlock at this same URL.`;
   }
   if (r === "no_client") {
     return language === "vi"
@@ -68,8 +60,8 @@ function checkoutNotYetMessage(ctx: CheckoutContext | null, language: "en" | "vi
       : "Could not load check-out status. Try refreshing the page.";
   }
   return language === "vi"
-    ? "Bạn chưa có yêu cầu check-out mở (chấm dứt hợp đồng hoặc trong vòng 7 ngày trước ngày hết hạn). Bạn vẫn có thể đọc hướng dẫn bên dưới; nút gửi sẽ mở đúng thời điểm."
-    : "You do not have an open check-out request yet (contract termination, or within 7 days of your end date). You can still read the guide below; submit actions unlock at the right time.";
+    ? "Bạn chưa trong kỳ check-out trên cổng (chấm dứt hợp đồng hoặc trong vòng 7 ngày trước ngày hết hạn). Khi đủ điều kiện, hãy mở check-out từ Trang chủ hoặc Tài khoản — biểu mẫu đầy đủ cũng sẽ hiện tại địa chỉ này."
+    : "You are not in the portal check-out window yet (contract termination, or within 7 days of your end date). When eligible, open check-out from Home or Account — the full form will also appear at this URL.";
 }
 
 const GOOGLE_FORM_URL = process.env.NEXT_PUBLIC_CHECKOUT_GOOGLE_FORM_URL ?? "";
@@ -275,42 +267,21 @@ export function CheckoutFormClient() {
   }
 
   if (!ctx?.eligible) {
-    const stepLabels = language === "vi" ? STEP_LABELS : STEP_LABELS_EN;
     return (
-      <div className="mx-auto max-w-lg space-y-6 py-8 px-4">
+      <div className="mx-auto max-w-md space-y-6 px-4 py-12 text-center">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-widest text-rose-600">Check-out</p>
-          <h1 className="mt-1 text-2xl font-bold text-slate-900">
-            {language === "vi" ? "Quy trình Trả phòng" : "Check-out guide"}
+          <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">Check-out</p>
+          <h1 className="mt-2 text-xl font-bold text-slate-900">
+            {language === "vi" ? "Chưa đến kỳ check-out" : "Check-out is not open yet"}
           </h1>
-          <p className="mt-2 text-sm text-sky-900/90 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2">
+          <p className="mt-4 text-sm leading-relaxed text-slate-600">{checkoutNotYetMessage(ctx, language)}</p>
+          <p className="mt-4 text-xs leading-relaxed text-slate-500">
             {language === "vi"
-              ? "Trang này luôn mở để bạn đọc trước. Chỉ khi đến đúng thời điểm (hợp đồng bị chấm dứt hoặc trong vòng 7 ngày trước ngày hết hạn) thì các nút upload ảnh và gửi hoàn tất check-out mới hoạt động."
-              : "This page stays open for everyone so you can read ahead. Photo uploads and the final check-out submit only turn on at the right time: when your contract is terminated, or within 7 days of your contract end date."}
-          </p>
-          <p className="mt-3 text-sm text-slate-700">{checkoutNotYetMessage(ctx, language)}</p>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            {language === "vi" ? "Các bước (xem trước)" : "Steps (preview)"}
-          </p>
-          <ol className="mt-3 space-y-3 text-sm text-slate-700">
-            {([1, 2, 3, 4, 5] as Step[]).map((s) => (
-              <li key={s} className="flex gap-2">
-                <span className="shrink-0 font-semibold text-slate-900">{s}.</span>
-                <span>{stepLabels[s]}</span>
-              </li>
-            ))}
-          </ol>
-          <p className="mt-4 text-xs text-slate-500">
-            {language === "vi"
-              ? "Biểu mẫu đầy đủ theo từng bước (checkbox, upload) sẽ xuất hiện tại đây khi cổng mở check-out cho bạn."
-              : "The full step-by-step form (checkboxes, uploads) will appear here when the portal opens check-out for your stay."}
+              ? "Đường dẫn /check-out vẫn mở nếu bạn lưu hoặc được gửi trực tiếp; hướng dẫn từng bước chỉ hiện khi cổng bật check-out cho bạn."
+              : "The /check-out link still works if you bookmark it or were given the URL; the full step-by-step guide only appears when the portal opens check-out for your stay."}
           </p>
         </div>
-
-        <div className="flex flex-wrap gap-3">
+        <div className="flex flex-wrap justify-center gap-3">
           <Link href="/" className="inline-block rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-medium text-white">
             {language === "vi" ? "Về trang chủ" : "Home"}
           </Link>

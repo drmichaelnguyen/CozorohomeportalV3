@@ -4289,7 +4289,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               if (!res.ok) throw new Error(data.error ?? "Failed");
                               setTerminationStatus(data.record ?? null);
                               setTerminateDialog(false);
-                              setStatus("Contract terminated. Client will see the check-out button on their dashboard.");
+                              setStatus("Contract terminated. When eligible, check-out appears on their Home / Account and at /check-out.");
                             } catch (err) {
                               setStatus(err instanceof Error ? err.message : "Failed to terminate contract");
                             } finally {
