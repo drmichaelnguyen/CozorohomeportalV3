@@ -1015,8 +1015,8 @@ const translations: Record<string, { en: string; vi: string }> = {
   residentAiBeeTitle: { en: "Chat with Cozoro Bee", vi: "Trò chuyện với Cozoro Bee" },
   residentAiTitle: { en: "Cozoro Bee", vi: "Cozoro Bee" },
   residentAiSubtitle: {
-    en: "CozoroHome mascot — your data only · separate Gemini key from manager AI",
-    vi: "Linh vật CozoroHome — chỉ dữ liệu của bạn · Gemini riêng so với AI quản lý"
+    en: "CozoroHome mascot",
+    vi: "Linh vật CozoroHome"
   },
   residentAiWelcome: {
     en: "Hi! I'm Cozoro Bee, CozoroHome's bee mascot. I only see data for your logged-in email—laundry, cleaning, rent/coins, payments. What can I help with?",

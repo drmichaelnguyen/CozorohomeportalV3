@@ -7,6 +7,23 @@ import { usePortalLanguage } from "./portal-language";
 
 type Phase = "play" | "redeeming" | "result";
 
+/**
+ * Founder face for the vent mini-game. Add your file here (repo path):
+ *   `portal/public/vent-game/trong-avatar.jpg`  (preferred)
+ *   or `portal/public/vent-game/trong-avatar.png`
+ * Served as `/vent-game/trong-avatar.jpg` / `.png` (square crop, ~256–512px works well).
+ */
+const VENT_GAME_AVATAR_JPG = "/vent-game/trong-avatar.jpg";
+const VENT_GAME_AVATAR_PNG = "/vent-game/trong-avatar.png";
+const VENT_GAME_AVATAR_PATH = VENT_GAME_AVATAR_JPG;
+
+/** Gray silhouette only if the image file is missing — not the Cozoro brand logo. */
+const VENT_GAME_AVATAR_FALLBACK =
+  "data:image/svg+xml," +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="32" fill="#334155"/><circle cx="32" cy="24" r="11" fill="#cbd5e1"/><path fill="#cbd5e1" d="M14 58c2-14 10-20 18-20s16 6 18 20"/></svg>'
+  );
+
 function randomPercentPos() {
   return { x: 16 + Math.random() * 68, y: 18 + Math.random() * 62 };
 }
@@ -26,7 +43,7 @@ export function VentHammerGameModal({
   const [hits, setHits] = useState(0);
   const [target, setTarget] = useState(() => randomPercentPos());
   const [pointer, setPointer] = useState({ x: 0, y: 0 });
-  const [avatarSrc, setAvatarSrc] = useState("/vent-game/trong-avatar.png");
+  const [avatarSrc, setAvatarSrc] = useState(VENT_GAME_AVATAR_PATH);
   const [coinsCredited, setCoinsCredited] = useState(0);
   const [redeemError, setRedeemError] = useState("");
   const [resultNote, setResultNote] = useState("");
@@ -43,7 +60,7 @@ export function VentHammerGameModal({
     setCoinsCredited(0);
     setRedeemError("");
     setResultNote("");
-    setAvatarSrc("/vent-game/trong-avatar.png");
+    setAvatarSrc(VENT_GAME_AVATAR_PATH);
   }, []);
 
   useEffect(() => {
@@ -225,7 +242,13 @@ export function VentHammerGameModal({
                   alt=""
                   className="h-full w-full rounded-full object-cover"
                   draggable={false}
-                  onError={() => setAvatarSrc("/cozorohome-logo.png")}
+                  onError={() =>
+                    setAvatarSrc((prev) => {
+                      if (prev === VENT_GAME_AVATAR_JPG) return VENT_GAME_AVATAR_PNG;
+                      if (prev === VENT_GAME_AVATAR_PNG) return VENT_GAME_AVATAR_FALLBACK;
+                      return prev;
+                    })
+                  }
                 />
               </div>
               <div
