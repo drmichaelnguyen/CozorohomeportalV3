@@ -1,4 +1,4 @@
-# CozoroHome Webapp â€” Agent Guide
+﻿# CozoroHome Webapp â€” Agent Guide
 
 ## Project Overview
 
@@ -259,6 +259,7 @@ Every route in `portal/app/**/error.tsx` uses either:
 - Main branch: `main`
 - Commit messages follow: `type: description` (e.g. `feat:`, `fix:`, `chore:`)
 - Release commits should bump the visible version when user-facing behavior changes
+- **Version scheme** (`portal/lib/app-version.ts`, `portal/package.json`, `api/package.json`): use **semver-style `MAJOR.MINOR.PATCH`** (e.g. `3.7.4`, `3.7.11`, `3.7.23`). The PATCH segment **may exceed 9** — `3.7.11` is normal; do not jump to `3.8.0` just because PATCH is “double digits”. Reserve **`3.8.0`** (MINOR bump) for **larger** product releases the team treats as a minor milestone, not for routine fixes/features.
 - When asked to "commit and push", first confirm whether the user wants:
   - commit only
   - push branch to GitHub
