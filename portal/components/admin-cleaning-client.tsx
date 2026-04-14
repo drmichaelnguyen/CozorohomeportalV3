@@ -825,7 +825,7 @@ export function AdminCleaningClient() {
                   </div>
 
                   <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
-                    <div className="font-medium text-slate-900">{getSchedulerJobLabel(selectedSchedulerJob)}</div>
+                    <div className="font-medium text-slate-900">{getSchedulerJobLabel(selectedSchedulerJob, t)}</div>
                     <div className="mt-1 text-xs text-slate-500">{t("adminCleaningSchedulerCalendarOnly")}</div>
 
                     <label className="mt-4 block">
