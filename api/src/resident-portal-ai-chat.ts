@@ -11,10 +11,10 @@ import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
 import { appendAiTrainingExchange } from "./ai-training-log.js";
 
 import { calculateRentBreakdown, computePrepaidNextPaymentEstimate } from "./calculation-engine.js";
+import { getCleaningOverviewForUser } from "./cleaning.js";
 import {
   createLaundryBooking,
   getActiveClientByEmail,
-  getCleaningOverviewForUser,
   getCoinsForEmail,
   getLaundryAvailabilityForMachine,
   getLaundryBookingContextForEmail,

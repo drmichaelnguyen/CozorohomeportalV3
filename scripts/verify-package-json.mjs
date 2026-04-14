@@ -14,7 +14,8 @@ let failed = false;
 for (const rel of rels) {
   const abs = join(root, rel);
   try {
-    const raw = readFileSync(abs, "utf8");
+    // Strip UTF-8 BOM — JSON.parse rejects U+FEFF (common when editors/OneDrive touch package.json on Windows).
+    const raw = readFileSync(abs, "utf8").replace(/^\uFEFF/, "");
     JSON.parse(raw);
   } catch (err) {
     failed = true;
