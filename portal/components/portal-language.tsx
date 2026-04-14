@@ -994,8 +994,8 @@ const translations: Record<string, { en: string; vi: string }> = {
   },
   managerAiGoTo: { en: "Go to {view}", vi: "Mở {view}" },
   managerAiHistoryNote: {
-    en: "{count} message(s) · history saved locally (last {max})",
-    vi: "{count} tin nhắn · lịch sử lưu trên máy (tối đa {max} tin gần nhất)"
+    en: "{count} message(s) · last {max} turns saved in this browser (per manager) for training / export · API uses last {ctx} per reply",
+    vi: "{count} tin nhắn · lưu tối đa {max} lượt gần nhất trên trình duyệt (theo tài khoản quản lý) để huấn luyện / xuất · mỗi lần gửi chỉ dùng {ctx} tin gần nhất cho model"
   },
   managerAiQuick1: {
     en: "Which beds are available in D7?",

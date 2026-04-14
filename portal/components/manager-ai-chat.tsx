@@ -10,8 +10,11 @@ type Message = {
   navigateTo?: string;
 };
 
-const MAX_STORED_MESSAGES = 10;
-const STORAGE_KEY = "cozoro-manager-ai-chat";
+/** Turns kept in localStorage per manager (for later AI training export / review). */
+const MAX_PERSISTED_MESSAGES = 80;
+/** Matches API `AI_CHAT_CONTEXT_MESSAGE_LIMIT` — only this many recent turns are sent each request. */
+const MAX_CONTEXT_MESSAGES = 10;
+const LEGACY_STORAGE_KEY = "cozoro-manager-ai-chat";
 
 const VIEW_LABEL_KEYS: Record<string, string> = {
   overview: "managerAiViewOverview",
@@ -29,23 +32,82 @@ const VIEW_LABEL_KEYS: Record<string, string> = {
   controller: "managerAiViewController"
 };
 
-function loadStoredMessages(): Message[] {
+function storageKey(operatorEmail: string, language: "en" | "vi") {
+  return `cozoro-manager-ai-chat:${operatorEmail.trim().toLowerCase()}:${language}`;
+}
+
+function parseStoredMessages(raw: string): Message[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as Message[];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const out: Message[] = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== "object") continue;
+      const m = item as Record<string, unknown>;
+      if (m.role !== "user" && m.role !== "model") continue;
+      if (typeof m.text !== "string") continue;
+      const msg: Message = { role: m.role, text: m.text };
+      if (typeof m.navigateTo === "string" && m.navigateTo.trim()) msg.navigateTo = m.navigateTo.trim();
+      out.push(msg);
+    }
+    return out;
   } catch {
     return [];
   }
 }
 
-function saveMessages(messages: Message[]) {
+function loadStoredMessages(operatorEmail: string, language: "en" | "vi"): Message[] {
+  const email = operatorEmail.trim().toLowerCase();
+  if (!email) return [];
   try {
-    // Keep only the last MAX_STORED_MESSAGES
-    const trimmed = messages.slice(-MAX_STORED_MESSAGES);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+    const key = storageKey(email, language);
+    let raw = localStorage.getItem(key);
+    if (!raw) {
+      const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (legacy) {
+        const migrated = parseStoredMessages(legacy);
+        if (migrated.length) {
+          const trimmed = migrated.slice(-MAX_PERSISTED_MESSAGES);
+          localStorage.setItem(key, JSON.stringify(trimmed));
+        }
+        try {
+          localStorage.removeItem(LEGACY_STORAGE_KEY);
+        } catch {
+          // ignore
+        }
+        raw = localStorage.getItem(key);
+      }
+    }
+    if (!raw) return [];
+    return parseStoredMessages(raw);
+  } catch {
+    try {
+      localStorage.removeItem(storageKey(email, language));
+    } catch {
+      // ignore
+    }
+    return [];
+  }
+}
+
+function saveMessages(operatorEmail: string, language: "en" | "vi", messages: Message[]) {
+  const email = operatorEmail.trim().toLowerCase();
+  if (!email) return;
+  try {
+    const trimmed = messages.slice(-MAX_PERSISTED_MESSAGES);
+    localStorage.setItem(storageKey(email, language), JSON.stringify(trimmed));
   } catch {
     // storage unavailable — silently ignore
+  }
+}
+
+function removeStoredMessages(operatorEmail: string, language: "en" | "vi") {
+  const email = operatorEmail.trim().toLowerCase();
+  if (!email) return;
+  try {
+    localStorage.removeItem(storageKey(email, language));
+  } catch {
+    // ignore
   }
 }
 
@@ -69,11 +131,15 @@ function ChatBody({
     return key ? t(key) : viewKey;
   }
 
-  const [messages, setMessages] = useState<Message[]>(() => loadStoredMessages());
+  const [messages, setMessages] = useState<Message[]>(() => loadStoredMessages(operatorEmail, language));
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    setMessages(loadStoredMessages(operatorEmail, language));
+  }, [operatorEmail, language]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -85,7 +151,7 @@ function ChatBody({
 
   function updateMessages(next: Message[]) {
     setMessages(next);
-    saveMessages(next);
+    saveMessages(operatorEmail, language, next);
   }
 
   async function sendMessage(text?: string) {
@@ -98,8 +164,7 @@ function ChatBody({
     setLoading(true);
 
     try {
-      // Send only last 20 messages as context to avoid huge payloads
-      const contextWindow = nextMessages.slice(-MAX_STORED_MESSAGES);
+      const contextWindow = nextMessages.slice(-MAX_CONTEXT_MESSAGES);
       const res = await fetch(`${API_BASE_URL}/manager/ai-chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -145,7 +210,8 @@ function ChatBody({
   }
 
   function clearChat() {
-    updateMessages([]);
+    setMessages([]);
+    removeStoredMessages(operatorEmail, language);
   }
 
   return (
@@ -271,7 +337,11 @@ function ChatBody({
         </div>
         {messages.length > 0 && (
           <p className="mt-1 text-[10px] text-slate-400">
-            {t("managerAiHistoryNote", undefined, { count: String(messages.length), max: String(MAX_STORED_MESSAGES) })}
+            {t("managerAiHistoryNote", undefined, {
+              count: String(messages.length),
+              max: String(MAX_PERSISTED_MESSAGES),
+              ctx: String(MAX_CONTEXT_MESSAGES)
+            })}
           </p>
         )}
       </div>
