@@ -545,6 +545,10 @@ export function SupportClient() {
           </div>
         </div>
 
+        {activeTab === "personal" ? (
+          <p className="mt-3 max-w-2xl text-[11px] leading-relaxed text-slate-500">{t("supportResidentChatDeleteHint")}</p>
+        ) : null}
+
         <div className="mt-4 flex gap-1 overflow-x-auto pb-1 no-scrollbar">
           <button
             onClick={() => setActiveTab("personal")}

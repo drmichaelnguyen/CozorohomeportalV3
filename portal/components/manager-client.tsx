@@ -9220,6 +9220,21 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   >
                     {t("newCoinsEntry")}
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setClientSubTab("details");
+                      setShowClientDetails(false);
+                      setActiveAction("message");
+                      setDiagramBedQuickSheet(null);
+                      window.setTimeout(() => {
+                        managerClientWorkspaceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }, 80);
+                    }}
+                    className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-center text-xs font-semibold text-sky-900 hover:bg-sky-100"
+                  >
+                    {t("diagramMessageClient")}
+                  </button>
                   {(() => {
                     const tel = toPhoneHref(getClientPhone(diagramBedQuickSheet.client));
                     return tel ? (

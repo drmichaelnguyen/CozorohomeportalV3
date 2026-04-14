@@ -426,6 +426,7 @@ export function ManagerSupportInbox({
         <div>
           <h2 className="text-base font-semibold text-slate-900">{t("supportInboxTitle")}</h2>
           <p className="text-xs text-slate-500">{t("supportInboxDesc")}</p>
+          <p className="mt-2 max-w-2xl text-xs leading-relaxed text-slate-600">{t("supportInboxManagerAiHint")}</p>
         </div>
         <button
           type="button"

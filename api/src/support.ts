@@ -150,28 +150,37 @@ export async function listManagerInbox(operatorEmail: string): Promise<StaffInbo
   const directConversationIds = directConversations.map(c => c.id);
   const directReadStates = await getReadStatesMap(directConversationIds, normalizedOperatorEmail, "STAFF");
 
-  const directItems: StaffInboxItem[] = directConversations.map(c => {
-    const lastRead = directReadStates.get(c.id) || null;
-    const unreadMessages = c.messages.filter(m => 
-      m.senderRole === SupportMessageSenderRole.RESIDENT && (!lastRead || m.createdAt > lastRead)
-    );
-    const latest = c.messages[0];
+  const directItems: StaffInboxItem[] = await Promise.all(
+    directConversations.map(async (c) => {
+      const lastRead = directReadStates.get(c.id) || null;
+      const latest = c.messages[0];
+      /** Must not use only `take:1` messages for unread — if the latest row is ASSISTANT, staff still needs resident messages after lastRead (same pattern as group chats). */
+      const unreadCount = await prisma.supportMessage.count({
+        where: {
+          conversationId: c.id,
+          senderRole: SupportMessageSenderRole.RESIDENT,
+          createdAt: { gt: lastRead || new Date(0) }
+        }
+      });
 
-    return {
-      id: c.id,
-      type: "DIRECT",
-      label: c.residentName || c.residentEmail,
-      subLabel: c.residentEmail,
-      status: c.status,
-      lastMessageAt: c.lastMessageAt,
-      unreadCount: unreadMessages.length,
-      latestMessage: latest ? {
-        body: latest.body,
-        senderName: latest.senderName,
-        createdAt: latest.createdAt
-      } : null
-    };
-  });
+      return {
+        id: c.id,
+        type: "DIRECT" as const,
+        label: c.residentName || c.residentEmail,
+        subLabel: c.residentEmail,
+        status: c.status,
+        lastMessageAt: c.lastMessageAt,
+        unreadCount,
+        latestMessage: latest
+          ? {
+              body: latest.body,
+              senderName: latest.senderName,
+              createdAt: latest.createdAt
+            }
+          : null
+      };
+    })
+  );
 
   // 2. Derive all potential groups from clients
   const clientCache = await readCachedClients();

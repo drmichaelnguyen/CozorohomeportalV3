@@ -444,6 +444,7 @@ const translations: Record<string, { en: string; vi: string }> = {
   diagramGoToClientDetail: { en: "Open client workspace", vi: "Mở bảng khách" },
   diagramQuickActionsTitle: { en: "Quick actions", vi: "Thao tác nhanh" },
   diagramCallNow: { en: "Call", vi: "Gọi" },
+  diagramMessageClient: { en: "Message in app", vi: "Nhắn trong app" },
   diagramNoPhoneOnFile: { en: "No phone on file", vi: "Chưa có số điện thoại" },
   table: { en: "Table", vi: "Bảng" },
   bedsLabel: { en: "beds", vi: "giường" },
@@ -982,6 +983,14 @@ const translations: Record<string, { en: string; vi: string }> = {
   byLabel: { en: "by", vi: "bởi" },
   supportInboxTitle: { en: "Support Inbox", vi: "Hộp thư hỗ trợ" },
   supportInboxDesc: { en: "Residents send one conversation per account — reply from this shared inbox.", vi: "Cư dân gửi một cuộc hội thoại cho mỗi tài khoản — phản hồi từ hộp thư chung này." },
+  supportInboxManagerAiHint: {
+    en: "Cozoro Assistant in the resident Personal tab is the same thread as that resident’s messages — open the row with their name or email (there is no separate “AI-only” row). The yellow bee chat only exists on the resident’s device and never appears in this inbox.",
+    vi: "Trợ lý Cozoro trong tab Cá nhân của cư dân nằm chung một cuộc hội thoại với tin nhắn của họ — mở dòng tên hoặc email (không có hàng chỉ AI). Chat nút ong vàng chỉ trên máy cư dân và không bao giờ hiện trong hộp thư này."
+  },
+  supportResidentChatDeleteHint: {
+    en: "Bee: use Clear in the bee window to erase history on this device only. Personal messages (staff and assistant) are kept on the server — you cannot delete them yourself; ask Cozoro staff if something must be removed.",
+    vi: "Ong: bấm Xóa trong khung ong để xóa lịch sử chỉ trên thiết bị này. Tin Cá nhân (nhân viên và trợ lý) lưu trên máy chủ — bạn không tự xóa được; cần xóa thì liên hệ Cozoro."
+  },
   supportOwnerDeleteConversation: { en: "Delete thread", vi: "Xóa cuộc hội thoại" },
   supportOwnerDeleteMessage: { en: "Delete message", vi: "Xóa tin nhắn" },
   supportOwnerDeleteConversationConfirm: {

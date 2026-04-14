@@ -59,6 +59,14 @@ function saveStored(email: string, language: UiLang, messages: Message[]) {
   }
 }
 
+function clearStored(email: string, language: UiLang) {
+  try {
+    localStorage.removeItem(storageKey(email, language));
+  } catch {
+    // ignore
+  }
+}
+
 /** CozoroHome mascot — cute bee for chat launcher and header */
 function CozoroBeeLogo({ className = "h-8 w-8" }: { className?: string }) {
   const uid = useId().replace(/:/g, "_");
@@ -136,6 +144,15 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
     },
     [normalized, language]
   );
+
+  const clearBeeChat = useCallback(() => {
+    if (!normalized) return;
+    clearStored(normalized, language);
+    setMessages([{ role: "model", text: welcome }]);
+    setErrorBanner("");
+  }, [normalized, language, welcome]);
+
+  const beeHasUserTurns = messages.some((m) => m.role === "user");
 
   async function sendMessage(text?: string) {
     const userText = (text ?? input).trim();
@@ -226,13 +243,26 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
                     <p className="truncate text-[10px] font-medium text-amber-900/80 dark:text-amber-200/80">{t("residentAiSubtitle")}</p>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setOpen(false)}
-                  className="rounded-full px-3 py-1.5 text-xs font-semibold text-amber-950 hover:bg-amber-200/80 dark:text-amber-100 dark:hover:bg-amber-800/80"
-                >
-                  {t("close")}
-                </button>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {beeHasUserTurns ? (
+                    <button
+                      type="button"
+                      onClick={clearBeeChat}
+                      title={t("clearChat")}
+                      aria-label={t("clearChat")}
+                      className="rounded-full border border-amber-300/80 bg-white/80 px-2.5 py-1.5 text-xs font-semibold text-amber-950 hover:bg-amber-100 dark:border-amber-600 dark:bg-amber-900/50 dark:text-amber-100 dark:hover:bg-amber-800/80"
+                    >
+                      {t("clearChat")}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setOpen(false)}
+                    className="rounded-full px-3 py-1.5 text-xs font-semibold text-amber-950 hover:bg-amber-200/80 dark:text-amber-100 dark:hover:bg-amber-800/80"
+                  >
+                    {t("close")}
+                  </button>
+                </div>
               </header>
 
               <main className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain bg-slate-50 p-4 dark:bg-slate-900">
