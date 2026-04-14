@@ -1,15 +1,27 @@
 #!/bin/bash
 # CozoroHome Mac — manage API + Portal (host-manager), backup/restore, git pull, deploy.
-# Double-click in Finder, or: chmod +x manage-server.command && ./manage-server.command
-# Repo root = this file's directory.
+#
+# If Finder says you don’t have permission / can’t open:
+#   1) Terminal (in this repo):  chmod u+x manage-server.command && xattr -cr manage-server.command
+#   2) Or right-click the file → Open → Open (first time only).
+#   3) Then double-click again, or run:  ./manage-server.command
+#
+# One-liner to free ports 3000 + 4000 (portal + API defaults):
+#   for p in 3000 4000; do for pid in $(lsof -nP -iTCP:$p -sTCP:LISTEN -t 2>/dev/null); do kill -9 "$pid"; done; done
 
 cd "$(dirname "$0")"
 REPO_ROOT=$(pwd)
+ME="$REPO_ROOT/$(basename "${BASH_SOURCE[0]:-$0}")"
+chmod u+x "$ME" 2>/dev/null || true
+xattr -cr "$ME" 2>/dev/null || true
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 echo "=============================================="
 echo "  CozoroHome — manage-server"
 echo "  Repo: $REPO_ROOT"
+echo "=============================================="
+echo "Tip: If Finder blocked this script, run once in Terminal:"
+echo "  chmod u+x manage-server.command && xattr -cr manage-server.command"
 echo "=============================================="
 
 if ! command -v corepack >/dev/null 2>&1; then
@@ -184,6 +196,28 @@ do_restore() {
   echo "Restore file copy done. Start stack with option 3 or run deploy (option 8)."
 }
 
+do_kill_ports() {
+  echo "--- Kill TCP listeners on portal :$portal_port and API :$api_port (SIGKILL) ---"
+  for port in "$portal_port" "$api_port"; do
+    echo "-- Port $port --"
+    local pids
+    pids=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)
+    if [[ -z "$pids" ]]; then
+      echo "  (no listener)"
+      continue
+    fi
+    for pid in $pids; do
+      if kill -9 "$pid" 2>/dev/null; then
+        echo "  killed PID $pid"
+      else
+        echo "  failed PID $pid — try: sudo kill -9 $pid"
+      fi
+    done
+  done
+  echo "--- Also: pnpm host:stop (managed stack) ---"
+  corepack pnpm host:stop 2>/dev/null || true
+}
+
 do_pull_deploy() {
   echo "--- Git pull (main) + full deploy ---"
   if ! git diff-index --quiet HEAD -- 2>/dev/null; then
@@ -209,6 +243,7 @@ while true; do
   echo "  7) RESTORE from backup/cozorohome-full-backup-*.tar.gz (destructive)"
   echo "  8) Git pull main + deploy (pnpm host:pull-deploy)"
   echo "  9) Git pull main only (no build)"
+  echo " 10) Kill listeners on portal :$portal_port + API :$api_port (then host:stop)"
   echo "  0) Exit"
   echo -n "Choice: "
   read -r choice
@@ -222,6 +257,7 @@ while true; do
     7) do_restore ;;
     8) do_pull_deploy ;;
     9) git pull --ff-only origin main ;;
+    10) do_kill_ports ;;
     0) echo "Bye."; break ;;
     *) echo "Unknown option." ;;
   esac
