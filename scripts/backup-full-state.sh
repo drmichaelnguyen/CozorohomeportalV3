@@ -7,15 +7,16 @@
 #   chmod +x scripts/backup-full-state.sh
 #   ./scripts/backup-full-state.sh
 #
+# Default output: ./backup/ under the repo (gitignored contents; folder tracked).
 # Optional:
-#   BACKUP_PARENT=~/Backups ./scripts/backup-full-state.sh
+#   BACKUP_PARENT=~/Desktop ./scripts/backup-full-state.sh
 #   SKIP_DATABASE=1 ./scripts/backup-full-state.sh   # skip mysqldump
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-BACKUP_PARENT="${BACKUP_PARENT:-$HOME/Desktop}"
+BACKUP_PARENT="${BACKUP_PARENT:-$ROOT/backup}"
 DEST="${BACKUP_PARENT}/cozorohome-full-backup-${STAMP}"
 
 mkdir -p "$DEST"

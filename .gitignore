@@ -24,4 +24,5 @@ api/.google-oauth.json
 api/data
 guest-booking-standalone/data
 backups/
+# Pre-deploy full backups: tracked folder is backup/; contents ignored via backup/.gitignore
 bot/knowledge/mapping-variable.md
