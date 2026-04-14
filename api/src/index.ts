@@ -3065,7 +3065,7 @@ app.post("/resident/portal-ai-chat", async (request, response) => {
     .safeParse(request.body);
 
   if (!parsed.success) {
-    return response.status(400).json({ error: "Invalid resident AI chat payload" });
+    return response.status(400).json({ error: "Invalid resident chat payload" });
   }
 
   try {

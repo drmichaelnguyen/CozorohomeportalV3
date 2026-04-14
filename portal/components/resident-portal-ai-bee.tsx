@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 
@@ -12,7 +12,7 @@ type Message = {
 const MAX_STORED_MESSAGES = 10;
 
 function storageKey(email: string) {
-  return `cozoro-resident-portal-ai:${email.trim().toLowerCase()}`;
+  return `cozoro-resident-bee:${email.trim().toLowerCase()}`;
 }
 
 function loadStored(email: string): Message[] {
@@ -35,6 +35,43 @@ function saveStored(email: string, messages: Message[]) {
   }
 }
 
+/** CozoroHome mascot — cute bee for chat launcher and header */
+function CozoroBeeLogo({ className = "h-8 w-8" }: { className?: string }) {
+  const uid = useId().replace(/:/g, "_");
+  const gradId = `cozoroBeeBody_${uid}`;
+  return (
+    <svg className={className} viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <defs>
+        <linearGradient id={gradId} x1="22" y1="10" x2="22" y2="38" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#FEF9C3" />
+          <stop offset="0.45" stopColor="#FDE047" />
+          <stop offset="1" stopColor="#F59E0B" />
+        </linearGradient>
+      </defs>
+      <ellipse cx="14" cy="26" rx="8" ry="11" fill="white" fillOpacity="0.93" transform="rotate(-26 14 26)" />
+      <ellipse cx="30" cy="26" rx="8" ry="11" fill="white" fillOpacity="0.93" transform="rotate(26 30 26)" />
+      <ellipse cx="22" cy="28" rx="11" ry="10" fill={`url(#${gradId})`} stroke="#B45309" strokeWidth="1.15" />
+      <path d="M12.5 26.5h19" stroke="#0f172a" strokeWidth="1.85" strokeLinecap="round" />
+      <path d="M11.5 30.5h21" stroke="#0f172a" strokeWidth="1.85" strokeLinecap="round" />
+      <circle cx="17.5" cy="25" r="2.1" fill="#0f172a" />
+      <circle cx="26.5" cy="25" r="2.1" fill="#0f172a" />
+      <circle cx="18.1" cy="24.35" r="0.65" fill="white" />
+      <circle cx="27.1" cy="24.35" r="0.65" fill="white" />
+      <path d="M16.5 32.5c1.9 1.5 4.1 2.2 6.5 1.7" stroke="#0f172a" strokeWidth="1.2" strokeLinecap="round" fill="none" />
+      <ellipse cx="13.5" cy="29" rx="1.9" ry="1.1" fill="#fb7185" fillOpacity="0.4" />
+      <ellipse cx="30.5" cy="29" rx="1.9" ry="1.1" fill="#fb7185" fillOpacity="0.4" />
+      <ellipse cx="22" cy="14" rx="10" ry="9" fill="#FDE047" stroke="#CA8A04" strokeWidth="1" />
+      <path d="M14 6.5l-2.5-4.8" stroke="#0f172a" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M30 6.5l2.5-4.8" stroke="#0f172a" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="17.5" cy="13" r="1.9" fill="#0f172a" />
+      <circle cx="26.5" cy="13" r="1.9" fill="#0f172a" />
+      <circle cx="18.1" cy="12.35" r="0.6" fill="white" />
+      <circle cx="27.1" cy="12.35" r="0.6" fill="white" />
+      <path d="M18 16.5q4 1.8 8 0" stroke="#0f172a" strokeWidth="1.1" strokeLinecap="round" fill="none" />
+    </svg>
+  );
+}
+
 export function ResidentPortalAiBee({ email }: { email: string }) {
   const { language, t } = usePortalLanguage();
   const [open, setOpen] = useState(false);
@@ -45,13 +82,7 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const normalized = email.trim().toLowerCase();
 
-  const welcome = useMemo(
-    () =>
-      language === "vi"
-        ? "Xin chào! Mình là Cozoro AI. Mình chỉ truy cập dữ liệu của đúng email đăng nhập của bạn (giặt sấy, lịch vệ sinh, tiền thuê/coins, thanh toán). Bạn muốn hỏi gì?"
-        : "Hi! I'm Cozoro AI. I only access data tied to your logged-in email (laundry, cleaning schedule, rent/coins, payments). What would you like to know?",
-    [language]
-  );
+  const welcome = useMemo(() => t("residentAiWelcome"), [t, language]);
 
   useEffect(() => {
     if (!open || !normalized) return;
@@ -117,19 +148,19 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
         type="button"
         onClick={() => setOpen(true)}
         title={t("residentAiBeeTitle")}
-        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 border-amber-500 bg-amber-300 text-lg shadow-md transition-transform hover:scale-105 hover:bg-amber-200 active:scale-95"
+        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 border-amber-500 bg-amber-100 shadow-md transition-transform hover:scale-105 hover:bg-amber-50 active:scale-95"
         aria-label={t("residentAiBeeTitle")}
       >
-        <span aria-hidden className="select-none">
-          🐝
-        </span>
+        <CozoroBeeLogo className="h-7 w-7" />
       </button>
 
       {open ? (
         <div className="fixed inset-0 z-[120] flex flex-col bg-white">
           <header className="flex shrink-0 items-center justify-between gap-2 border-b border-amber-200 bg-amber-50 px-4 py-3">
             <div className="flex min-w-0 items-center gap-2">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-amber-500 bg-amber-300 text-lg">🐝</span>
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-amber-400 bg-amber-50 p-0.5">
+                <CozoroBeeLogo className="h-9 w-9" />
+              </span>
               <div className="min-w-0">
                 <h2 className="truncate text-sm font-bold text-amber-950">{t("residentAiTitle")}</h2>
                 <p className="truncate text-[10px] font-medium text-amber-900/80">{t("residentAiSubtitle")}</p>
@@ -158,7 +189,10 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
             ))}
             {loading ? (
               <div className="flex justify-start">
-                <div className="rounded-2xl border border-amber-200 bg-white px-3 py-2 text-xs text-slate-500">…</div>
+                <div className="flex items-center gap-2 rounded-2xl border border-amber-200 bg-white px-3 py-2 text-xs text-slate-500">
+                  <CozoroBeeLogo className="h-5 w-5 animate-pulse" />
+                  <span>…</span>
+                </div>
               </div>
             ) : null}
             <div ref={bottomRef} />

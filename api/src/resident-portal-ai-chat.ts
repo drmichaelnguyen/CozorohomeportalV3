@@ -1,5 +1,5 @@
 /**
- * Resident-only Cozoro AI (Messages tab / portal) — Gemini 2.5 Flash with a **separate** API key
+ * Resident-only **Cozoro Bee** chat (Messages tab) — Gemini 2.5 Flash with a **separate** API key
  * from manager AI (`GEMINI_API_KEY`). Uses `GEMINI_RESIDENT_PORTAL_AI_API_KEY`.
  *
  * Tools only return data scoped to the authenticated resident email (server-enforced).
@@ -90,7 +90,7 @@ function clipJson(value: unknown, maxLen: number): string {
 function assertResidentClient(email: string) {
   return resolvePortalLogin(email).then((login) => {
     if (!login.allowed || login.role !== "user" || login.source !== "client") {
-      throw new Error("Only resident accounts can use Cozoro AI here.");
+      throw new Error("Only resident accounts can use Cozoro Bee here.");
     }
   });
 }
@@ -405,7 +405,7 @@ const TOOLS: GeminiTool[] = [
 ];
 
 function buildSystemPrompt(language: UiLanguage, residentEmail: string) {
-  const common = `You are **Cozoro AI**, a private helper inside the CozoroHome resident portal (co-living, Ho Chi Minh City).
+  const common = `You are **Cozoro Bee**, the friendly bee mascot of CozoroHome — a co-living resident portal in Ho Chi Minh City. You speak in first person as Cozoro Bee (warm, concise, never arrogant).
 
 ## Authenticated resident
 - Portal email (the only account you may access): ${residentEmail}
@@ -417,19 +417,20 @@ function buildSystemPrompt(language: UiLanguage, residentEmail: string) {
 - Prefer **concise** answers. Offer step-by-step only when booking laundry or interpreting a schedule.
 - For laundry booking: first call get_my_laundry_status, then get_laundry_open_slots for the chosen machine, then book_my_laundry with an exact slot. Confirm date/time in local wording.
 - Payments/rent: summarize amounts and due status clearly; mention if figures are estimates from the roster.
-- This chat is **not** visible to managers as a support ticket — still be professional. For disputes or sensitive issues, suggest they use the normal **Messages / Support** thread.`;
+- This chat is **not** visible to managers as a support ticket — still be professional. For disputes or sensitive issues, suggest they use the normal **Messages / Support** thread.
+- When introducing yourself, say you are **Cozoro Bee**, CozoroHome's bee mascot (in Vietnamese you may say "mình là Cozoro Bee, linh vật ong của CozoroHome").`;
 
   if (language === "vi") {
     return `${common}
 
 ## Ngôn ngữ
-- Trả lời chính bằng **tiếng Việt** rõ ràng, thân thiện (có thể giữ thuật ngữ tiếng Anh ngắn nếu cư dân dùng: laundry, coins).`;
+- Trả lời chính bằng **tiếng Việt** rõ ràng, thân thiện; xưng hô là Cozoro Bee ("mình") như linh vật ong nhỏ (có thể giữ từ tiếng Anh ngắn: laundry, coins).`;
   }
 
   return `${common}
 
 ## Language
-- Reply in **clear English** (short Vietnamese labels are fine if the resident wrote Vietnamese mixed with English).`;
+- Reply in **clear English** as Cozoro Bee (friendly "I" voice). Short Vietnamese words in the resident's message are fine to mirror.`;
 }
 
 export async function handleResidentPortalAiChat(
@@ -438,7 +439,7 @@ export async function handleResidentPortalAiChat(
   options?: { language?: UiLanguage }
 ): Promise<{ reply: string }> {
   if (process.env.RESIDENT_PORTAL_AI_DISABLED === "1") {
-    throw new Error("Cozoro AI is temporarily disabled.");
+    throw new Error("Cozoro Bee is temporarily disabled.");
   }
 
   await assertResidentClient(residentEmail);

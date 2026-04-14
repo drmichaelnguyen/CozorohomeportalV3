@@ -931,15 +931,19 @@ const translations: Record<string, { en: string; vi: string }> = {
   errorConnection: { en: "Network error. Please check your connection.", vi: "Lỗi mạng. Vui lòng kiểm tra kết nối của bạn." },
   errorSomethingWrong: { en: "Something went wrong. Please try again.", vi: "Đã xảy ra lỗi. Vui lòng thử lại." },
   close: { en: "Close", vi: "Đóng" },
-  residentAiBeeTitle: { en: "Chat with Cozoro AI", vi: "Trò chuyện với Cozoro AI" },
-  residentAiTitle: { en: "Cozoro AI", vi: "Cozoro AI" },
+  residentAiBeeTitle: { en: "Chat with Cozoro Bee", vi: "Trò chuyện với Cozoro Bee" },
+  residentAiTitle: { en: "Cozoro Bee", vi: "Cozoro Bee" },
   residentAiSubtitle: {
-    en: "Your data only — uses a separate Gemini key from manager AI",
-    vi: "Chỉ dữ liệu của bạn — dùng Gemini riêng so với AI quản lý"
+    en: "CozoroHome mascot — your data only · separate Gemini key from manager AI",
+    vi: "Linh vật CozoroHome — chỉ dữ liệu của bạn · Gemini riêng so với AI quản lý"
+  },
+  residentAiWelcome: {
+    en: "Hi! I'm Cozoro Bee, CozoroHome's bee mascot. I only see data for your logged-in email—laundry, cleaning, rent/coins, payments. What can I help with?",
+    vi: "Chào bạn! Mình là Cozoro Bee, linh vật ong của CozoroHome. Mình chỉ xem dữ liệu đúng email đăng nhập của bạn—giặt sấy, lịch vệ sinh, tiền thuê/coins, thanh toán. Bạn cần gì?"
   },
   residentAiPlaceholder: {
-    en: "Laundry, cleaning schedule, rent, coins…",
-    vi: "Giặt sấy, lịch vệ sinh, tiền thuê, coins…"
+    en: "Ask Cozoro Bee about laundry, cleaning, rent, coins…",
+    vi: "Hỏi Cozoro Bee về giặt sấy, vệ sinh, tiền thuê, coins…"
   },
   laundryTitle: { en: "Laundry", vi: "Giặt sấy" },
   machinesLabel: { en: "Machines", vi: "Máy móc" },
