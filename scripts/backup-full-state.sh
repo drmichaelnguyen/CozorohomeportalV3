@@ -7,16 +7,19 @@
 #   chmod +x scripts/backup-full-state.sh
 #   ./scripts/backup-full-state.sh
 #
-# Default output: ./backup/ under the repo (gitignored contents; folder tracked).
-# Optional:
-#   BACKUP_PARENT=~/Desktop ./scripts/backup-full-state.sh
+# Default output: always <repo>/backup/ (gitignored contents; backup/.gitignore tracked).
+# Override location only if you explicitly set COZORO_BACKUP_ROOT (absolute or under repo).
+#   COZORO_BACKUP_ROOT=/Volumes/external/cozoro-backups ./scripts/backup-full-state.sh
 #   SKIP_DATABASE=1 ./scripts/backup-full-state.sh   # skip mysqldump
+#
+# Note: we do NOT read BACKUP_PARENT — a stale BACKUP_PARENT=~/Desktop in your shell
+# would otherwise send backups outside the project.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-BACKUP_PARENT="${BACKUP_PARENT:-$ROOT/backup}"
+BACKUP_PARENT="${COZORO_BACKUP_ROOT:-$ROOT/backup}"
 DEST="${BACKUP_PARENT}/cozorohome-full-backup-${STAMP}"
 
 mkdir -p "$DEST"
