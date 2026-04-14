@@ -873,6 +873,36 @@ function getSlotFloor(type: CleaningTaskType, floor?: number | null) {
   return type === CleaningTaskType.TRASH_D7 ? floor ?? null : null;
 }
 
+/** Month key `YYYY-MM` in UTC for cleaning monthly opt-out rows. */
+function cleaningMonthKeyFromDate(date: Date) {
+  const n = normalizeCalendarDate(date);
+  return `${n.getUTCFullYear()}-${String(n.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+/**
+ * Admin picker / auto-assign: kitchen D7 = any D7 resident (floor irrelevant).
+ * TRASH_D7 = only residents on `trashFloor` (1/2/3); `trashFloor` must be a number.
+ */
+function isUserEligibleForCleaningSlot(
+  user: ActiveCleaningUser,
+  type: CleaningTaskType,
+  trashFloor?: number | null
+): boolean {
+  if (type === CleaningTaskType.KITCHEN_D2) {
+    return user.branchId === "D2";
+  }
+  if (type === CleaningTaskType.KITCHEN_D7) {
+    return user.branchId === "D7";
+  }
+  if (type === CleaningTaskType.TRASH_D7) {
+    if (user.branchId !== "D7" || typeof trashFloor !== "number") {
+      return false;
+    }
+    return user.floor === trashFloor;
+  }
+  return false;
+}
+
 function formatCalendarDate(date: Date) {
   const normalized = normalizeCalendarDate(date);
   const year = String(normalized.getUTCFullYear());
@@ -974,13 +1004,7 @@ async function getAssignableCandidates(
 
   return activeUsers
     .filter((user) => {
-      if (type === CleaningTaskType.KITCHEN_D2) {
-        return user.branchId === "D2";
-      }
-      if (type === CleaningTaskType.KITCHEN_D7) {
-        return user.branchId === "D7";
-      }
-      return user.branchId === "D7" && user.floor === floor;
+      return isUserEligibleForCleaningSlot(user, type, floor);
     })
     .filter((user) => {
       const availability = availabilityMap.get(`${user.email}|${normalizedDateKey}`);
@@ -1160,6 +1184,118 @@ async function assignTaskToUser(input: {
   return created;
 }
 
+/** Batch Google Calendar inserts for new assignments to reduce latency and API bursts. */
+const CLEANING_CALENDAR_DEFER_FLUSH_MS = 5 * 60 * 1000;
+const CLEANING_CALENDAR_DEFER_BATCH_MAX = 8;
+
+const deferredCleaningCalendarCreateIds = new Set<string>();
+let deferredCleaningCalendarTimer: ReturnType<typeof setTimeout> | null = null;
+let deferredCleaningCalendarFlushChain: Promise<void> = Promise.resolve();
+
+function scheduleDeferredCleaningCalendarFlush() {
+  if (deferredCleaningCalendarTimer) {
+    return;
+  }
+  deferredCleaningCalendarTimer = setTimeout(() => {
+    deferredCleaningCalendarTimer = null;
+    flushDeferredCleaningCalendarCreates("timer");
+  }, CLEANING_CALENDAR_DEFER_FLUSH_MS);
+}
+
+function enqueueDeferredCleaningCalendarCreate(taskId: string) {
+  deferredCleaningCalendarCreateIds.add(taskId);
+  if (deferredCleaningCalendarCreateIds.size >= CLEANING_CALENDAR_DEFER_BATCH_MAX) {
+    flushDeferredCleaningCalendarCreates("batch");
+    return;
+  }
+  scheduleDeferredCleaningCalendarFlush();
+}
+
+function flushDeferredCleaningCalendarCreates(reason: string) {
+  if (deferredCleaningCalendarTimer) {
+    clearTimeout(deferredCleaningCalendarTimer);
+    deferredCleaningCalendarTimer = null;
+  }
+
+  deferredCleaningCalendarFlushChain = deferredCleaningCalendarFlushChain
+    .catch(() => undefined)
+    .then(async () => {
+      const ids = [...deferredCleaningCalendarCreateIds];
+      deferredCleaningCalendarCreateIds.clear();
+      if (ids.length === 0) {
+        return;
+      }
+      console.log(`[cleaning-calendar] deferred flush: ${ids.length} task(s) (${reason})`);
+      for (const taskId of ids) {
+        await syncDeferredCleaningCalendarCreate(taskId);
+      }
+    });
+
+  void deferredCleaningCalendarFlushChain.catch((err) => {
+    console.error("[cleaning-calendar] deferred flush error", err);
+  });
+}
+
+async function syncDeferredCleaningCalendarCreate(taskId: string) {
+  const task = await prisma.cleaningTask.findUnique({ where: { id: taskId } });
+  if (!task || task.calendarEventId || !task.calendarId || task.status !== CleaningTaskStatus.ASSIGNED) {
+    return;
+  }
+
+  const config = getConfigForTaskType(task.type);
+  if (!config) {
+    return;
+  }
+
+  const normalizedScheduledDate = normalizeCalendarDate(task.scheduledDate);
+  try {
+    const eventId = await createCleaningCalendarEvent({
+      calendarId: task.calendarId,
+      title: config.title,
+      scheduledDate: normalizedScheduledDate,
+      userEmail: task.userEmail,
+      userName: task.userName,
+      branchId: task.branchId,
+      floor: task.floor,
+      rewardCoins: task.rewardCoins,
+      type: task.type
+    });
+    if (eventId) {
+      await prisma.cleaningTask.update({
+        where: { id: taskId },
+        data: { calendarEventId: eventId }
+      });
+    }
+  } catch (error) {
+    console.warn(
+      `[cleaning-calendar] deferred create failed for task ${taskId}:`,
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+
+/** Re-enqueues ASSIGNED rows that have a target calendar but no Google event yet (e.g. after process restart). */
+export async function recoverDeferredCleaningCalendarCreates() {
+  const since = addDays(normalizeCalendarDate(new Date()), -30);
+  const stuck = await prisma.cleaningTask.findMany({
+    where: {
+      calendarEventId: null,
+      calendarId: { not: null },
+      status: CleaningTaskStatus.ASSIGNED,
+      scheduledDate: { gte: since }
+    },
+    select: { id: true },
+    orderBy: { scheduledDate: "asc" },
+    take: 200
+  });
+  for (const row of stuck) {
+    deferredCleaningCalendarCreateIds.add(row.id);
+  }
+  if (stuck.length > 0) {
+    flushDeferredCleaningCalendarCreates("startup-recovery");
+  }
+}
+
 async function createCleaningTaskRecord(input: {
   user: ActiveCleaningUser;
   type: CleaningTaskType;
@@ -1178,33 +1314,10 @@ async function createCleaningTaskRecord(input: {
     rewardCoins = Math.round(rewardCoins * 1.2); // 20% bonus
   }
   const target = getCleaningCalendarTarget(input.type, { floor: input.floor ?? input.user.floor });
-  let calendarEventId: string | null = null;
-  let calendarId: string | null = target?.calendarId ?? null;
+  const calendarId: string | null = target?.calendarId ?? null;
+  const calendarEventId: string | null = null;
 
-  if (target) {
-    try {
-      calendarEventId = await createCleaningCalendarEvent({
-        calendarId: target.calendarId,
-        title: target.title,
-        scheduledDate: normalizedScheduledDate,
-        userEmail: input.user.email,
-        userName: input.user.name,
-        branchId: input.user.branchId,
-        floor: input.floor ?? input.user.floor,
-        rewardCoins,
-        type: input.type
-      });
-    } catch (error) {
-      console.warn(
-        `Cleaning calendar event creation skipped for ${input.user.email} on ${normalizedScheduledDate.toISOString()}:`,
-        error instanceof Error ? error.message : error
-      );
-      calendarId = null;
-      calendarEventId = null;
-    }
-  }
-
-  return createCleaningTask({
+  const created = await createCleaningTask({
     data: {
       userEmail: input.user.email,
       userName: input.user.name,
@@ -1221,6 +1334,12 @@ async function createCleaningTaskRecord(input: {
         calendarEventId
       }
   });
+
+  if (calendarId) {
+    enqueueDeferredCleaningCalendarCreate(created.id);
+  }
+
+  return created;
 }
 
 function getImportedUserName(event: CleaningCalendarEvent, matchedUser: ActiveCleaningUser | null) {
@@ -1992,6 +2111,8 @@ export async function getAvailableUsersForAdminSlot(input: {
   const excludedEmails = new Set((input.excludeEmails ?? []).map((email) => email.trim().toLowerCase()));
   const activeUsers = await getActiveCleaningUsers();
   const contractOptOutLookup = await getContractCleaningOptOutLookup(activeUsers.map((user) => getUserContractCode(user)));
+  const monthKey = cleaningMonthKeyFromDate(normalizedDate);
+  const monthlyOptOutEmails = await getOptedOutEmailsForMonth(monthKey);
   const availabilityMap = await getAvailabilityMap(normalizedDate, normalizedDate);
   const occupiedTasks = await findManyCleaningTasks({
     where: {
@@ -2020,15 +2141,11 @@ export async function getAvailableUsersForAdminSlot(input: {
     if (contractOptOutLookup.has(getUserContractCode(user))) {
       continue;
     }
+    if (monthlyOptOutEmails.has(user.email.toLowerCase())) {
+      continue;
+    }
 
-    const isEligible =
-      input.type === CleaningTaskType.KITCHEN_D2
-        ? user.branchId === "D2"
-        : input.type === CleaningTaskType.KITCHEN_D7
-          ? user.branchId === "D7"
-          : user.branchId === "D7" && user.floor === (input.floor ?? null);
-
-    if (!isEligible) {
+    if (!isUserEligibleForCleaningSlot(user, input.type, input.type === CleaningTaskType.TRASH_D7 ? input.floor : null)) {
       continue;
     }
 
@@ -2118,22 +2235,32 @@ export async function adminAssignCleaningTask(input: {
     throw new Error("This user marked the date as unavailable");
   }
 
-  const allowedTypes = getAllowedTaskTypesForUser(user);
-  if (!allowedTypes.includes(input.type)) {
-    throw new Error("This user is not eligible for that cleaning task");
+  const assignMonth = cleaningMonthKeyFromDate(input.date);
+  const monthlyOptOut = await prisma.cleaningOptOut.findFirst({
+    where: { userEmail: input.email.trim().toLowerCase(), month: assignMonth }
+  });
+  if (monthlyOptOut) {
+    throw new Error("This user has opted out of cleaning for this month.");
   }
 
-    return assignTaskToUser({
-      user,
-      date: normalizeCalendarDate(input.date),
-      type: input.type,
-      floor: input.floor ?? user.floor,
-      allowSameDayOverride: input.force,
-      assignmentSource: CleaningAssignmentSource.MANAGER,
-      assignedByEmail: input.actorEmail?.trim().toLowerCase() ?? null,
-      assignedByName: input.actorName?.trim() || "Cozoro"
-    });
+  if (!isUserEligibleForCleaningSlot(user, input.type, input.type === CleaningTaskType.TRASH_D7 ? input.floor : null)) {
+    throw new Error("This user is not eligible for that cleaning slot (branch / floor).");
   }
+
+  return assignTaskToUser({
+    user,
+    date: normalizeCalendarDate(input.date),
+    type: input.type,
+    floor:
+      input.type === CleaningTaskType.TRASH_D7 && typeof input.floor === "number"
+        ? input.floor
+        : undefined,
+    allowSameDayOverride: input.force,
+    assignmentSource: CleaningAssignmentSource.MANAGER,
+    assignedByEmail: input.actorEmail?.trim().toLowerCase() ?? null,
+    assignedByName: input.actorName?.trim() || "Cozoro"
+  });
+}
 
 export async function adminAutoAssignCleaningSlots(input: {
   dates: Date[];
@@ -2155,8 +2282,14 @@ export async function adminAutoAssignCleaningSlots(input: {
     if (!isFutureCalendarDate(normalizedDate)) {
       continue;
     }
+    if (input.type === CleaningTaskType.TRASH_D7 && typeof input.floor !== "number") {
+      continue;
+    }
+    const monthOptOuts = await getOptedOutEmailsForMonth(cleaningMonthKeyFromDate(normalizedDate));
+    const usersForDate = eligibleActiveUsers.filter((user) => !monthOptOuts.has(user.email.toLowerCase()));
+
     const availabilityMap = await getAvailabilityMap(normalizedDate, normalizedDate);
-  const occupiedTasks = await findManyCleaningTasks({
+    const occupiedTasks = await findManyCleaningTasks({
       where: {
         scheduledDate: {
           gte: calendarRangeStart(normalizedDate),
@@ -2172,7 +2305,7 @@ export async function adminAutoAssignCleaningSlots(input: {
           gte: calendarRangeStart(normalizedDate),
           lte: calendarRangeEnd(normalizedDate)
         },
-        ...(input.type === CleaningTaskType.TRASH_D7 ? { floor: input.floor ?? null } : {})
+        ...(input.type === CleaningTaskType.TRASH_D7 && typeof input.floor === "number" ? { floor: input.floor } : {})
       }
     });
 
@@ -2181,12 +2314,12 @@ export async function adminAutoAssignCleaningSlots(input: {
     }
 
     const candidates = await getAssignableCandidates(
-      eligibleActiveUsers,
+      usersForDate,
       availabilityMap,
       normalizedDate,
       input.type,
       occupiedTasks,
-      input.floor ?? null,
+      input.type === CleaningTaskType.TRASH_D7 ? input.floor : undefined,
       recentTaskCounts
     ).then((entries) => entries.filter((user) => !reservedEmails.has(user.email)));
     const selectedUser = candidates[0];
@@ -2194,15 +2327,18 @@ export async function adminAutoAssignCleaningSlots(input: {
       continue;
     }
 
-      const assignedTask = await assignTaskToUser({
-        user: selectedUser,
-        date: normalizedDate,
-        type: input.type,
-        floor: input.floor ?? selectedUser.floor,
-        assignmentSource: CleaningAssignmentSource.MANAGER,
-        assignedByEmail: input.actorEmail?.trim().toLowerCase() ?? null,
-        assignedByName: input.actorName?.trim() || "Cozoro"
-      });
+    const assignedTask = await assignTaskToUser({
+      user: selectedUser,
+      date: normalizedDate,
+      type: input.type,
+      floor:
+        input.type === CleaningTaskType.TRASH_D7 && typeof input.floor === "number"
+          ? input.floor
+          : undefined,
+      assignmentSource: CleaningAssignmentSource.MANAGER,
+      assignedByEmail: input.actorEmail?.trim().toLowerCase() ?? null,
+      assignedByName: input.actorName?.trim() || "Cozoro"
+    });
     reservedEmails.add(selectedUser.email);
     recentTaskCounts.set(selectedUser.email, (recentTaskCounts.get(selectedUser.email) ?? 0) + 1);
     results.push(assignedTask);

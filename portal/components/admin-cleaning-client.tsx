@@ -305,7 +305,8 @@ export function AdminCleaningClient() {
         date: toApiDate(selectedDate),
         type: selectedCalendar.type
       });
-      if (selectedCalendar.floor) {
+      // TRASH_D7 slots are per floor; kitchen tasks use all branch residents ΓÇö never send floor for kitchen.
+      if (selectedCalendar.type === "TRASH_D7" && selectedCalendar.floor != null) {
         params.set("floor", String(selectedCalendar.floor));
       }
       if (all) {
@@ -428,7 +429,7 @@ export function AdminCleaningClient() {
           date,
           type: selectedCalendar.type
         });
-        if (selectedCalendar.floor) {
+        if (selectedCalendar.type === "TRASH_D7" && selectedCalendar.floor != null) {
           params.set("floor", String(selectedCalendar.floor));
         }
         if (reservedEmails.size > 0) {

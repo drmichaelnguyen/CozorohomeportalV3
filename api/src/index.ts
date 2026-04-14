@@ -146,7 +146,8 @@ import {
   getCleaningOptOutForEmail,
   setCleaningOptOut,
   cancelCleaningOptOut,
-  upsertContractCleaningOptOut
+  upsertContractCleaningOptOut,
+  recoverDeferredCleaningCalendarCreates
 } from "./cleaning.js";
 import {
   getCleaningAutoSchedulerConfig,
@@ -5794,6 +5795,10 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 
 app.listen(port, "127.0.0.1", () => {
   console.log(`[AntiGravity v2] cozorohome-api listening on http://127.0.0.1:${port}`);
+
+  void recoverDeferredCleaningCalendarCreates().catch((error) => {
+    console.error("[cleaning-calendar] deferred recovery on startup failed", error);
+  });
 
   startMaintenanceSyncInterval();
 
