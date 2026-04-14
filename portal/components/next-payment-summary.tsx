@@ -15,13 +15,18 @@ import { usePortalLanguage } from "./portal-language";
 function BreakdownRows({
   breakdown,
   billMonthLabel,
+  language,
+  showCoinExplainers,
   t
 }: {
   breakdown: RentBreakdownPayload;
   billMonthLabel: string;
-  t: (key: string, fallback?: string) => string;
+  language: "en" | "vi";
+  /** When false, hide cap/rate/balance helper rows (resident turned off coin use). */
+  showCoinExplainers: boolean;
+  t: (key: string, fallback?: string, params?: Record<string, string | number>) => string;
 }) {
-  const rows: { label: string; value: number }[] = [
+  const rows: { label: string; value: number | "skip" }[] = [
     { label: t("rent", "Rent"), value: breakdown.baseRent },
     {
       label: `${t("tenureSurcharge", "Short-term surcharge")} (${((breakdown.tenureSurchargeRate ?? 0) * 100).toFixed(0)}%)`,
@@ -49,7 +54,34 @@ function BreakdownRows({
     { label: t("fines", "Fines"), value: breakdown.finesVnd }
   ];
 
+  const maxCap = breakdown.maxCoinUsageVnd ?? 0;
+  const rate = breakdown.coinRateVndPerCoin;
+  const balance = breakdown.currentCoinsBalance;
+  const fmtN = (n: number) => new Intl.NumberFormat(language === "vi" ? "vi-VN" : "en-US").format(n);
+  if (showCoinExplainers && maxCap > 0 && typeof rate === "number" && Number.isFinite(rate)) {
+    rows.push({
+      label: t("rentCoinMaxCreditRow", undefined, { max: fmtN(maxCap) }),
+      value: "skip"
+    });
+    rows.push({
+      label: t("rentCoinRateRow", undefined, { rate: fmtN(rate) }),
+      value: "skip"
+    });
+    if (typeof balance === "number" && Number.isFinite(balance)) {
+      rows.push({
+        label: t("rentCoinBalanceRow", undefined, { n: fmtN(balance) }),
+        value: "skip"
+      });
+    }
+  }
+
   const coinCreditVnd = breakdown.recommendedCoinValueVnd ?? 0;
+  if (breakdown.totalBeforeCoinsVnd != null && coinCreditVnd > 0) {
+    rows.push({
+      label: t("billSubtotalBeforeCoins"),
+      value: breakdown.totalBeforeCoinsVnd
+    });
+  }
   if (coinCreditVnd > 0) {
     rows.push({
       label: t("coinUsageLabel", "Coin usage ({count} coins)").replace(
@@ -65,12 +97,24 @@ function BreakdownRows({
       <p className="text-xs font-semibold uppercase tracking-wide text-amber-800/90">
         {t("billForMonth", "Bill")} · {billMonthLabel}
       </p>
-      {rows.map((item) => (
-        <div key={item.label} className="flex items-center justify-between gap-3 text-sm">
-          <span className={item.value < 0 ? "text-emerald-700" : "text-slate-700"}>{item.label}</span>
-          <span className={`shrink-0 font-semibold ${item.value < 0 ? "text-emerald-700" : "text-slate-900"}`}>
-            {item.value < 0 ? "-" : ""}
-            {new Intl.NumberFormat("vi-VN").format(Math.abs(item.value))} ₫
+      {rows.map((item, idx) => (
+        <div key={`${idx}-${item.label}`} className="flex items-center justify-between gap-3 text-sm">
+          <span className={typeof item.value === "number" && item.value < 0 ? "text-emerald-700" : "text-slate-700"}>
+            {item.label}
+          </span>
+          <span
+            className={`shrink-0 font-semibold ${
+              typeof item.value === "number" && item.value < 0 ? "text-emerald-700" : "text-slate-900"
+            }`}
+          >
+            {item.value === "skip" ? (
+              <span className="text-slate-400">—</span>
+            ) : (
+              <>
+                {item.value < 0 ? "-" : ""}
+                {new Intl.NumberFormat("vi-VN").format(Math.abs(item.value))} ₫
+              </>
+            )}
           </span>
         </div>
       ))}
@@ -238,6 +282,8 @@ export function NextPaymentSummary({
   const [prepaidDetailsOpen, setPrepaidDetailsOpen] = useState(false);
   const [coinPrefSaving, setCoinPrefSaving] = useState(false);
   const [coinPrefError, setCoinPrefError] = useState("");
+  const [coinRedeemSaving, setCoinRedeemSaving] = useState(false);
+  const [coinRedeemError, setCoinRedeemError] = useState("");
 
   async function handleApplyCoinsChange(next: boolean) {
     if (!residentEmail || !rentPaidStatus?.month) {
@@ -268,6 +314,34 @@ export function NextPaymentSummary({
     }
   }
 
+  async function handleRedeemCoinsForBill() {
+    if (!residentEmail || !rentPaidStatus?.month) {
+      return;
+    }
+    setCoinRedeemError("");
+    setCoinRedeemSaving(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/rent-paid-status/redeem-coins-for-bill`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: residentEmail,
+          month: rentPaidStatus.month
+        })
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setCoinRedeemError(typeof data.error === "string" ? data.error : t("rentCoinSubmitError"));
+        return;
+      }
+      await onRentPaidStatusRefresh?.();
+    } catch {
+      setCoinRedeemError(t("rentCoinSubmitError"));
+    } finally {
+      setCoinRedeemSaving(false);
+    }
+  }
+
   const isDashboard = variant === "dashboard";
   const pad = isDashboard ? "p-5 sm:p-6" : "p-6";
   const rounded = isDashboard ? "rounded-3xl" : "rounded-2xl";
@@ -285,6 +359,7 @@ export function NextPaymentSummary({
   const coinCreditVnd = breakdown?.recommendedCoinValueVnd ?? 0;
   const cashDueZeroButBillPositive =
     breakdown != null && breakdown.finalTotalVnd === 0 && coinCreditVnd > 0;
+  const coinRedeemDone = (rentPaidStatus?.rentCoinRedeemCoins ?? 0) > 0;
 
   return (
     <section className={`${rounded} border border-amber-200 bg-amber-50 shadow-sm ${pad}`}>
@@ -397,7 +472,7 @@ export function NextPaymentSummary({
                 type="checkbox"
                 className="mt-1 h-4 w-4 shrink-0 rounded border-amber-400 text-amber-700 focus:ring-amber-500 disabled:opacity-50"
                 checked={rentPaidStatus?.applyCoinsTowardRent === true}
-                disabled={coinPrefSaving}
+                disabled={coinPrefSaving || coinRedeemDone}
                 onChange={(e) => void handleApplyCoinsChange(e.target.checked)}
               />
               <span className="min-w-0">
@@ -409,6 +484,49 @@ export function NextPaymentSummary({
                 {coinPrefError ? <span className="mt-1 block text-xs text-rose-700">{coinPrefError}</span> : null}
               </span>
             </label>
+          ) : null}
+          {residentEmail && rentPaidStatus?.applyCoinsTowardRent && breakdown && !coinRedeemDone ? (
+            <div className="rounded-xl border border-amber-200/80 bg-white/80 p-3 text-sm text-slate-800 shadow-sm">
+              {(breakdown.recommendedCoinUsage ?? 0) > 0 ? (
+                <>
+                  <p className="text-xs leading-relaxed text-slate-600">
+                    {t("rentCoinPlannedDeduction", undefined, {
+                      coins: String(breakdown.recommendedCoinUsage ?? 0),
+                      vnd: new Intl.NumberFormat("vi-VN").format(breakdown.recommendedCoinValueVnd ?? 0)
+                    })}
+                  </p>
+                  <button
+                    type="button"
+                    disabled={coinRedeemSaving || coinPrefSaving}
+                    onClick={() => void handleRedeemCoinsForBill()}
+                    className="mt-2 inline-flex items-center justify-center rounded-lg bg-amber-800 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-amber-900 disabled:opacity-50"
+                  >
+                    {coinRedeemSaving ? t("rentCoinSubmitting") : t("rentCoinSubmitExchange")}
+                  </button>
+                  {coinRedeemError ? <p className="mt-2 text-xs text-rose-700">{coinRedeemError}</p> : null}
+                </>
+              ) : (
+                <p className="text-xs text-slate-600">
+                  {language === "vi"
+                    ? "Bật tùy chọn ở trên nhưng hiện không có coin để đổi (kiểm tra số dư hoặc mức tối đa 10%)."
+                    : "Coin use is on, but there are no coins to exchange toward this bill yet (check your balance or the 10% cap)."}
+                </p>
+              )}
+            </div>
+          ) : null}
+          {coinRedeemDone && rentPaidStatus ? (
+            <p className="rounded-xl border border-emerald-200/80 bg-emerald-50/80 p-3 text-xs font-medium text-emerald-900">
+              {t("rentCoinExchangeDone", undefined, {
+                when: rentPaidStatus.rentCoinRedeemAt
+                  ? new Date(rentPaidStatus.rentCoinRedeemAt).toLocaleString(
+                      language === "vi" ? "vi-VN" : "en-GB",
+                      { dateStyle: "short", timeStyle: "short" }
+                    )
+                  : "—",
+                coins: String(rentPaidStatus.rentCoinRedeemCoins ?? 0),
+                vnd: new Intl.NumberFormat("vi-VN").format(rentPaidStatus.rentCoinRedeemValueVnd ?? 0)
+              })}
+            </p>
           ) : null}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -439,7 +557,15 @@ export function NextPaymentSummary({
               </svg>
             </button>
           </div>
-          {detailsOpen ? <BreakdownRows breakdown={breakdown} billMonthLabel={billMonthLabel} t={t} /> : null}
+          {detailsOpen ? (
+            <BreakdownRows
+              breakdown={breakdown}
+              billMonthLabel={billMonthLabel}
+              language={language}
+              showCoinExplainers={rentPaidStatus?.applyCoinsTowardRent === true || coinRedeemDone}
+              t={t}
+            />
+          ) : null}
         </div>
       ) : !rentLoading && rentPaidStatus && !rentPaidStatus.isPaid && !rentPaidStatus.onPrepaidPlan && !breakdown ? (
         <p className="mt-3 text-sm text-amber-900/80">

@@ -2082,18 +2082,27 @@ export async function getAdminCleaningTasks(from?: Date, to?: Date) {
 export async function getAdminCleaningCalendars(from?: Date, to?: Date) {
   const definitions = getConfiguredCleaningCalendars();
   const tasks = await getAdminCleaningTasks(from, to);
+  const activeUsers = await getActiveCleaningUsers();
+  const bedLineByEmail = new Map(
+    activeUsers.map((user) => [user.email.trim().toLowerCase(), formatCleaningUserBedLine(user)])
+  );
 
   return definitions.map((definition) => ({
     ...definition,
-    tasks: tasks.filter((task) => {
-      if (task.type !== definition.type) {
-        return false;
-      }
-      if (definition.type !== CleaningTaskType.TRASH_D7) {
-        return true;
-      }
-      return task.floor === definition.floor;
-    })
+    tasks: tasks
+      .filter((task) => {
+        if (task.type !== definition.type) {
+          return false;
+        }
+        if (definition.type !== CleaningTaskType.TRASH_D7) {
+          return true;
+        }
+        return task.floor === definition.floor;
+      })
+      .map((task) => ({
+        ...task,
+        bedDisplay: bedLineByEmail.get(task.userEmail.trim().toLowerCase()) ?? null
+      }))
   }));
 }
 

@@ -119,18 +119,46 @@ const translations: Record<string, { en: string; vi: string }> = {
     vi: "Số tiền mặt cần trả là 0₫ vì Cozoro Coin đã được dùng để khấu trừ vào hóa đơn này. Mở Chi tiết để xem đầy đủ."
   },
   useCoinsTowardRentLabel: {
-    en: "Use Cozoro Coins toward this month’s bill (up to 10% of rent + short-term surcharge, tier rate applies).",
-    vi: "Dùng Cozoro Coin cho hóa đơn tháng này (tối đa 10% tiền phòng + phụ phí ngắn hạn, theo hạng thành viên)."
+    en: "Use Cozoro Coins toward this month’s bill (up to 10% of the full bill before coins, tier rate applies).",
+    vi: "Dùng Cozoro Coin cho hóa đơn tháng này (tối đa 10% tổng hóa đơn trước khi đổi coin, theo hạng thành viên)."
   },
   useCoinsTowardRentHelp: {
-    en: "When this is off, coins are not applied to the amount below. Turn it on before the month is marked paid if you want the discount.",
-    vi: "Khi tắt, coin sẽ không được khấu trừ vào số tiền bên dưới. Bật trước khi tháng được ghi nhận đã thanh toán nếu bạn muốn dùng coin."
+    en: "When this is on, you’ll see a preview below. Submit the coin exchange to deduct coins from your balance and lock the amount for your manager’s receipt. Turn off only before exchanging if you change your mind.",
+    vi:
+      "Khi bật, bạn sẽ thấy bản xem trước bên dưới. Nhấn xác nhận đổi coin để trừ coin trong số dư và khóa số tiền cho biên lai của quản lý. Chỉ tắt trước khi đổi nếu bạn đổi ý."
   },
   useCoinsTowardRentSaving: { en: "Saving preference…", vi: "Đang lưu…" },
   useCoinsTowardRentError: {
     en: "Could not update coin preference. Try again or contact your manager.",
     vi: "Không thể cập nhật tùy chọn coin. Thử lại hoặc liên hệ quản lý."
   },
+  rentCoinMaxCreditRow: {
+    en: "Maximum coin credit (10% of this bill): {max} ₫",
+    vi: "Mức khấu trừ tối đa bằng coin (10% hóa đơn này): {max} ₫"
+  },
+  rentCoinRateRow: {
+    en: "1 Cozoro Coin = {rate} ₫ toward this bill (your member tier).",
+    vi: "1 Cozoro Coin = {rate} ₫ cho hóa đơn này (theo hạng thành viên)."
+  },
+  rentCoinBalanceRow: {
+    en: "Your Cozoro Coins balance: {n} coins",
+    vi: "Số dư Cozoro Coin của bạn: {n} coin"
+  },
+  rentCoinPlannedDeduction: {
+    en: "Planned exchange: {coins} coins → about {vnd} ₫ off this bill.",
+    vi: "Dự kiến đổi: {coins} coin → khoảng {vnd} ₫ giảm trên hóa đơn."
+  },
+  rentCoinSubmitExchange: { en: "Submit coin exchange", vi: "Xác nhận đổi coin" },
+  rentCoinSubmitting: { en: "Submitting…", vi: "Đang xử lý…" },
+  rentCoinSubmitError: {
+    en: "Could not complete the coin exchange. Try again or contact your manager.",
+    vi: "Không thể hoàn tất đổi coin. Thử lại hoặc liên hệ quản lý."
+  },
+  rentCoinExchangeDone: {
+    en: "Coins exchanged on {when}: {coins} coins ({vnd} ₫) applied to this bill.",
+    vi: "Đã đổi coin vào {when}: {coins} coin ({vnd} ₫) cho hóa đơn này."
+  },
+  billSubtotalBeforeCoins: { en: "Bill before coin credit", vi: "Hóa đơn trước khi dùng coin" },
   rentBlockingTitle: { en: "Rent payment required", vi: "Cần thanh toán tiền thuê" },
   rentBlockingSub: {
     en: "Your monthly rent is due and unpaid. Review the amount below, then tap Hide to continue using the portal.",
@@ -190,7 +218,7 @@ const translations: Record<string, { en: string; vi: string }> = {
   refreshDashboard: { en: "Refresh dashboard", vi: "Làm mới bảng điều khiển" },
   signInToView: { en: "Sign in first to view your dashboard.", vi: "Đăng nhập trước để xem bảng điều khiển của bạn." },
   unableToLoadDashboard: { en: "Unable to load dashboard.", vi: "Không thể tải bảng điều khiển." },
-  dashboardPartialData: { en: "Dashboard loaded with partial data.", vi: "Bảng điều khiển được tải with dữ liệu không đầy đủ." },
+  dashboardPartialData: { en: "Dashboard loaded with partial data.", vi: "Bảng điều khiển được tải với dữ liệu không đầy đủ." },
   unableToLoadRightNow: { en: "Unable to load dashboard right now.", vi: "Hiện tại không thể tải bảng điều khiển." },
   currentCoins: { en: "Current Coins", vi: "Số coin hiện tại" },
   coinsEarnedLastMonth: { en: "Coins Earned Last Month", vi: "Số coin kiếm được tháng trước" },
@@ -440,6 +468,42 @@ const translations: Record<string, { en: string; vi: string }> = {
   newCoinsEntry: { en: "New coins entry", vi: "Tạo mục nhập coin" },
   newPaymentReceipt: { en: "New payment receipt", vi: "Tạo biên lai thanh toán" },
   gateParkingTickets: { en: "Gate parking tickets", vi: "Vé gửi xe cổng" },
+  gateParkingRollIntoRentDesc: {
+    en: "Unpaid gate parking tickets roll into monthly rent until rent is marked paid or each ticket is paid.",
+    vi: "Vé gửi xe cổng được cộng vào tiền phòng cho đến khi đánh dấu đã thanh toán tiền phòng hoặc từng vé được thanh toán."
+  },
+  gateParkingTicketsEmptyHint: {
+    en: "No tickets yet. Enter date, time, and duration below; the amount follows the hourly rate and can be edited before you add the ticket.",
+    vi: "Chưa có vé. Nhập ngày giờ và thời lượng bên dưới; số tiền theo mức mỗi giờ và có thể chỉnh trước khi thêm vé."
+  },
+  gateParkingValidationRequired: {
+    en: "Enter a valid session start date and time, duration greater than zero, and a positive amount.",
+    vi: "Nhập ngày giờ bắt đầu hợp lệ, thời lượng lớn hơn 0 và số tiền dương."
+  },
+  gateParkingSessionStartLabel: { en: "Session start", vi: "Bắt đầu phiên" },
+  gateParkingDurationHoursLabel: { en: "Duration (hours)", vi: "Thời lượng (giờ)" },
+  gateParkingRateAutoHint: {
+    en: "Bill amount auto-fills as duration × {rate}/hour; you can override it.",
+    vi: "Tiền vé tự điền theo thời lượng × {rate}/giờ; có thể ghi đè."
+  },
+  gateParkingHoursUnit: { en: "h", vi: "giờ" },
+  gateParkingBillingMonthShort: { en: "Bill month", vi: "Tháng tính tiền" },
+  gateParkingBillingMonthOptional: { en: "Billing month (optional)", vi: "Tháng tính tiền (tùy chọn)" },
+  gateParkingBillingMonthOptionalHint: {
+    en: "Leave blank to use the calendar month of the session in the business timezone.",
+    vi: "Để trống để dùng tháng dương lịch của phiên theo múi giờ vận hành."
+  },
+  gateParkingAmountLabel: { en: "Amount (₫)", vi: "Số tiền (₫)" },
+  gateParkingNoteLabel: { en: "Note", vi: "Ghi chú" },
+  optionalShort: { en: "Optional", vi: "Tùy chọn" },
+  gateParkingAddTicket: { en: "Add ticket", vi: "Thêm vé" },
+  gateParkingDeleteConfirm: {
+    en: "Delete this gate parking ticket?",
+    vi: "Xóa vé gửi xe cổng này?"
+  },
+  gateParkingButtonMarkPaid: { en: "Mark paid", vi: "Đánh dấu đã trả" },
+  gateParkingButtonUnpay: { en: "Unpay", vi: "Hủy đã trả" },
+  gateParkingLoading: { en: "Loading…", vi: "Đang tải…" },
   closeLabel: { en: "Close", vi: "Đóng" },
   clientChatTitle: { en: "Client Chat", vi: "Trò chuyện với Khách hàng" },
   createPaymentReceipt: { en: "Create Payment Receipt", vi: "Tạo biên lai thanh toán" },
@@ -918,6 +982,16 @@ const translations: Record<string, { en: string; vi: string }> = {
   byLabel: { en: "by", vi: "bởi" },
   supportInboxTitle: { en: "Support Inbox", vi: "Hộp thư hỗ trợ" },
   supportInboxDesc: { en: "Residents send one conversation per account — reply from this shared inbox.", vi: "Cư dân gửi một cuộc hội thoại cho mỗi tài khoản — phản hồi từ hộp thư chung này." },
+  supportOwnerDeleteConversation: { en: "Delete thread", vi: "Xóa cuộc hội thoại" },
+  supportOwnerDeleteMessage: { en: "Delete message", vi: "Xóa tin nhắn" },
+  supportOwnerDeleteConversationConfirm: {
+    en: "Permanently delete this entire conversation for everyone? This cannot be undone.",
+    vi: "Xóa vĩnh viễn toàn bộ cuộc hội thoại này cho mọi người? Không thể hoàn tác."
+  },
+  supportOwnerDeleteMessageConfirm: {
+    en: "Permanently delete this message? This cannot be undone.",
+    vi: "Xóa vĩnh viễn tin nhắn này? Không thể hoàn tác."
+  },
   noConversationsYet: { en: "No conversations yet.", vi: "Chưa có cuộc hội thoại nào." },
   groupLabelShort: { en: "Group", vi: "Nhóm" },
   openStatus: { en: "OPEN", vi: "ĐANG MỞ" },
@@ -1042,6 +1116,162 @@ const translations: Record<string, { en: string; vi: string }> = {
   accountNoonBeeGameOver: { en: "Nice try!", vi: "Cũng hay đó!" },
   accountNoonBeeScore: { en: "Score: {score}", vi: "Điểm: {score}" },
   accountNoonBeeClose: { en: "Close", vi: "Đóng" },
+  refreshLabel: { en: "Refresh", vi: "Làm mới" },
+  branchLabelShort: { en: "Branch", vi: "Chi nhánh" },
+  loadingInboxError: { en: "Unable to load support inbox.", vi: "Không thể tải hộp thư hỗ trợ." },
+  supportUnableLoadThread: { en: "Unable to load this conversation.", vi: "Không thể tải cuộc hội thoại này." },
+  supportUnableSendReply: { en: "Unable to send reply.", vi: "Không thể gửi phản hồi." },
+  supportUnableUpdateStatus: { en: "Unable to update conversation status.", vi: "Không thể cập nhật trạng thái hội thoại." },
+  supportConversationClosed: { en: "Conversation closed.", vi: "Đã đóng cuộc hội thoại." },
+  supportConversationReopened: { en: "Conversation reopened.", vi: "Đã mở lại cuộc hội thoại." },
+  selectConversationPrompt: {
+    en: "Select a conversation to start reading",
+    vi: "Chọn một cuộc hội thoại để xem tin nhắn"
+  },
+  conversationLabel: { en: "Conversation", vi: "Cuộc hội thoại" },
+  roleOwner: { en: "Owner", vi: "Chủ hệ thống" },
+  roleManager: { en: "Manager", vi: "Quản lý" },
+  chatKeyboardHint: {
+    en: "Enter to send · Shift+Enter for new line",
+    vi: "Enter để gửi · Shift+Enter để xuống dòng"
+  },
+  messageFromPageLabel: { en: "From", vi: "Từ trang" },
+  previousNav: { en: "Prev", vi: "Trước" },
+  todayNav: { en: "Today", vi: "Hôm nay" },
+  nextNav: { en: "Next", vi: "Sau" },
+  selectedDate: { en: "Selected date", vi: "Ngày đã chọn" },
+  atTimeLabel: { en: "at", vi: "lúc" },
+  approveLabel: { en: "Approve", vi: "Duyệt" },
+  rejectLabel: { en: "Reject", vi: "Từ chối" },
+  auditLabel: { en: "Audit", vi: "Kiểm tra" },
+  cancelLabel: { en: "Cancel", vi: "Hủy" },
+  coinsRewardPlus: { en: "+{n} coins", vi: "+{n} xu" },
+  adminCleaningErrLoadCalendars: {
+    en: "Unable to load cleaning calendars.",
+    vi: "Không thể tải lịch dọn dẹp."
+  },
+  adminCleaningErrLoadAutoScheduler: {
+    en: "Unable to load auto-scheduler settings.",
+    vi: "Không thể tải cài đặt lập lịch tự động."
+  },
+  adminCleaningErrSaveAutoScheduler: {
+    en: "Unable to save auto-scheduler settings.",
+    vi: "Không thể lưu cài đặt lập lịch tự động."
+  },
+  adminCleaningAutoSchedulerSaved: {
+    en: "Auto-scheduler settings saved.",
+    vi: "Đã lưu cài đặt lập lịch tự động."
+  },
+  adminCleaningChooseCalendarFirst: {
+    en: "Choose a cleaning calendar first.",
+    vi: "Vui lòng chọn một lịch dọn dẹp trước."
+  },
+  adminCleaningChooseSuggestedUserFirst: {
+    en: "Choose a suggested user first.",
+    vi: "Vui lòng chọn một người trong danh sách gợi ý trước."
+  },
+  adminCleaningChooseFromToFirst: {
+    en: "Choose a from and to date first.",
+    vi: "Vui lòng chọn ngày bắt đầu và ngày kết thúc trước."
+  },
+  adminCleaningChoosePreviewDatesFirst: {
+    en: "Choose at least one preview date first.",
+    vi: "Vui lòng chọn ít nhất một ngày trong phần xem trước."
+  },
+  adminCleaningErrLoadSuggestedUsers: {
+    en: "Unable to load suggested users.",
+    vi: "Không thể tải danh sách người gợi ý."
+  },
+  adminCleaningSuggestedUsersLoaded: {
+    en: "Suggested users loaded.",
+    vi: "Đã tải danh sách người gợi ý."
+  },
+  adminCleaningUsersLoadedCount: {
+    en: "{count} users loaded.",
+    vi: "Đã tải {count} người dùng."
+  },
+  adminCleaningNoEligibleUsersDate: {
+    en: "No eligible users available for this date.",
+    vi: "Không có người đủ điều kiện cho ngày này."
+  },
+  adminCleaningErrRemoveTask: { en: "Unable to remove task.", vi: "Không thể xóa công việc." },
+  adminCleaningTaskRemoved: { en: "Task removed.", vi: "Đã xóa công việc." },
+  adminCleaningUserHasTaskSameDay: {
+    en: "This user already has another task on that date.",
+    vi: "Người này đã có công việc dọn dẹp khác trong ngày đó."
+  },
+  adminCleaningErrAssignTask: {
+    en: "Unable to assign cleaning task.",
+    vi: "Không thể giao công việc dọn dẹp."
+  },
+  adminCleaningTaskAssigned: { en: "Cleaning task assigned.", vi: "Đã giao công việc dọn dẹp." },
+  adminCleaningAutoPreviewReady: {
+    en: "Auto-assignment preview ready.",
+    vi: "Đã sẵn sàng xem trước giao việc tự động."
+  },
+  adminCleaningNoOpenFutureDates: {
+    en: "No open future dates found.",
+    vi: "Không tìm thấy ngày trống trong tương lai."
+  },
+  adminCleaningErrAutoPreview: {
+    en: "Unable to build auto-assignment preview.",
+    vi: "Không thể tạo xem trước giao việc tự động."
+  },
+  adminCleaningErrAutoAssignSelected: {
+    en: "Unable to auto-assign selected dates.",
+    vi: "Không thể tự động giao các ngày đã chọn."
+  },
+  adminCleaningAssignedDatesPushed: {
+    en: "Assigned {assigned} cleaning dates and pushed them to Google Calendar.",
+    vi: "Đã giao {assigned} ngày dọn dẹp và đồng bộ lên Google Calendar."
+  },
+  adminCleaningErrAuditTask: { en: "Unable to audit task.", vi: "Không thể duyệt công việc." },
+  adminCleaningTaskApprovedCoins: {
+    en: "Task approved — coins granted.",
+    vi: "Đã duyệt — đã cộng xu."
+  },
+  adminCleaningTaskRejectedForfeit: {
+    en: "Task rejected — coins forfeited.",
+    vi: "Đã từ chối — thu hồi xu."
+  },
+  adminCleaningTaskRejectedForfeitFine: {
+    en: "Task rejected — coins forfeited and fine issued.",
+    vi: "Đã từ chối — thu hồi xu và đã lập phiếu phạt."
+  },
+  adminCleaningPrivilegedViewLoaded: {
+    en: "Privileged cleaning view loaded.",
+    vi: "Đã tải giao diện quản lý dọn dẹp."
+  },
+  adminCleaningErrLoadAdminView: {
+    en: "Unable to load admin cleaning view.",
+    vi: "Không thể tải màn hình quản lý dọn dẹp."
+  },
+  adminCleaningErrSyncCalendars: {
+    en: "Unable to sync cleaning calendars.",
+    vi: "Không thể đồng bộ lịch dọn dẹp."
+  },
+  adminCleaningSyncImportedCreated: {
+    en: "Imported {imported} calendar tasks and created {created} missing cleaning tasks.",
+    vi: "Đã nhập {imported} công việc từ lịch và tạo thêm {created} công việc còn thiếu."
+  },
+  adminCleaningSchedulerCalendarOnly: {
+    en: "These settings apply only to this selected calendar.",
+    vi: "Các cài đặt này chỉ áp dụng cho lịch đang chọn."
+  },
+  viewCompletionPhoto: { en: "View photo", vi: "Xem ảnh" },
+  adminCleaningTaskOnDate: {
+    en: "{task} — {date}",
+    vi: "{task} — {date}"
+  },
+  adminCleaningHelpBlurb: {
+    en: "Admin and manager share this cleaning scheduler. View each cleaning calendar, inspect existing assignments, and assign future cleaning dates.",
+    vi: "Quản trị và quản lý dùng chung bộ lập lịch vệ sinh này. Xem từng lịch, kiểm tra phân công hiện có và giao các ngày dọn dẹp trong tương lai."
+  },
+  adminCleaningErrPreviewUsersForDate: {
+    en: "Unable to preview users for {date}.",
+    vi: "Không thể xem trước người dùng cho ngày {date}."
+  },
+  cozoroShortName: { en: "Cozoro", vi: "Cozoro" },
   ventHammerTitle: { en: "Vent hammer (30s)", vi: "Đập búa xả stress (30s)" },
   ventHammerSubtitle: {
     en: "Tap the floating photo — 10 coins per hit (credited after the round).",

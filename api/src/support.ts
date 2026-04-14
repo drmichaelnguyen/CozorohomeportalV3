@@ -13,6 +13,7 @@ import {
 } from "./google-sheets.js";
 import { prisma } from "./prisma.js";
 import { ASSISTANT_SENDER_EMAIL, runResidentSupportAssistantTurn } from "./resident-support-ai.js";
+import { appendSupportAssistantMetaSuffix } from "./support-assistant-message-meta.js";
 import { requirePortalRole, resolvePortalLogin } from "./staff-access.js";
 import { sendPushToEmail } from "./push.js";
 import { getClientGroupContext } from "./group-support.js";
@@ -996,7 +997,7 @@ export async function tryAppendAssistantAfterResidentMessage(input: {
   residentEmail: string;
 }) {
   const normalizedEmail = normalizeEmail(input.residentEmail);
-  const { replyText } = await runResidentSupportAssistantTurn({
+  const { replyText, assistantMeta } = await runResidentSupportAssistantTurn({
     conversationId: input.conversationId,
     residentEmail: normalizedEmail
   });
@@ -1005,7 +1006,8 @@ export async function tryAppendAssistantAfterResidentMessage(input: {
     return null;
   }
 
-  const trimmed = replyText.trim().length > 8000 ? replyText.trim().slice(0, 8000) : replyText.trim();
+  const trimmedRaw = replyText.trim().length > 8000 ? replyText.trim().slice(0, 8000) : replyText.trim();
+  const trimmed = appendSupportAssistantMetaSuffix(trimmedRaw, assistantMeta);
 
   const message = await prisma.supportMessage.create({
     data: {
@@ -1024,12 +1026,8 @@ export async function tryAppendAssistantAfterResidentMessage(input: {
 
   clearNotificationCaches(normalizedEmail);
 
-  void sendPushToEmail(
-    normalizedEmail,
-    "New message from Cozoro",
-    trimmed.length > 100 ? trimmed.slice(0, 97) + "…" : trimmed,
-    "/support"
-  ).catch(() => {});
+  const pushPreview = trimmedRaw.length > 100 ? trimmedRaw.slice(0, 97) + "…" : trimmedRaw;
+  void sendPushToEmail(normalizedEmail, "New message from Cozoro", pushPreview, "/support").catch(() => {});
 
   return { message };
 }
@@ -1142,4 +1140,89 @@ export async function updateSupportConversationStatus(input: {
     where: { id: input.conversationId },
     data: { status: input.status }
   });
+}
+
+/**
+ * Owner-only: delete an entire direct support thread (all messages + read states)
+ * or clear every message (and read states) in a branch/floor/room group channel.
+ */
+export async function ownerDeleteSupportConversation(input: {
+  operatorEmail: string;
+  conversationOrGroupId: string;
+}) {
+  const operatorEmail = normalizeEmail(input.operatorEmail);
+  await requirePortalRole(
+    operatorEmail,
+    ["owner"],
+    "Only owners can delete a whole conversation."
+  );
+
+  const id = input.conversationOrGroupId.trim();
+  const isGroup =
+    id.startsWith("BRANCH_") || id.startsWith("FLOOR_") || id.startsWith("ROOM_");
+
+  if (isGroup) {
+    const deleted = await prisma.groupMessage.deleteMany({ where: { groupId: id } });
+    await prisma.groupReadState.deleteMany({ where: { groupId: id } });
+    staffNotificationCache.clear();
+    clearAllResidentNotificationCaches();
+    return { ok: true as const, scope: "GROUP" as const, deletedMessageCount: deleted.count };
+  }
+
+  const conversation = await prisma.supportConversation.findUnique({
+    where: { id },
+    select: { id: true, residentEmail: true }
+  });
+
+  if (!conversation) {
+    throw new Error("Support conversation not found");
+  }
+
+  clearNotificationCaches(operatorEmail, conversation.residentEmail);
+  await prisma.supportConversation.delete({ where: { id: conversation.id } });
+  return { ok: true as const, scope: "DIRECT" as const };
+}
+
+/** Owner-only: delete one inbox message (direct `SupportMessage` or group `GroupMessage`). */
+export async function ownerDeleteSupportMessage(input: { operatorEmail: string; messageId: string }) {
+  const operatorEmail = normalizeEmail(input.operatorEmail);
+  await requirePortalRole(
+    operatorEmail,
+    ["owner"],
+    "Only owners can delete a support message."
+  );
+
+  const direct = await prisma.supportMessage.findUnique({
+    where: { id: input.messageId },
+    include: { conversation: { select: { id: true, residentEmail: true, createdAt: true } } }
+  });
+
+  if (direct) {
+    const { conversationId, conversation } = direct;
+    await prisma.supportMessage.delete({ where: { id: direct.id } });
+
+    const latest = await prisma.supportMessage.findFirst({
+      where: { conversationId },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true }
+    });
+
+    await prisma.supportConversation.update({
+      where: { id: conversationId },
+      data: { lastMessageAt: latest?.createdAt ?? conversation.createdAt }
+    });
+
+    clearNotificationCaches(operatorEmail, conversation.residentEmail);
+    return { ok: true as const, scope: "DIRECT" as const };
+  }
+
+  const groupRow = await prisma.groupMessage.findUnique({ where: { id: input.messageId } });
+  if (groupRow) {
+    await prisma.groupMessage.delete({ where: { id: groupRow.id } });
+    staffNotificationCache.clear();
+    clearAllResidentNotificationCaches();
+    return { ok: true as const, scope: "GROUP" as const };
+  }
+
+  throw new Error("Message not found");
 }

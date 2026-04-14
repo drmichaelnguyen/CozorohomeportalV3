@@ -326,6 +326,10 @@ model GateParkingTicket {
   residentEmail String
   periodMonth   String
   amountVnd     Int
+  /// When the gate parking session started (local business time is interpreted when saving from ISO).
+  sessionStartAt DateTime?
+  /// How long the vehicle was parked (hours); shown on the ticket and for records.
+  durationHours  Float?
   note          String?   @db.Text
   createdBy     String
   createdAt     DateTime  @default(now())
@@ -343,8 +347,13 @@ model MonthlyRentStatus {
   updatedAt DateTime @updatedAt
   updatedBy String   @default("")
 
-  /// Resident opt-in: apply Cozoro Coins toward this month’s bill (up to 10% of rent+surcharge, tier rate).
+  /// Resident opt-in: apply Cozoro Coins toward this month’s bill (preview until redeem; cap 10% of full bill, tier rate).
   applyCoinsTowardRent Boolean @default(false)
+
+  /// After resident confirms coin exchange: coins deducted from sheet; bill uses these amounts until paid.
+  rentCoinRedeemCoins    Int?
+  rentCoinRedeemValueVnd Int?
+  rentCoinRedeemAt       DateTime?
 
   /// When a rent receipt was recorded via pay-rent (or manual backfill)
   paidRecordedAt DateTime?

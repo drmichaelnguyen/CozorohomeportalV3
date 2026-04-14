@@ -11,6 +11,8 @@ type AdminTask = {
   id: string;
   userEmail: string;
   userName?: string | null;
+  /** Branch · bed · room · floor — joined on admin calendar load from active residents. */
+  bedDisplay?: string | null;
   assignedByEmail?: string | null;
   assignedByName?: string | null;
   branchId: string;
@@ -131,6 +133,46 @@ function calendarKey(calendar: Pick<AdminCalendar, "type" | "floor">) {
   return calendar.type === "TRASH_D7" ? `${calendar.type}:${calendar.floor ?? "none"}` : calendar.type;
 }
 
+/** Short given-name style token (last whitespace segment); email → compact local part. */
+function adminCalendarShortName(nameOrEmail: string) {
+  const raw = nameOrEmail.trim();
+  if (!raw) return "—";
+  if (raw.includes("@")) {
+    const local = (raw.split("@")[0] ?? "").replace(/[._]+/g, " ");
+    const parts = local.split(/\s+/).filter(Boolean);
+    const token = (parts.length ? parts[parts.length - 1] : local) ?? local;
+    return token.length > 14 ? `${token.slice(0, 13)}…` : token;
+  }
+  const parts = raw.split(/\s+/).filter(Boolean);
+  if (parts.length <= 1) {
+    return parts[0] ?? raw;
+  }
+  const last = parts[parts.length - 1] ?? raw;
+  return last.length > 16 ? `${last.slice(0, 15)}…` : last;
+}
+
+function adminCalendarBedDigits(
+  bedDisplay: string | null | undefined,
+  task: Pick<AdminTask, "branchId" | "floor" | "type">
+) {
+  if (bedDisplay) {
+    const match = bedDisplay.match(/Bed\s*(\d+)/i);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+  if (task.type === "TRASH_D7" && task.floor != null) {
+    return `F${task.floor}`;
+  }
+  return "";
+}
+
+function adminCalendarMobileCellLine(task: AdminTask) {
+  const name = adminCalendarShortName(task.userName?.trim() || task.userEmail);
+  const bed = adminCalendarBedDigits(task.bedDisplay, task);
+  return bed ? `${name} · ${bed}` : name;
+}
+
 function isFutureDate(date: Date) {
   return startOfDay(date).getTime() > startOfDay(new Date()).getTime();
 }
@@ -142,15 +184,22 @@ function getAssignerLabel(task: Pick<AdminTask, "assignmentSource" | "isSelfAssi
   if (task.assignmentSource === "SELF" || task.isSelfAssigned) {
     return t("selfAssigned");
   }
-  return task.assignedByName?.trim() || task.assignedByEmail?.trim() || "Cozoro";
+  return task.assignedByName?.trim() || task.assignedByEmail?.trim() || t("cozoroShortName");
 }
 
-function getSchedulerJobLabel(job: AutoSchedulerConfig["jobs"][number]) {
-  return job.type === "TRASH_D7" && job.floor ? `${job.title} (${job.branchId} floor ${job.floor})` : `${job.title} (${job.branchId})`;
+function getSchedulerJobLabel(
+  job: AutoSchedulerConfig["jobs"][number],
+  t: (key: string, fallback?: string) => string
+) {
+  if (job.type === "TRASH_D7" && job.floor != null) {
+    return `${job.title} (${job.branchId} · ${t("floorLabel")} ${job.floor})`;
+  }
+  return `${job.title} (${job.branchId})`;
 }
 
 export function AdminCleaningClient() {
-  const { t } = usePortalLanguage();
+  const { t, language } = usePortalLanguage();
+  const dateLocale = language === "vi" ? "vi-VN" : "en-US";
   const { sessionEmail } = usePortalSession();
   const activeEmail = sessionEmail || DEFAULT_PRIVILEGED_EMAIL;
   const [message, setMessage] = useState("");
@@ -213,7 +262,7 @@ export function AdminCleaningClient() {
     const data = await readJsonSafely<{ calendars?: AdminCalendar[]; error?: string }>(response);
 
     if (!response.ok) {
-      throw new Error(data.error ?? "Unable to load cleaning calendars.");
+      throw new Error(data.error ?? t("adminCleaningErrLoadCalendars"));
     }
 
     const nextCalendars = data.calendars ?? [];
@@ -229,7 +278,7 @@ export function AdminCleaningClient() {
     const response = await fetch(`${API_BASE_URL}/admin/cleaning/auto-scheduler-config?actorEmail=${encodeURIComponent(activeEmail)}`);
     const data = await readJsonSafely<AutoSchedulerConfig & { error?: string }>(response);
     if (!response.ok) {
-      throw new Error(data.error ?? "Unable to load auto-scheduler settings.");
+      throw new Error(data.error ?? t("adminCleaningErrLoadAutoScheduler"));
     }
     setAutoSchedulerConfig(data);
   }
@@ -255,13 +304,13 @@ export function AdminCleaningClient() {
       });
       const data = await readJsonSafely<AutoSchedulerConfig & { error?: string }>(response);
       if (!response.ok) {
-        setMessage(data.error ?? "Unable to save auto-scheduler settings.");
+        setMessage(data.error ?? t("adminCleaningErrSaveAutoScheduler"));
         return;
       }
       setAutoSchedulerConfig(data);
-      setMessage("Auto-scheduler settings saved.");
+      setMessage(t("adminCleaningAutoSchedulerSaved"));
     } catch {
-      setMessage("Unable to save auto-scheduler settings.");
+      setMessage(t("adminCleaningErrSaveAutoScheduler"));
     } finally {
       setAutoSchedulerSaving(false);
     }
@@ -288,11 +337,11 @@ export function AdminCleaningClient() {
 
   async function loadAvailableUsers(all = false) {
     if (!selectedCalendar) {
-      setMessage("Choose a cleaning calendar first.");
+      setMessage(t("adminCleaningChooseCalendarFirst"));
       return;
     }
     if (!canAssignSelectedDate) {
-      setMessage("Admin assignment is only available for future dates.");
+      setMessage(t("assignmentFutureOnly"));
       return;
     }
 
@@ -317,16 +366,22 @@ export function AdminCleaningClient() {
       const data = await readJsonSafely<{ users?: AdminAvailableUser[]; error?: string }>(response);
 
       if (!response.ok) {
-        setMessage(data.error ?? "Unable to load suggested users.");
+        setMessage(data.error ?? t("adminCleaningErrLoadSuggestedUsers"));
         return;
       }
 
       const nextUsers = data.users ?? [];
       setAvailableUsers(nextUsers);
       setSelectedAssignEmail(nextUsers[0]?.email ?? "");
-      setMessage(nextUsers.length > 0 ? (all ? `${nextUsers.length} users loaded.` : "Suggested users loaded.") : "No eligible users available for this date.");
+      setMessage(
+        nextUsers.length > 0
+          ? all
+            ? t("adminCleaningUsersLoadedCount", { count: String(nextUsers.length) })
+            : t("adminCleaningSuggestedUsersLoaded")
+          : t("adminCleaningNoEligibleUsersDate")
+      );
     } catch {
-      setMessage("Unable to load suggested users.");
+      setMessage(t("adminCleaningErrLoadSuggestedUsers"));
     } finally {
       setLoading(false);
     }
@@ -341,13 +396,13 @@ export function AdminCleaningClient() {
       });
       const data = await readJsonSafely<{ error?: string }>(response);
       if (!response.ok) {
-        setMessage(data.error ?? "Unable to remove task.");
+        setMessage(data.error ?? t("adminCleaningErrRemoveTask"));
         return;
       }
       await reloadAll();
-      setMessage("Task removed.");
+      setMessage(t("adminCleaningTaskRemoved"));
     } catch {
-      setMessage("Unable to remove task.");
+      setMessage(t("adminCleaningErrRemoveTask"));
     } finally {
       setLoading(false);
     }
@@ -355,11 +410,11 @@ export function AdminCleaningClient() {
 
   async function assignSelectedUser(force = false) {
     if (!selectedCalendar || !selectedAssignEmail) {
-      setMessage("Choose a suggested user first.");
+      setMessage(t("adminCleaningChooseSuggestedUserFirst"));
       return;
     }
     if (!canAssignSelectedDate) {
-      setMessage("Admin assignment is only available for future dates.");
+      setMessage(t("assignmentFutureOnly"));
       return;
     }
 
@@ -391,21 +446,21 @@ export function AdminCleaningClient() {
           email: selectedAssignEmail,
           conflicts: data.conflicts ?? []
         });
-        setMessage(data.error ?? "This user already has another task on that date.");
+        setMessage(data.error ?? t("adminCleaningUserHasTaskSameDay"));
         return;
       }
 
       if (!response.ok) {
-        setMessage(data.error ?? "Unable to assign cleaning task.");
+        setMessage(data.error ?? t("adminCleaningErrAssignTask"));
         return;
       }
 
       await reloadAll();
       await loadAvailableUsers();
       setPendingConflict(null);
-      setMessage("Cleaning task assigned.");
+      setMessage(t("adminCleaningTaskAssigned"));
     } catch {
-      setMessage("Unable to assign cleaning task.");
+      setMessage(t("adminCleaningErrAssignTask"));
     } finally {
       setLoading(false);
     }
@@ -413,7 +468,7 @@ export function AdminCleaningClient() {
 
   async function previewAutoAssignDates(dates: string[]) {
     if (!selectedCalendar) {
-      setMessage("Choose a cleaning calendar first.");
+      setMessage(t("adminCleaningChooseCalendarFirst"));
       return;
     }
 
@@ -440,7 +495,7 @@ export function AdminCleaningClient() {
         const data = await readJsonSafely<{ users?: AdminAvailableUser[]; error?: string }>(response);
 
         if (!response.ok) {
-          throw new Error(data.error ?? `Unable to preview users for ${date}.`);
+          throw new Error(data.error ?? t("adminCleaningErrPreviewUsersForDate", undefined, { date }));
         }
 
         const user = (data.users ?? [])[0] ?? null;
@@ -456,9 +511,11 @@ export function AdminCleaningClient() {
 
       setAutoAssignPreview(previews);
       setSelectedAutoAssignDates(previews.filter((entry) => entry.user).map((entry) => entry.date));
-      setMessage(previews.length > 0 ? "Auto-assignment preview ready." : "No open future dates found.");
+      setMessage(
+        previews.length > 0 ? t("adminCleaningAutoPreviewReady") : t("adminCleaningNoOpenFutureDates")
+      );
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to build auto-assignment preview.");
+      setMessage(error instanceof Error ? error.message : t("adminCleaningErrAutoPreview"));
     } finally {
       setLoading(false);
     }
@@ -471,11 +528,11 @@ export function AdminCleaningClient() {
 
   async function commitAutoAssignments() {
     if (!selectedCalendar) {
-      setMessage("Choose a cleaning calendar first.");
+      setMessage(t("adminCleaningChooseCalendarFirst"));
       return;
     }
     if (selectedAutoAssignDates.length === 0) {
-      setMessage("Choose at least one preview date first.");
+      setMessage(t("adminCleaningChoosePreviewDatesFirst"));
       return;
     }
 
@@ -498,16 +555,20 @@ export function AdminCleaningClient() {
       const data = await readJsonSafely<{ assigned?: number; error?: string }>(response);
 
       if (!response.ok) {
-        setMessage(data.error ?? "Unable to auto-assign selected dates.");
+        setMessage(data.error ?? t("adminCleaningErrAutoAssignSelected"));
         return;
       }
 
       await reloadAll();
       setAutoAssignPreview([]);
       setSelectedAutoAssignDates([]);
-      setMessage(`Assigned ${data.assigned ?? 0} cleaning dates and pushed them to Google Calendar.`);
+      setMessage(
+        t("adminCleaningAssignedDatesPushed", {
+          assigned: String(data.assigned ?? 0)
+        })
+      );
     } catch {
-      setMessage("Unable to auto-assign selected dates.");
+      setMessage(t("adminCleaningErrAutoAssignSelected"));
     } finally {
       setLoading(false);
     }
@@ -530,7 +591,7 @@ export function AdminCleaningClient() {
       });
       const data = await readJsonSafely<{ error?: string }>(response);
       if (!response.ok) {
-        setMessage(data.error ?? "Unable to audit task.");
+        setMessage(data.error ?? t("adminCleaningErrAuditTask"));
         return;
       }
       setAuditingTaskId(null);
@@ -539,12 +600,14 @@ export function AdminCleaningClient() {
       setRejectFineCreate(false);
       await reloadAll();
       if (decision === "APPROVE") {
-        setMessage("Task approved — coins granted.");
+        setMessage(t("adminCleaningTaskApprovedCoins"));
       } else {
-        setMessage(opts?.createFine ? "Task rejected — coins forfeited and fine issued." : "Task rejected — coins forfeited.");
+        setMessage(
+          opts?.createFine ? t("adminCleaningTaskRejectedForfeitFine") : t("adminCleaningTaskRejectedForfeit")
+        );
       }
     } catch {
-      setMessage("Unable to audit task.");
+      setMessage(t("adminCleaningErrAuditTask"));
     } finally {
       setLoading(false);
     }
@@ -558,9 +621,9 @@ export function AdminCleaningClient() {
     try {
       await loadCalendars();
       await loadAutoSchedulerConfig();
-      setMessage("Privileged cleaning view loaded.");
+      setMessage(t("adminCleaningPrivilegedViewLoaded"));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to load admin cleaning view.");
+      setMessage(error instanceof Error ? error.message : t("adminCleaningErrLoadAdminView"));
     } finally {
       setLoading(false);
     }
@@ -568,7 +631,7 @@ export function AdminCleaningClient() {
 
   async function syncCalendarsAndFillMissingDates() {
     if (!from || !to) {
-      setMessage("Choose a from and to date first.");
+      setMessage(t("adminCleaningChooseFromToFirst"));
       return;
     }
 
@@ -589,14 +652,19 @@ export function AdminCleaningClient() {
       const data = await readJsonSafely<{ imported?: number; created?: number; error?: string }>(response);
 
       if (!response.ok) {
-        setMessage(data.error ?? "Unable to sync cleaning calendars.");
+        setMessage(data.error ?? t("adminCleaningErrSyncCalendars"));
         return;
       }
 
       await reloadAll();
-      setMessage(`Imported ${data.imported ?? 0} calendar tasks and created ${data.created ?? 0} missing cleaning tasks.`);
+      setMessage(
+        t("adminCleaningSyncImportedCreated", {
+          imported: String(data.imported ?? 0),
+          created: String(data.created ?? 0)
+        })
+      );
     } catch {
-      setMessage("Unable to sync cleaning calendars.");
+      setMessage(t("adminCleaningErrSyncCalendars"));
     } finally {
       setLoading(false);
     }
@@ -611,14 +679,14 @@ export function AdminCleaningClient() {
             type="button"
             onClick={() => setShowSchedulerHelp((v) => !v)}
             className="flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 bg-slate-100 text-xs font-semibold text-slate-500 hover:bg-slate-200"
-            aria-label={t("aboutLabel", "About")}
+            aria-label={t("aboutLabel")}
           >
             ?
           </button>
         </div>
         {showSchedulerHelp && (
           <div className="mt-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
-            Admin and manager share this cleaning scheduler. View each cleaning calendar, inspect existing assignments, and assign future cleaning dates.
+            {t("adminCleaningHelpBlurb")}
           </div>
         )}
 
@@ -628,7 +696,7 @@ export function AdminCleaningClient() {
           </div>
 
           <label className="block text-sm font-medium text-slate-700">
-            {t("fromLabel", "From")}
+            {t("fromLabel")}
             <input
               type="date"
               value={from}
@@ -638,7 +706,7 @@ export function AdminCleaningClient() {
           </label>
 
           <label className="block text-sm font-medium text-slate-700">
-            {t("toLabel", "To")}
+            {t("toLabel")}
             <input
               type="date"
               value={to}
@@ -706,21 +774,21 @@ export function AdminCleaningClient() {
                     onClick={() => setCalendarFocusDate(new Date(calendarFocusDate.getFullYear(), calendarFocusDate.getMonth() - 1, 1))}
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
                   >
-                    {t("previousNav", "Prev")}
+                    {t("previousNav")}
                   </button>
                   <button
                     type="button"
                     onClick={() => setCalendarFocusDate(startOfDay(new Date()))}
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
                   >
-                    {t("todayNav", "Today")}
+                    {t("todayNav")}
                   </button>
                   <button
                     type="button"
                     onClick={() => setCalendarFocusDate(new Date(calendarFocusDate.getFullYear(), calendarFocusDate.getMonth() + 1, 1))}
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
                   >
-                    {t("nextNav", "Next")}
+                    {t("nextNav")}
                   </button>
                 </div>
               </div>
@@ -734,7 +802,9 @@ export function AdminCleaningClient() {
                   >
                     <div>
                       <h3 className="text-sm font-semibold text-slate-900">{t("backgroundAutoScheduler")}</h3>
-                      <p className="mt-1 text-sm text-slate-600">{t("controlSystemJob", "Control the system job for")} {getSchedulerJobLabel(selectedSchedulerJob)}.</p>
+                      <p className="mt-1 text-sm text-slate-600">
+                        {t("controlSystemJob")} {getSchedulerJobLabel(selectedSchedulerJob, t)}.
+                      </p>
                     </div>
                     <svg className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${showAutoScheduler ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
@@ -756,7 +826,7 @@ export function AdminCleaningClient() {
 
                   <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
                     <div className="font-medium text-slate-900">{getSchedulerJobLabel(selectedSchedulerJob)}</div>
-                    <div className="mt-1 text-xs text-slate-500">These settings apply only to this selected calendar.</div>
+                    <div className="mt-1 text-xs text-slate-500">{t("adminCleaningSchedulerCalendarOnly")}</div>
 
                     <label className="mt-4 block">
                       <div className="font-medium text-slate-900">{t("enableThisJob")}</div>
@@ -831,21 +901,24 @@ export function AdminCleaningClient() {
                   </div>
 
                   <p className="mt-3 text-xs text-slate-500">
-                    {t("lastUpdatedBy", "Last updated by")} {autoSchedulerConfig.updatedBy || t("system")} at{" "}
-                    {autoSchedulerConfig.updatedAt ? new Date(autoSchedulerConfig.updatedAt).toLocaleString("vi-VN") : t("unknown")}.
+                    {t("lastUpdatedBy")} {autoSchedulerConfig.updatedBy || t("system")} {t("atTimeLabel")}{" "}
+                    {autoSchedulerConfig.updatedAt
+                      ? new Date(autoSchedulerConfig.updatedAt).toLocaleString(dateLocale)
+                      : t("unknown")}
+                    .
                   </p>
                   </>
                   )}
                 </div>
               ) : null}
 
-              <div className="grid grid-cols-7 gap-2 text-center text-xs font-medium uppercase tracking-wide text-slate-500">
-                {[t("mon", "Mon"), t("tue", "Tue"), t("wed", "Wed"), t("thu", "Thu"), t("fri", "Fri"), t("sat", "Sat"), t("sun", "Sun")].map((label) => (
+              <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-medium uppercase tracking-wide text-slate-500 sm:gap-2 sm:text-xs">
+                {[t("mon"), t("tue"), t("wed"), t("thu"), t("fri"), t("sat"), t("sun")].map((label) => (
                   <div key={label}>{label}</div>
                 ))}
               </div>
 
-              <div className="grid grid-cols-7 gap-2">
+              <div className="grid grid-cols-7 gap-1 sm:gap-2">
                 {monthDays.map((date) => {
                   const dayTasks = selectedCalendar.tasks.filter((task) => sameDay(new Date(task.scheduledDate), date));
                   const isSelected = sameDay(date, selectedDate);
@@ -856,19 +929,49 @@ export function AdminCleaningClient() {
                       key={date.toISOString()}
                       type="button"
                       onClick={() => setSelectedDate(startOfDay(date))}
-                      className={`min-h-28 rounded-xl border p-3 text-left ${
+                      className={`relative flex min-h-[5.25rem] flex-col rounded-lg border p-1.5 text-left sm:min-h-28 sm:rounded-xl sm:p-3 ${
                         isSelected ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white"
                       } ${!isCurrentMonth ? "opacity-45" : ""}`}
                     >
-                      <div className="text-sm font-semibold text-slate-900">{date.getDate()}</div>
-                      <div className="mt-2 space-y-1">
+                      <span className="absolute right-1 top-1 text-[10px] font-semibold tabular-nums text-slate-400 sm:static sm:text-sm sm:font-semibold sm:text-slate-900">
+                        {date.getDate()}
+                      </span>
+                      <div className="mt-3 flex min-h-0 flex-1 flex-col gap-0.5 sm:mt-2 sm:space-y-1 sm:gap-0">
                         {dayTasks.slice(0, 3).map((task) => (
-                          <div key={task.id} className={`truncate rounded-md px-2 py-1 text-xs ${task.calendarId ? "bg-slate-100 text-slate-700" : "bg-amber-50 text-amber-800 border border-amber-200"}`}>
-                            {(task.assignmentSource === "SELF" || task.isSelfAssigned) ? "★ " : task.assignmentSource === "SYSTEM" ? "⚙ " : task.assignmentSource === "MANAGER" ? "👤 " : ""}{task.userName || task.userEmail}
+                          <div
+                            key={task.id}
+                            className={`rounded-md px-1 py-0.5 sm:truncate sm:px-2 sm:py-1 sm:text-xs ${
+                              task.calendarId ? "bg-slate-100 text-slate-700" : "bg-amber-50 text-amber-800 sm:border sm:border-amber-200"
+                            }`}
+                          >
+                            <span className="hidden sm:inline">
+                              {(task.assignmentSource === "SELF" || task.isSelfAssigned)
+                                ? "★ "
+                                : task.assignmentSource === "SYSTEM"
+                                  ? "⚙ "
+                                  : task.assignmentSource === "MANAGER"
+                                    ? "👤 "
+                                    : ""}
+                              {task.userName || task.userEmail}
+                            </span>
+                            <span className="sm:hidden block text-left text-[11px] font-semibold leading-snug text-slate-900 [overflow-wrap:anywhere]">
+                              <span className="mr-0.5 align-middle text-[9px] font-normal opacity-80">
+                                {(task.assignmentSource === "SELF" || task.isSelfAssigned)
+                                  ? "★"
+                                  : task.assignmentSource === "SYSTEM"
+                                    ? "⚙"
+                                    : task.assignmentSource === "MANAGER"
+                                      ? "👤"
+                                      : ""}
+                              </span>
+                              {adminCalendarMobileCellLine(task)}
+                            </span>
                           </div>
                         ))}
                         {dayTasks.length > 3 ? (
-                          <div className="text-xs text-slate-500">+{dayTasks.length - 3} {t("moreLabel", "more")}</div>
+                          <div className="text-[10px] text-slate-500 sm:text-xs">
+                            +{dayTasks.length - 3} {t("moreLabel")}
+                          </div>
                         ) : null}
                       </div>
                     </button>
@@ -879,7 +982,7 @@ export function AdminCleaningClient() {
 
             <aside className="space-y-4 rounded-2xl border border-slate-200 p-4">
               <div>
-                <div className="text-sm font-medium text-slate-500">{t("selectedDate", "Selected date")}</div>
+                <div className="text-sm font-medium text-slate-500">{t("selectedDate")}</div>
                 <div className="mt-1 text-lg font-semibold text-slate-900">{selectedDate.toLocaleDateString("vi-VN")}</div>
                 {!canAssignSelectedDate ? (
                   <div className="mt-2 text-sm text-amber-700">{t("assignmentFutureOnly", "Assignment is only enabled for future dates.")}</div>
@@ -941,25 +1044,44 @@ export function AdminCleaningClient() {
                                   {t(`task${task.status.split("_").map(x => x.charAt(0) + x.slice(1).toLowerCase()).join("")}`)}
                                 </span>
                                 {(task.assignmentSource === "SELF" || task.isSelfAssigned) ? (
-                                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">★ {t("selfShort", "Self")}</span>
+                                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                                    ★ {t("selfShort")}
+                                  </span>
                                 ) : task.assignmentSource === "SYSTEM" ? (
-                                  <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">⚙ {t("autoShort", "Auto")}</span>
+                                  <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">
+                                    ⚙ {t("autoShort")}
+                                  </span>
                                 ) : task.assignmentSource === "MANAGER" ? (
-                                  <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600">👤 {t("roleManager", "Manager")}</span>
+                                  <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                                    👤 {t("roleManager")}
+                                  </span>
                                 ) : null}
                                 {task.status === "REJECTED" ? (
-                                  <span className="text-[11px] font-semibold text-rose-500 line-through">+{task.rewardCoins.toLocaleString()} coins</span>
+                                  <span className="text-[11px] font-semibold text-rose-500 line-through">
+                                    {t("coinsRewardPlus", { n: task.rewardCoins.toLocaleString(dateLocale) })}
+                                  </span>
                                 ) : task.status === "APPROVED" ? (
-                                  <span className="text-[11px] font-semibold text-emerald-600">+{task.rewardCoins.toLocaleString()} coins</span>
+                                  <span className="text-[11px] font-semibold text-emerald-600">
+                                    {t("coinsRewardPlus", { n: task.rewardCoins.toLocaleString(dateLocale) })}
+                                  </span>
                                 ) : (
-                                  <span className="text-[11px] text-slate-500">+{task.rewardCoins.toLocaleString()} coins</span>
+                                  <span className="text-[11px] text-slate-500">
+                                    {t("coinsRewardPlus", { n: task.rewardCoins.toLocaleString(dateLocale) })}
+                                  </span>
                                 )}
                               </div>
                               {task.completionNote && (
                                 <p className="mt-1 text-xs text-slate-600 italic">"{task.completionNote}"</p>
                               )}
                               {task.completionPhoto && (
-                                <a href={task.completionPhoto} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-xs text-sky-600 underline">View photo</a>
+                                <a
+                                  href={task.completionPhoto}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="mt-1 inline-block text-xs text-sky-600 underline"
+                                >
+                                  {t("viewCompletionPhoto")}
+                                </a>
                               )}
                               <p className="mt-1 text-xs text-slate-500">{t("assignerLabel")}: {getAssignerLabel(task, t)}</p>
                               {task.auditorNote && (
@@ -987,7 +1109,7 @@ export function AdminCleaningClient() {
                                   disabled={loading}
                                   className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
                                 >
-                                  {isAuditing ? t("cancelLabel") : task.status === "DONE_PENDING_AUDIT" ? t("auditLabel", "Audit") : t("reAuditLabel", "Re-audit")}
+                                  {isAuditing ? t("cancelLabel") : task.status === "DONE_PENDING_AUDIT" ? t("auditLabel") : t("reAuditLabel")}
                                 </button>
                               )}
                             </div>
@@ -1009,7 +1131,8 @@ export function AdminCleaningClient() {
                                   disabled={loading}
                                   className="flex-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
                                 >
-                                  {t("approveLabel", "Approve")} — {t("grantCoinsLabel", "grant +{count} coins", { count: task.rewardCoins.toLocaleString("vi-VN") })}
+                                  {t("approveLabel")} —{" "}
+                                  {t("grantCoinsLabel", { count: task.rewardCoins.toLocaleString(dateLocale) })}
                                 </button>
                                 <button
                                   type="button"
@@ -1017,7 +1140,7 @@ export function AdminCleaningClient() {
                                   disabled={loading}
                                   className="flex-1 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
                                 >
-                                  {t("rejectLabel", "Reject")} — {t("forfeitCoinsLabel", "forfeit coins")}
+                                  {t("rejectLabel")} — {t("forfeitCoinsLabel")}
                                 </button>
                               </div>
                             </div>
@@ -1034,7 +1157,7 @@ export function AdminCleaningClient() {
                 <p className="mt-1 text-xs text-slate-500">{t("assignTaskPickByBedNote")}</p>
                 {availableUsers.length === 0 ? (
                   <p className="mt-2 text-sm text-slate-600">
-                    {t("findBestUserPrompt", "Click <span className=\"font-medium\">Find best user</span> to load recommended users for this date.")}
+                    {t("findBestUserPrompt")}
                   </p>
                 ) : (
                   <div className="mt-2 space-y-3">
@@ -1051,8 +1174,12 @@ export function AdminCleaningClient() {
                         {availableUsers.map((user) => (
                           <option key={user.email} value={user.email}>
                             {assignUserPickerLabel(user, t)}
-                            {user.availabilityType === "UNAVAILABLE" ? ` | ${t("unavailableLabel", "UNAVAILABLE")}` : user.availabilityType === "PREFERRED" ? ` | ${t("preferredLabel", "preferred")}` : ""}
-                            {user.hasSameDayTask ? ` | ${t("alreadyBookedLabel", "already booked")}` : ""}
+                            {user.availabilityType === "UNAVAILABLE"
+                              ? ` | ${t("unavailableLabel")}`
+                              : user.availabilityType === "PREFERRED"
+                                ? ` | ${t("preferredLabel")}`
+                                : ""}
+                            {user.hasSameDayTask ? ` | ${t("alreadyBookedLabel")}` : ""}
                           </option>
                         ))}
                       </select>
@@ -1063,7 +1190,7 @@ export function AdminCleaningClient() {
                         {(() => {
                           const selectedUser = availableUsers.find((user) => user.email === selectedAssignEmail);
                           if (!selectedUser) {
-                            return t("noUserSelected", "No user selected.");
+                            return t("noUserSelected");
                           }
 
                           return (
@@ -1073,7 +1200,8 @@ export function AdminCleaningClient() {
                                 {selectedUser.bedDisplay?.trim() || selectedUser.branchId}
                               </div>
                               <div>
-                                {t("preferenceLabel")}: {selectedUser.availabilityType ?? t("noneLabel", "none")} | {t("availabilityScore")}: {selectedUser.availabilityCount}
+                                {t("preferenceLabel")}: {selectedUser.availabilityType ?? t("noneLabel")} |{" "}
+                              {t("availabilityScore")}: {selectedUser.availabilityCount}
                               </div>
                               <div>{t("totalTasksLabel")}: {selectedUser.totalTaskCount}</div>
                               {selectedUser.hasSameDayTask ? (
@@ -1122,7 +1250,10 @@ export function AdminCleaningClient() {
                         <div className="mt-2 space-y-1">
                           {pendingConflict.conflicts.map((conflict) => (
                             <div key={conflict.id}>
-                              {prettyTaskType(conflict.type, t)} on {new Date(conflict.scheduledDate).toLocaleDateString("vi-VN")}
+                              {t("adminCleaningTaskOnDate", {
+                                task: prettyTaskType(conflict.type, t),
+                                date: new Date(conflict.scheduledDate).toLocaleDateString(dateLocale)
+                              })}
                             </div>
                           ))}
                         </div>
@@ -1136,7 +1267,7 @@ export function AdminCleaningClient() {
                 <h3 className="text-sm font-semibold text-slate-900">{t("bulkAutoAssignment")}</h3>
                 {autoAssignPreview.length === 0 ? (
                   <p className="mt-2 text-sm text-slate-600">
-                    {t("bulkAutoAssignPrompt", "Preview open future dates first, then submit the selected dates when the suggestions look good.")}
+                    {t("bulkAutoAssignPrompt")}
                   </p>
                 ) : (
                   <div className="mt-2 space-y-3">
@@ -1156,19 +1287,21 @@ export function AdminCleaningClient() {
                         />
                         <div className="text-sm text-slate-700">
                           <div className="font-medium text-slate-900">
-                            {new Date(`${entry.date}T12:00:00`).toLocaleDateString()}
+                            {new Date(`${entry.date}T12:00:00`).toLocaleDateString(dateLocale)}
                           </div>
                           {entry.user ? (
                             <>
                               <div>
-                                {t("suggestedLabel", "Suggested")}: {entry.user.name} — {entry.user.bedDisplay?.trim() || entry.user.branchId}
+                                {t("suggestedLabel")}: {entry.user.name} — {entry.user.bedDisplay?.trim() || entry.user.branchId}
                               </div>
                               <div>
-                                {t("availabilityLabel", "Availability")}: {entry.user.availabilityType ?? t("noneLabel", "none")} | {t("availabilityScore")}: {entry.user.availabilityCount} | {t("totalTasksLabel")}: {entry.user.totalTaskCount}
+                                {t("availabilityLabel")}: {entry.user.availabilityType ?? t("noneLabel")} |{" "}
+                                {t("availabilityScore")}: {entry.user.availabilityCount} | {t("totalTasksLabel")}:{" "}
+                                {entry.user.totalTaskCount}
                               </div>
                             </>
                           ) : (
-                            <div className="text-amber-700">{t("noEligibleUserFound", "No eligible user found for this date.")}</div>
+                            <div className="text-amber-700">{t("noEligibleUserFound")}</div>
                           )}
                         </div>
                       </label>
@@ -1187,7 +1320,7 @@ export function AdminCleaningClient() {
             </aside>
           </div>
         ) : (
-          <p className="mt-4 text-sm text-slate-600">{t("loadCalendarsPrompt", "Load the admin calendars first.")}</p>
+          <p className="mt-4 text-sm text-slate-600">{t("loadCalendarsPrompt")}</p>
         )}
       </section>
 
@@ -1196,7 +1329,10 @@ export function AdminCleaningClient() {
           <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl space-y-4">
             <h3 className="text-base font-bold text-slate-900">{t("rejectTaskConfirm")}</h3>
             <p className="text-sm text-slate-600">
-              {t("rejectingFor", { email: rejectFineDialog.userEmail, date: new Date(rejectFineDialog.scheduledDate).toLocaleDateString("vi-VN") })}
+              {t("rejectingFor", {
+                email: rejectFineDialog.userEmail,
+                date: new Date(rejectFineDialog.scheduledDate).toLocaleDateString(dateLocale)
+              })}
               {" "}{t("coinsWillBeForfeited")}
             </p>
 

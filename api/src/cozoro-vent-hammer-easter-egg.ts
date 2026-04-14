@@ -20,6 +20,8 @@ function normalize(text: string): string {
 const COZORO_MARKERS = ["cozoro", "cozorohome", "cozoro home"];
 const TRONG_MARKERS = [
   "anh trong",
+  /** "Ông Trọng" (respectful) normalizes to "ong trong" */
+  "ong trong",
   "mr trong",
   "trong nguyen",
   "nguyen trong",
