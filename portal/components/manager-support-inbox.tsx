@@ -104,6 +104,41 @@ export function ManagerSupportInbox({
   const [status, setStatus] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressNextRowClickRef = useRef(false);
+
+  const [ownerSheet, setOwnerSheet] = useState<
+    null | { kind: "thread"; conversationId: string } | { kind: "message"; messageId: string }
+  >(null);
+
+  function clearLongPressTimer() {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }
+
+  useEffect(() => () => clearLongPressTimer(), []);
+
+  /** Owner: long-press or right-click to open delete options. */
+  function scheduleThreadSheet(conversationId: string) {
+    if (!operatorIsOwner) return;
+    clearLongPressTimer();
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTimerRef.current = null;
+      suppressNextRowClickRef.current = true;
+      setOwnerSheet({ kind: "thread", conversationId });
+    }, 500);
+  }
+
+  function scheduleMessageSheet(messageId: string) {
+    if (!operatorIsOwner) return;
+    clearLongPressTimer();
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTimerRef.current = null;
+      setOwnerSheet({ kind: "message", messageId });
+    }, 500);
+  }
 
   const selectedPreview = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedConversationId) ?? null,
@@ -234,8 +269,8 @@ export function ManagerSupportInbox({
     }
   }
 
-  async function deleteEntireConversation() {
-    if (!operatorIsOwner || !selectedConversationId) return;
+  async function deleteThreadById(conversationId: string) {
+    if (!operatorIsOwner || !conversationId) return;
     if (!window.confirm(t("supportOwnerDeleteConversationConfirm"))) return;
 
     setLoading(true);
@@ -243,7 +278,7 @@ export function ManagerSupportInbox({
     try {
       const response = await fetch(
         `${API_BASE_URL}/manager/support/conversations/${encodeURIComponent(
-          selectedConversationId
+          conversationId
         )}?operatorEmail=${encodeURIComponent(operatorEmail)}`,
         { method: "DELETE" }
       );
@@ -252,7 +287,9 @@ export function ManagerSupportInbox({
         setStatus(data.error ?? t("errorSomethingWrong"));
         return;
       }
-      await loadInbox(null);
+      const stayOn =
+        selectedConversationId && selectedConversationId !== conversationId ? selectedConversationId : null;
+      await loadInbox(stayOn);
     } catch {
       setStatus(t("errorConnection"));
     } finally {
@@ -376,7 +413,19 @@ export function ManagerSupportInbox({
                     ? `bg-violet-600 text-white ${isFirstInGroup ? "rounded-tr-sm" : ""}`
                     : `bg-blue-500 text-white ${isFirstInGroup ? "rounded-tr-sm" : ""}`
                   : `bg-slate-100 text-slate-900 ${isFirstInGroup ? "rounded-tl-sm" : ""}`
-              }`}
+              } ${operatorIsOwner ? "touch-manipulation select-none" : ""}`}
+              onPointerDown={() => {
+                if (operatorIsOwner) scheduleMessageSheet(message.id);
+              }}
+              onPointerUp={clearLongPressTimer}
+              onPointerCancel={clearLongPressTimer}
+              onPointerLeave={clearLongPressTimer}
+              onContextMenu={(e) => {
+                if (operatorIsOwner) {
+                  e.preventDefault();
+                  setOwnerSheet({ kind: "message", messageId: message.id });
+                }
+              }}
             >
               <p className="whitespace-pre-wrap text-sm leading-relaxed">
                 {message.senderRole === "ASSISTANT" ? supportMessageDisplayBody(message.body) : message.body}
@@ -393,22 +442,11 @@ export function ManagerSupportInbox({
             </div>
             {isLastInGroup && (
               <div
-                className={`mt-1 flex items-center gap-2 px-1 ${isStaff ? "justify-end" : "justify-start"} ${operatorIsOwner ? "min-h-[22px]" : ""}`}
+                className={`mt-1 flex items-center px-1 ${isStaff ? "justify-end" : "justify-start"}`}
               >
                 <span className={`text-[10px] text-slate-400 ${isStaff ? "text-right" : "text-left"}`}>
                   {formatTime(message.createdAt)}
                 </span>
-                {operatorIsOwner ? (
-                  <button
-                    type="button"
-                    title={t("supportOwnerDeleteMessage")}
-                    disabled={loading}
-                    onClick={() => void deleteOneMessage(message.id)}
-                    className="rounded p-0.5 text-[10px] font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-40"
-                  >
-                    {t("supportOwnerDeleteMessage")}
-                  </button>
-                ) : null}
               </div>
             )}
           </div>
@@ -483,14 +521,34 @@ export function ManagerSupportInbox({
                 <button
                   key={conversation.id}
                   type="button"
-                  onClick={() => void loadInbox(conversation.id)}
+                  onPointerDown={() => {
+                    if (!operatorIsOwner) return;
+                    suppressNextRowClickRef.current = false;
+                    scheduleThreadSheet(conversation.id);
+                  }}
+                  onPointerUp={clearLongPressTimer}
+                  onPointerCancel={clearLongPressTimer}
+                  onPointerLeave={clearLongPressTimer}
+                  onContextMenu={(e) => {
+                    if (operatorIsOwner) {
+                      e.preventDefault();
+                      setOwnerSheet({ kind: "thread", conversationId: conversation.id });
+                    }
+                  }}
+                  onClick={() => {
+                    if (suppressNextRowClickRef.current) {
+                      suppressNextRowClickRef.current = false;
+                      return;
+                    }
+                    void loadInbox(conversation.id);
+                  }}
                   className={`relative w-full border-b px-4 py-3.5 text-left transition-colors ${
                     isSelected
                       ? "bg-blue-500 text-white"
                       : hasUnread
                         ? "bg-sky-50 hover:bg-sky-100"
                         : "bg-white hover:bg-slate-50"
-                  }`}
+                  } ${operatorIsOwner ? "touch-manipulation select-none" : ""}`}
                 >
                   {hasUnread && !isSelected && (
                     <span className="absolute right-3 top-3 flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-bold text-white">
@@ -539,7 +597,26 @@ export function ManagerSupportInbox({
             <>
               {/* Thread header */}
               <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
-                <div>
+                <div
+                  className={
+                    operatorIsOwner && selectedConversationId
+                      ? "min-w-0 flex-1 cursor-default touch-manipulation select-none rounded-lg px-1 py-0.5 -mx-1"
+                      : "min-w-0 flex-1"
+                  }
+                  onPointerDown={() => {
+                    if (!operatorIsOwner || !selectedConversationId) return;
+                    scheduleThreadSheet(selectedConversationId);
+                  }}
+                  onPointerUp={clearLongPressTimer}
+                  onPointerCancel={clearLongPressTimer}
+                  onPointerLeave={clearLongPressTimer}
+                  onContextMenu={(e) => {
+                    if (operatorIsOwner && selectedConversationId) {
+                      e.preventDefault();
+                      setOwnerSheet({ kind: "thread", conversationId: selectedConversationId });
+                    }
+                  }}
+                >
                   <p className="text-sm font-semibold text-slate-900">
                     {selectedConversation?.residentName || selectedPreview?.label || t("conversationLabel")}
                   </p>
@@ -547,7 +624,7 @@ export function ManagerSupportInbox({
                     {selectedConversation?.residentEmail || selectedPreview?.subLabel}
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center justify-end gap-2">
+                <div className="flex flex-shrink-0 flex-wrap items-center justify-end gap-2">
                   <button
                     type="button"
                     onClick={() => void updateStatus("OPEN")}
@@ -564,16 +641,6 @@ export function ManagerSupportInbox({
                   >
                     {t("closeLabel")}
                   </button>
-                  {operatorIsOwner && selectedConversationId ? (
-                    <button
-                      type="button"
-                      onClick={() => void deleteEntireConversation()}
-                      disabled={loading}
-                      className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-100 disabled:opacity-40"
-                    >
-                      {t("supportOwnerDeleteConversation")}
-                    </button>
-                  ) : null}
                 </div>
               </div>
 
@@ -653,11 +720,68 @@ export function ManagerSupportInbox({
                   </button>
                 </form>
                 <p className="mt-1.5 text-center text-[10px] text-slate-300">{t("chatKeyboardHint")}</p>
+                {operatorIsOwner ? (
+                  <p className="mt-1 text-center text-[10px] text-slate-400">{t("supportOwnerLongPressHint")}</p>
+                ) : null}
               </div>
             </>
           )}
         </div>
       </div>
+
+      {ownerSheet ? (
+        <div
+          className="fixed inset-0 z-[120] flex items-end justify-center bg-black/40 p-3 sm:items-center"
+          role="presentation"
+          onClick={() => setOwnerSheet(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="support-owner-sheet-title"
+            className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p id="support-owner-sheet-title" className="border-b border-slate-100 px-4 py-3 text-sm font-semibold text-slate-900">
+              {t("supportOwnerActionsSheetTitle")}
+            </p>
+            <div className="flex flex-col">
+              {ownerSheet.kind === "thread" ? (
+                <button
+                  type="button"
+                  className="w-full px-4 py-3.5 text-left text-sm font-medium text-rose-600 transition hover:bg-rose-50"
+                  onClick={() => {
+                    const id = ownerSheet.conversationId;
+                    setOwnerSheet(null);
+                    void deleteThreadById(id);
+                  }}
+                >
+                  {t("supportOwnerDeleteConversation")}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="w-full px-4 py-3.5 text-left text-sm font-medium text-rose-600 transition hover:bg-rose-50"
+                  onClick={() => {
+                    const mid = ownerSheet.messageId;
+                    setOwnerSheet(null);
+                    void deleteOneMessage(mid);
+                  }}
+                >
+                  {t("supportOwnerDeleteMessage")}
+                </button>
+              )}
+              <button
+                type="button"
+                className="w-full border-t border-slate-100 px-4 py-3.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+                onClick={() => setOwnerSheet(null)}
+              >
+                {t("cancel")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

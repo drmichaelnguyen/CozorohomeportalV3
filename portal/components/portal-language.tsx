@@ -991,8 +991,13 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "Bee: use Clear in the bee window to erase history on this device only. Personal messages (staff and assistant) are kept on the server — you cannot delete them yourself; ask Cozoro staff if something must be removed.",
     vi: "Ong: bấm Xóa trong khung ong để xóa lịch sử chỉ trên thiết bị này. Tin Cá nhân (nhân viên và trợ lý) lưu trên máy chủ — bạn không tự xóa được; cần xóa thì liên hệ Cozoro."
   },
-  supportOwnerDeleteConversation: { en: "Delete thread", vi: "Xóa cuộc hội thoại" },
-  supportOwnerDeleteMessage: { en: "Delete message", vi: "Xóa tin nhắn" },
+  supportOwnerDeleteConversation: { en: "Delete chat", vi: "Xóa hộp" },
+  supportOwnerDeleteMessage: { en: "Delete", vi: "Xóa" },
+  supportOwnerActionsSheetTitle: { en: "Owner actions", vi: "Thao tác chủ sở hữu" },
+  supportOwnerLongPressHint: {
+    en: "Long-press a chat row, the header, or a message — or right-click — to delete (owner only).",
+    vi: "Nhấn giữ dòng chat, tiêu đề, hoặc một tin nhắn (hoặc chuột phải) để xóa — chỉ chủ sở hữu."
+  },
   supportOwnerDeleteConversationConfirm: {
     en: "Permanently delete this entire conversation for everyone? This cannot be undone.",
     vi: "Xóa vĩnh viễn toàn bộ cuộc hội thoại này cho mọi người? Không thể hoàn tác."
