@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./load-env.js";
 
 import cors from "cors";
 import express from "express";
@@ -3134,6 +3134,31 @@ app.post("/resident/portal-ai-chat", async (request, response) => {
         : lower.includes("not configured") || lower.includes("disabled")
           ? 503
           : 400;
+    // #region agent log
+    {
+      const logPayload = {
+        sessionId: "abe43c",
+        hypothesisId: "H1-portal-ai-chat-503",
+        location: "index.ts:POST /resident/portal-ai-chat",
+        message: "portal-ai-chat error path",
+        data: {
+          status,
+          errorSnippet: msg.slice(0, 220),
+          cwd: process.cwd(),
+          hasResidentPortalGeminiKey: Boolean(process.env.GEMINI_RESIDENT_PORTAL_AI_API_KEY?.trim()),
+          hasManagerGeminiKey: Boolean(process.env.GEMINI_API_KEY?.trim()),
+          residentPortalAiDisabled: process.env.RESIDENT_PORTAL_AI_DISABLED === "1"
+        },
+        timestamp: Date.now()
+      };
+      console.error("[agent-debug]", JSON.stringify(logPayload));
+      void fetch("http://127.0.0.1:7386/ingest/2d0b8dfe-73b5-48f2-82fb-087a4a208e01", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "abe43c" },
+        body: JSON.stringify(logPayload)
+      }).catch(() => {});
+    }
+    // #endregion
     return response.status(status).json({ error: msg });
   }
 });

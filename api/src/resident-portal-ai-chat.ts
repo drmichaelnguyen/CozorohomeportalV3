@@ -1,6 +1,6 @@
 /**
- * Resident-only **Cozoro Bee** chat (Messages tab) — Gemini 2.5 Flash with a **separate** API key
- * from manager AI (`GEMINI_API_KEY`). Uses `GEMINI_RESIDENT_PORTAL_AI_API_KEY`.
+ * Resident-only **Cozoro Bee** chat (Messages tab) — Gemini 2.5 Flash.
+ * Prefers `GEMINI_RESIDENT_PORTAL_AI_API_KEY`; if unset, falls back to `GEMINI_API_KEY` (same as manager / support AI).
  *
  * Tools only return data scoped to the authenticated resident email (server-enforced).
  */
@@ -63,9 +63,13 @@ function isGeminiQuotaExceeded(response: Response, data: GeminiResponse): boolea
 }
 
 function residentGeminiEndpoint(): string {
-  const key = process.env.GEMINI_RESIDENT_PORTAL_AI_API_KEY?.trim();
+  const dedicated = process.env.GEMINI_RESIDENT_PORTAL_AI_API_KEY?.trim();
+  const shared = process.env.GEMINI_API_KEY?.trim();
+  const key = dedicated || shared;
   if (!key) {
-    throw new Error("GEMINI_RESIDENT_PORTAL_AI_API_KEY is not configured");
+    throw new Error(
+      "Gemini API key is not configured for Cozoro Bee (set GEMINI_RESIDENT_PORTAL_AI_API_KEY or GEMINI_API_KEY)"
+    );
   }
   return `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
 }
