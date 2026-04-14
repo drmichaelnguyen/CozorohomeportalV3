@@ -1067,6 +1067,10 @@ const translations: Record<string, { en: string; vi: string }> = {
   managerAiTitle: { en: "Cozoro AI", vi: "Cozoro AI" },
   managerAiBadgeBeta: { en: "Beta", vi: "Beta" },
   managerAiClear: { en: "Clear", vi: "Xóa hội thoại" },
+  managerAiClearSwipeHint: {
+    en: "Swipe left or right on the blue header or the message list to clear this chat.",
+    vi: "Vuốt trái hoặc phải trên thanh xanh dương hoặc danh sách tin nhắn để xóa hội thoại."
+  },
   managerAiCloseAria: { en: "Close AI assistant", vi: "Đóng trợ lý AI" },
   managerAiOpenAria: { en: "Open AI assistant", vi: "Mở trợ lý AI" },
   managerAiHintEmpty: {

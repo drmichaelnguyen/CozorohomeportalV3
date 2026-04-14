@@ -162,14 +162,19 @@ export function SupportClient() {
       return;
     }
     const now = Date.now();
+    /** Only auto-open game / starfield for fresh assistant rows (skip old history on load). */
+    const maxAgeMs = 600_000;
     for (const m of messages) {
       if (m.senderRole !== "ASSISTANT") continue;
       if (processedAssistantMetaIdsRef.current.has(m.id)) continue;
       const meta = parseSupportAssistantMeta(m.body);
       if (!meta) continue;
-      processedAssistantMetaIdsRef.current.add(m.id);
       const ageMs = now - new Date(m.createdAt).getTime();
-      if (ageMs > 120_000) continue;
+      if (ageMs > maxAgeMs) {
+        processedAssistantMetaIdsRef.current.add(m.id);
+        continue;
+      }
+      processedAssistantMetaIdsRef.current.add(m.id);
       if (meta === "vent-start") {
         setVentHammerOpen(true);
       }
@@ -493,11 +498,6 @@ export function SupportClient() {
   return (
     <div className="flex h-[calc(100vh-140px)] min-h-0 flex-col overflow-hidden bg-white md:h-[700px] md:rounded-3xl md:border md:border-slate-200 md:shadow-lg">
       <CozoroStarfieldBurst burstKey={starfieldBurstKey} />
-      <VentHammerGameModal
-        open={ventHammerOpen}
-        onOpenChange={setVentHammerOpen}
-        email={sessionEmail.trim().toLowerCase()}
-      />
       {/* Header */}
       <header className="shrink-0 border-b border-slate-100 bg-white/80 p-4 backdrop-blur-md">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -634,7 +634,9 @@ export function SupportClient() {
                         : "bg-white text-slate-700 border border-slate-200 rounded-tl-none"
                   }`}
                 >
-                  <p className="whitespace-pre-wrap leading-relaxed">{message.body}</p>
+                  <p className="whitespace-pre-wrap leading-relaxed">
+                    {isAssistant ? supportMessageDisplayBody(message.body) : message.body}
+                  </p>
                   <div className={`mt-1 text-[9px] ${isMe ? "text-slate-400" : "text-slate-500"}`}>
                     {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </div>
@@ -779,6 +781,11 @@ export function SupportClient() {
           </div>
         </div>
       )}
+      <VentHammerGameModal
+        open={ventHammerOpen}
+        onOpenChange={setVentHammerOpen}
+        email={sessionEmail.trim().toLowerCase()}
+      />
     </div>
   );
 }

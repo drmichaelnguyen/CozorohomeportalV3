@@ -1,4 +1,4 @@
-const SUPPORT_ASSISTANT_META_SUFFIX_RE = /\n\[\[cozoro-meta:(vent-offer|vent-start|founder-egg)\]\]\s*$/;
+const SUPPORT_ASSISTANT_META_SUFFIX_RE = /\r?\n\[\[cozoro-meta:(vent-offer|vent-start|founder-egg)\]\]\s*$/;
 
 export type SupportAssistantStoredMeta = "vent-offer" | "vent-start" | "founder-egg";
 

@@ -198,7 +198,6 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
   return (
     <>
       <CozoroStarfieldBurst burstKey={starfieldBurstKey} />
-      <VentHammerGameModal open={ventHammerOpen} onOpenChange={setVentHammerOpen} email={normalized} />
       <button
         type="button"
         onClick={() => setOpen(true)}
@@ -296,6 +295,8 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
             document.body
           )
         : null}
+      {/* Mount after Bee portal so stacking/DOM order keeps the game above the chat shell (z-[300] vs z-[200]). */}
+      <VentHammerGameModal open={ventHammerOpen} onOpenChange={setVentHammerOpen} email={normalized} />
     </>
   );
 }

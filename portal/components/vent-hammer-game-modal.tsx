@@ -159,9 +159,10 @@ export function VentHammerGameModal({
 
   if (!open || typeof document === "undefined") return null;
 
+  /* z must stay above resident-portal-ai-bee (z-200) and rent-due overlay (z-220). */
   return createPortal(
     <div
-      className="fixed inset-0 z-[92] flex items-center justify-center bg-black/60 p-3 backdrop-blur-[1px]"
+      className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 p-3 backdrop-blur-[1px]"
       role="dialog"
       aria-modal="true"
       aria-label={t("ventHammerTitle")}

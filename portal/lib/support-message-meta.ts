@@ -1,4 +1,5 @@
-const SUPPORT_ASSISTANT_META_RE = /\n\[\[cozoro-meta:(vent-offer|vent-start|founder-egg)\]\]\s*$/;
+/** Allow `\r\n` (Windows / some DB clients) before the trailer. */
+const SUPPORT_ASSISTANT_META_RE = /\r?\n\[\[cozoro-meta:(vent-offer|vent-start|founder-egg)\]\]\s*$/;
 
 export type SupportAssistantClientMeta = "vent-offer" | "vent-start" | "founder-egg";
 

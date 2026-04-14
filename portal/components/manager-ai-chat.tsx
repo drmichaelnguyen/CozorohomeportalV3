@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type TouchEvent } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 import { CozoroStarfieldBurst } from "./cozoro-starfield-burst";
@@ -138,6 +138,8 @@ function ChatBody({
   const [starfieldBurstKey, setStarfieldBurstKey] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  /** Shared start point for horizontal swipe-to-clear (header + message list). */
+  const swipeClearStartRef = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     setMessages(loadStoredMessages(operatorEmail, language));
@@ -225,35 +227,73 @@ function ChatBody({
     removeStoredMessages(operatorEmail, language);
   }
 
+  function onSwipeClearTouchStart(e: TouchEvent) {
+    if (messages.length === 0) return;
+    const p = e.touches[0];
+    if (!p) return;
+    swipeClearStartRef.current = { x: p.clientX, y: p.clientY };
+  }
+
+  function onSwipeClearTouchEnd(e: TouchEvent) {
+    const start = swipeClearStartRef.current;
+    swipeClearStartRef.current = null;
+    if (messages.length === 0 || !start) return;
+    const p = e.changedTouches[0];
+    if (!p) return;
+    const dx = p.clientX - start.x;
+    const dy = p.clientY - start.y;
+    if (Math.abs(dx) > 72 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+      clearChat();
+    }
+  }
+
+  function onSwipeClearTouchCancel() {
+    swipeClearStartRef.current = null;
+  }
+
   return (
     <>
       <CozoroStarfieldBurst burstKey={starfieldBurstKey} />
       {/* Header bar */}
-      <div className="flex items-center justify-between border-b border-slate-100 bg-sky-600 px-4 py-3 text-white rounded-t-2xl">
-        <div className="flex items-center gap-2">
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <div
+        className="flex min-h-[3rem] items-center justify-between gap-2 border-b border-slate-100 bg-sky-600 px-3 py-2 text-white rounded-t-2xl sm:px-4 sm:py-3"
+        onTouchStart={onSwipeClearTouchStart}
+        onTouchEnd={onSwipeClearTouchEnd}
+        onTouchCancel={onSwipeClearTouchCancel}
+      >
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
           </svg>
-          <span className="text-sm font-semibold">{t("managerAiTitle")}</span>
-          <span className="rounded-full bg-sky-500 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide">
+          <span className="truncate text-sm font-semibold">{t("managerAiTitle")}</span>
+          <span className="shrink-0 rounded-full bg-sky-500 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide">
             {t("managerAiBadgeBeta")}
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
           {messages.length > 0 && (
             <button
               type="button"
               onClick={clearChat}
-              className="rounded-full px-2 py-0.5 text-[10px] font-medium text-sky-200 hover:bg-sky-500 transition-colors"
+              title={t("managerAiClear")}
+              aria-label={t("managerAiClear")}
+              className="inline-flex items-center gap-1 rounded-lg border border-white/50 bg-white/15 px-2 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-white/25 active:bg-white/30"
             >
-              {t("managerAiClear")}
+              <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                />
+              </svg>
+              <span className="max-w-[7rem] truncate sm:max-w-none">{t("managerAiClear")}</span>
             </button>
           )}
           {onClose && (
             <button
               type="button"
               onClick={onClose}
-              className="rounded-full p-1 text-sky-200 hover:bg-sky-500 transition-colors"
+              className="rounded-full p-1 text-sky-100 hover:bg-sky-500 transition-colors"
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -264,7 +304,12 @@ function ChatBody({
       </div>
 
       {/* Messages */}
-      <div className="flex max-h-96 min-h-48 flex-col gap-2 overflow-y-auto p-4">
+      <div
+        className="flex max-h-96 min-h-48 flex-col gap-2 overflow-y-auto overscroll-y-contain p-4 touch-pan-y"
+        onTouchStart={onSwipeClearTouchStart}
+        onTouchEnd={onSwipeClearTouchEnd}
+        onTouchCancel={onSwipeClearTouchCancel}
+      >
         {messages.length === 0 ? (
           <div className="space-y-3">
             <p className="text-xs text-slate-500 text-center">{t("managerAiHintEmpty")}</p>
@@ -348,13 +393,16 @@ function ChatBody({
           </button>
         </div>
         {messages.length > 0 && (
-          <p className="mt-1 text-[10px] text-slate-400">
-            {t("managerAiHistoryNote", undefined, {
-              count: String(messages.length),
-              max: String(MAX_PERSISTED_MESSAGES),
-              ctx: String(MAX_CONTEXT_MESSAGES)
-            })}
-          </p>
+          <div className="mt-1 space-y-1">
+            <p className="text-[10px] text-slate-400 sm:text-[11px]">
+              {t("managerAiHistoryNote", undefined, {
+                count: String(messages.length),
+                max: String(MAX_PERSISTED_MESSAGES),
+                ctx: String(MAX_CONTEXT_MESSAGES)
+              })}
+            </p>
+            <p className="text-[10px] text-slate-500 sm:hidden">{t("managerAiClearSwipeHint")}</p>
+          </div>
         )}
       </div>
     </>
