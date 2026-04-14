@@ -10,7 +10,7 @@ type Message = {
   navigateTo?: string;
 };
 
-const MAX_STORED_MESSAGES = 20;
+const MAX_STORED_MESSAGES = 10;
 const STORAGE_KEY = "cozoro-manager-ai-chat";
 
 const VIEW_LABEL_KEYS: Record<string, string> = {

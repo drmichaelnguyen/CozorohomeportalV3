@@ -165,6 +165,7 @@ import {
 } from "./checkout.js";
 import { getShortTermConfig, updateShortTermConfig } from "./short-term-config.js";
 import { handleManagerAiChat, type AiChatMessage } from "./manager-ai-chat.js";
+import { handleResidentPortalAiChat, type ResidentPortalAiMessage } from "./resident-portal-ai-chat.js";
 import {
   managerGetDepositRefundPreview,
   managerSendDepositRefundEmail
@@ -3048,6 +3049,37 @@ app.post("/manager/ai-chat", async (request, response) => {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "AI assistant error"
     });
+  }
+});
+
+app.post("/resident/portal-ai-chat", async (request, response) => {
+  const parsed = z
+    .object({
+      email: z.string().email(),
+      language: z.enum(["en", "vi"]).optional(),
+      history: z
+        .array(z.object({ role: z.enum(["user", "model"]), text: z.string().max(12000) }))
+        .min(1)
+        .max(40)
+    })
+    .safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid resident AI chat payload" });
+  }
+
+  try {
+    const result = await handleResidentPortalAiChat(
+      parsed.data.email,
+      parsed.data.history as ResidentPortalAiMessage[],
+      { language: parsed.data.language }
+    );
+    return response.json(result);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "AI assistant error";
+    const lower = msg.toLowerCase();
+    const status = lower.includes("only resident") ? 403 : lower.includes("not configured") || lower.includes("disabled") ? 503 : 400;
+    return response.status(status).json({ error: msg });
   }
 });
 

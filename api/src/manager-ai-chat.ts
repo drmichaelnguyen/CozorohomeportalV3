@@ -9,6 +9,8 @@
  *   query_beds     — answer which beds are available / occupied
  */
 
+import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
+import { appendAiTrainingExchange } from "./ai-training-log.js";
 import { getManagerClients, getManagerInactiveClients } from "./google-sheets.js";
 import { requirePortalRole } from "./staff-access.js";
 
@@ -407,8 +409,8 @@ export async function handleManagerAiChat(
   const clients = await buildClientContext();
   const systemPrompt = buildSystemPrompt(clients, language);
 
-  // Convert chat history to Gemini content format
-  const contents: GeminiContent[] = history.map((msg) => ({
+  const limitedHistory = history.slice(-AI_CHAT_CONTEXT_MESSAGE_LIMIT);
+  const contents: GeminiContent[] = limitedHistory.map((msg) => ({
     role: msg.role,
     parts: [{ text: msg.text }]
   }));
@@ -453,7 +455,17 @@ export async function handleManagerAiChat(
     if (!functionCallPart) {
       // Model produced a text response — done
       const textPart = parts.find((p): p is { text: string } => "text" in p);
-      return { reply: textPart?.text ?? "(no response)", navigateTo };
+      const reply = textPart?.text ?? "(no response)";
+      const lastUser = [...history].reverse().find((m) => m.role === "user");
+      void appendAiTrainingExchange({
+        channel: "manager",
+        identifier: operatorEmail,
+        language,
+        userText: lastUser?.text ?? "",
+        modelText: reply,
+        meta: navigateTo ? { navigateTo } : undefined
+      });
+      return { reply, navigateTo };
     }
 
     // Execute the tool
@@ -469,5 +481,15 @@ export async function handleManagerAiChat(
     });
   }
 
-  return { reply: "I ran into an issue processing your request. Please try again.", navigateTo };
+  const fallback = "I ran into an issue processing your request. Please try again.";
+  const lastUser = [...history].reverse().find((m) => m.role === "user");
+  void appendAiTrainingExchange({
+    channel: "manager",
+    identifier: operatorEmail,
+    language,
+    userText: lastUser?.text ?? "",
+    modelText: fallback,
+    meta: { maxToolRoundsExhausted: true, ...(navigateTo ? { navigateTo } : {}) }
+  });
+  return { reply: fallback, navigateTo };
 }

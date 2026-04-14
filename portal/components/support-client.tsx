@@ -5,6 +5,7 @@ import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalSession } from "./portal-session";
 import { usePortalLanguage } from "./portal-language";
 import { ManagerSupportInbox } from "./manager-support-inbox";
+import { ResidentPortalAiBee } from "./resident-portal-ai-bee";
 
 const SOUND_PREF_KEY = "chat_sound_enabled";
 const POLL_INTERVAL_MS = 10000;
@@ -468,6 +469,9 @@ export function SupportClient() {
             <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{activeTab === "personal" ? t("cozoroSupport", "Cozoro Support") : `${activeTab} ${t("community", "Community")}`}</p>
           </div>
           <div className="flex items-center gap-2">
+            {!loading && !isStaff && activeTab === "personal" && sessionEmail.trim() ? (
+              <ResidentPortalAiBee email={sessionEmail.trim().toLowerCase()} />
+            ) : null}
             <button
               type="button"
               onClick={toggleSound}

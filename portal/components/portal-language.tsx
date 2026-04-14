@@ -930,6 +930,17 @@ const translations: Record<string, { en: string; vi: string }> = {
   askAnythingPlaceholder: { en: "Ask anything… (Enter to send)", vi: "Hỏi bất cứ điều gì… (Enter để gửi)" },
   errorConnection: { en: "Network error. Please check your connection.", vi: "Lỗi mạng. Vui lòng kiểm tra kết nối của bạn." },
   errorSomethingWrong: { en: "Something went wrong. Please try again.", vi: "Đã xảy ra lỗi. Vui lòng thử lại." },
+  close: { en: "Close", vi: "Đóng" },
+  residentAiBeeTitle: { en: "Chat with Cozoro AI", vi: "Trò chuyện với Cozoro AI" },
+  residentAiTitle: { en: "Cozoro AI", vi: "Cozoro AI" },
+  residentAiSubtitle: {
+    en: "Your data only — uses a separate Gemini key from manager AI",
+    vi: "Chỉ dữ liệu của bạn — dùng Gemini riêng so với AI quản lý"
+  },
+  residentAiPlaceholder: {
+    en: "Laundry, cleaning schedule, rent, coins…",
+    vi: "Giặt sấy, lịch vệ sinh, tiền thuê, coins…"
+  },
   laundryTitle: { en: "Laundry", vi: "Giặt sấy" },
   machinesLabel: { en: "Machines", vi: "Máy móc" },
   kitchenTitle: { en: "Common Area — Kitchen", vi: "Khu vực chung — Bếp" },

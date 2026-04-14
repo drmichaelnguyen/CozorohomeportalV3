@@ -5,6 +5,8 @@
 
 import { SupportMessageSenderRole } from "@prisma/client";
 
+import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
+import { appendAiTrainingExchange } from "./ai-training-log.js";
 import { getActiveClientByEmail } from "./google-sheets.js";
 import { prisma } from "./prisma.js";
 
@@ -65,8 +67,9 @@ function sanitizeOther(raw: unknown) {
 function compressThreadForGemini(
   rows: Array<{ senderRole: SupportMessageSenderRole; senderName: string | null; body: string }>
 ) {
+  const recent = rows.slice(-AI_CHAT_CONTEXT_MESSAGE_LIMIT);
   const chunks: { role: "user" | "model"; text: string }[] = [];
-  for (const m of rows) {
+  for (const m of recent) {
     const role = m.senderRole === SupportMessageSenderRole.RESIDENT ? "user" : "model";
     const label =
       m.senderRole === SupportMessageSenderRole.ASSISTANT
@@ -82,8 +85,7 @@ function compressThreadForGemini(
       chunks.push({ role, text });
     }
   }
-  const out: GeminiContent[] = chunks.map((c) => ({ role: c.role, parts: [{ text: c.text }] }));
-  return out.slice(-24);
+  return chunks.map((c) => ({ role: c.role, parts: [{ text: c.text }] }));
 }
 
 function buildResidentContextBlock(email: string, client: Record<string, string> | null) {
@@ -285,7 +287,18 @@ export async function runResidentSupportAssistantTurn(input: {
     if (!functionCallPart) {
       const textPart = parts.find((p): p is { text: string } => "text" in p);
       const replyText = textPart?.text?.trim() || null;
-      return { replyText: replyText && replyText.length > 6000 ? replyText.slice(0, 6000) : replyText };
+      const trimmed = replyText && replyText.length > 6000 ? replyText.slice(0, 6000) : replyText;
+      if (trimmed) {
+        void appendAiTrainingExchange({
+          channel: "resident_support_thread",
+          identifier: input.residentEmail,
+          userText: last.body,
+          modelText: trimmed,
+          conversationId: input.conversationId,
+          meta: { preferVietnamese }
+        });
+      }
+      return { replyText: trimmed };
     }
 
     const { name, args } = functionCallPart.functionCall;
