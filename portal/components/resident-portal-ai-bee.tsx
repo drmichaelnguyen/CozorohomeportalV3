@@ -4,6 +4,8 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
+import { CozoroStarfieldBurst } from "./cozoro-starfield-burst";
+import { VentHammerGameModal } from "./vent-hammer-game-modal";
 
 type Message = {
   role: "user" | "model";
@@ -101,6 +103,8 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [errorBanner, setErrorBanner] = useState("");
+  const [starfieldBurstKey, setStarfieldBurstKey] = useState(0);
+  const [ventHammerOpen, setVentHammerOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const normalized = email.trim().toLowerCase();
 
@@ -163,7 +167,12 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
         updateMessages([...base, { role: "model", text: hint }]);
         return;
       }
-      const data = parsedBody.data as { reply?: string; error?: string };
+      const data = parsedBody.data as {
+        reply?: string;
+        error?: string;
+        showStarfieldEffect?: true;
+        startVentHammerGame?: true;
+      };
       if (!res.ok || data.error) {
         setErrorBanner(data.error ?? t("errorSomethingWrong"));
         updateMessages([...base, { role: "model", text: data.error ?? t("errorSomethingWrong") }]);
@@ -171,6 +180,12 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
       }
       const reply = (data.reply ?? "").trim() || "…";
       updateMessages([...base, { role: "model", text: reply }]);
+      if (data.showStarfieldEffect) {
+        setStarfieldBurstKey((k) => k + 1);
+      }
+      if (data.startVentHammerGame) {
+        setVentHammerOpen(true);
+      }
     } catch {
       const msg = t("errorSomethingWrong");
       setErrorBanner(msg);
@@ -182,6 +197,8 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
 
   return (
     <>
+      <CozoroStarfieldBurst burstKey={starfieldBurstKey} />
+      <VentHammerGameModal open={ventHammerOpen} onOpenChange={setVentHammerOpen} email={normalized} />
       <button
         type="button"
         onClick={() => setOpen(true)}

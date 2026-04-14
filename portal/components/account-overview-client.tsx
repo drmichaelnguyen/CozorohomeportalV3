@@ -18,6 +18,7 @@ import { usePortalTheme } from "./portal-theme";
 import { LaundryController } from "./laundry-controller";
 import { ContractExtension } from "./contract-extension";
 import { NextPaymentSummary } from "./next-payment-summary";
+import { AccountNoonFlappyBee } from "./account-noon-flappy-bee";
 import type { RentPaidStatusPayload } from "../lib/rent-paid-status";
 
 type ClientRecord = Record<string, string>;
@@ -1670,6 +1671,7 @@ export function AccountOverviewClient() {
           </div>
         ) : null}
       </section>
+      <AccountNoonFlappyBee />
     </div>
   );
 }

@@ -113,3 +113,31 @@ a {
 .dark .bg-amber-50 { background-color: #1f1a0f !important; }
 .dark .bg-sky-50\/30 { background-color: #0c1a2e !important; }
 .dark .bg-red-50\/30 { background-color: #1f1215 !important; }
+
+/* Cozoro founder / Trọng easter-egg — full-screen star burst (~5s) */
+@keyframes cozoro-star-twinkle {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+@keyframes cozoro-starfield-veil {
+  0% {
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  82% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}

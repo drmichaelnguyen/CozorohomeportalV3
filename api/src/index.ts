@@ -112,7 +112,8 @@ import {
   MAINTENANCE_FEEDBACK_COLUMN,
   logMicrowaveUse,
   getDuplicateActiveClients,
-  appendCheckoutSheetRow
+  appendCheckoutSheetRow,
+  awardVentHammerGameCoinsToSheet
 } from "./google-sheets.js";
 import {
   checkProspectReferralEligibility,
@@ -166,6 +167,7 @@ import {
 import { getShortTermConfig, updateShortTermConfig } from "./short-term-config.js";
 import { handleManagerAiChat, type AiChatMessage } from "./manager-ai-chat.js";
 import { handleResidentPortalAiChat, type ResidentPortalAiMessage } from "./resident-portal-ai-chat.js";
+import { getVentHammerRedeemToday, markVentHammerRedeemedToday } from "./vent-hammer-redeem-guard.js";
 import {
   managerGetDepositRefundPreview,
   managerSendDepositRefundEmail
@@ -190,7 +192,7 @@ import {
   type TermType
 } from "./pricing-config.js";
 import { createWriteStream } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
@@ -3085,6 +3087,93 @@ app.post("/resident/portal-ai-chat", async (request, response) => {
           ? 503
           : 400;
     return response.status(status).json({ error: msg });
+  }
+});
+
+app.post("/resident/vent-hammer-redeem", async (request, response) => {
+  const parsed = z
+    .object({
+      email: z.string().email(),
+      hits: z.number().int().min(0).max(55)
+    })
+    .safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid payload" });
+  }
+
+  const email = parsed.data.email.trim().toLowerCase();
+  try {
+    const login = await resolvePortalLogin(email);
+    if (!login.allowed || login.source !== "client" || login.role !== "user") {
+      return response.status(403).json({ error: "Only resident accounts can redeem vent-game coins." });
+    }
+
+    const prev = getVentHammerRedeemToday(email);
+    if (prev) {
+      return response.json({ ok: true, alreadyRedeemed: true, coinsCredited: prev.coins, hitsCounted: 0 });
+    }
+
+    const hitsCounted = Math.min(parsed.data.hits, 45);
+    const coins = hitsCounted * 10;
+    if (coins <= 0) {
+      return response.json({ ok: true, coinsCredited: 0, hitsCounted: 0, alreadyRedeemed: false });
+    }
+
+    const { currentCoins } = await awardVentHammerGameCoinsToSheet({
+      userEmail: email,
+      rewardCoins: coins
+    });
+    markVentHammerRedeemedToday(email, coins);
+    return response.json({
+      ok: true,
+      alreadyRedeemed: false,
+      coinsCredited: coins,
+      hitsCounted,
+      currentCoins
+    });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to award coins"
+    });
+  }
+});
+
+app.post("/resident/vent-hammer-feedback", async (request, response) => {
+  const parsed = z
+    .object({
+      email: z.string().email(),
+      satisfied: z.boolean(),
+      language: z.enum(["en", "vi"]).optional()
+    })
+    .safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid payload" });
+  }
+
+  try {
+    const login = await resolvePortalLogin(parsed.data.email.trim().toLowerCase());
+    if (!login.allowed || login.source !== "client" || login.role !== "user") {
+      return response.status(403).json({ error: "Forbidden" });
+    }
+
+    const dir = path.join(process.cwd(), "data", "vent-hammer-feedback");
+    const file = path.join(dir, `${new Date().toISOString().slice(0, 10)}.jsonl`);
+    const line =
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        email: parsed.data.email.trim().toLowerCase(),
+        satisfied: parsed.data.satisfied,
+        language: parsed.data.language ?? null
+      }) + "\n";
+    await mkdir(dir, { recursive: true });
+    await appendFile(file, line, "utf8");
+    return response.json({ ok: true });
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to save feedback"
+    });
   }
 });
 

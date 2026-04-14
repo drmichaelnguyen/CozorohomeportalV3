@@ -4264,6 +4264,49 @@ export async function awardCleaningCoinsToSheet(input: {
   }
 }
 
+/** One-off positive coin line from the resident Cozoro Bee vent-hammer easter egg. */
+export async function awardVentHammerGameCoinsToSheet(input: {
+  userEmail: string;
+  rewardCoins: number;
+}): Promise<{ currentCoins: number }> {
+  if (!Number.isFinite(input.rewardCoins) || input.rewardCoins <= 0) {
+    throw new Error("Vent game coin amount must be positive");
+  }
+  const normalizedEmail = input.userEmail.trim().toLowerCase();
+  const client = await getActiveClientByEmail(normalizedEmail);
+  if (!client) {
+    throw new Error("No active resident row for this email");
+  }
+  const currentCoins =
+    Number.parseInt(String(client[CLIENT_CURRENT_COINS_COLUMN] ?? "0").replace(/[^0-9-]/g, ""), 10) || 0;
+  const nextCoins = currentCoins + input.rewardCoins;
+  const recordedMember = client[COINS_MEMBER_COLUMN] ?? "";
+  const branchVal = normalizeClientBranch(client[CLIENT_BRANCH_COLUMN] ?? "").replace("D", "");
+
+  await appendCoinsSheetRow({
+    [COINS_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(new Date()),
+    [CONTRACT_CODE_COLUMN]: client[CONTRACT_CODE_COLUMN] ?? "",
+    ["Chi nhánh Cozoro dorm"]: branchVal,
+    [EMAIL_COLUMN]: normalizedEmail,
+    [CLIENT_NAME_COLUMN]: client[CLIENT_NAME_COLUMN] ?? "",
+    [CLIENT_BED_COLUMN]: client[CLIENT_BED_COLUMN] ?? "",
+    [COINS_BALANCE_COLUMN]: String(input.rewardCoins),
+    [COINS_EVENT_COLUMN]: "Cozoro Bee — trò vent búa (mini-game)",
+    [COINS_OPERATOR_COLUMN]: "Cozoro Bee",
+    [COINS_MEMBER_COLUMN]: recordedMember,
+    [COINS_CURRENT_BALANCE_COLUMN]: String(nextCoins),
+    [COINS_TRANSACTION_CODE_COLUMN]: `VentBee${Date.now()}${normalizedEmail.slice(0, 8)}`
+  });
+
+  if (client[CONTRACT_CODE_COLUMN]) {
+    await updateClientColumns(client[CONTRACT_CODE_COLUMN], {
+      [CLIENT_CURRENT_COINS_COLUMN]: String(nextCoins)
+    });
+  }
+
+  return { currentCoins: nextCoins };
+}
+
 async function appendPaymentSheetRow(entry: Record<string, string>) {
   if (!paymentsSpreadsheetId) {
     throw new Error("GOOGLE_PAYMENT_SPREADSHEET_ID is not configured");

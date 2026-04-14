@@ -854,6 +854,10 @@ const translations: Record<string, { en: string; vi: string }> = {
   approveGrantCoins: { en: "✓ Approve — grant +{count} coins", vi: "✓ Duyệt — tặng +{count} xu" },
   rejectForfeitCoins: { en: "✗ Reject — forfeit coins", vi: "✗ Từ chối — mất xu" },
   assignTaskLabel: { en: "Assign task", vi: "Giao việc" },
+  assignTaskPickByBedNote: {
+    en: "Pick residents by name and bed — email is not shown in this list.",
+    vi: "Chọn theo tên và giường — email không hiển thị trong danh sách này."
+  },
   suggestedUser: { en: "Suggested user", vi: "Người dùng gợi ý" },
   allEligibleUsers: { en: "All eligible users", vi: "Tất cả người dùng đủ điều kiện" },
   preferenceLabel: { en: "Preference", vi: "Ưu tiên" },
@@ -888,7 +892,10 @@ const translations: Record<string, { en: string; vi: string }> = {
   alreadyBookedLabel: { en: "already booked", vi: "đã được giao" },
   noUserSelected: { en: "No user selected.", vi: "Chưa chọn người dùng." },
   noneLabel: { en: "none", vi: "không có" },
-  userAlreadyHasTask: { en: "{email} already has task(s) on this date. You can still override this rule.", vi: "{email} đã có công việc vào ngày này. Bạn vẫn có thể ghi đè quy tắc này." },
+  userAlreadyHasTask: {
+    en: "{who} already has task(s) on this date. You can still override this rule.",
+    vi: "{who} đã có công việc vào ngày này. Bạn vẫn có thể ghi đè quy tắc này."
+  },
   bulkAutoAssignPrompt: { en: "Preview open future dates first, then submit the selected dates when the suggestions look good.", vi: "Xem trước các ngày còn trống, sau đó gửi các ngày đã chọn khi các gợi ý trông ổn." },
   suggestedLabel: { en: "Suggested", vi: "Gợi ý" },
   availabilityLabel: { en: "Availability", vi: "Khả dụng" },
@@ -1025,7 +1032,46 @@ const translations: Record<string, { en: string; vi: string }> = {
   managerAiViewSupportChat: { en: "Support Chat", vi: "Tin nhắn hỗ trợ" },
   managerAiViewAdminCleaning: { en: "Cleaning", vi: "Vệ sinh" },
   managerAiViewSettings: { en: "Settings", vi: "Cài đặt" },
-  managerAiViewController: { en: "Device Controller", vi: "Điều khiển thiết bị" }
+  managerAiViewController: { en: "Device Controller", vi: "Điều khiển thiết bị" },
+  accountNoonBeeFabTitle: {
+    en: "Noon surprise — tap for a tiny bee flight",
+    vi: "Bất ngờ buổi trưa — bấm để ong bay thử"
+  },
+  accountNoonBeeTitle: { en: "Noon buzz (12:00–12:10)", vi: "Tiếng ong buổi trưa (12:00–12:10)" },
+  accountNoonBeeTap: { en: "Tap or press Space to flap", vi: "Chạm hoặc bấm cách để vỗ cánh" },
+  accountNoonBeeGameOver: { en: "Nice try!", vi: "Cũng hay đó!" },
+  accountNoonBeeScore: { en: "Score: {score}", vi: "Điểm: {score}" },
+  accountNoonBeeClose: { en: "Close", vi: "Đóng" },
+  ventHammerTitle: { en: "Vent hammer (30s)", vi: "Đập búa xả stress (30s)" },
+  ventHammerSubtitle: {
+    en: "Tap the floating photo — 10 coins per hit (credited after the round).",
+    vi: "Chạm vào ảnh bay loạn — mỗi lần trúng +10 coin (cộng sau khi hết giờ)."
+  },
+  ventHammerClose: { en: "Close", vi: "Đóng" },
+  ventHammerTime: { en: "Time {s}s", vi: "Còn {s}s" },
+  ventHammerHits: { en: "Hits {n}", vi: "Trúng {n}" },
+  ventHammerHint: {
+    en: "That’s Mr. Trong’s avatar — all in good fun. Click / tap to swing the hammer.",
+    vi: "Đó là ảnh đại diện anh Trọng — chỉ để vui thôi. Bấm / chạm để vung búa."
+  },
+  ventHammerCrediting: { en: "Crediting your coins…", vi: "Đang cộng coin…" },
+  ventHammerRoundDone: { en: "Round finished!", vi: "Hết giờ!" },
+  ventHammerCoinsLine: { en: "Coins added: {c}", vi: "Đã cộng: {c} coin" },
+  ventHammerAvatarNote: {
+    en: "This is my founder avatar in the game — thanks for playing fair.",
+    vi: "Đây là ảnh đại diện founder trong trò chơi — cảm ơn bạn đã chơi vui vẻ."
+  },
+  ventHammerSatisfactionAsk: {
+    en: "Did that help you feel a little better?",
+    vi: "Bạn có thấy đỡ bực hơn một chút không?"
+  },
+  ventHammerSatYes: { en: "Yes, thanks", vi: "Có, cảm ơn" },
+  ventHammerSatNo: { en: "Not really", vi: "Chưa lắm" },
+  ventHammerRedeemFail: { en: "Could not credit coins right now.", vi: "Hiện chưa cộng coin được." },
+  ventHammerAlreadyRedeemed: {
+    en: "You already collected today’s vent-game coins — here’s what was credited earlier.",
+    vi: "Bạn đã nhận coin trò vent hôm nay rồi — đây là số đã cộng trước đó."
+  }
 };
 
 const PortalLanguageContext = createContext<PortalLanguageContextValue | null>(null);

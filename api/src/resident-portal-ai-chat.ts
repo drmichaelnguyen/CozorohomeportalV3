@@ -9,6 +9,12 @@ import { CleaningAvailabilityType } from "@prisma/client";
 
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
 import { appendAiTrainingExchange } from "./ai-training-log.js";
+import { tryFounderEasterEggReply } from "./cozoro-founder-easter-egg.js";
+import {
+  tryVentHammerConsentReply,
+  tryVentHammerHateReply,
+  tryVentHammerPendingRefusalReply
+} from "./cozoro-vent-hammer-easter-egg.js";
 
 import { calculateRentBreakdown, computePrepaidNextPaymentEstimate } from "./calculation-engine.js";
 import { getCleaningOverviewForUser } from "./cleaning.js";
@@ -446,13 +452,75 @@ export async function handleResidentPortalAiChat(
   residentEmail: string,
   history: ResidentPortalAiMessage[],
   options?: { language?: UiLanguage }
-): Promise<{ reply: string }> {
+): Promise<{
+  reply: string;
+  showStarfieldEffect?: true;
+  ventGameOfferPending?: true;
+  startVentHammerGame?: true;
+}> {
   if (process.env.RESIDENT_PORTAL_AI_DISABLED === "1") {
     throw new Error("Cozoro Bee is temporarily disabled.");
   }
 
   await assertEligibleForResidentPortalAi(residentEmail);
   const language: UiLanguage = options?.language === "vi" ? "vi" : "en";
+  const lastUserEgg = [...history].reverse().find((m) => m.role === "user");
+  const founderEgg = tryFounderEasterEggReply(lastUserEgg?.text ?? "", language);
+  if (founderEgg) {
+    const normalizedEmail = residentEmail.trim().toLowerCase();
+    void appendAiTrainingExchange({
+      channel: "resident_portal",
+      identifier: normalizedEmail,
+      language,
+      userText: lastUserEgg?.text ?? "",
+      modelText: founderEgg.reply,
+      meta: { founderEasterEgg: true }
+    });
+    return { reply: founderEgg.reply, showStarfieldEffect: founderEgg.showStarfieldEffect };
+  }
+
+  const normalizedEmailEarly = residentEmail.trim().toLowerCase();
+  const lastUserText = lastUserEgg?.text ?? "";
+
+  const ventRefusal = tryVentHammerPendingRefusalReply(normalizedEmailEarly, lastUserText, language);
+  if (ventRefusal) {
+    void appendAiTrainingExchange({
+      channel: "resident_portal",
+      identifier: normalizedEmailEarly,
+      language,
+      userText: lastUserText,
+      modelText: ventRefusal.reply,
+      meta: { ventHammerRefusal: true }
+    });
+    return { reply: ventRefusal.reply };
+  }
+
+  const ventConsent = tryVentHammerConsentReply(normalizedEmailEarly, lastUserText, language);
+  if (ventConsent) {
+    void appendAiTrainingExchange({
+      channel: "resident_portal",
+      identifier: normalizedEmailEarly,
+      language,
+      userText: lastUserText,
+      modelText: ventConsent.reply,
+      meta: { ventHammerStart: true }
+    });
+    return { reply: ventConsent.reply, startVentHammerGame: ventConsent.startVentHammerGame };
+  }
+
+  const ventHate = tryVentHammerHateReply(lastUserText, language, normalizedEmailEarly);
+  if (ventHate) {
+    void appendAiTrainingExchange({
+      channel: "resident_portal",
+      identifier: normalizedEmailEarly,
+      language,
+      userText: lastUserText,
+      modelText: ventHate.reply,
+      meta: { ventHammerOffer: true }
+    });
+    return { reply: ventHate.reply, ventGameOfferPending: ventHate.ventGameOfferPending };
+  }
+
   const systemPrompt = buildSystemPrompt(language, residentEmail.trim().toLowerCase());
 
   const limitedHistory = history.slice(-AI_CHAT_CONTEXT_MESSAGE_LIMIT);

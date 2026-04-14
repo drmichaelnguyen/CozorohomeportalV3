@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
+import { CozoroStarfieldBurst } from "./cozoro-starfield-burst";
 
 type Message = {
   role: "user" | "model";
@@ -134,6 +135,7 @@ function ChatBody({
   const [messages, setMessages] = useState<Message[]>(() => loadStoredMessages(operatorEmail, language));
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [starfieldBurstKey, setStarfieldBurstKey] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -175,7 +177,12 @@ function ChatBody({
         })
       });
 
-      const data = await res.json() as { reply?: string; navigateTo?: string; error?: string };
+      const data = await res.json() as {
+        reply?: string;
+        navigateTo?: string;
+        error?: string;
+        showStarfieldEffect?: true;
+      };
 
       if (!res.ok || data.error) {
         const errMessages = [...nextMessages, { role: "model" as const, text: data.error ?? t("errorSomethingWrong") }];
@@ -190,6 +197,10 @@ function ChatBody({
       };
       const withReply = [...nextMessages, modelMsg];
       updateMessages(withReply);
+
+      if (data.showStarfieldEffect) {
+        setStarfieldBurstKey((k) => k + 1);
+      }
 
       if (data.navigateTo && onNavigate) {
         onNavigate(data.navigateTo);
@@ -216,6 +227,7 @@ function ChatBody({
 
   return (
     <>
+      <CozoroStarfieldBurst burstKey={starfieldBurstKey} />
       {/* Header bar */}
       <div className="flex items-center justify-between border-b border-slate-100 bg-sky-600 px-4 py-3 text-white rounded-t-2xl">
         <div className="flex items-center gap-2">

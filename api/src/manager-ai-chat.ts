@@ -11,6 +11,7 @@
 
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
 import { appendAiTrainingExchange } from "./ai-training-log.js";
+import { tryFounderEasterEggReply } from "./cozoro-founder-easter-egg.js";
 import { getManagerClients, getManagerInactiveClients } from "./google-sheets.js";
 import { requirePortalRole } from "./staff-access.js";
 
@@ -402,10 +403,24 @@ export async function handleManagerAiChat(
   operatorEmail: string,
   history: AiChatMessage[],
   options?: { language?: UiLanguage }
-): Promise<{ reply: string; navigateTo?: string }> {
+): Promise<{ reply: string; navigateTo?: string; showStarfieldEffect?: true }> {
   await requirePortalRole(operatorEmail, ["manager", "owner", "app_admin"], "Only managers can use the AI assistant.");
 
   const language: UiLanguage = options?.language === "vi" ? "vi" : "en";
+  const lastUserEgg = [...history].reverse().find((m) => m.role === "user");
+  const founderEgg = tryFounderEasterEggReply(lastUserEgg?.text ?? "", language);
+  if (founderEgg) {
+    void appendAiTrainingExchange({
+      channel: "manager",
+      identifier: operatorEmail,
+      language,
+      userText: lastUserEgg?.text ?? "",
+      modelText: founderEgg.reply,
+      meta: { founderEasterEgg: true }
+    });
+    return { reply: founderEgg.reply, showStarfieldEffect: founderEgg.showStarfieldEffect };
+  }
+
   const clients = await buildClientContext();
   const systemPrompt = buildSystemPrompt(clients, language);
 

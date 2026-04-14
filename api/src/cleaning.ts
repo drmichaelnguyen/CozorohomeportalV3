@@ -60,6 +60,8 @@ type ContractCleaningOptOutSummary = {
 type CleaningAvailableUser = {
   email: string;
   name: string;
+  /** Branch, bed #, room zone, floor — for manager UI without exposing email. */
+  bedDisplay: string;
   branchId: "D2" | "D7";
   floor: number | null;
   availabilityType: CleaningAvailabilityType | null;
@@ -391,6 +393,46 @@ function inferFloorFromBed(bedValue: string) {
     return 2;
   }
   return 3;
+}
+
+function parseBedNumberForLabel(value: string | undefined) {
+  const parsed = Number.parseInt((value ?? "").replace(/[^0-9]/g, ""), 10);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+/** Room / zone label from bed index (same rules as group-support). */
+function deriveRoomLabelFromBed(branchId: "D2" | "D7", bedValue: string | undefined) {
+  const bed = parseBedNumberForLabel(bedValue);
+  if (!bed || bed <= 0) {
+    return "";
+  }
+
+  if (branchId === "D2") {
+    if (bed >= 1 && bed <= 9) return "1";
+    if (bed >= 10 && bed <= 15) return "2";
+    if (bed >= 16 && bed <= 21) return "3";
+    return "";
+  }
+
+  if (bed >= 1 && bed <= 9) return "1.1";
+  if (bed >= 10 && bed <= 15) return "1.2";
+  if (bed >= 16 && bed <= 24) return "1.3";
+  if (bed >= 25 && bed <= 33) return "2.1";
+  if (bed >= 34 && bed <= 39) return "2.2";
+  if (bed >= 40 && bed <= 48) return "2.3";
+  if (bed >= 49 && bed <= 57) return "3.1";
+  if (bed >= 58 && bed <= 63) return "3.2";
+  return "";
+}
+
+/** Compact bed line for manager admin cleaning pickers (no email). */
+function formatCleaningUserBedLine(user: ActiveCleaningUser): string {
+  const bedRaw = (user.source["số giường"] ?? "").trim();
+  const bedPart = bedRaw ? `Bed ${bedRaw}` : "Bed —";
+  const room = deriveRoomLabelFromBed(user.branchId, user.source["số giường"]);
+  const roomPart = room ? `Rm ${room}` : "";
+  const floorPart = user.floor != null ? `Fl ${user.floor}` : "";
+  return [user.branchId, bedPart, roomPart, floorPart].filter(Boolean).join(" · ");
 }
 
 function normalizeCalendarDate(value: Date | string) {
@@ -2008,6 +2050,7 @@ export async function getAvailableUsersForAdminSlot(input: {
     candidates.push({
       email: user.email,
       name: user.name,
+      bedDisplay: formatCleaningUserBedLine(user),
       branchId: user.branchId,
       floor: user.floor,
       availabilityType,

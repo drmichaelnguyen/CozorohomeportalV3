@@ -40,6 +40,8 @@ type AdminCalendar = {
 type AdminAvailableUser = {
   email: string;
   name: string;
+  /** Branch · bed · room · floor — from API; email not shown in assign UI. */
+  bedDisplay?: string;
   branchId: string;
   floor: number | null;
   availabilityType: "AVAILABLE" | "UNAVAILABLE" | "PREFERRED" | null;
@@ -52,6 +54,11 @@ type AdminAvailableUser = {
     scheduledDate: string;
   }>;
 };
+
+function assignUserPickerLabel(user: AdminAvailableUser, t: (key: string, fallback?: string, params?: Record<string, string>) => string) {
+  const bed = user.bedDisplay?.trim() || user.branchId;
+  return `${user.name} — ${bed} | ${t("tasksCount", "tasks {count}", { count: String(user.totalTaskCount) })}`;
+}
 
 type AutoAssignPreview = {
   date: string;
@@ -1023,6 +1030,7 @@ export function AdminCleaningClient() {
 
               <div>
                 <h3 className="text-sm font-semibold text-slate-900">{t("assignTaskLabel")}</h3>
+                <p className="mt-1 text-xs text-slate-500">{t("assignTaskPickByBedNote")}</p>
                 {availableUsers.length === 0 ? (
                   <p className="mt-2 text-sm text-slate-600">
                     {t("findBestUserPrompt", "Click <span className=\"font-medium\">Find best user</span> to load recommended users for this date.")}
@@ -1041,7 +1049,7 @@ export function AdminCleaningClient() {
                       >
                         {availableUsers.map((user) => (
                           <option key={user.email} value={user.email}>
-                            {user.name} ({user.email}) | {t("tasksCount", "tasks {count}", { count: user.totalTaskCount })}
+                            {assignUserPickerLabel(user, t)}
                             {user.availabilityType === "UNAVAILABLE" ? ` | ${t("unavailableLabel", "UNAVAILABLE")}` : user.availabilityType === "PREFERRED" ? ` | ${t("preferredLabel", "preferred")}` : ""}
                             {user.hasSameDayTask ? ` | ${t("alreadyBookedLabel", "already booked")}` : ""}
                           </option>
@@ -1060,6 +1068,9 @@ export function AdminCleaningClient() {
                           return (
                             <>
                               <div className="font-medium text-slate-900">{selectedUser.name}</div>
+                              <div className="text-sm font-semibold text-sky-800">
+                                {selectedUser.bedDisplay?.trim() || selectedUser.branchId}
+                              </div>
                               <div>
                                 {t("preferenceLabel")}: {selectedUser.availabilityType ?? t("noneLabel", "none")} | {t("availabilityScore")}: {selectedUser.availabilityCount}
                               </div>
@@ -1100,7 +1111,12 @@ export function AdminCleaningClient() {
                       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                         <div className="font-medium">{t("adminWarning")}</div>
                         <div className="mt-1">
-                          {t("userAlreadyHasTask", "{email} already has task(s) on this date. You can still override this rule.", { email: pendingConflict.email })}
+                          {t("userAlreadyHasTask", undefined, {
+                            who: (() => {
+                              const u = availableUsers.find((x) => x.email === pendingConflict.email);
+                              return u ? `${u.name} — ${u.bedDisplay?.trim() || u.branchId}` : pendingConflict.email;
+                            })()
+                          })}
                         </div>
                         <div className="mt-2 space-y-1">
                           {pendingConflict.conflicts.map((conflict) => (
@@ -1144,7 +1160,7 @@ export function AdminCleaningClient() {
                           {entry.user ? (
                             <>
                               <div>
-                                {t("suggestedLabel", "Suggested")}: {entry.user.name} ({entry.user.email})
+                                {t("suggestedLabel", "Suggested")}: {entry.user.name} — {entry.user.bedDisplay?.trim() || entry.user.branchId}
                               </div>
                               <div>
                                 {t("availabilityLabel", "Availability")}: {entry.user.availabilityType ?? t("noneLabel", "none")} | {t("availabilityScore")}: {entry.user.availabilityCount} | {t("totalTasksLabel")}: {entry.user.totalTaskCount}
