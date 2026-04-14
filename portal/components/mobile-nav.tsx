@@ -391,8 +391,8 @@ export function MobileNav() {
   const navItems = isMechanicWorkspace ? mechanicItems : isManagerWorkspace ? managerItems : residentItems;
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 flex flex-col items-center justify-center border-t border-white/20 dark:border-white/10 bg-white/70 dark:bg-slate-900/80 px-4 py-3 backdrop-blur-lg sm:bottom-6 sm:border-none sm:bg-transparent sm:px-0 sm:py-0">
-      <div className="mx-auto flex w-full max-w-lg items-center justify-between sm:rounded-3xl sm:border sm:border-white/40 dark:sm:border-white/10 sm:bg-white/80 dark:sm:bg-slate-900/80 sm:p-2 sm:shadow-[0_8px_32px_rgba(0,0,0,0.1)] sm:backdrop-blur-xl">
+    <nav className="fixed bottom-0 left-0 right-0 z-50 flex flex-col items-center justify-center border-t border-slate-200/95 bg-white/95 px-4 py-3 shadow-[0_-6px_24px_rgba(15,23,42,0.07)] backdrop-blur-md dark:border-white/10 dark:bg-slate-900/85 dark:shadow-[0_-8px_28px_rgba(0,0,0,0.35)] sm:bottom-6 sm:border-none sm:bg-transparent sm:px-0 sm:py-0 sm:shadow-none dark:sm:shadow-none">
+      <div className="mx-auto flex w-full max-w-lg items-center justify-between sm:rounded-3xl sm:border sm:border-slate-200 sm:bg-white sm:p-2 sm:shadow-[0_8px_30px_rgba(15,23,42,0.1)] sm:backdrop-blur-xl dark:sm:border-white/10 dark:sm:bg-slate-900/85 dark:sm:shadow-[0_12px_40px_rgba(0,0,0,0.45)]">
         {navItems.map((item) => {
           let isActive = false;
 
@@ -418,14 +418,16 @@ export function MobileNav() {
               }}
               className={`group flex flex-col items-center gap-1 transition-all duration-300 ${
                 isDisabled ? "opacity-30 cursor-not-allowed" :
-                isActive ? "scale-105 text-sky-600 dark:text-sky-400" : "text-slate-500 dark:text-slate-100 hover:text-slate-700 dark:hover:text-white"
+                isActive
+                  ? "scale-105 text-sky-600 dark:text-sky-400"
+                  : "text-slate-600 dark:text-slate-100 hover:text-slate-900 dark:hover:text-white"
               }`}
             >
               <div
                 className={`relative flex h-10 w-10 items-center justify-center rounded-xl transition-all duration-500 ${
                   isActive
                     ? "bg-gradient-to-br from-sky-500 to-blue-600 text-white shadow-[0_5px_12px_-3px_rgba(14,165,233,0.4)] ring-2 ring-sky-50 dark:ring-sky-500/30"
-                    : "bg-transparent group-hover:bg-slate-50 dark:group-hover:bg-white/10"
+                    : "bg-transparent group-hover:bg-slate-100 dark:group-hover:bg-white/10"
                 }`}
               >
                 <div className="scale-75">{item.icon}</div>
