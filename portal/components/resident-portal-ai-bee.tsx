@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 
@@ -115,6 +116,15 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, open]);
 
+  useEffect(() => {
+    if (!open || typeof document === "undefined") return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
   const updateMessages = useCallback(
     (next: Message[]) => {
       setMessages(next);
@@ -182,79 +192,93 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
         <CozoroBeeLogo className="h-7 w-7" />
       </button>
 
-      {open ? (
-        <div className="fixed inset-0 z-[120] flex min-h-0 flex-col bg-white">
-          <header className="flex shrink-0 items-center justify-between gap-2 border-b border-amber-200 bg-amber-50 px-4 py-3">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-amber-400 bg-amber-50 p-0.5">
-                <CozoroBeeLogo className="h-9 w-9" />
-              </span>
-              <div className="min-w-0">
-                <h2 className="truncate text-sm font-bold text-amber-950">{t("residentAiTitle")}</h2>
-                <p className="truncate text-[10px] font-medium text-amber-900/80">{t("residentAiSubtitle")}</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              className="rounded-full px-3 py-1.5 text-xs font-semibold text-amber-950 hover:bg-amber-200/80"
+      {open && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[200] flex h-[100dvh] max-h-[100dvh] w-full flex-col overflow-hidden bg-white pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] dark:bg-slate-950"
+              role="dialog"
+              aria-modal="true"
+              aria-label={t("residentAiBeeTitle")}
             >
-              {t("close")}
-            </button>
-          </header>
-
-          <main className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4">
-            {messages.map((m, i) => (
-              <div key={`${i}-${m.text.slice(0, 24)}`} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div
-                  className={`max-w-[90%] rounded-2xl px-3 py-2 text-sm shadow-sm ${
-                    m.role === "user" ? "bg-slate-900 text-white rounded-tr-sm" : "border border-amber-200 bg-white text-slate-800 rounded-tl-sm"
-                  }`}
+              <header className="flex shrink-0 items-center justify-between gap-2 border-b border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-950/90">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-amber-400 bg-amber-50 p-0.5 dark:border-amber-600 dark:bg-amber-900/60">
+                    <CozoroBeeLogo className="h-9 w-9" />
+                  </span>
+                  <div className="min-w-0">
+                    <h2 className="truncate text-sm font-bold text-amber-950 dark:text-amber-100">{t("residentAiTitle")}</h2>
+                    <p className="truncate text-[10px] font-medium text-amber-900/80 dark:text-amber-200/80">{t("residentAiSubtitle")}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="rounded-full px-3 py-1.5 text-xs font-semibold text-amber-950 hover:bg-amber-200/80 dark:text-amber-100 dark:hover:bg-amber-800/80"
                 >
-                  <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
-                </div>
-              </div>
-            ))}
-            {loading ? (
-              <div className="flex justify-start">
-                <div className="flex items-center gap-2 rounded-2xl border border-amber-200 bg-white px-3 py-2 text-xs text-slate-500">
-                  <CozoroBeeLogo className="h-5 w-5 animate-pulse" />
-                  <span>…</span>
-                </div>
-              </div>
-            ) : null}
-            <div ref={bottomRef} />
-          </main>
+                  {t("close")}
+                </button>
+              </header>
 
-          {errorBanner ? <p className="shrink-0 bg-rose-50 px-4 py-2 text-center text-xs font-medium text-rose-700">{errorBanner}</p> : null}
+              <main className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain bg-slate-50 p-4 dark:bg-slate-900">
+                {messages.map((m, i) => (
+                  <div key={`${i}-${m.text.slice(0, 24)}`} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                    <div
+                      className={`max-w-[min(90%,36rem)] rounded-2xl px-3 py-2 text-sm shadow-sm ${
+                        m.role === "user"
+                          ? "bg-slate-900 text-white rounded-tr-sm dark:bg-amber-400 dark:text-amber-950"
+                          : "border border-amber-200 bg-white text-slate-800 rounded-tl-sm dark:border-amber-700/60 dark:bg-slate-800 dark:text-slate-100"
+                      }`}
+                    >
+                      <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
+                    </div>
+                  </div>
+                ))}
+                {loading ? (
+                  <div className="flex justify-start">
+                    <div className="flex items-center gap-2 rounded-2xl border border-amber-200 bg-white px-3 py-2 text-xs text-slate-500 dark:border-amber-700/60 dark:bg-slate-800 dark:text-slate-400">
+                      <CozoroBeeLogo className="h-5 w-5 animate-pulse" />
+                      <span>…</span>
+                    </div>
+                  </div>
+                ) : null}
+                <div ref={bottomRef} className="h-px shrink-0" aria-hidden />
+              </main>
 
-          <footer className="shrink-0 border-t border-slate-200 bg-white p-3">
-            <form
-              className="flex items-end gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void sendMessage();
-              }}
-            >
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder={t("residentAiPlaceholder")}
-                rows={2}
-                disabled={loading}
-                className="min-h-[44px] flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-300 disabled:opacity-50"
-              />
-              <button
-                type="submit"
-                disabled={loading || !input.trim()}
-                className="shrink-0 rounded-full bg-amber-500 px-4 py-2 text-xs font-bold text-amber-950 shadow disabled:opacity-40"
-              >
-                {t("send")}
-              </button>
-            </form>
-          </footer>
-        </div>
-      ) : null}
+              {errorBanner ? (
+                <p className="shrink-0 bg-rose-50 px-4 py-2 text-center text-xs font-medium text-rose-700 dark:bg-rose-950/80 dark:text-rose-200">
+                  {errorBanner}
+                </p>
+              ) : null}
+
+              <footer className="shrink-0 border-t border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-950">
+                <form
+                  className="flex items-end gap-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void sendMessage();
+                  }}
+                >
+                  <textarea
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    placeholder={t("residentAiPlaceholder")}
+                    rows={3}
+                    disabled={loading}
+                    className="min-h-[52px] max-h-40 flex-1 resize-y rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-300 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-amber-500 dark:focus:ring-amber-600/40"
+                  />
+                  <button
+                    type="submit"
+                    disabled={loading || !input.trim()}
+                    className="shrink-0 rounded-full bg-amber-500 px-4 py-2.5 text-xs font-bold text-amber-950 shadow disabled:opacity-40 dark:bg-amber-400 dark:text-amber-950"
+                  >
+                    {t("send")}
+                  </button>
+                </form>
+              </footer>
+            </div>,
+            document.body
+          )
+        : null}
     </>
   );
 }
