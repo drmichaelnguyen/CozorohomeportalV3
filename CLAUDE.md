@@ -26,6 +26,8 @@ Starts API (:4000), portal (:3000), and Cloudflare tunnel in separate windows.
 - Public URL: https://app.cozorohome.com
 - API URL: https://api.cozorohome.com
 
+**Mac public host:** use `corepack pnpm host:*` from the repo root on `main`, or double‑click **`manage-server.command`** (menu: status, backup/restore, pull‑deploy, kill ports **3000/4000**). Finder permission / `xattr` / one‑liner details: **`docs/mac-hosting.md`** § *manage-server.command*.
+
 ### Start dev
 ```bash
 bash start-sandbox.sh

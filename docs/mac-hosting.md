@@ -49,6 +49,37 @@ To stop the managed processes:
 corepack pnpm host:stop
 ```
 
+## `manage-server.command` (repo root)
+
+The repo includes **`manage-server.command`** at the project root: a Terminal menu for status, **full backup** (into **`backup/`** inside the repo), **restore** from a `backup/cozorohome-full-backup-*.tar.gz` archive, **git pull** on `main`, **`pnpm host:pull-deploy`**, and freeing stuck ports.
+
+### If Finder says you don’t have permission / can’t open the file
+
+1. Open **Terminal**, `cd` to the repo root, then run once:
+   ```bash
+   chmod u+x manage-server.command && xattr -cr manage-server.command
+   ```
+2. Or **Right‑click** `manage-server.command` → **Open** → **Open** (first launch only).
+3. Then double‑click the file again, or run `./manage-server.command`.
+
+The script also tries `chmod u+x` and `xattr -cr` on itself when it starts (may not be enough until Gatekeeper has been cleared once).
+
+### Free portal + API ports (3000 / 4000 defaults)
+
+From the menu, choose **`10`** — it kills whatever is **listening** on the **portal** and **API** ports read from `portal/.env.local` and `api/.env` (`PORT=`), then runs **`pnpm host:stop`**.
+
+Default ports are **3000** (portal) and **4000** (API). One‑liner equivalent (only those two ports):
+
+```bash
+for p in 3000 4000; do for pid in $(lsof -nP -iTCP:$p -sTCP:LISTEN -t 2>/dev/null); do kill -9 "$pid"; done; done
+```
+
+If your env uses different `PORT` values, use menu **10** so it reads the correct ports, or adjust the loop.
+
+### Backups live under `backup/`
+
+Full backups go to **`./backup/`** (contents are gitignored; see **`backup/.gitignore`**). Before deploy, `host:pull-deploy` runs **`scripts/ensure-backup-dir.mjs`** so the folder exists.
+
 ## What The Host Commands Do
 
 ### `host:doctor`

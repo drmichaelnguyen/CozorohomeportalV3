@@ -57,6 +57,8 @@ corepack pnpm host:build
 corepack pnpm host:start
 ```
 
+Optional GUI menu (same machine): double‑click **`manage-server.command`** in the repo root (see **`docs/mac-hosting.md`** for Finder permissions, port‑kill, backup, restore, and pull‑deploy).
+
 Important: copy the env/credential files, but do not trust copied `node_modules`, `portal/.next`, or `dist` folders from Windows. Rebuild them on the Mac.
 
 To create a transfer zip from this Windows machine that already includes the runtime files, Cloudflare tunnel assets, and a MySQL dump for the Mac handoff:
