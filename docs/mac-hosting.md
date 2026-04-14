@@ -53,6 +53,8 @@ corepack pnpm host:stop
 
 The repo includes **`manage-server.command`** at the project root: a Terminal menu for status, **full backup** (into **`backup/`** inside the repo), **restore** from a `backup/cozorohome-full-backup-*.tar.gz` archive, **git pull** on `main`, **`pnpm host:pull-deploy`**, and freeing stuck ports.
 
+**Menu 8 (pull + deploy):** if Git reports a dirty tree, the script asks for **`1`**, **`2`**, or **`0`** and runs `git checkout -- .` or `git stash push -u` for you. Typing `a`/`b` at a “Press Enter” line does not run those commands — use the number prompt. Option **`1`** restores deleted tracked files (for example `backup.ps1`) from the current branch.
+
 ### If Finder says you don’t have permission / can’t open the file
 
 1. Open **Terminal**, `cd` to the repo root, then run once:

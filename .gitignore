@@ -1,5 +1,6 @@
 # Portable Node installer zip sometimes dropped in repo root — do not commit.
 node-v*-win-x64.zip
+.DS_Store
 
 node_modules
 .next

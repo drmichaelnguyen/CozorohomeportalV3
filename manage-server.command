@@ -234,13 +234,39 @@ do_kill_ports() {
 do_pull_deploy() {
   echo "--- Git pull (main) + full deploy ---"
   if ! git diff-index --quiet HEAD -- 2>/dev/null; then
-    echo "Working tree is dirty (example: modified scripts, or line-ending churn). First lines of git status:"
+    echo "Working tree is dirty. Git status (first 20 lines):"
     git status --short | head -20 || true
     echo ""
-    echo "Fix then re-run option 8:"
-    echo "  a) Discard ALL local changes to tracked files:  git checkout -- ."
-    echo "  b) Stash everything:  git stash push -u -m \"pre-pull\""
-    return 0
+    echo "Choose an action (typing a/b at the blank line does NOT run commands — pick a number):"
+    echo "  1) Discard local changes to ALL tracked files:  git checkout -- ."
+    echo "     (restores deleted files like backup.ps1; resets manage-server.command to match git)"
+    echo "  2) Stash tracked + untracked:  git stash push -u -m \"pre-pull\""
+    echo "  0) Cancel pull/deploy"
+    echo -n "Enter 1, 2, or 0: "
+    read -r pullfix
+    case "$pullfix" in
+      1)
+        git checkout -- .
+        rm -f .DS_Store 2>/dev/null || true
+        ;;
+      2)
+        git stash push -u -m "pre-pull-$(date +%Y%m%d-%H%M)" || true
+        ;;
+      0)
+        echo "Cancelled."
+        return 0
+        ;;
+      *)
+        echo "Cancelled (use 1, 2, or 0)."
+        return 0
+        ;;
+    esac
+    if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+      echo "Tree is still not clean. Full status:"
+      git status --short | head -30 || true
+      echo "Try: git stash push -u   or fix files above, then run option 8 again."
+      return 0
+    fi
   fi
   git pull --ff-only origin main
   corepack pnpm host:pull-deploy
@@ -256,7 +282,7 @@ while true; do
   echo "  5) Restart     (pnpm host:restart)"
   echo "  6) Full backup (ensure backup/ + backup-full-state)"
   echo "  7) RESTORE from backup/cozorohome-full-backup-*.tar.gz (destructive)"
-  echo "  8) Git pull main + deploy (pnpm host:pull-deploy)"
+  echo "  8) Git pull main + deploy (offers cleanup if git tree is dirty)"
   echo "  9) Git pull main only (no build)"
   echo " 10) Kill listeners on :$portal_port :$api_port :$bot_port :$guest_port (then host:stop)"
   echo "  0) Exit"
