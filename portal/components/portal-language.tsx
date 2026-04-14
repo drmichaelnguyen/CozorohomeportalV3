@@ -945,6 +945,10 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "Ask Cozoro Bee about laundry, cleaning, rent, coins…",
     vi: "Hỏi Cozoro Bee về giặt sấy, vệ sinh, tiền thuê, coins…"
   },
+  residentAiNonJsonResponse: {
+    en: "The app could not read the server reply (not valid JSON). Check that the API is running and portal API URL is correct (e.g. http://localhost:4000).",
+    vi: "Ứng dụng không đọc được phản hồi từ máy chủ (không phải JSON hợp lệ). Hãy kiểm tra API đang chạy và địa chỉ API trên portal đúng (ví dụ http://localhost:4000)."
+  },
   laundryTitle: { en: "Laundry", vi: "Giặt sấy" },
   machinesLabel: { en: "Machines", vi: "Máy móc" },
   kitchenTitle: { en: "Common Area — Kitchen", vi: "Khu vực chung — Bếp" },

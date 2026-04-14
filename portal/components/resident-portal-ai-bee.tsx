@@ -16,14 +16,33 @@ function storageKey(email: string) {
 }
 
 function loadStored(email: string): Message[] {
+  const key = storageKey(email);
   try {
-    const raw = localStorage.getItem(storageKey(email));
+    const raw = localStorage.getItem(key);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as Message[];
     if (!Array.isArray(parsed)) return [];
     return parsed.filter((m) => (m.role === "user" || m.role === "model") && typeof m.text === "string");
   } catch {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // ignore
+    }
     return [];
+  }
+}
+
+async function parseJsonResponse(res: Response): Promise<{ ok: true; data: unknown } | { ok: false }> {
+  const text = await res.text();
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return { ok: false };
+  }
+  try {
+    return { ok: true, data: JSON.parse(trimmed) as unknown };
+  } catch {
+    return { ok: false };
   }
 }
 
@@ -125,16 +144,23 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
           history: contextWindow.map((m) => ({ role: m.role, text: m.text }))
         })
       });
-      const data = (await res.json()) as { reply?: string; error?: string };
+      const parsedBody = await parseJsonResponse(res);
+      if (!parsedBody.ok) {
+        const hint = t("residentAiNonJsonResponse");
+        setErrorBanner(hint);
+        updateMessages([...base, { role: "model", text: hint }]);
+        return;
+      }
+      const data = parsedBody.data as { reply?: string; error?: string };
       if (!res.ok || data.error) {
-        setErrorBanner(data.error ?? t("errorSomethingWrong", "Something went wrong."));
-        updateMessages([...base, { role: "model", text: data.error ?? t("errorSomethingWrong", "Something went wrong.") }]);
+        setErrorBanner(data.error ?? t("errorSomethingWrong"));
+        updateMessages([...base, { role: "model", text: data.error ?? t("errorSomethingWrong") }]);
         return;
       }
       const reply = (data.reply ?? "").trim() || "…";
       updateMessages([...base, { role: "model", text: reply }]);
     } catch {
-      const msg = t("errorSomethingWrong", "Something went wrong.");
+      const msg = t("errorSomethingWrong");
       setErrorBanner(msg);
       updateMessages([...base, { role: "model", text: msg }]);
     } finally {
