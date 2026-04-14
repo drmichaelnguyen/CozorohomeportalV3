@@ -409,6 +409,12 @@ async function runDeploy() {
 }
 
 async function runBuild() {
+  console.log("Ensuring backup/ exists (local deploy backups; gitignored contents)...");
+  await runCommand(process.execPath, [path.join(repoRoot, "scripts", "ensure-backup-dir.mjs")], {
+    cwd: repoRoot,
+    stdio: "inherit"
+  });
+
   console.log("Cleaning copied dependencies and build output...");
   removePath("node_modules");
   removePath("api/node_modules");

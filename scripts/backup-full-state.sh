@@ -33,8 +33,19 @@ if [[ ! -d "$ROOT/api" ]]; then
   exit 1
 fi
 
-STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="$ROOT/backup"
+mkdir -p "$BACKUP_DIR"
+if [[ ! -f "$BACKUP_DIR/.gitignore" ]]; then
+  cat > "$BACKUP_DIR/.gitignore" <<'EOF'
+# Generated artifacts (timestamped dirs + .tar.gz). Do not commit.
+# Tracked in git as this file only; contents stay local.
+*
+!.gitignore
+EOF
+  echo "[backup-full] Created $BACKUP_DIR/.gitignore"
+fi
+
+STAMP="$(date +%Y%m%d-%H%M%S)"
 DEST="$BACKUP_DIR/cozorohome-full-backup-${STAMP}"
 
 mkdir -p "$DEST"
