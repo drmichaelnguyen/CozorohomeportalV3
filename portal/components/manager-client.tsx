@@ -883,14 +883,17 @@ function chatRoleLabel(role: ClientChatMessage["senderRole"]) {
   return "Resident";
 }
 
-const DEFAULT_MANAGER_CLIENT_PANEL_SECTIONS = {
+const DEFAULT_MANAGER_CLIENT_PANEL_SECTIONS: Record<
+  "overview" | "paymentPlan" | "duplicates" | "stayStatus" | "contractTermination" | "billing",
+  boolean
+> = {
   overview: true,
   paymentPlan: false,
   duplicates: false,
   stayStatus: false,
   contractTermination: false,
   billing: false
-} as const;
+};
 
 function ManagerClientPanelCollapsible({
   title,
@@ -6458,7 +6461,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                         if (!statusColumnKey) {
                                           return <span className="text-xs text-slate-400">—</span>;
                                         }
-                                        const paid = entry.coinPayment?.isPaid === true;
+                                        const paid = (entry as FineEntry).coinPayment?.isPaid === true;
                                         const saving = finePaidSavingKey === key;
                                         const fineEmail = String(entry.row.EMAIL ?? selectedClient?.email ?? "").trim();
                                         const fineTs = String(entry.row["DẤU THỜI GIAN"] ?? entry.row["ĐẤU THỜI GIAN"] ?? "").trim();

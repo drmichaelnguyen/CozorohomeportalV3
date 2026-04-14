@@ -259,7 +259,7 @@ export function CheckoutFormClient() {
     );
   }
 
-  if (ctx.completed || done) {
+  if (done || ctx?.completed) {
     return (
       <div className="mx-auto max-w-md py-16 text-center">
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 text-3xl">✓</div>

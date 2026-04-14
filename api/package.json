@@ -1,13 +1,13 @@
-﻿{
+{
   "name": "cozorohome-api",
-  "version": "3.7.4",
+  "version": "3.7.5",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "prisma generate && tsc -p tsconfig.json",
+    "build": "pnpm run prisma:generate && tsc -p tsconfig.json",
     "start": "node dist/src/index.js",
-    "prisma:generate": "prisma generate",
+    "prisma:generate": "node ../scripts/verify-package-json.mjs && prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "tsx prisma/seed.ts"
   },

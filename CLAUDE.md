@@ -90,6 +90,8 @@ Named tunnel `cozorohome-portal` (ID: `ace69517-369e-44a3-9f00-3304bf2153df`)
 ```bash
 cd api && npx prisma generate
 ```
+- **`Unexpected token … JSON` when running Prisma:** often a **UTF-8 BOM** on `api/package.json` (common with OneDrive / some Windows editors). Run `node scripts/verify-package-json.mjs` from the repo root — it parses all workspace `package.json` files and **removes a BOM on disk** if present. `pnpm --filter cozorohome-api prisma:generate` runs this automatically before `prisma generate`.
+- **Windows `EPERM` renaming `query_engine-windows.dll.node`:** another process (usually a running **API** or `tsx watch`) has the Prisma engine file locked. Stop dev/production API on that machine, then rerun `prisma generate` or `pnpm --filter cozorohome-api build`.
 
 ### WSL / Linux note
 If `esbuild` fails with a platform mismatch (win32-x64 vs linux-x64), run:

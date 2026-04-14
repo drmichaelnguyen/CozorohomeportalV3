@@ -6,6 +6,8 @@ import {
   sanitizePrepaidBreakdownOverrides,
   type PrepaidBreakdownOverrides
 } from "./prepaid-breakdown-overrides.js";
+import { Prisma } from "@prisma/client";
+
 import { prisma } from "./prisma.js";
 import { requirePortalRole } from "./staff-access.js";
 import { clearResidentNotificationCacheForEmail } from "./support.js";
@@ -87,13 +89,20 @@ export async function managerUpsertPrepaidPackageBilling(input: {
     breakdownPatch = sanitizePrepaidBreakdownOverrides(input.breakdownOverrides);
   }
 
+  const breakdownForPrisma =
+    breakdownPatch === "__keep__"
+      ? undefined
+      : breakdownPatch === null
+        ? Prisma.DbNull
+        : (breakdownPatch as Prisma.InputJsonValue);
+
   const billing = await prisma.prepaidPackageBilling.upsert({
     where: { residentEmail_billingMonth: { residentEmail: email, billingMonth: input.billingMonth } },
     create: {
       residentEmail: email,
       billingMonth: input.billingMonth,
       calculatedSnapshot: snapshot,
-      ...(breakdownPatch !== "__keep__" ? { breakdownOverrides: breakdownPatch } : {}),
+      ...(breakdownPatch !== "__keep__" ? { breakdownOverrides: breakdownForPrisma } : {}),
       managerPackageTotalVnd: total,
       managerNote: input.managerNote?.trim() || null,
       confirmed: false,
@@ -102,7 +111,7 @@ export async function managerUpsertPrepaidPackageBilling(input: {
     },
     update: {
       calculatedSnapshot: snapshot,
-      ...(breakdownPatch !== "__keep__" ? { breakdownOverrides: breakdownPatch } : {}),
+      ...(breakdownPatch !== "__keep__" ? { breakdownOverrides: breakdownForPrisma } : {}),
       managerPackageTotalVnd: total,
       managerNote: input.managerNote?.trim() || null,
       confirmed: false,

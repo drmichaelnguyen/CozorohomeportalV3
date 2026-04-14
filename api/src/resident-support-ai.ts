@@ -66,7 +66,7 @@ function sanitizeOther(raw: unknown) {
 
 function compressThreadForGemini(
   rows: Array<{ senderRole: SupportMessageSenderRole; senderName: string | null; body: string }>
-) {
+): GeminiContent[] {
   const recent = rows.slice(-AI_CHAT_CONTEXT_MESSAGE_LIMIT);
   const chunks: { role: "user" | "model"; text: string }[] = [];
   for (const m of recent) {
@@ -85,7 +85,7 @@ function compressThreadForGemini(
       chunks.push({ role, text });
     }
   }
-  return chunks.map((c) => ({ role: c.role, parts: [{ text: c.text }] }));
+  return chunks.map((c) => ({ role: c.role, parts: [{ text: c.text }] })) as GeminiContent[];
 }
 
 function buildResidentContextBlock(email: string, client: Record<string, string> | null) {

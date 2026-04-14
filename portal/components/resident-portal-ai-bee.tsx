@@ -127,8 +127,8 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
     const userText = (text ?? input).trim();
     if (!userText || loading || !normalized) return;
 
-    const prior = messages.length > 0 ? messages : [{ role: "model" as const, text: welcome }];
-    const base = [...prior, { role: "user", text: userText }];
+    const prior: Message[] = messages.length > 0 ? messages : [{ role: "model", text: welcome }];
+    const base: Message[] = [...prior, { role: "user", text: userText }];
 
     updateMessages(base);
     setInput("");

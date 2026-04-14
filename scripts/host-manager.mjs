@@ -423,6 +423,12 @@ async function runBuild() {
   console.log("Installing workspace dependencies...");
   await runCorepack(["pnpm", "install", "--frozen-lockfile"]);
 
+  console.log("Verifying package.json (removing UTF-8 BOM if present)...");
+  await runCommand(process.execPath, [path.join(repoRoot, "scripts", "verify-package-json.mjs")], {
+    cwd: repoRoot,
+    stdio: "inherit"
+  });
+
   console.log("Regenerating Prisma client...");
   await runCorepack(["pnpm", "--filter", "cozorohome-api", "prisma:generate"]);
 
