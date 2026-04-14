@@ -18,26 +18,10 @@ import {
   tryVentHammerPendingRefusalReply
 } from "./cozoro-vent-hammer-easter-egg.js";
 import { getActiveClientByEmail } from "./google-sheets.js";
+import { geminiCapacityReply, isGeminiCapacityOrRateLimit } from "./gemini-capacity-reply.js";
 import { prisma } from "./prisma.js";
 
 const ASSISTANT_SENDER_EMAIL = "cozoro-assistant@system";
-
-const GEMINI_QUOTA_HOLIDAY_REPLY =
-  "Anh Trong is bankcrupted and cannot afford me, so i'm on holiday and unavailable";
-
-function isGeminiQuotaExceeded(response: Response, data: GeminiResponse): boolean {
-  if (response.status === 429) return true;
-  const err = data.error;
-  if (!err) return false;
-  const msg = (err.message ?? "").toLowerCase();
-  const code = (err as { code?: number }).code;
-  if (code === 429) return true;
-  if (msg.includes("quota")) return true;
-  if (msg.includes("resource exhausted")) return true;
-  if (msg.includes("rate limit")) return true;
-  if (msg.includes("too many requests")) return true;
-  return false;
-}
 
 const GEMINI_ENDPOINT = () => {
   const key = process.env.GEMINI_API_KEY;
@@ -366,16 +350,17 @@ export async function runResidentSupportAssistantTurn(input: {
       return { replyText: null };
     }
 
-    if (isGeminiQuotaExceeded(res, data)) {
+    if (isGeminiCapacityOrRateLimit(res, data)) {
+      const quotaReply = geminiCapacityReply(preferVietnamese ? "vi" : "en");
       void appendAiTrainingExchange({
         channel: "resident_support_thread",
         identifier: input.residentEmail,
         userText: last.body,
-        modelText: GEMINI_QUOTA_HOLIDAY_REPLY,
+        modelText: quotaReply,
         conversationId: input.conversationId,
         meta: { geminiQuotaExceeded: true, preferVietnamese }
       });
-      return { replyText: GEMINI_QUOTA_HOLIDAY_REPLY };
+      return { replyText: quotaReply };
     }
 
     if (data.error) {

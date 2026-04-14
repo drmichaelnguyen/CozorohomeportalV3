@@ -11,6 +11,7 @@
 
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
 import { appendAiTrainingExchange } from "./ai-training-log.js";
+import { geminiModelDoesNotKnowReply } from "./gemini-capacity-reply.js";
 import { tryFounderEasterEggReply } from "./cozoro-founder-easter-egg.js";
 import { getManagerClients, getManagerInactiveClients } from "./google-sheets.js";
 import { requirePortalRole } from "./staff-access.js";
@@ -470,7 +471,8 @@ export async function handleManagerAiChat(
     if (!functionCallPart) {
       // Model produced a text response — done
       const textPart = parts.find((p): p is { text: string } => "text" in p);
-      const reply = textPart?.text ?? "(no response)";
+      const raw = textPart?.text?.trim() ?? "";
+      const reply = raw || geminiModelDoesNotKnowReply(language);
       const lastUser = [...history].reverse().find((m) => m.role === "user");
       void appendAiTrainingExchange({
         channel: "manager",
@@ -496,7 +498,7 @@ export async function handleManagerAiChat(
     });
   }
 
-  const fallback = "I ran into an issue processing your request. Please try again.";
+  const fallback = geminiModelDoesNotKnowReply(language);
   const lastUser = [...history].reverse().find((m) => m.role === "user");
   void appendAiTrainingExchange({
     channel: "manager",

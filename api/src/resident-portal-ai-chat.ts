@@ -36,6 +36,11 @@ import type { PrepaidBreakdownOverrides } from "./prepaid-breakdown-overrides.js
 import { prisma } from "./prisma.js";
 import { getPortalUxSettings } from "./portal-ux-settings.js";
 import { resolvePortalLogin } from "./staff-access.js";
+import {
+  geminiCapacityReply,
+  geminiModelDoesNotKnowReply,
+  isGeminiCapacityOrRateLimit
+} from "./gemini-capacity-reply.js";
 
 export type ResidentPortalAiMessage = {
   role: "user" | "model";
@@ -43,24 +48,6 @@ export type ResidentPortalAiMessage = {
 };
 
 type UiLanguage = "en" | "vi";
-
-/** Shown when Gemini returns quota / rate-limit errors (exact copy per product request). */
-const GEMINI_QUOTA_HOLIDAY_REPLY =
-  "Anh Trong is bankcrupted and cannot afford me, so i'm on holiday and unavailable";
-
-function isGeminiQuotaExceeded(response: Response, data: GeminiResponse): boolean {
-  if (response.status === 429) return true;
-  const err = data.error;
-  if (!err) return false;
-  const msg = (err.message ?? "").toLowerCase();
-  const code = (err as { code?: number }).code;
-  if (code === 429) return true;
-  if (msg.includes("quota")) return true;
-  if (msg.includes("resource exhausted")) return true;
-  if (msg.includes("rate limit")) return true;
-  if (msg.includes("too many requests")) return true;
-  return false;
-}
 
 function residentGeminiEndpoint(): string {
   const dedicated = process.env.GEMINI_RESIDENT_PORTAL_AI_API_KEY?.trim();
@@ -756,17 +743,18 @@ export async function handleResidentPortalAiChat(
       throw new Error("Cozoro Bee: invalid response from AI gateway.");
     }
 
-    if (isGeminiQuotaExceeded(res, data)) {
+    if (isGeminiCapacityOrRateLimit(res, data)) {
       const lastUser = [...history].reverse().find((m) => m.role === "user");
+      const reply = geminiCapacityReply(language);
       void appendAiTrainingExchange({
         channel: "resident_portal",
         identifier: normalizedEmail,
         language,
         userText: lastUser?.text ?? "",
-        modelText: GEMINI_QUOTA_HOLIDAY_REPLY,
+        modelText: reply,
         meta: { geminiQuotaExceeded: true }
       });
-      return { reply: GEMINI_QUOTA_HOLIDAY_REPLY };
+      return { reply };
     }
 
     if (data.error) {
@@ -775,7 +763,21 @@ export async function handleResidentPortalAiChat(
 
     const candidate = data.candidates?.[0];
     if (!candidate?.content?.parts?.length) {
-      throw new Error("No response from AI");
+      const lastUser = [...history].reverse().find((m) => m.role === "user");
+      const reply = geminiModelDoesNotKnowReply(language);
+      void appendAiTrainingExchange({
+        channel: "resident_portal",
+        identifier: normalizedEmail,
+        language,
+        userText: lastUser?.text ?? "",
+        modelText: reply,
+        meta: {
+          emptyCandidate: true,
+          finishReason: candidate?.finishReason ?? null,
+          httpStatus: res.status
+        }
+      });
+      return { reply };
     }
 
     const parts = candidate.content.parts;
@@ -785,8 +787,12 @@ export async function handleResidentPortalAiChat(
 
     if (!functionCallPart) {
       const textPart = parts.find((p): p is { text: string } => "text" in p);
-      const reply = textPart?.text?.trim() || "(no response)";
-      const trimmed = reply.length > 8000 ? reply.slice(0, 8000) : reply;
+      const raw = textPart?.text?.trim() ?? "";
+      const trimmed = !raw
+        ? geminiModelDoesNotKnowReply(language)
+        : raw.length > 8000
+          ? raw.slice(0, 8000)
+          : raw;
       const lastUser = [...history].reverse().find((m) => m.role === "user");
       void appendAiTrainingExchange({
         channel: "resident_portal",
@@ -808,10 +814,7 @@ export async function handleResidentPortalAiChat(
     });
   }
 
-  const fallback =
-    language === "vi"
-      ? "Mình chưa xử lý xong trong một lượt. Bạn hỏi lại hoặc thu hẹp câu hỏi nhé."
-      : "I could not finish that in one go. Please ask again or narrow your question.";
+  const fallback = geminiModelDoesNotKnowReply(language);
   const lastUser = [...history].reverse().find((m) => m.role === "user");
   void appendAiTrainingExchange({
     channel: "resident_portal",
