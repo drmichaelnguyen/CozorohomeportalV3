@@ -1,9 +1,4 @@
 import type { NextConfig } from "next";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const configDir = path.dirname(fileURLToPath(import.meta.url));
-const workspaceRoot = path.resolve(configDir, "..");
 
 const publicApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim() || "";
 const publicApiOrigin = /^https?:\/\//i.test(publicApiBaseUrl) ? publicApiBaseUrl.replace(/\/+$/, "") : "";
@@ -20,9 +15,7 @@ if (!process.env.API_SERVER_ORIGIN && !publicApiOrigin) {
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["app.cozorohome.com"],
   devIndicators: { position: "top-left" },
-  turbopack: {
-    root: workspaceRoot
-  },
+  // Monorepo `turbopack.root` caused dev/tooling JSON parse issues on some Windows + OneDrive setups; portal uses `next dev --webpack`.
   async rewrites() {
     return [
       {

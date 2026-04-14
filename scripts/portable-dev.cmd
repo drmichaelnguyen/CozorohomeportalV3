@@ -34,6 +34,8 @@ if not exist "node_modules" (
 ) else (
   call corepack pnpm install --no-frozen-lockfile || exit /b 1
 )
+echo [portable-dev] Verifying package.json files parse as JSON...
+node "%~dp0verify-package-json.mjs" || exit /b 1
 call corepack pnpm --filter cozorohome-api prisma:generate || exit /b 1
 rem This repo uses schema sync via `prisma db push` / migrate from api — not `migrate deploy` on boot (no migrations dir in git).
 echo [portable-dev] After pulling schema changes: cd api ^&^& npx prisma generate ^&^& npx prisma db push
