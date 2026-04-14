@@ -180,19 +180,23 @@ function CollapsibleSettingsSection({
   children: ReactNode;
 }) {
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+    <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden dark:border-slate-600/80">
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between gap-4 px-6 py-5 text-left transition-colors hover:bg-slate-50"
+        className="flex w-full items-center justify-between gap-4 px-6 py-5 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-700/50"
       >
         <div>
-          <h3 className="text-base font-semibold text-slate-900">{title}</h3>
-          <p className="mt-1 text-sm text-slate-500">{description}</p>
+          <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">{title}</h3>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{description}</p>
         </div>
-        <span className="text-xl text-slate-400">{expanded ? "▲" : "▼"}</span>
+        <span className="shrink-0 text-xl text-slate-400 dark:text-slate-500" aria-hidden>
+          {expanded ? "▲" : "▼"}
+        </span>
       </button>
-      {expanded ? <div className="border-t border-slate-100 p-6">{children}</div> : null}
+      {expanded ? (
+        <div className="border-t border-slate-100 p-6 dark:border-slate-600/80">{children}</div>
+      ) : null}
     </div>
   );
 }
@@ -1178,7 +1182,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [pricingSettingsTab, setPricingSettingsTab] = useState<"long_term" | "short_term" | "staff" | "tools">("long_term");
   const [bedPricingExpanded, setBedPricingExpanded] = useState(false);
   const [pricingSettingsExpanded, setPricingSettingsExpanded] = useState<Record<PricingSettingsSectionKey, boolean>>({
-    parking_tiers: true,
+    parking_tiers: false,
     branch_fees: false,
     resident_portal: false,
     bed_prices: false,

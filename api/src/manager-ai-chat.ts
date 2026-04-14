@@ -11,7 +11,7 @@
  */
 
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
-import { appendAiTrainingExchange } from "./ai-training-log.js";
+import { appendAiToolInvocation, appendAiTrainingExchange } from "./ai-training-log.js";
 import { geminiModelDoesNotKnowReply } from "./gemini-capacity-reply.js";
 import { tryFounderEasterEggReply } from "./cozoro-founder-easter-egg.js";
 import { getManagerClients, getManagerInactiveClients } from "./google-sheets.js";
@@ -661,6 +661,16 @@ export async function handleManagerAiChat(
     const { name, args } = functionCallPart.functionCall;
     const toolResult = await executeTool(name, args, operatorEmail, deleteBudget);
     if (toolResult.navigateTo) navigateTo = toolResult.navigateTo;
+
+    void appendAiToolInvocation({
+      channel: "manager",
+      identifier: operatorEmail,
+      toolName: name,
+      args: (args ?? {}) as Record<string, unknown>,
+      result: toolResult.result,
+      language,
+      meta: toolResult.navigateTo ? { navigateTo: toolResult.navigateTo } : undefined
+    });
 
     // Append model turn (function call) and tool result to contents
     contents.push({ role: "model", parts: [{ functionCall: { name, args } }] });

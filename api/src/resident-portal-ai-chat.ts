@@ -8,7 +8,7 @@
 import { CleaningAvailabilityType } from "@prisma/client";
 
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
-import { appendAiTrainingExchange } from "./ai-training-log.js";
+import { appendAiToolInvocation, appendAiTrainingExchange } from "./ai-training-log.js";
 import { tryFounderEasterEggReply } from "./cozoro-founder-easter-egg.js";
 import {
   tryVentHammerConsentReply,
@@ -806,6 +806,15 @@ export async function handleResidentPortalAiChat(
 
     const { name, args } = functionCallPart.functionCall;
     const toolResponse = await executeResidentTool(name, args ?? {}, normalizedEmail);
+
+    void appendAiToolInvocation({
+      channel: "resident_portal",
+      identifier: normalizedEmail,
+      toolName: name,
+      args: (args ?? {}) as Record<string, unknown>,
+      result: toolResponse,
+      language
+    });
 
     contents.push({ role: "model", parts: [{ functionCall: { name, args: args ?? {} } }] });
     contents.push({
