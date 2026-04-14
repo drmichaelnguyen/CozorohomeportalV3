@@ -413,7 +413,7 @@ const translations: Record<string, { en: string; vi: string }> = {
   newGroupMessage: { en: "+ New Group Message", vi: "+ Tin nhắn nhóm mới" },
   diagram: { en: "Diagram", vi: "Sơ đồ" },
   diagramBedQuickSheetTitle: { en: "Bed", vi: "Giường" },
-  diagramGoToClientDetail: { en: "Open full client detail", vi: "Mở chi tiết khách" },
+  diagramGoToClientDetail: { en: "Open client workspace", vi: "Mở bảng khách" },
   diagramQuickActionsTitle: { en: "Quick actions", vi: "Thao tác nhanh" },
   diagramCallNow: { en: "Call", vi: "Gọi" },
   diagramNoPhoneOnFile: { en: "No phone on file", vi: "Chưa có số điện thoại" },

@@ -134,7 +134,9 @@ export async function calculateRentBreakdown(
   options: RentCalculationOptions = {}
 ): Promise<RentBreakdown> {
   const managerDiscountVnd = Number(options.managerDiscountVnd ?? 0);
-  const email = client["Địa chỉ email"] || "";
+  const emailRaw = (client["Địa chỉ email"] ?? "").trim();
+  /** Fines, laundry, gate tickets, and coins are matched by normalized email — not MÃ HD. */
+  const email = emailRaw.toLowerCase();
   const memberTier = client["Cozoro Member"] || "Silver";
   const baseRentRaw = parseVndAmount(client["Số tiền chia sẻ mỗi tháng"]);
   const durationMonths = parseInt(String(client["Thời hạn hợp đồng (tháng)"] || "0"), 10);
@@ -294,7 +296,7 @@ export async function calculateRentBreakdown(
   const finalTotalVnd = totalBeforeCoinsVnd - (recommendedCoinUsage * coinRate);
 
   return {
-    email,
+    email: emailRaw,
     month: targetMonth,
     baseRent: effectiveBaseRent,
     tenureSurchargeVnd,

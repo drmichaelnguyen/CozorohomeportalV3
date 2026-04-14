@@ -878,9 +878,35 @@ function getFineCoinMultiplier(memberValue: string) {
   return 1.5;
 }
 
+/**
+ * "ĐÃ THANH TOÁN?" cell — fines are keyed by resident EMAIL; new rows default to "CHƯA" (unpaid).
+ * Historically only mojibake "chÆ°a" was treated as unpaid, so real "chưa" was misclassified as paid
+ * and rent/fine totals showed 0.
+ */
 function isFineMarkedPaid(value: string) {
-  const normalized = value.trim().toLowerCase();
-  return Boolean(normalized) && normalized !== "0" && normalized !== "false" && normalized !== "chÆ°a";
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return false;
+  }
+  const normalized = raw.toLowerCase();
+
+  if (normalized === "chưa" || normalized.startsWith("chưa ")) {
+    return false;
+  }
+  if (normalized === "chua" || normalized.startsWith("chua ")) {
+    return false;
+  }
+  if (normalized === "chÆ°a" || normalized.startsWith("chÆ°a")) {
+    return false;
+  }
+  if (normalized === "0" || normalized === "false" || normalized === "no") {
+    return false;
+  }
+  if (normalized === "không" || normalized === "khong") {
+    return false;
+  }
+
+  return true;
 }
 
 function isDateInSameMonth(date: Date, compareTo: Date) {

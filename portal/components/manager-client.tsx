@@ -114,6 +114,7 @@ type FineEntry = {
   row: Record<string, string>;
   parsedTimestamp: string | null;
   parsedDueDate: string | null;
+  coinPayment?: { isPaid: boolean };
 };
 type DuplicateEntry = { email: string; name: string; rows: Array<{ maHd: string; submissionTimestamp: string; contractStart: string; contractEnd: string; activeStay: string; bed: string; branch: string }> };
 type LaundryEntry = {
@@ -375,6 +376,19 @@ function makeKey(parts: Array<string | null | undefined>) {
   return parts.map((part) => String(part ?? "")).join("::");
 }
 
+/** Same identity fields as staff delete/update — do not use Object.values(row).slice(0,4); key order is not stable. */
+function makeWorkspaceStatsEntryKey(tab: Exclude<StatsTab, "laundry">, entry: { row: Record<string, string> }) {
+  const row = entry.row;
+  const ts = String(row["DẤU THỜI GIAN"] ?? row["ĐẤU THỜI GIAN"] ?? "").trim();
+  if (tab === "fines") {
+    return makeKey([(row.EMAIL ?? "").trim().toLowerCase(), ts, String(row["NỘI DUNG VI PHẠM"] ?? "").trim()]);
+  }
+  if (tab === "coins") {
+    return makeKey([ts, String(row["Mã giao dịch"] ?? "").trim()]);
+  }
+  return makeKey([ts, String(row["SỐ TIỀN"] ?? "").trim(), String(row["MỤC ĐÍCH"] ?? "").trim()]);
+}
+
 function normalizeLookupValue(value: string) {
   return value
     .normalize("NFD")
@@ -392,6 +406,16 @@ function findRowValue(row: Record<string, string>, fragments: string[]) {
     return fragments.every((fragment) => normalizedKey.includes(fragment));
   });
   return String(match?.[1] ?? "").trim();
+}
+
+/** Sheet header for "ĐÃ THANH TOÁN?" — keys vary slightly by export; match by normalized letters. */
+function findFinePaidStatusColumnKey(row: Record<string, string>): string | null {
+  return (
+    Object.keys(row).find((key) => {
+      const nk = normalizeLookupValue(key);
+      return nk.includes("thanhtoan") || (nk.includes("thanh") && nk.includes("toan"));
+    }) ?? null
+  );
 }
 
 function getPaymentRowValue(row: Record<string, string>, column: (typeof PAYMENT_COMPACT_COLUMNS)[number]) {
@@ -853,6 +877,45 @@ function chatRoleLabel(role: ClientChatMessage["senderRole"]) {
   return "Resident";
 }
 
+const DEFAULT_MANAGER_CLIENT_PANEL_SECTIONS = {
+  overview: true,
+  paymentPlan: false,
+  duplicates: false,
+  stayStatus: false,
+  contractTermination: false,
+  billing: false
+} as const;
+
+function ManagerClientPanelCollapsible({
+  title,
+  right,
+  open,
+  onToggle,
+  children
+}: {
+  title: string;
+  right?: ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50/90"
+      >
+        <span className="text-sm font-semibold text-slate-800">{title}</span>
+        <span className="flex shrink-0 items-center gap-2">
+          {right}
+          <span className="text-sm text-slate-400 tabular-nums">{open ? "▲" : "▼"}</span>
+        </span>
+      </button>
+      {open ? <div className="space-y-3 border-t border-slate-100 px-4 pb-4 pt-3">{children}</div> : null}
+    </div>
+  );
+}
 
 export function ManagerClient({ initialView = "overview" }: { initialView?: ManagerView }) {
 
@@ -888,11 +951,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [clientForm, setClientForm] = useState<Record<string, string>>({});
   const [isEditingClientProfile, setIsEditingClientProfile] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspacePayload | null>(null);
+  const [finePaidSavingKey, setFinePaidSavingKey] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<StatsTab>("laundry");
   const [rentPaidStatus, setRentPaidStatus] = useState<boolean | null>(null);
   const [rentPaidMonth, setRentPaidMonth] = useState("");
   const [rentPaidLoading, setRentPaidLoading] = useState(false);
   const [rentSectionCollapsed, setRentSectionCollapsed] = useState(true);
+  const [clientPanelSections, setClientPanelSections] = useState(() => ({ ...DEFAULT_MANAGER_CLIENT_PANEL_SECTIONS }));
+  const [prepaidPkgBreakdownOpen, setPrepaidPkgBreakdownOpen] = useState(false);
   const [infoRentBreakdown, setInfoRentBreakdown] = useState<RentBreakdown | null>(null);
   const [infoManagerDiscount, setInfoManagerDiscount] = useState("0");
   const [infoShortTermSurchargeRate, setInfoShortTermSurchargeRate] = useState("0");
@@ -2357,6 +2423,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
   useEffect(() => {
     setShowClientDetails(false);
+    setClientPanelSections({ ...DEFAULT_MANAGER_CLIENT_PANEL_SECTIONS });
+    setPrepaidPkgBreakdownOpen(false);
   }, [selectedMaHd]);
 
   useEffect(() => {
@@ -2570,6 +2638,54 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       setStatus(t("requestFailed"));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function patchFinePaidToggle(opts: {
+    rowKey: string;
+    residentEmail: string;
+    timestamp: string;
+    content: string;
+    statusColumnKey: string;
+    nextPaid: boolean;
+  }) {
+    setFinePaidSavingKey(opts.rowKey);
+    setStatus("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/staff/fines/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actorEmail: normalizedEmail,
+          email: opts.residentEmail.trim().toLowerCase(),
+          timestamp: opts.timestamp,
+          content: opts.content,
+          values: {
+            [opts.statusColumnKey]: opts.nextPaid ? "Đã thanh toán tiền mặt" : "CHƯA"
+          }
+        })
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        setStatus(data.error ?? t("requestFailed"));
+        return;
+      }
+      if (selectedClient) {
+        await loadWorkspace("fines", selectedClient.maHd);
+      }
+      setStatus(
+        opts.nextPaid
+          ? language === "vi"
+            ? "Đã đánh dấu phiếu phạt là đã thanh toán."
+            : "Fine marked as paid."
+          : language === "vi"
+            ? "Đã đánh dấu phiếu phạt là chưa thanh toán."
+            : "Fine marked as unpaid."
+      );
+    } catch {
+      setStatus(t("requestFailed"));
+    } finally {
+      setFinePaidSavingKey(null);
     }
   }
 
@@ -3688,6 +3804,16 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
             {selectedClient ? (
               <div className="mt-4 space-y-4">
+                <ManagerClientPanelCollapsible
+                  title="Overview"
+                  open={clientPanelSections.overview}
+                  onToggle={() =>
+                    setClientPanelSections((s) => ({
+                      ...s,
+                      overview: !s.overview
+                    }))
+                  }
+                >
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("tableHeaderContract")}</div>
@@ -3718,7 +3844,18 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     <div className="mt-2 text-sm text-slate-800">{selectedClientPhone || "-"}</div>
                   </div>
                 </div>
+                </ManagerClientPanelCollapsible>
 
+                <ManagerClientPanelCollapsible
+                  title="Payment plan"
+                  open={clientPanelSections.paymentPlan}
+                  onToggle={() =>
+                    setClientPanelSections((s) => ({
+                      ...s,
+                      paymentPlan: !s.paymentPlan
+                    }))
+                  }
+                >
                 {(() => {
                   const ps = derivePaymentPlanSummary(selectedClient.row ?? {}, rentPaidStatus);
                   const expiryStr = ps.packageExpiry
@@ -3759,7 +3896,24 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     </div>
                   );
                 })()}
-                {selectedClientDuplicate && (() => {
+                </ManagerClientPanelCollapsible>
+                {selectedClientDuplicate ? (
+                <ManagerClientPanelCollapsible
+                  title="Duplicate active contracts"
+                  right={
+                    <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-900">
+                      {selectedClientDuplicate.rows.length}
+                    </span>
+                  }
+                  open={clientPanelSections.duplicates}
+                  onToggle={() =>
+                    setClientPanelSections((s) => ({
+                      ...s,
+                      duplicates: !s.duplicates
+                    }))
+                  }
+                >
+                {(() => {
                   // Parse dd/mm/yyyy hh:mm:ss → Date for sorting
                   function parseTs(ts: string): number {
                     const m = ts.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})$/);
@@ -3809,7 +3963,19 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     </div>
                   );
                 })()}
+                </ManagerClientPanelCollapsible>
+                ) : null}
 
+                <ManagerClientPanelCollapsible
+                  title="Stay status"
+                  open={clientPanelSections.stayStatus}
+                  onToggle={() =>
+                    setClientPanelSections((s) => ({
+                      ...s,
+                      stayStatus: !s.stayStatus
+                    }))
+                  }
+                >
                 {(() => {
                   const stay = String(selectedClient.activeStay ?? "").trim();
                   const isUnset = stay === "";
@@ -3863,9 +4029,21 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     </div>
                   );
                 })()}
+                </ManagerClientPanelCollapsible>
 
                 {/* Contract Termination — hidden for inactive clients */}
-                {selectedClient && selectedClient.activeStay !== "0" && selectedClient.activeStay !== "-1" && (() => {
+                {selectedClient && selectedClient.activeStay !== "0" && selectedClient.activeStay !== "-1" ? (
+                <ManagerClientPanelCollapsible
+                  title="Contract termination"
+                  open={clientPanelSections.contractTermination}
+                  onToggle={() =>
+                    setClientPanelSections((s) => ({
+                      ...s,
+                      contractTermination: !s.contractTermination
+                    }))
+                  }
+                >
+                {(() => {
                   const isTerminated = terminationStatus && terminationStatus !== "loading";
                   const checkedOut = isTerminated && (terminationStatus as { checkOut: { submittedAt: string } | null }).checkOut;
                   return (
@@ -3908,6 +4086,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     </div>
                   );
                 })()}
+                </ManagerClientPanelCollapsible>
+                ) : null}
 
                 {/* Terminate contract confirmation dialog */}
                 {terminateDialog && selectedClient && (
@@ -3969,7 +4149,17 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   </div>
                 )}
 
-                {selectedClient && (() => {
+                <ManagerClientPanelCollapsible
+                  title="Rent & package billing"
+                  open={clientPanelSections.billing}
+                  onToggle={() =>
+                    setClientPanelSections((s) => ({
+                      ...s,
+                      billing: !s.billing
+                    }))
+                  }
+                >
+                {(() => {
                   const paymentPlan = String(selectedClient.row?.["Bạn muốn thanh toán chi phí như thế nào?"] ?? "");
                   const isOnPrepaidPlan = paymentPlan.includes("03 tháng") || paymentPlan.includes("06 tháng");
                   const billingMonth =
@@ -3999,12 +4189,21 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           <p className="text-xs text-slate-600 border-t border-slate-200 pt-3">Loading engine estimate…</p>
                         ) : est ? (
                           <div className="space-y-3 border-t border-slate-200 pt-3">
-                            <PrepaidPackageBreakdownRows
-                              est={est}
-                              billMonthLabel={formatBillingMonthLabel(billingMonth, language)}
-                              t={t}
-                              className="mt-0"
-                            />
+                            <button
+                              type="button"
+                              onClick={() => setPrepaidPkgBreakdownOpen((v) => !v)}
+                              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left text-xs font-semibold text-slate-800 hover:bg-slate-100"
+                            >
+                              {prepaidPkgBreakdownOpen ? "Hide package estimate breakdown" : "Show package estimate breakdown"}
+                            </button>
+                            {prepaidPkgBreakdownOpen ? (
+                              <PrepaidPackageBreakdownRows
+                                est={est}
+                                billMonthLabel={formatBillingMonthLabel(billingMonth, language)}
+                                t={t}
+                                className="mt-0"
+                              />
+                            ) : null}
                             <label className="block text-xs font-medium text-slate-700">
                               Manager package total (₫)
                               <input
@@ -4394,9 +4593,18 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     </div>
                   );
                 })()}
+                </ManagerClientPanelCollapsible>
 
-                {showClientDetails || isEditingClientProfile ? (
-                  <div className="grid gap-4 border-t border-slate-200 pt-4 md:grid-cols-2">
+                <ManagerClientPanelCollapsible
+                  title="Sheet columns (all fields)"
+                  open={showClientDetails || isEditingClientProfile}
+                  onToggle={() => {
+                    if (!isEditingClientProfile) {
+                      setShowClientDetails((v) => !v);
+                    }
+                  }}
+                >
+                  <div className="grid gap-4 md:grid-cols-2">
                     {Object.keys(clientForm).map((field) => (
                       <label key={field} className="block text-sm font-medium text-slate-700">
                         {field}
@@ -4414,7 +4622,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       </label>
                     ))}
                   </div>
-                ) : null}
+                </ManagerClientPanelCollapsible>
               </div>
             ) : null}
           </section>
@@ -5761,6 +5969,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             <th className="px-4 py-3 font-medium">{activeTab === "fines" ? (language === "vi" ? "Nội dung vi phạm" : "Violation") : activeTab === "coins" ? "Coins" : `${t("detailLabel")} 1`}</th>
                             <th className="px-4 py-3 font-medium">{activeTab === "fines" ? (language === "vi" ? "Người lập phiếu" : "Created by") : activeTab === "coins" ? "Sự kiện" : `${t("detailLabel")} 2`}</th>
                             <th className="px-4 py-3 font-medium">{activeTab === "fines" ? (language === "vi" ? "Chi phí" : "Amount") : activeTab === "coins" ? "Người thao tác" : `${t("detailLabel")} 3`}</th>
+                            {activeTab === "fines" ? (
+                              <th className="px-4 py-3 font-medium whitespace-nowrap">{language === "vi" ? "Đã thanh toán" : "Paid"}</th>
+                            ) : null}
                           </>
                         )}
                         <th className="px-4 py-3 font-medium">{t("clientActions")}</th>
@@ -5768,7 +5979,10 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     </thead>
                     <tbody className="divide-y divide-slate-200 bg-white">
                       {(activeTab === "coins" ? workspace.stats.coins : activeTab === "payments" ? workspace.stats.payments : workspace.stats.fines).map((entry) => {
-                        const key = makeKey(Object.values(entry.row).slice(0, 4));
+                        const key = makeWorkspaceStatsEntryKey(
+                          activeTab as Exclude<StatsTab, "laundry">,
+                          entry
+                        );
                         const preview = Object.entries(entry.row).filter(([, value]) => String(value ?? "").trim()).slice(0, 4);
                         const fineContent = activeTab === "fines" ? findRowValue(entry.row, ["noidungvipham"]) : null;
                         const fineCreator = activeTab === "fines" ? findRowValue(entry.row, ["nguoilapphieu"]) : null;
@@ -5801,6 +6015,50 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                     <td className="px-4 py-3 text-slate-700">{fineContent || "-"}</td>
                                     <td className="px-4 py-3 text-slate-700">{fineCreator || "-"}</td>
                                     <td className="px-4 py-3 text-slate-700">{fineAmount ? `${Number(fineAmount).toLocaleString()} ₫` : "-"}</td>
+                                    <td className="px-4 py-3">
+                                      {(() => {
+                                        const statusColumnKey = findFinePaidStatusColumnKey(entry.row);
+                                        if (!statusColumnKey) {
+                                          return <span className="text-xs text-slate-400">—</span>;
+                                        }
+                                        const paid = entry.coinPayment?.isPaid === true;
+                                        const saving = finePaidSavingKey === key;
+                                        const fineEmail = String(entry.row.EMAIL ?? selectedClient?.email ?? "").trim();
+                                        const fineTs = String(entry.row["DẤU THỜI GIAN"] ?? entry.row["ĐẤU THỜI GIAN"] ?? "").trim();
+                                        const fineCt = String(entry.row["NỘI DUNG VI PHẠM"] ?? "").trim();
+                                        if (!fineEmail || !fineTs || !fineCt) {
+                                          return <span className="text-xs text-slate-400">—</span>;
+                                        }
+                                        return (
+                                          <button
+                                            type="button"
+                                            role="switch"
+                                            aria-checked={paid}
+                                            aria-label={language === "vi" ? "Đánh dấu đã thanh toán" : "Mark fine paid"}
+                                            disabled={saving}
+                                            onClick={() =>
+                                              void patchFinePaidToggle({
+                                                rowKey: key,
+                                                residentEmail: fineEmail,
+                                                timestamp: fineTs,
+                                                content: fineCt,
+                                                statusColumnKey,
+                                                nextPaid: !paid
+                                              })
+                                            }
+                                            className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+                                              paid ? "bg-emerald-500" : "bg-slate-300"
+                                            }`}
+                                          >
+                                            <span
+                                              className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                                                paid ? "translate-x-6" : "translate-x-1"
+                                              }`}
+                                            />
+                                          </button>
+                                        );
+                                      })()}
+                                    </td>
                                   </>
                                 ) : (
                                   <>
@@ -5851,62 +6109,47 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   </div>
                 </div>
                 {(activeTab === "coins" ? workspace.stats.coins : activeTab === "payments" ? workspace.stats.payments : workspace.stats.fines).map((entry) => {
-                  const key = makeKey(Object.values(entry.row).slice(0, 4));
+                  const key = makeWorkspaceStatsEntryKey(
+                    activeTab as Exclude<StatsTab, "laundry">,
+                    entry
+                  );
                   const isEditing = editingId === `${activeTab}:${key}`;
+                  if (!isEditing) {
+                    return null;
+                  }
                   return (
-                    <div key={key} className={isEditing ? "rounded-2xl border border-slate-200 p-4" : "hidden"}>
-                      {isEditing ? (
-                        <div className="grid gap-3 md:grid-cols-2">
-                          {Object.keys(editValues).map((field) => (
-                            <label key={field} className="block text-sm font-medium text-slate-700">
-                              {field}
-                              <input type="text" value={editValues[field] ?? ""} onChange={(event) => setEditValues((current) => ({ ...current, [field]: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
-                            </label>
-                          ))}
-                          <div className="md:col-span-2 flex gap-3">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void postJson(
-                                  `${API_BASE_URL}${activeTab === "coins" ? "/staff/coins/update" : activeTab === "payments" ? "/staff/payments/update" : "/staff/fines/update"}`,
-                                  activeTab === "coins"
-                                    ? { actorEmail: normalizedEmail, email: selectedClient?.email ?? "", timestamp: entry.row["DẤU THỜI GIAN"] ?? entry.row["ĐẤU THỜI GIAN"] ?? "", transactionCode: entry.row["Mã giao dịch"] ?? "", values: editValues }
-                                    : activeTab === "payments"
-                                      ? { actorEmail: normalizedEmail, email: selectedClient?.email ?? "", timestamp: entry.row["DẤU THỜI GIAN"] ?? entry.row["ĐẤU THỜI GIAN"] ?? "", amount: entry.row["SỐ TIỀN"] ?? "", purpose: entry.row["MỤC ĐÍCH"] ?? "", values: editValues }
-                                      : { actorEmail: normalizedEmail, email: entry.row.EMAIL ?? selectedClient?.email ?? "", timestamp: entry.row["DẤU THỜI GIAN"] ?? entry.row["ĐẤU THỜI GIAN"] ?? "", content: entry.row["NỘI DUNG VI PHẠM"] ?? "", values: editValues },
-                                  `${activeTab[0].toUpperCase() + activeTab.slice(1)} entry updated.`,
-                                  async () => {
-                                    if (selectedClient) await loadWorkspace(activeTab, selectedClient.maHd);
-                                  }
-                                )
-                              }
-                              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white"
-                            >
-                              Save
-                            </button>
-                            <button type="button" onClick={() => setEditingId("")} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700">Cancel</button>
-                          </div>
+                    <div key={key} className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="grid gap-3 md:grid-cols-2">
+                        {Object.keys(editValues).map((field) => (
+                          <label key={field} className="block text-sm font-medium text-slate-700">
+                            {field}
+                            <input type="text" value={editValues[field] ?? ""} onChange={(event) => setEditValues((current) => ({ ...current, [field]: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
+                          </label>
+                        ))}
+                        <div className="md:col-span-2 flex gap-3">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void postJson(
+                                `${API_BASE_URL}${activeTab === "coins" ? "/staff/coins/update" : activeTab === "payments" ? "/staff/payments/update" : "/staff/fines/update"}`,
+                                activeTab === "coins"
+                                  ? { actorEmail: normalizedEmail, email: selectedClient?.email ?? "", timestamp: entry.row["DẤU THỜI GIAN"] ?? entry.row["ĐẤU THỜI GIAN"] ?? "", transactionCode: entry.row["Mã giao dịch"] ?? "", values: editValues }
+                                  : activeTab === "payments"
+                                    ? { actorEmail: normalizedEmail, email: selectedClient?.email ?? "", timestamp: entry.row["DẤU THỜI GIAN"] ?? entry.row["ĐẤU THỜI GIAN"] ?? "", amount: entry.row["SỐ TIỀN"] ?? "", purpose: entry.row["MỤC ĐÍCH"] ?? "", values: editValues }
+                                    : { actorEmail: normalizedEmail, email: entry.row.EMAIL ?? selectedClient?.email ?? "", timestamp: entry.row["DẤU THỜI GIAN"] ?? entry.row["ĐẤU THỜI GIAN"] ?? "", content: entry.row["NỘI DUNG VI PHẠM"] ?? "", values: editValues },
+                                `${activeTab[0].toUpperCase() + activeTab.slice(1)} entry updated.`,
+                                async () => {
+                                  if (selectedClient) await loadWorkspace(activeTab, selectedClient.maHd);
+                                }
+                              )
+                            }
+                            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white"
+                          >
+                            Save
+                          </button>
+                          <button type="button" onClick={() => setEditingId("")} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700">Cancel</button>
                         </div>
-                      ) : (
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="text-sm text-slate-700">
-                            {Object.entries(entry.row).filter(([, value]) => String(value ?? "").trim()).slice(0, 6).map(([label, value]) => (
-                              <div key={label}>
-                                <span className="font-medium text-slate-900">{label}:</span> {value}
-                              </div>
-                            ))}
-                            {activeTab === "fines" && (() => {
-                              const creator = findRowValue(entry.row, ["nguoilapphieu"]);
-                              return creator ? (
-                                <div>
-                                  <span className="font-medium text-slate-900">{language === "vi" ? "Người lập phiếu" : "Created by"}:</span> {creator}
-                                </div>
-                              ) : null;
-                            })()}
-                          </div>
-                          <button type="button" onClick={() => { setEditingId(`${activeTab}:${key}`); setEditValues(entry.row); }} className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700">Edit</button>
-                        </div>
-                      )}
+                      </div>
                     </div>
                   );
                 })}
@@ -8306,7 +8549,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 type="button"
                 onClick={() => {
                   setClientSubTab("details");
-                  setShowClientDetails(true);
+                  setShowClientDetails(false);
                   setDiagramBedQuickSheet(null);
                   window.setTimeout(() => {
                     managerClientWorkspaceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
