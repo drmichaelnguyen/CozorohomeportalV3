@@ -1,5 +1,8 @@
 # Changelog
 
+## [3.7.0] - 2026-04-14
+- **Parking plans (registration)**: `ParkingPricingTier` per branch — managers/owners add named EN/VI plans and fees; `/register` shows choices when multiple; per-bed parking override still wins for that bed; `portable-dev` no longer blocks on `migrate deploy` (no migrations in repo); `rebuild-restart.cmd`, `start-sandbox.cmd`, ping-based delays; misc TS fixes (checkout form, nav badges, prepaid estimate type).
+
 ## [3.6.10] - 2026-04-13
 - **Multi-month prepaid (manager)**: Draft/confirm package totals, optional resident note, notify in-app and/or email; `PrepaidPackageBilling` model; resident next-payment and notifications (`PREPAID_PACKAGE`) reflect confirmed amounts.
 
