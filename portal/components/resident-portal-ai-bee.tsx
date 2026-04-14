@@ -11,12 +11,14 @@ type Message = {
 
 const MAX_STORED_MESSAGES = 10;
 
-function storageKey(email: string) {
-  return `cozoro-resident-bee:${email.trim().toLowerCase()}`;
+type UiLang = "en" | "vi";
+
+function storageKey(email: string, language: UiLang) {
+  return `cozoro-resident-bee:${email.trim().toLowerCase()}:${language}`;
 }
 
-function loadStored(email: string): Message[] {
-  const key = storageKey(email);
+function loadStored(email: string, language: UiLang): Message[] {
+  const key = storageKey(email, language);
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return [];
@@ -46,9 +48,9 @@ async function parseJsonResponse(res: Response): Promise<{ ok: true; data: unkno
   }
 }
 
-function saveStored(email: string, messages: Message[]) {
+function saveStored(email: string, language: UiLang, messages: Message[]) {
   try {
-    localStorage.setItem(storageKey(email), JSON.stringify(messages.slice(-MAX_STORED_MESSAGES)));
+    localStorage.setItem(storageKey(email, language), JSON.stringify(messages.slice(-MAX_STORED_MESSAGES)));
   } catch {
     // ignore
   }
@@ -105,9 +107,9 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
 
   useEffect(() => {
     if (!open || !normalized) return;
-    const stored = loadStored(normalized);
+    const stored = loadStored(normalized, language);
     setMessages(stored.length > 0 ? stored : [{ role: "model", text: welcome }]);
-  }, [open, normalized, welcome]);
+  }, [open, normalized, welcome, language]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -116,9 +118,9 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
   const updateMessages = useCallback(
     (next: Message[]) => {
       setMessages(next);
-      if (normalized) saveStored(normalized, next);
+      if (normalized) saveStored(normalized, language, next);
     },
-    [normalized]
+    [normalized, language]
   );
 
   async function sendMessage(text?: string) {

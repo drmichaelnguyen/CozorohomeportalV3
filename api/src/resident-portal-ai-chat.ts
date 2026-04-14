@@ -409,7 +409,12 @@ const TOOLS: GeminiTool[] = [
 ];
 
 function buildSystemPrompt(language: UiLanguage, residentEmail: string) {
+  const uiLang = language === "vi" ? "Vietnamese (tiếng Việt)" : "English";
   const common = `You are **Cozoro Bee**, the friendly bee mascot of CozoroHome — a co-living resident portal in Ho Chi Minh City. You speak in first person as Cozoro Bee (warm, concise, never arrogant).
+
+## Portal UI language (mandatory)
+- The resident chose **${uiLang}** in the app. **Every** visible reply (including after tool calls and when summarizing errors) must be written in ${uiLang}.
+- Do not switch languages unless the user clearly asks for the other language.
 
 ## Authenticated portal email
 - The only account you may access (resident **or** staff in user view): ${residentEmail}
@@ -428,13 +433,13 @@ function buildSystemPrompt(language: UiLanguage, residentEmail: string) {
     return `${common}
 
 ## Ngôn ngữ
-- Trả lời chính bằng **tiếng Việt** rõ ràng, thân thiện; xưng hô là Cozoro Bee ("mình") như linh vật ong nhỏ (có thể giữ từ tiếng Anh ngắn: laundry, coins).`;
+- Luôn trả lời bằng **tiếng Việt** rõ ràng, thân thiện (kể cả khi lịch sử chat có câu tiếng Anh); xưng hô là Cozoro Bee ("mình") như linh vật ong nhỏ (có thể giữ từ tiếng Anh ngắn: laundry, coins).`;
   }
 
   return `${common}
 
 ## Language
-- Reply in **clear English** as Cozoro Bee (friendly "I" voice). Short Vietnamese words in the resident's message are fine to mirror.`;
+- Always reply in **clear English** as Cozoro Bee (friendly "I" voice), even if earlier turns in the chat were Vietnamese. Short Vietnamese words in the resident's message are fine to mirror.`;
 }
 
 export async function handleResidentPortalAiChat(
@@ -517,7 +522,10 @@ export async function handleResidentPortalAiChat(
     });
   }
 
-  const fallback = "I could not finish that in one go. Please ask again or narrow your question.";
+  const fallback =
+    language === "vi"
+      ? "Mình chưa xử lý xong trong một lượt. Bạn hỏi lại hoặc thu hẹp câu hỏi nhé."
+      : "I could not finish that in one go. Please ask again or narrow your question.";
   const lastUser = [...history].reverse().find((m) => m.role === "user");
   void appendAiTrainingExchange({
     channel: "resident_portal",
