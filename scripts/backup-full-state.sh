@@ -7,25 +7,41 @@
 #   chmod +x scripts/backup-full-state.sh
 #   ./scripts/backup-full-state.sh
 #
-# Default output: always <repo>/backup/ (gitignored contents; backup/.gitignore tracked).
-# Override location only if you explicitly set COZORO_BACKUP_ROOT (absolute or under repo).
-#   COZORO_BACKUP_ROOT=/Volumes/external/cozoro-backups ./scripts/backup-full-state.sh
+# Output is ALWAYS <repo>/backup/ (gitignored contents; backup/.gitignore tracked).
+# For an external disk, symlink: ln -s /Volumes/MyDisk/cozoro-backups ./backup
 #   SKIP_DATABASE=1 ./scripts/backup-full-state.sh   # skip mysqldump
 #
-# Note: we do NOT read BACKUP_PARENT — a stale BACKUP_PARENT=~/Desktop in your shell
-# would otherwise send backups outside the project.
+# Ignores BACKUP_PARENT / COZORO_BACKUP_ROOT so a mis-set shell env cannot redirect output.
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+_SELF="${BASH_SOURCE[0]:-$0}"
+SCRIPT_DIR="$(cd "$(dirname "$_SELF")" && pwd)"
+
+# Prefer git worktree root (correct even if $PWD is wrong or $0 is relative).
+ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -z "$ROOT" || ! -f "$ROOT/package.json" ]]; then
+  if [[ "$(basename "$SCRIPT_DIR")" == "scripts" ]]; then
+    ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+  else
+    echo "[backup-full] ERROR: could not resolve repo root (expected this file under <repo>/scripts/)." >&2
+    exit 1
+  fi
+fi
+if [[ ! -d "$ROOT/api" ]]; then
+  echo "[backup-full] ERROR: not a CozoroHome repo root (missing api/): $ROOT" >&2
+  exit 1
+fi
+
 STAMP="$(date +%Y%m%d-%H%M%S)"
-BACKUP_PARENT="${COZORO_BACKUP_ROOT:-$ROOT/backup}"
-DEST="${BACKUP_PARENT}/cozorohome-full-backup-${STAMP}"
+BACKUP_DIR="$ROOT/backup"
+DEST="$BACKUP_DIR/cozorohome-full-backup-${STAMP}"
 
 mkdir -p "$DEST"
 
-echo "[backup-full] Repo:  $ROOT"
-echo "[backup-full] Dest: $DEST"
+echo "[backup-full] Repo:       $ROOT"
+echo "[backup-full] Backup dir: $BACKUP_DIR (inside project)"
+echo "[backup-full] Dest:       $DEST"
 echo ""
 
 manifest="$DEST/MANIFEST.txt"
