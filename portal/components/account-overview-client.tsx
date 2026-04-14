@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   buildCozoroMemberProgram,
-  COZORO_MEMBER_DIAMOND_EXAMPLE,
-  COZORO_MEMBER_RULE_DETAILS,
+  COZORO_MEMBER_DIAMOND_EXAMPLE_KEYS,
+  COZORO_MEMBER_RULE_DETAIL_KEYS,
   getMemberUpgradeCheck,
   parseUpgradeCoins
 } from "../lib/cozoro-member";
@@ -995,7 +995,7 @@ export function AccountOverviewClient() {
           className="flex w-full cursor-pointer items-center justify-between p-6 text-left"
         >
           <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold text-slate-900">Cozoro Member</h2>
+            <h2 className="text-lg font-semibold text-slate-900">{t("cozoroMember")}</h2>
           </div>
           <svg
             className={`h-5 w-5 text-slate-500 transition-transform ${memberExpanded ? "rotate-180" : ""}`}
@@ -1011,12 +1011,12 @@ export function AccountOverviewClient() {
               type="button"
               onClick={() => setShowMemberRuleHelp((current) => !current)}
               className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-300 text-sm font-semibold text-slate-700"
-              aria-label="Show Cozoro Member ranking details"
-              title="How Cozoro Member ranking is calculated"
+              aria-label={t("memberRankingHelpAria")}
+              title={t("memberRankingHelpTitle")}
             >
               ?
             </button>
-            <span className="text-sm text-slate-500">How ranking is calculated</span>
+            <span className="text-sm text-slate-500">{t("memberRankingHowShort")}</span>
           </div>
           {!client ? (
             <p className="text-sm text-slate-600">{loading ? "Loading..." : "Account information will appear here once loaded."}</p>
@@ -1024,17 +1024,19 @@ export function AccountOverviewClient() {
           <>
             {showMemberRuleHelp ? (
               <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-slate-700">
-                <div className="font-semibold text-slate-900">How Cozoro calculates your member tier</div>
+                <div className="font-semibold text-slate-900">{t("memberTierHelpTitle")}</div>
                 <div className="mt-3 space-y-2">
-                  {COZORO_MEMBER_RULE_DETAILS.map((item) => (
-                    <p key={item}>{item}</p>
+                  {COZORO_MEMBER_RULE_DETAIL_KEYS.map((key) => (
+                    <p key={key}>{t(key)}</p>
                   ))}
                 </div>
                 <div className="mt-3 rounded-lg border border-sky-100 bg-white px-3 py-2">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Diamond example</div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    {t("memberDiamondExampleTitle")}
+                  </div>
                   <div className="mt-2 space-y-1">
-                    {COZORO_MEMBER_DIAMOND_EXAMPLE.map((item) => (
-                      <p key={item}>{item}</p>
+                    {COZORO_MEMBER_DIAMOND_EXAMPLE_KEYS.map((key) => (
+                      <p key={key}>{t(key)}</p>
                     ))}
                   </div>
                 </div>
@@ -1043,55 +1045,65 @@ export function AccountOverviewClient() {
 
             <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <div className="rounded-xl border border-slate-200 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recorded Cozoro Member</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {t("recordedCozoroMemberLabel")}
+                </div>
                 <div className="mt-2 text-xl font-semibold text-slate-900">{memberProgram.recordedRank}</div>
-                <div className="mt-1 text-xs text-slate-500">Sheet value, updated monthly</div>
+                <div className="mt-1 text-xs text-slate-500">{t("recordedCozoroMemberSub")}</div>
               </div>
               <div className="rounded-xl border border-slate-200 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Calculated Cozoro Member</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {t("calculatedCozoroMemberLabel")}
+                </div>
                 <div className="mt-2 text-xl font-semibold text-slate-900">{memberProgram.liveRank}</div>
-                <div className="mt-1 text-xs text-slate-500">Calculated from accumulated coins and previous month earnings</div>
+                <div className="mt-1 text-xs text-slate-500">{t("calculatedCozoroMemberSub")}</div>
               </div>
               <div className="rounded-xl border border-slate-200 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Accumulated Coins</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("accumulatedCoinsLabel")}</div>
                 <div className="mt-2 text-xl font-semibold text-slate-900">
                   {new Intl.NumberFormat().format(memberProgram.totalAccumulatedCoins)}
                 </div>
               </div>
               <div className="rounded-xl border border-slate-200 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Previous Month Earned</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {t("previousMonthEarnedLabel")}
+                </div>
                 <div className="mt-2 text-xl font-semibold text-slate-900">
                   {new Intl.NumberFormat().format(memberProgram.previousMonthEarnings)}
                 </div>
-                <div className="mt-1 text-xs text-slate-500">Positive coins earned in the previous calendar month</div>
+                <div className="mt-1 text-xs text-slate-500">{t("previousMonthEarnedSub")}</div>
               </div>
               <div className="rounded-xl border border-slate-200 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Coins To Next Cozoro Member</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {t("coinsToNextCozoroMemberLabel")}
+                </div>
                 <div className="mt-2 text-xl font-semibold text-slate-900">
                   {memberProgram.nextTier ? new Intl.NumberFormat().format(memberProgram.nextTier.remainingCoins) : "0"}
                 </div>
                 <div className="mt-1 text-xs text-slate-500">
-                  {memberProgram.nextTier ? `Next: ${memberProgram.nextTier.name}` : "Top Cozoro Member reached"}
+                  {memberProgram.nextTier
+                    ? t("memberNextTierFooter", { tier: memberProgram.nextTier.name })
+                    : t("memberTopTierReached")}
                 </div>
               </div>
               <div className="rounded-xl border border-slate-200 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Coins To Remain</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("coinsToRemainLabel")}</div>
                 <div className="mt-2 text-xl font-semibold text-slate-900">
                   {memberProgram.maintainCoinsNeeded != null
                     ? new Intl.NumberFormat().format(memberProgram.maintainCoinsNeeded)
                     : "-"}
                 </div>
-                <div className="mt-1 text-xs text-slate-500">Monthly minimum to keep this Cozoro Member</div>
+                <div className="mt-1 text-xs text-slate-500">{t("coinsToRemainSub")}</div>
               </div>
             </div>
 
             <div className="mt-6 rounded-xl border border-slate-200 p-4">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                 <div>
-                  <div className="text-sm font-semibold text-slate-900">Upgrade Cozoro Member</div>
+                  <div className="text-sm font-semibold text-slate-900">{t("upgradeMemberHeading")}</div>
                   <div className="mt-1 text-sm text-slate-600">
-                    Move to a higher Cozoro Member when you meet the accumulated-coins rule, previous-month rule, and any one-time upgrade fee for that tier. The upgrade will create a coins entry like
-                    <span className="font-medium"> Upgrade to Diamond</span>.
+                    {t("upgradeMemberDescBefore")}
+                    <span className="font-medium"> {t("upgradeMemberSampleLine")}</span>.
                   </div>
                 </div>
 
@@ -1104,7 +1116,12 @@ export function AccountOverviewClient() {
                     >
                       {availableMemberUpgrades.map((tier) => (
                         <option key={tier.name} value={tier.name}>
-                          {tier.name} - {new Intl.NumberFormat().format(tier.upgradeCost ?? 0)} coins
+                          {t("upgradeSelectOptionCoins", {
+                            name: tier.name,
+                            amount: new Intl.NumberFormat(language === "vi" ? "vi-VN" : "en-US").format(
+                              tier.upgradeCost ?? 0
+                            )
+                          })}
                         </option>
                       ))}
                     </select>
@@ -1119,11 +1136,11 @@ export function AccountOverviewClient() {
                       }
                       className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
                     >
-                      {upgradingMember ? "Upgrading..." : "Upgrade now"}
+                      {upgradingMember ? t("upgradeMemberInProgress") : t("upgradeMemberNow")}
                     </button>
                   </div>
                 ) : (
-                  <div className="text-sm text-slate-500">No higher Cozoro Member upgrades are available.</div>
+                  <div className="text-sm text-slate-500">{t("upgradeMemberNoneAvailable")}</div>
                 )}
               </div>
 
@@ -1149,24 +1166,30 @@ export function AccountOverviewClient() {
                       >
                         <div className="text-sm font-semibold text-slate-900">{tier.name}</div>
                         <div className="mt-2 text-sm text-slate-600">
-                          One-time upgrade cost: {new Intl.NumberFormat().format(upgradeCost)} coins
+                          {t("upgradeOneTimeCostLine", {
+                            amount: new Intl.NumberFormat(language === "vi" ? "vi-VN" : "en-US").format(upgradeCost)
+                          })}
                         </div>
                         <div className="mt-2 space-y-1 text-xs text-slate-500">
                           <div>
                             {eligibility?.meetsAccumulated
-                              ? "Accumulated coins requirement met."
-                              : `Need ${new Intl.NumberFormat().format(eligibility?.threshold ?? 0)} accumulated coins.`}
+                              ? t("memberUpgradeAccumulatedOk")
+                              : t("memberUpgradeAccumulatedNeed", {
+                                  amount: new Intl.NumberFormat(language === "vi" ? "vi-VN" : "en-US").format(
+                                    eligibility?.threshold ?? 0
+                                  )
+                                })}
                           </div>
                           <div>
                             {eligibility?.meetsPreviousMonth
-                              ? "Previous month earnings requirement met."
-                              : `Need ${new Intl.NumberFormat().format(eligibility?.previousMonthRequirement ?? 0)} coins earned in the previous month.`}
+                              ? t("memberUpgradePrevMonthOk")
+                              : t("memberUpgradePrevMonthNeed", {
+                                  amount: new Intl.NumberFormat(language === "vi" ? "vi-VN" : "en-US").format(
+                                    eligibility?.previousMonthRequirement ?? 0
+                                  )
+                                })}
                           </div>
-                          <div>
-                            {canAfford
-                              ? "Current coin balance is enough for the one-time upgrade fee."
-                              : "Not enough current coins for the one-time upgrade fee yet."}
-                          </div>
+                          <div>{canAfford ? t("memberUpgradeAffordYes") : t("memberUpgradeAffordNo")}</div>
                         </div>
                       </div>
                     );

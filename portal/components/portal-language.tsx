@@ -192,6 +192,69 @@ const translations: Record<string, { en: string; vi: string }> = {
   viewFineHistory: { en: "View fine history", vi: "Xem lịch sử tiền phạt" },
   refreshFines: { en: "Refresh fines", vi: "Làm mới tiền phạt" },
   laundryBookingsTitle: { en: "Laundry Bookings", vi: "Đặt lịch giặt sấy" },
+  laundryBookingFiltersShow: { en: "Show filters", vi: "Hiện bộ lọc" },
+  laundryBookingFiltersHide: { en: "Hide filters", vi: "Ẩn bộ lọc" },
+  laundryAutoPaymentTitle: { en: "Automatic Payment Type", vi: "Loại thanh toán tự động" },
+  laundryPaymentPriorityOrder: {
+    en: "Order: free laundry first, then coins if available, then cash.",
+    vi: "Thứ tự: ưu tiên giặt miễn phí, sau đó coin nếu đủ, rồi tiền mặt."
+  },
+  laundryPaymentRuleSelectMachine: {
+    en: "Select a machine to see its allowed payment methods.",
+    vi: "Chọn máy để xem phương thức thanh toán được phép."
+  },
+  laundryPaymentRuleD7PaidWhirlpool: {
+    en: "D7 paid Whirlpool only accepts cash or coins.",
+    vi: "Máy giặt Whirlpool trả phí D7 chỉ chấp nhận tiền mặt hoặc coin."
+  },
+  laundryPaymentRuleD7General: {
+    en: "This D7 machine accepts free laundry, coins, or cash when available.",
+    vi: "Máy D7 này chấp nhận giặt miễn phí, coin hoặc tiền mặt khi có điều kiện."
+  },
+  laundryPaymentRuleDefault: {
+    en: "Payment methods depend on your allowance and available coins.",
+    vi: "Phương thức thanh toán phụ thuộc vào ưu đãi và số coin khả dụng của bạn."
+  },
+  laundryPayLabel: { en: "Payment", vi: "Thanh toán" },
+  laundryPayOptionFreeLaundry: { en: "Free laundry", vi: "Giặt miễn phí" },
+  laundryPayOptionCoins: { en: "Pay by coins", vi: "Thanh toán bằng coin" },
+  laundryPayOptionCash: { en: "Pay by cash", vi: "Thanh toán bằng tiền mặt" },
+  laundrySuffixRecommended: { en: " (Recommended)", vi: " (Gợi ý)" },
+  laundrySuffixUnavailable: { en: " (Unavailable)", vi: " (Không khả dụng)" },
+  laundrySelectMachineFirst: { en: "Select a machine first", vi: "Chọn máy trước" },
+  laundryPaymentCodeFreeLaundry: { en: "Free laundry", vi: "Giặt miễn phí" },
+  laundryPaymentCodeCoins: { en: "Coins", vi: "Coin" },
+  laundryPaymentCodeCash: { en: "Cash", vi: "Tiền mặt" },
+  laundryPaymentCodeOther: { en: "Other", vi: "Khác" },
+  laundryCouponPlaceholder: { en: "Optional coupon code", vi: "Mã ưu đãi (không bắt buộc)" },
+  laundryBookingSummaryTitle: { en: "Booking Summary", vi: "Tóm tắt đặt lịch" },
+  laundrySummaryMachine: { en: "Machine:", vi: "Máy:" },
+  laundrySummaryDuration: { en: "Duration:", vi: "Thời lượng:" },
+  laundrySummaryCooldown: { en: "Cooldown after booking:", vi: "Nghỉ giữa các lượt sau khi đặt:" },
+  laundrySummaryPayment: { en: "Payment:", vi: "Thanh toán:" },
+  laundrySummaryCoupon: { en: "Coupon:", vi: "Mã ưu đãi:" },
+  laundrySummaryTime: { en: "Time:", vi: "Thời gian:" },
+  laundryBookingsFilterCalendar: { en: "Calendar", vi: "Lịch" },
+  laundryBookingsFilterTime: { en: "Time", vi: "Thời gian" },
+  laundryBookingsFilterDate: { en: "Date", vi: "Ngày" },
+  laundryBookingsFilterPayment: { en: "Payment", vi: "Thanh toán" },
+  laundryBookingsFilterSort: { en: "Sort", vi: "Sắp xếp" },
+  laundryAllCalendars: { en: "All calendars", vi: "Tất cả lịch" },
+  laundryAllBookings: { en: "All bookings", vi: "Tất cả lịch đặt" },
+  laundryTimeFutureOnly: { en: "Future only", vi: "Chỉ sắp tới" },
+  laundryTimePastOnly: { en: "Past only", vi: "Chỉ đã qua" },
+  laundryAllDates: { en: "All dates", vi: "Tất cả ngày" },
+  laundryAllPaymentTypes: { en: "All payment types", vi: "Tất cả hình thức thanh toán" },
+  laundryPaymentFilterFree: { en: "Free laundry", vi: "Giặt miễn phí" },
+  laundryPaymentFilterCoins: { en: "Coins", vi: "Coin" },
+  laundryPaymentFilterCash: { en: "Cash", vi: "Tiền mặt" },
+  laundryPaymentFilterOther: { en: "Other / Unknown", vi: "Khác / Chưa rõ" },
+  laundrySortLatestFirst: { en: "Latest first", vi: "Mới nhất trước" },
+  laundrySortOldestFirst: { en: "Oldest first", vi: "Cũ nhất trước" },
+  laundryNoMatchingBookings: {
+    en: "No laundry bookings match the current filters.",
+    vi: "Không có lịch giặt nào khớp bộ lọc hiện tại."
+  },
   acControllerTitle: { en: "Room Controller", vi: "Điều khiển máy lạnh" },
   loadBookingOptions: { en: "Load booking options", vi: "Tải tùy chọn đặt lịch" },
   bookLaundrySlot: { en: "Book laundry slot", vi: "Đặt lịch giặt sấy" },
@@ -208,6 +271,11 @@ const translations: Record<string, { en: string; vi: string }> = {
   laundryQuickLink: { en: "Laundry", vi: "Giặt sấy" },
   laundryDesc: { en: "Book laundry and check machine availability", vi: "Đặt lịch giặt sấy và kiểm tra tình trạng máy" },
   controllerDesc: { en: "Control your room devices", vi: "Điều khiển thiết bị trong phòng của bạn" },
+  controllerAllowedRoomHeading: { en: "Allowed room", vi: "Phòng được phép điều khiển" },
+  controllerResidentDetailsHelp: { en: "Who this controller is for", vi: "Thông tin cư dân tương ứng" },
+  controllerResidentDetailsTitle: { en: "Resident details", vi: "Thông tin cư dân" },
+  controllerGuestLabel: { en: "Guest", vi: "Khách" },
+  controllerContractLabel: { en: "Contract code", vi: "Mã hợp đồng" },
   scheduleDesc: { en: "See cleaning duties and next laundry", vi: "Xem lịch trực vệ sinh và lịch giặt sấy tiếp theo" },
   billingsDesc: { en: "Review laundry fees and fines", vi: "Xem phí giặt sấy và tiền phạt" },
   coinsDesc: { en: "Check your current coins and Cozoronian status", vi: "Xem số lượng coin hiện tại và trạng thái Khách hàng" },
@@ -244,6 +312,98 @@ const translations: Record<string, { en: string; vi: string }> = {
   accountSnapshot: { en: "Account Snapshot", vi: "Tóm tắt tài khoản" },
   reviewFines: { en: "Review fines", vi: "Xem tiền phạt" },
   cozoroMember: { en: "Cozoro Member", vi: "Thành viên Cozoro" },
+  cozoroMemberStatusHeading: { en: "Cozoro Member Status", vi: "Trạng thái Thành viên Cozoro" },
+  memberRankingHelpAria: { en: "Show Cozoro Member ranking details", vi: "Xem chi tiết cách tính hạng Thành viên Cozoro" },
+  memberRankingHelpTitle: { en: "How Cozoro Member ranking is calculated", vi: "Cách tính hạng Thành viên Cozoro" },
+  memberRankingHowShort: { en: "How ranking is calculated", vi: "Cách tính hạng" },
+  memberTierHelpTitle: { en: "How Cozoro calculates your member tier", vi: "Cozoro tính hạng thành viên của bạn như thế nào" },
+  memberRuleDetailTierOrder: {
+    en: "Tier order: Silver -> Gold -> Platinum -> Diamond -> Elite.",
+    vi: "Thứ tự hạng: Silver → Gold → Platinum → Diamond → Elite."
+  },
+  memberRuleDetailLifetimeAcc: {
+    en: "Lifetime accumulated coins decide which tiers you are allowed to aim for.",
+    vi: "Tổng coin tích lũy suốt đời quyết định các hạng mà bạn có thể hướng tới."
+  },
+  memberRuleDetailPrevMonth: {
+    en: "Previous month's earned coins decide whether you qualify for that tier now and whether you keep it.",
+    vi: "Số coin kiếm được tháng trước quyết định bạn có đủ điều kiện ở hạng đó hiện tại và có được giữ hạng hay không."
+  },
+  memberRuleDetailUpgradeFee: {
+    en: "Upgrade cost is a one-time payment when moving up into a tier that has a fee.",
+    vi: "Chi phí thăng hạng chỉ trả một lần khi lên một hạng có thu phí."
+  },
+  memberRuleDetailStaySameTier: {
+    en: "If you stay at the same tier, you do not pay that upgrade cost again.",
+    vi: "Nếu bạn giữ nguyên hạng, bạn không phải trả lại khoản phí thăng hạng đó."
+  },
+  memberRuleDetailLoseTier: {
+    en: "If you lose a tier and later upgrade back to it, you must pay that tier's upgrade cost again.",
+    vi: "Nếu bạn tụt hạng rồi sau này thăng hạng lại hạng đó, bạn phải trả lại phí thăng hạng của hạng đó."
+  },
+  memberDiamondExampleTitle: { en: "Diamond example", vi: "Ví dụ hạng Kim cương (Diamond)" },
+  memberDiamondExampleAccumulated: {
+    en: "Diamond requires 300,000 accumulated coins.",
+    vi: "Hạng Kim cương yêu cầu 300.000 coin tích lũy."
+  },
+  memberDiamondExamplePrevMonth: {
+    en: "Diamond also requires 20,000 coins earned in the previous month.",
+    vi: "Hạng Kim cương cũng yêu cầu 20.000 coin kiếm được trong tháng trước."
+  },
+  memberDiamondExampleReupgrade: {
+    en: "If you dropped below Diamond and want to upgrade back, it also costs 10,000 current coins once.",
+    vi: "Nếu bạn đã tụt khỏi Kim cương và muốn thăng hạng lại, bạn còn phải trả một lần 10.000 coin hiện có."
+  },
+  recordedCozoroMemberLabel: { en: "Recorded Cozoro Member", vi: "Cozoro Member (đã ghi nhận)" },
+  recordedCozoroMemberSub: { en: "Sheet value, updated monthly", vi: "Giá trị trên sheet, cập nhật hàng tháng" },
+  calculatedCozoroMemberLabel: { en: "Calculated Cozoro Member", vi: "Cozoro Member (tính toán)" },
+  calculatedCozoroMemberSub: {
+    en: "Calculated from accumulated coins and previous month earnings",
+    vi: "Tính từ tổng coin tích lũy và coin kiếm được tháng trước"
+  },
+  accumulatedCoinsLabel: { en: "Accumulated Coins", vi: "Coin tích lũy" },
+  previousMonthEarnedLabel: { en: "Previous Month Earned", vi: "Coin tháng trước" },
+  previousMonthEarnedSub: {
+    en: "Positive coins earned in the previous calendar month",
+    vi: "Coin dương kiếm được trong tháng dương lịch trước"
+  },
+  coinsToNextCozoroMemberLabel: { en: "Coins To Next Cozoro Member", vi: "Coin còn thiếu để lên hạng tiếp" },
+  memberNextTierFooter: { en: "Next: {tier}", vi: "Tiếp theo: {tier}" },
+  memberTopTierReached: { en: "Top Cozoro Member reached", vi: "Đã đạt hạng Thành viên Cozoro cao nhất" },
+  coinsToRemainLabel: { en: "Coins To Remain", vi: "Coin cần để giữ hạng" },
+  coinsToRemainSub: {
+    en: "Monthly minimum to keep this Cozoro Member",
+    vi: "Mức tối thiểu mỗi tháng để giữ hạng Thành viên Cozoro này"
+  },
+  upgradeMemberHeading: { en: "Upgrade Cozoro Member", vi: "Thăng hạng Thành viên Cozoro" },
+  upgradeMemberDescBefore: {
+    en: "Move to a higher Cozoro Member when you meet the accumulated-coins rule, previous-month rule, and any one-time upgrade fee for that tier. The upgrade will create a coins entry like",
+    vi: "Bạn có thể lên hạng Thành viên Cozoro cao hơn khi đủ quy tắc coin tích lũy, quy tắc tháng trước và khoản phí thăng hạng một lần (nếu có) của hạng đó. Việc thăng hạng sẽ tạo một dòng coin ví dụ"
+  },
+  upgradeMemberSampleLine: { en: "Upgrade to Diamond", vi: "Thăng hạng lên Kim cương (Diamond)" },
+  upgradeMemberNoneAvailable: {
+    en: "No higher Cozoro Member upgrades are available.",
+    vi: "Hiện không còn lựa chọn thăng hạng Thành viên Cozoro nào cao hơn."
+  },
+  upgradeMemberInProgress: { en: "Upgrading...", vi: "Đang thăng hạng..." },
+  upgradeMemberNow: { en: "Upgrade now", vi: "Thăng hạng ngay" },
+  upgradeSelectOptionCoins: { en: "{name} - {amount} coins", vi: "{name} - {amount} coin" },
+  upgradeOneTimeCostLine: { en: "One-time upgrade cost: {amount} coins", vi: "Phí thăng hạng một lần: {amount} coin" },
+  memberUpgradeAccumulatedOk: { en: "Accumulated coins requirement met.", vi: "Đã đủ điều kiện coin tích lũy." },
+  memberUpgradeAccumulatedNeed: { en: "Need {amount} accumulated coins.", vi: "Cần {amount} coin tích lũy." },
+  memberUpgradePrevMonthOk: { en: "Previous month earnings requirement met.", vi: "Đã đủ điều kiện coin tháng trước." },
+  memberUpgradePrevMonthNeed: {
+    en: "Need {amount} coins earned in the previous month.",
+    vi: "Cần {amount} coin kiếm được trong tháng trước."
+  },
+  memberUpgradeAffordYes: {
+    en: "Current coin balance is enough for the one-time upgrade fee.",
+    vi: "Số coin hiện có đủ để trả phí thăng hạng một lần."
+  },
+  memberUpgradeAffordNo: {
+    en: "Not enough current coins for the one-time upgrade fee yet.",
+    vi: "Chưa đủ coin hiện có để trả phí thăng hạng một lần."
+  },
   contractCode: { en: "Contract Code", vi: "Mã HD" },
   paidThrough: { en: "Paid Through", vi: "Đã thanh toán đến" },
   coinsUsedByMonth: { en: "Coins Used by Month", vi: "Coin sử dụng theo tháng" },
@@ -605,6 +765,58 @@ const translations: Record<string, { en: string; vi: string }> = {
   checkEmailFifteenSeconds: { en: "Your contract is being processed. Please wait about 15 seconds for your account to reactivate automatically. An email will also be sent to your inbox.", vi: "Hợp đồng của bạn đang được xử lý. Vui lòng đợi khoảng 15 giây để tài khoản tự động kích hoạt lại. Một bản sao cũng sẽ được gửi đến email của bạn." },
   gotIt: { en: "Got it!", vi: "Đã hiểu!" },
 
+  contractEndingSoon: { en: "Contract Ending Soon", vi: "Hợp đồng sắp kết thúc" },
+  contractEndingDesc: {
+    en: "Your contract is scheduled to end on {date}. You can extend it right here.",
+    vi: "Hợp đồng của bạn dự kiến kết thúc vào {date}. Bạn có thể gia hạn ngay tại đây."
+  },
+  extendNow: { en: "Extend Now", vi: "Gia hạn ngay" },
+  selectExtensionDuration: { en: "Select Duration", vi: "Chọn thời hạn" },
+  extensionUnderOneMonth: { en: "< 1 month", vi: "Dưới 1 tháng" },
+  hostelBooking: { en: "Hostel booking", vi: "Đặt phòng hostel" },
+  extensionDuration1m: { en: "1 Month", vi: "1 tháng" },
+  extensionDuration3m: { en: "3 Months", vi: "3 tháng" },
+  extensionDuration6m: { en: "6 Months", vi: "6 tháng" },
+  extensionDuration12m: { en: "12 Months", vi: "12 tháng" },
+  extensionSurchargeShort: { en: "+{pct}% surcharge", vi: "+{pct}% phụ phí" },
+  extensionBonusCoinsLine: { en: "+{amount} coins", vi: "+{amount} coin" },
+  extensionNoCoinsLine: { en: "No coins", vi: "Không thưởng coin" },
+  hostelRedirectTitle: { en: "Short-term stay (< 1 month)", vi: "Lưu trú ngắn hạn (dưới 1 tháng)" },
+  hostelRedirectDesc: {
+    en: "Stays under 1 month are booked through our hostel portal. Click the button below to go there.",
+    vi: "Lưu trú dưới 1 tháng được đặt qua cổng hostel. Nhấn nút bên dưới để chuyển đến đó."
+  },
+  goToHostel: { en: "Go to hostel.cozorohome.com", vi: "Đến hostel.cozorohome.com" },
+  surcharge12Title: { en: "Short-stay surcharge: +12%", vi: "Phụ phí lưu trú ngắn: +12%" },
+  surcharge8Title: { en: "Short-stay surcharge: +8%", vi: "Phụ phí lưu trú ngắn: +8%" },
+  surcharge12Desc: {
+    en: "Extending for 1–3 months adds a 12% surcharge on your base monthly rent for the extension period. This will be included in your next month's payment.",
+    vi: "Gia hạn 1–3 tháng sẽ cộng thêm 12% phụ phí trên tiền thuê tháng cơ bản trong thời gian gia hạn. Khoản này sẽ được tính vào kỳ thanh toán tháng tiếp theo."
+  },
+  surcharge8Desc: {
+    en: "Extending for 4–5 months adds an 8% surcharge on your base monthly rent for the extension period. This will be included in your next month's payment.",
+    vi: "Gia hạn 4–5 tháng sẽ cộng thêm 8% phụ phí trên tiền thuê tháng cơ bản trong thời gian gia hạn. Khoản này sẽ được tính vào kỳ thanh toán tháng tiếp theo."
+  },
+  continuousStayBonus: {
+    en: "Continuous stay bonus: +30,000 coins at 6 months · +20,000 extra at 12 months — awarded by management.",
+    vi: "Thưởng ở liên tục: +30.000 coin khi gia hạn 6 tháng · +20.000 coin thêm khi gia hạn 12 tháng — quản lý cộng thủ công."
+  },
+  yourFullName: { en: "Your Full Name", vi: "Họ và tên đầy đủ" },
+  fullNamePlaceholder: { en: "Enter your legal full name", vi: "Nhập họ tên khai sinh đầy đủ" },
+  signatureLabel: { en: "E-Signature", vi: "Chữ ký điện tử" },
+  clearSignature: { en: "Clear", vi: "Xóa" },
+  signHere: { en: "Sign here...", vi: "Ký tại đây..." },
+  contractAgreeTermsFormal: {
+    en: "By signing this, I agree to extend my contract by the selected duration and explicitly accept the current internal rules and policies of Cozoro Home.",
+    vi: "Bằng việc ký tên, tôi đồng ý gia hạn hợp đồng theo thời hạn đã chọn và chấp nhận rõ ràng các nội quy và chính sách nội bộ hiện hành của Cozoro Home."
+  },
+  confirmExtension: { en: "Confirm & Sign Extension", vi: "Xác nhận & ký gia hạn" },
+  processing: { en: "Processing...", vi: "Đang xử lý..." },
+  mustSignAndAgree: {
+    en: "You must sign, provide your full name, and agree to the terms to proceed.",
+    vi: "Bạn phải ký, nhập họ tên đầy đủ và đồng ý điều khoản để tiếp tục."
+  },
+
   // Cleaning schedule
   cleaningScheduleTitle: { en: "Cleaning Schedule", vi: "Lịch vệ sinh" },
   cleaningScheduleDesc: { en: "Click a date to mark yourself unavailable or assign yourself to a cleaning task that fits your branch and floor.", vi: "Nhấn vào ngày để đánh dấu không rảnh hoặc đăng ký nhận lịch trực vệ sinh phù hợp với chi nhánh và tầng của bạn." },
@@ -693,6 +905,10 @@ const translations: Record<string, { en: string; vi: string }> = {
   auditNoteLabel: { en: "Audit note", vi: "Ghi chú kiểm tra" },
   yourNoteLabel: { en: "Your note", vi: "Ghi chú của bạn" },
   pastTasksTitle: { en: "Past Tasks", vi: "Lịch trực đã qua" },
+  pastTasksShow: { en: "Show past tasks", vi: "Hiện lịch đã qua" },
+  pastTasksHide: { en: "Hide past tasks", vi: "Ẩn lịch đã qua" },
+  noPastTasksYet: { en: "No past tasks yet.", vi: "Chưa có lịch trực đã qua." },
+  noPastTasksMatchFilters: { en: "No tasks match these filters.", vi: "Không có lịch nào khớp bộ lọc." },
   monthFilterLabel: { en: "Month", vi: "Tháng" },
   yearFilterLabel: { en: "Year", vi: "Năm" },
   allMonths: { en: "All months", vi: "Tất cả tháng" },
@@ -717,6 +933,50 @@ const translations: Record<string, { en: string; vi: string }> = {
   longTermTab: { en: "Long-term", vi: "Dài hạn" },
   shortTermTab: { en: "Short-term", vi: "Ngắn hạn" },
   staffAccountsTab: { en: "Staff Accounts", vi: "Tài khoản nhân viên" },
+  settingsToolsTab: { en: "Tools", vi: "Công cụ" },
+  settingsToolsTitle: { en: "Tools", vi: "Công cụ" },
+  settingsToolsDesc: {
+    en: "Cleaning coin rewards, bulk coin grants, and bulk web push promotions to selected residents.",
+    vi: "Thưởng coin vệ sinh, cộng coin hàng loạt, và gửi thông báo web push khuyến mãi tới nhiều cư dân."
+  },
+  toolsCleaningRewardsTitle: { en: "Cleaning schedule coin rewards", vi: "Thưởng coin lịch vệ sinh" },
+  toolsCleaningRewardsDesc: {
+    en: "Base coins per task type and the multiplier when a resident self-assigns a slot (e.g. 1.2 = +20%).",
+    vi: "Coin cơ bản theo loại công việc và hệ số khi cư dân tự đăng ký slot (vd: 1.2 = +20%)."
+  },
+  toolsTaskKitchenD2: { en: "Kitchen D2", vi: "Bếp D2" },
+  toolsTaskKitchenD7: { en: "Kitchen D7", vi: "Bếp D7" },
+  toolsTaskTrashD7: { en: "Trash D7", vi: "Rác D7" },
+  toolsSelfAssignMultiplier: { en: "Self-assign multiplier", vi: "Hệ số tự đăng ký" },
+  toolsSaveCleaningRewards: { en: "Save cleaning rewards", vi: "Lưu thưởng vệ sinh" },
+  toolsBulkCoinsTitle: { en: "Bulk coin reward / adjustment", vi: "Cộng / điều chỉnh coin hàng loạt" },
+  toolsBulkCoinsDesc: {
+    en: "Select residents by contract (Mã HD). Use a positive number to add coins or a negative number to deduct. One shared reason is recorded for all rows.",
+    vi: "Chọn cư dân theo hợp đồng (Mã HD). Số dương để cộng coin, số âm để trừ. Một lý do chung được ghi cho tất cả."
+  },
+  toolsBulkPushTitle: { en: "Bulk promotion (web push)", vi: "Khuyến mãi hàng loạt (web push)" },
+  toolsBulkPushDesc: {
+    en: "Sends a browser notification to selected residents who enabled push on this portal. Title and body are the same for everyone.",
+    vi: "Gửi thông báo trình duyệt tới các cư dân đã bật push trên cổng này. Tiêu đề và nội dung giống nhau cho mọi người."
+  },
+  toolsFilterClients: { en: "Search name, email, or contract…", vi: "Tìm tên, email hoặc mã hợp đồng…" },
+  toolsSelectFiltered: { en: "Select filtered", vi: "Chọn theo bộ lọc" },
+  toolsClearSelection: { en: "Clear selection", vi: "Bỏ chọn" },
+  toolsSelectedCount: { en: "{n} selected", vi: "Đã chọn {n}" },
+  toolsCoinDelta: { en: "Coin change (Δ)", vi: "Thay đổi coin (Δ)" },
+  toolsCoinReason: { en: "Reason (shared)", vi: "Lý do (chung)" },
+  toolsApplyBulkCoins: { en: "Apply to selected", vi: "Áp dụng cho đã chọn" },
+  toolsPushTitle: { en: "Notification title", vi: "Tiêu đề thông báo" },
+  toolsPushBody: { en: "Message body", vi: "Nội dung" },
+  toolsSendBulkPush: { en: "Send push to selected", vi: "Gửi push tới đã chọn" },
+  toolsBulkResults: { en: "Results", vi: "Kết quả" },
+  toolsLoadFailed: { en: "Could not load settings.", vi: "Không tải được cấu hình." },
+  toolsSelectResidentsFirst: { en: "Select at least one resident.", vi: "Chọn ít nhất một cư dân." },
+  toolsEnterNonZeroDelta: { en: "Enter a non-zero coin change.", vi: "Nhập mức thay đổi coin khác 0." },
+  toolsEnterReason: { en: "Enter a reason.", vi: "Nhập lý do." },
+  toolsEnterTitleBody: { en: "Enter title and body.", vi: "Nhập tiêu đề và nội dung." },
+  toolsNoEmailsForSelection: { en: "No email addresses for selection.", vi: "Không có email cho lựa chọn này." },
+  toolsPushSentTo: { en: "Push request completed for {n} email address(es). Residents only receive it if they enabled notifications.", vi: "Đã xử lý gửi push cho {n} địa chỉ email. Cư dân chỉ nhận được nếu đã bật thông báo." },
   pricingRestricted: { en: "Pricing editing is restricted to owners and app admins.", vi: "Việc chỉnh sửa giá chỉ dành cho chủ sở hữu và quản trị viên ứng dụng." },
   parkingTiersManagerNote: {
     en: "You can manage motorbike parking plans above. Bed prices, branch default fees, and discounts still require an owner or app admin.",

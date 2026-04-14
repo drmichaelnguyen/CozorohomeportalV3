@@ -219,15 +219,7 @@ export function HomeDashboardClient() {
     kind?: "termination" | "contract_due";
     completed?: boolean;
   } | null>(null);
-  const [extensionExpanded, setExtensionExpanded] = useState(false);
   const activeEmail = sessionEmail.trim().toLowerCase();
-
-  function openExtensionPanel() {
-    setExtensionExpanded(true);
-    setTimeout(() => {
-      document.getElementById("contract-extension-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 50);
-  }
 
   const isExpired = useMemo(() => {
     return isContractExpired(client?.["Ngày hết hạn hợp đồng"]);
@@ -481,60 +473,11 @@ export function HomeDashboardClient() {
             <h1 className="text-2xl font-semibold text-slate-900 sm:text-3xl">
               {client?.["Tên"] || t("yourDashboard", "Your dashboard")}
             </h1>
-            {isExpired && !isRemoved ? (
-              <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-4 animate-in fade-in slide-in-from-top-2 duration-500">
-                <div className="flex items-center gap-3 text-rose-800 font-bold">
-                  <svg className="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                  <span>{t("contractExpiredWarning", "Your contract has expired!")}</span>
-                </div>
-                <p className="mt-2 text-sm text-rose-700 font-medium">
-                  {t("contractExpiredSub", "Portal services are restricted. Please extend your contract to continue living at Cozoro Home and regain full access.")}
-                </p>
-                <p className="mt-1 text-sm text-rose-600">
-                  {t("contractExpiredGrace", "Access will be permanently removed 5 days after your contract end date if no extension is made. / Quyền truy cập sẽ bị xóa sau 5 ngày kể từ ngày hết hạn nếu không gia hạn.")}
-                </p>
-                <button
-                  type="button"
-                  onClick={openExtensionPanel}
-                  className="mt-3 inline-flex items-center gap-2 rounded-xl bg-rose-700 px-5 py-2.5 text-sm font-bold text-white hover:bg-rose-800 transition"
-                >
-                  {t("extendContractNow", "Extend Contract Now →")}
-                </button>
-              </div>
-            ) : isExpiringSoon && !isRemoved ? (
-              <div className="mt-4 rounded-2xl border border-amber-300 bg-amber-50 p-4 animate-in fade-in slide-in-from-top-2 duration-500">
-                <div className="flex items-center gap-3 text-amber-800 font-bold">
-                  <svg className="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                  <span>
-                    {contractDaysRemaining === 0
-                      ? t("contractExpiringToday", "Your contract expires today!")
-                      : contractDaysRemaining === 1
-                        ? t("contractExpiring1Day", "Your contract expires tomorrow!")
-                        : t("contractExpiringSoon", `Your contract expires in ${contractDaysRemaining} days.`)}
-                  </span>
-                </div>
-                <p className="mt-2 text-sm text-amber-800">
-                  {t("contractExpiringSoonSub", "Extend your contract to keep using all portal services. Access will be removed 5 days after the contract end date if not renewed. / Gia hạn hợp đồng để tiếp tục sử dụng dịch vụ. Quyền truy cập sẽ bị xóa sau 5 ngày nếu không gia hạn.")}
-                </p>
-                <button
-                  type="button"
-                  onClick={openExtensionPanel}
-                  className="mt-3 inline-flex items-center gap-2 rounded-xl bg-amber-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-amber-700 transition"
-                >
-                  {t("extendContractNow", "Extend Contract Now →")}
-                </button>
-              </div>
-            ) : (
-              <>
-                <p className="max-w-2xl text-sm text-slate-600">
-                  {t("dashboardSubtext", "A quick view of your account, bookings, cleaning schedule, and unpaid fine tickets.")}
-                </p>
-              </>
-            )}
+            {!isRemoved && !isExpired && !isExpiringSoon ? (
+              <p className="max-w-2xl text-sm text-slate-600">
+                {t("dashboardSubtext", "A quick view of your account, bookings, cleaning schedule, and unpaid fine tickets.")}
+              </p>
+            ) : null}
             <p className="text-sm text-slate-500 break-all">{sessionEmail}</p>
           </div>
 
@@ -555,8 +498,7 @@ export function HomeDashboardClient() {
         <ContractExtension
           email={sessionEmail}
           endDateStr={client["Ngày hết hạn hợp đồng"]}
-          onExtended={() => { setExtensionExpanded(false); void loadDashboard(); }}
-          forceExpand={extensionExpanded}
+          onExtended={() => void loadDashboard()}
         />
       )}
 

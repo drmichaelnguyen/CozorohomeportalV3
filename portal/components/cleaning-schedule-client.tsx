@@ -257,6 +257,7 @@ export function CleaningScheduleClient() {
   const [pastVisibleCount, setPastVisibleCount] = useState(5);
   const [pastMonthFilter, setPastMonthFilter] = useState("all");
   const [pastYearFilter, setPastYearFilter] = useState("all");
+  const [pastTasksExpanded, setPastTasksExpanded] = useState(false);
   const [selfAssignSuggestions, setSelfAssignSuggestions] = useState<string[]>([]);
   const [pendingSelfAssignment, setPendingSelfAssignment] = useState<PendingSelfAssignment | null>(null);
   const [activeMenuDate, setActiveMenuDate] = useState<Date | null>(null);
@@ -1141,21 +1142,23 @@ export function CleaningScheduleClient() {
               </div>
             </div>
           )}
-          <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-            <h2 className="text-lg font-semibold text-slate-900">My Cleaning Profile</h2>
-            <div className="mt-4 grid gap-4 md:grid-cols-3">
-              <div className="rounded-xl border border-slate-200 p-4">
-                <div className="text-xs uppercase tracking-wide text-slate-500">Branch</div>
-                <div className="mt-1 text-sm font-medium text-slate-900">{overview.user?.branchId ?? "-"}</div>
-              </div>
-              <div className="rounded-xl border border-slate-200 p-4">
-                <div className="text-xs uppercase tracking-wide text-slate-500">Floor</div>
-                <div className="mt-1 text-sm font-medium text-slate-900">{overview.user?.floor ?? "-"}</div>
-              </div>
-              <div className="rounded-xl border border-slate-200 p-4">
-                <div className="text-xs uppercase tracking-wide text-slate-500">Name</div>
-                <div className="mt-1 text-sm font-medium text-slate-900">{overview.user?.name ?? sessionEmail}</div>
-              </div>
+          <section className="rounded-xl bg-white px-4 py-3 shadow-sm ring-1 ring-slate-200">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between sm:gap-x-4 sm:gap-y-1">
+              <h2 className="text-sm font-semibold text-slate-900">{t("cleaningProfileTitle")}</h2>
+              <p className="text-sm text-slate-700">
+                <span className="text-slate-500">{t("branchLabel")}</span>{" "}
+                <span className="font-medium text-slate-900">{overview.user?.branchId ?? "—"}</span>
+                <span className="mx-2 text-slate-300" aria-hidden>
+                  ·
+                </span>
+                <span className="text-slate-500">{t("floorLabel")}</span>{" "}
+                <span className="font-medium text-slate-900">{overview.user?.floor ?? "—"}</span>
+                <span className="mx-2 text-slate-300" aria-hidden>
+                  ·
+                </span>
+                <span className="text-slate-500">{t("name")}</span>{" "}
+                <span className="font-medium text-slate-900 break-words">{overview.user?.name ?? sessionEmail}</span>
+              </p>
             </div>
           </section>
 
@@ -1699,76 +1702,95 @@ export function CleaningScheduleClient() {
             </div>
 
               <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-                <h2 className="text-lg font-semibold text-slate-900">Past Tasks</h2>
-              <div className="mt-4 space-y-3">
-                <div className="grid gap-3 md:grid-cols-2">
-                  <label className="block text-sm font-medium text-slate-700">
-                    Month
-                    <select
-                      value={pastMonthFilter}
-                      onChange={(event) => {
-                        setPastMonthFilter(event.target.value);
-                        setPastVisibleCount(5);
-                      }}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h2 className="text-lg font-semibold text-slate-900">
+                    {t("pastTasksTitle", "Past Tasks")}
+                  </h2>
+                  {pastTasks.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setPastTasksExpanded((current) => !current)}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
                     >
-                      <option value="all">All months</option>
-                      {pastMonthOptions.map((month) => (
-                        <option key={month} value={month}>
-                          {month}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="block text-sm font-medium text-slate-700">
-                    Year
-                    <select
-                      value={pastYearFilter}
-                      onChange={(event) => {
-                        setPastYearFilter(event.target.value);
-                        setPastVisibleCount(5);
-                      }}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-                    >
-                      <option value="all">All years</option>
-                      {pastYearOptions.map((year) => (
-                        <option key={year} value={year}>
-                          {year}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                      {pastTasksExpanded ? t("pastTasksHide", "Hide past tasks") : t("pastTasksShow", "Show past tasks")}
+                    </button>
+                  ) : null}
                 </div>
-                {filteredPastTasks.length === 0 ? <p className="text-sm text-slate-600">No past tasks yet.</p> : null}
-                {visiblePastTasks.map((task) => (
-                  <div key={task.id} className="rounded-xl border border-slate-200 p-4">
-                    <div className="font-medium text-slate-900">
-                      {prettyTaskType(task.type)} - {new Date(task.scheduledDate).toLocaleDateString()}
+                {pastTasks.length === 0 ? (
+                  <p className="mt-4 text-sm text-slate-600">{t("noPastTasksYet", "No past tasks yet.")}</p>
+                ) : pastTasksExpanded ? (
+                  <div className="mt-4 space-y-3">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="block text-sm font-medium text-slate-700">
+                        Month
+                        <select
+                          value={pastMonthFilter}
+                          onChange={(event) => {
+                            setPastMonthFilter(event.target.value);
+                            setPastVisibleCount(5);
+                          }}
+                          className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+                        >
+                          <option value="all">All months</option>
+                          {pastMonthOptions.map((month) => (
+                            <option key={month} value={month}>
+                              {month}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="block text-sm font-medium text-slate-700">
+                        Year
+                        <select
+                          value={pastYearFilter}
+                          onChange={(event) => {
+                            setPastYearFilter(event.target.value);
+                            setPastVisibleCount(5);
+                          }}
+                          className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+                        >
+                          <option value="all">All years</option>
+                          {pastYearOptions.map((year) => (
+                            <option key={year} value={year}>
+                              {year}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                     </div>
-                    <div className="mt-1 text-sm text-slate-600">
-                      Status: {task.status} | Reward: {task.rewardCoins} coins
-                    </div>
-                    <div className="mt-1 text-sm text-slate-600">
-                      Assigner: {getResidentAssignerLabel(task)}
-                    </div>
-                    <div className="mt-1 text-sm text-slate-600">
-                      Completion window: {getCompletionWindow(task).label}
-                    </div>
-                    {task.completionNote ? <div className="mt-2 text-sm text-slate-600">Your note: {task.completionNote}</div> : null}
-                    {task.auditorNote ? <div className="mt-2 text-sm text-slate-600">Audit note: {task.auditorNote}</div> : null}
+                    {filteredPastTasks.length === 0 ? (
+                      <p className="text-sm text-slate-600">{t("noPastTasksMatchFilters", "No tasks match these filters.")}</p>
+                    ) : null}
+                    {visiblePastTasks.map((task) => (
+                      <div key={task.id} className="rounded-xl border border-slate-200 p-4">
+                        <div className="font-medium text-slate-900">
+                          {prettyTaskType(task.type)} - {new Date(task.scheduledDate).toLocaleDateString()}
+                        </div>
+                        <div className="mt-1 text-sm text-slate-600">
+                          Status: {task.status} | Reward: {task.rewardCoins} coins
+                        </div>
+                        <div className="mt-1 text-sm text-slate-600">
+                          Assigner: {getResidentAssignerLabel(task)}
+                        </div>
+                        <div className="mt-1 text-sm text-slate-600">
+                          Completion window: {getCompletionWindow(task).label}
+                        </div>
+                        {task.completionNote ? <div className="mt-2 text-sm text-slate-600">Your note: {task.completionNote}</div> : null}
+                        {task.auditorNote ? <div className="mt-2 text-sm text-slate-600">Audit note: {task.auditorNote}</div> : null}
+                      </div>
+                    ))}
+                    {visiblePastTasks.length < filteredPastTasks.length ? (
+                      <button
+                        type="button"
+                        onClick={() => setPastVisibleCount((current) => current + 5)}
+                        className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
+                      >
+                        Show 5 more
+                      </button>
+                    ) : null}
                   </div>
-                ))}
-                {visiblePastTasks.length < filteredPastTasks.length ? (
-                  <button
-                    type="button"
-                    onClick={() => setPastVisibleCount((current) => current + 5)}
-                    className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
-                  >
-                    Show 5 more
-                  </button>
                 ) : null}
               </div>
-            </div>
           </section>
         </>
       ) : null}

@@ -27,6 +27,7 @@ import {
   syncClientsFromSheet,
   updateCleaningCalendarEvent
 } from "./google-sheets.js";
+import { getCleaningRewardSettings } from "./cleaning-reward-settings.js";
 import { prisma } from "./prisma.js";
 
 type ActiveCleaningUser = {
@@ -116,12 +117,6 @@ const CLEANING_TASK_LEGACY_ASSIGNER_OMIT = {
 } as const;
 let cleaningTaskAssignerColumnsMissing = false;
 let cleaningTaskAssignerFieldsUnsupported = false;
-
-const cleaningRewardMap: Record<CleaningTaskType, number> = {
-  [CleaningTaskType.KITCHEN_D2]: 5000,
-  [CleaningTaskType.TRASH_D7]: 5000,
-  [CleaningTaskType.KITCHEN_D7]: 10000
-};
 
 const CLEANING_FULL_FINE_AMOUNT = 10000;
 const AUTO_CLEANING_FINE_OPERATOR = "System";
@@ -1308,10 +1303,10 @@ async function createCleaningTaskRecord(input: {
   assignedByName?: string | null;
 }) {
   const normalizedScheduledDate = normalizeCalendarDate(input.scheduledDate);
-  let rewardCoins = cleaningRewardMap[input.type];
-  
+  const rewardSettings = await getCleaningRewardSettings();
+  let rewardCoins = rewardSettings.baseRewards[input.type];
   if (input.isSelfAssigned) {
-    rewardCoins = Math.round(rewardCoins * 1.2); // 20% bonus
+    rewardCoins = Math.round(rewardCoins * rewardSettings.selfAssignBonusMultiplier);
   }
   const target = getCleaningCalendarTarget(input.type, { floor: input.floor ?? input.user.floor });
   const calendarId: string | null = target?.calendarId ?? null;
@@ -1356,6 +1351,7 @@ async function syncCalendarTasksIntoDatabase(
   });
   const importedTasks: CleaningTaskRecord[] = [];
   const usersByEmail = new Map(activeUsers.map((user) => [user.email, user]));
+  const rewardSettings = await getCleaningRewardSettings();
 
   for (const event of importedEvents) {
     const scheduledDate = normalizeCalendarDate(event.start);
@@ -1454,7 +1450,7 @@ async function syncCalendarTasksIntoDatabase(
         scheduledDate,
           calendarId: event.calendarId,
           calendarEventId: event.id,
-          rewardCoins: cleaningRewardMap[event.taskType as CleaningTaskType],
+          rewardCoins: rewardSettings.baseRewards[event.taskType as CleaningTaskType],
           assignmentSource: CleaningAssignmentSource.SYSTEM,
           assignedByName: "System"
         }

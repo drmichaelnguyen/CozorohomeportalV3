@@ -5,8 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import {
   buildCozoroMemberProgram,
-  COZORO_MEMBER_DIAMOND_EXAMPLE,
-  COZORO_MEMBER_RULE_DETAILS
+  COZORO_MEMBER_DIAMOND_EXAMPLE_KEYS,
+  COZORO_MEMBER_RULE_DETAIL_KEYS
 } from "../lib/cozoro-member";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
@@ -686,30 +686,32 @@ export function CoinsClient() {
       {entries.length > 0 ? (
         <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
           <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold text-slate-900">Cozoro Member Status</h2>
+            <h2 className="text-lg font-semibold text-slate-900">{t("cozoroMemberStatusHeading")}</h2>
             <button
               type="button"
               onClick={() => setShowMemberRuleHelp((current) => !current)}
               className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-300 text-sm font-semibold text-slate-700"
-              aria-label="Show Cozoro Member ranking details"
-              title="How Cozoro Member ranking is calculated"
+              aria-label={t("memberRankingHelpAria")}
+              title={t("memberRankingHelpTitle")}
             >
               ?
             </button>
           </div>
           {showMemberRuleHelp ? (
             <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-slate-700">
-              <div className="font-semibold text-slate-900">How Cozoro calculates your member tier</div>
+              <div className="font-semibold text-slate-900">{t("memberTierHelpTitle")}</div>
               <div className="mt-3 space-y-2">
-                {COZORO_MEMBER_RULE_DETAILS.map((item) => (
-                  <p key={item}>{item}</p>
+                {COZORO_MEMBER_RULE_DETAIL_KEYS.map((key) => (
+                  <p key={key}>{t(key)}</p>
                 ))}
               </div>
               <div className="mt-3 rounded-lg border border-sky-100 bg-white px-3 py-2">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Diamond example</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {t("memberDiamondExampleTitle")}
+                </div>
                 <div className="mt-2 space-y-1">
-                  {COZORO_MEMBER_DIAMOND_EXAMPLE.map((item) => (
-                    <p key={item}>{item}</p>
+                  {COZORO_MEMBER_DIAMOND_EXAMPLE_KEYS.map((key) => (
+                    <p key={key}>{t(key)}</p>
                   ))}
                 </div>
               </div>
@@ -717,43 +719,53 @@ export function CoinsClient() {
           ) : null}
           <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-xl border border-slate-200 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recorded Cozoro Member</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                {t("recordedCozoroMemberLabel")}
+              </div>
               <div className="mt-2 text-2xl font-semibold text-slate-900">{memberProgram.recordedRank}</div>
-              <div className="mt-1 text-xs text-slate-500">Sheet value, updated monthly</div>
+              <div className="mt-1 text-xs text-slate-500">{t("recordedCozoroMemberSub")}</div>
             </div>
             <div className="rounded-xl border border-slate-200 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Calculated Cozoro Member</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                {t("calculatedCozoroMemberLabel")}
+              </div>
               <div className="mt-2 text-2xl font-semibold text-slate-900">{memberProgram.liveRank}</div>
-              <div className="mt-1 text-xs text-slate-500">Calculated from accumulated coins and previous month earnings</div>
+              <div className="mt-1 text-xs text-slate-500">{t("calculatedCozoroMemberSub")}</div>
             </div>
             <div className="rounded-xl border border-slate-200 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Accumulated Coins</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("accumulatedCoinsLabel")}</div>
               <div className="mt-2 text-2xl font-semibold text-slate-900">
                 {formatCoins(memberProgram.totalAccumulatedCoins)}
               </div>
             </div>
             <div className="rounded-xl border border-slate-200 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Previous Month Earned</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                {t("previousMonthEarnedLabel")}
+              </div>
               <div className="mt-2 text-2xl font-semibold text-slate-900">
                 {formatCoins(memberProgram.previousMonthEarnings)}
               </div>
-              <div className="mt-1 text-xs text-slate-500">Positive coins earned in the previous calendar month</div>
+              <div className="mt-1 text-xs text-slate-500">{t("previousMonthEarnedSub")}</div>
             </div>
             <div className="rounded-xl border border-slate-200 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Coins To Next Cozoro Member</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                {t("coinsToNextCozoroMemberLabel")}
+              </div>
               <div className="mt-2 text-2xl font-semibold text-slate-900">
                 {memberProgram.nextTier ? formatCoins(memberProgram.nextTier.remainingCoins) : "0"}
               </div>
               <div className="mt-1 text-xs text-slate-500">
-                {memberProgram.nextTier ? `Next: ${memberProgram.nextTier.name}` : "Top Cozoro Member reached"}
+                {memberProgram.nextTier
+                  ? t("memberNextTierFooter", { tier: memberProgram.nextTier.name })
+                  : t("memberTopTierReached")}
               </div>
             </div>
             <div className="rounded-xl border border-slate-200 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Coins To Remain</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("coinsToRemainLabel")}</div>
               <div className="mt-2 text-2xl font-semibold text-slate-900">
                 {memberProgram.maintainCoinsNeeded != null ? formatCoins(memberProgram.maintainCoinsNeeded) : "-"}
               </div>
-              <div className="mt-1 text-xs text-slate-500">Minimum needed this month to keep the current Cozoro Member</div>
+              <div className="mt-1 text-xs text-slate-500">{t("coinsToRemainSub")}</div>
             </div>
           </div>
         </section>
