@@ -1,5 +1,8 @@
 # Changelog
 
+## [3.7.1] - 2026-04-14
+- **Multi-month prepaid package**: Detailed line-item estimate (rent, tenure surcharge, monthly adjustment, professional discount, parking, then package gross/discount/net; laundry, gate parking, and fines always shown). Improved contrast on resident next-payment and manager client panels. API adds `recurringComponents` and `laundryCashUses` to prepaid estimate payload.
+
 ## [3.7.0] - 2026-04-14
 - **Parking plans (registration)**: `ParkingPricingTier` per branch — managers/owners add named EN/VI plans and fees; `/register` shows choices when multiple; per-bed parking override still wins for that bed; `portable-dev` no longer blocks on `migrate deploy` (no migrations in repo); `rebuild-restart.cmd`, `start-sandbox.cmd`, ping-based delays; misc TS fixes (checkout form, nav badges, prepaid estimate type).
 

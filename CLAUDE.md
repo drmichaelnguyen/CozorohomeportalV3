@@ -219,6 +219,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.7.1 | Multi-month prepaid: full package calculator breakdown (register-style recurring lines, no deposit; laundry / gate / fines explicit); readable UI on manager package card and resident next payment |
 | 3.7.0 | Named motorbike parking tiers per branch (`ParkingPricingTier`), manager Settings + registration multi-choice; portable dev start without `migrate deploy`; rebuild-restart / start-sandbox helpers |
 | 3.6.10 | Multi-month prepaid: manager draft/confirm package total and note, in-app (`PREPAID_PACKAGE`) and email notify; resident next payment shows manager-confirmed amount vs engine estimate; `PrepaidPackageBilling` in Prisma |
 | 3.6.9 | Resident personal support: optional Cozoro Assistant (Gemini) replies in the same thread as manager inbox; optional callback fields (phone, Facebook, other) on conversation; `ASSISTANT` message role; manager Messages workspace: open-maintenance count on tab + mobile nav badge, compact scroll area with sticky subtab row; `bot/README` clarifies `chatbot.cozorohome.com` as standalone HTTPS bot vs portal and Facebook as optional |

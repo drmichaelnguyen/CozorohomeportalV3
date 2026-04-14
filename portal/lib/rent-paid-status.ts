@@ -23,13 +23,27 @@ export type RentBreakdownPayload = {
   };
 };
 
+/** Sheet-derived recurring lines (same as engine monthly rent from sheet, no deposit). */
+export type PrepaidRecurringComponentsPayload = {
+  baseRentVnd: number;
+  tenureSurchargeVnd: number;
+  tenureSurchargeRate: number;
+  monthlyAdjustmentSurchargeVnd: number;
+  professionalDiscountVnd: number;
+  parkingFeeVnd: number;
+  recurringMonthlyVnd: number;
+};
+
 /** Server estimate for the next multi-month package renewal (sheet + engine as of billing month). */
 export type PrepaidNextPaymentEstimatePayload = {
   planMonths: 3 | 6;
   recurringMonthlyVnd: number;
+  /** Present on current API; omitted on very old snapshots only. */
+  recurringComponents?: PrepaidRecurringComponentsPayload;
   frequencyDiscountVnd: number;
   packageRecurringSubtotalVnd: number;
   laundryFeeVnd: number;
+  laundryCashUses?: number;
   finesVnd: number;
   gateParkingFeeVnd: number;
   /** Unpaid fines + laundry + gate per engine (current billing month) */

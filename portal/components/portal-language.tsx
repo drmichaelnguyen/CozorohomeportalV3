@@ -82,6 +82,26 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "Package portion after discount",
     vi: "Phần gói sau giảm giá"
   },
+  prepaidEachMonthNoDeposit: {
+    en: "Each month in the package (no deposit)",
+    vi: "Mỗi tháng trong gói (không gồm tiền cọc)"
+  },
+  prepaidRecurringMonthlyTotalLabel: {
+    en: "Recurring total per month",
+    vi: "Tổng phần định kỳ mỗi tháng"
+  },
+  prepaidPackagePortionTitle: {
+    en: "Prepaid package (months × recurring, then plan discount)",
+    vi: "Gói trả trước (tháng × phần định kỳ, rồi giảm theo gói)"
+  },
+  prepaidBillAddOnsTitle: {
+    en: "Unpaid laundry, gate parking, and fines (added to total)",
+    vi: "Giặt tiền mặt, gửi xe cổng và phạt chưa trả (cộng vào tổng)"
+  },
+  prepaidLaundryCashUsesLabel: {
+    en: "{n} cash",
+    vi: "{n} tiền mặt"
+  },
   prepaidEstimateDisclaimer: {
     en: "This is an estimate for your next prepaid renewal; managers may adjust the final amount. Laundry uses cash usage from the month before the billing month shown.",
     vi: "Đây là ước tính cho kỳ gia hạn gói trả trước; quản lý có thể điều chỉnh số cuối. Phí giặt dựa trên lượt tiền mặt của tháng trước tháng hóa đơn hiển thị."

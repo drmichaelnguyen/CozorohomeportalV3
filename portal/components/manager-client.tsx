@@ -3,12 +3,14 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
+import { formatBillingMonthLabel, type PrepaidNextPaymentEstimatePayload } from "../lib/rent-paid-status";
 import { parseVietnamDate } from "../lib/contract-utils";
 import { AdminCleaningClient } from "./admin-cleaning-client";
 import { ManagerAiChat } from "./manager-ai-chat";
 import { ManagerSupportInbox } from "./manager-support-inbox";
 import { LaundryScheduleManager } from "./laundry-schedule-manager";
 import { usePortalLanguage } from "./portal-language";
+import { PrepaidPackageBreakdownRows } from "./next-payment-summary";
 import { usePortalSession } from "./portal-session";
 import { usePortalTheme } from "./portal-theme";
 import Link from "next/link";
@@ -902,12 +904,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [gateNewAmount, setGateNewAmount] = useState("");
   const [gateNewNote, setGateNewNote] = useState("");
   const [prepaidPkgLoading, setPrepaidPkgLoading] = useState(false);
-  const [prepaidPkgEstimate, setPrepaidPkgEstimate] = useState<{
-    estimatedTotalVnd: number;
-    planMonths?: number;
-    midCyclePayablesVnd?: number;
-    recurringMonthlyVnd?: number;
-  } | null>(null);
+  const [prepaidPkgEstimate, setPrepaidPkgEstimate] = useState<PrepaidNextPaymentEstimatePayload | null>(null);
   const [prepaidPkgBilling, setPrepaidPkgBilling] = useState<{
     confirmed?: boolean;
     managerPackageTotalVnd?: number;
@@ -1932,12 +1929,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         );
         const data = (await res.json()) as {
           error?: string;
-          estimate?: {
-            estimatedTotalVnd: number;
-            planMonths?: number;
-            midCyclePayablesVnd?: number;
-            recurringMonthlyVnd?: number;
-          };
+          estimate?: PrepaidNextPaymentEstimatePayload;
           billing?: {
             confirmed?: boolean;
             managerPackageTotalVnd?: number;
@@ -3990,33 +3982,30 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     const parsedTotal = Math.round(Number(String(prepaidPkgTotalInput).replace(/[^\d.-]/g, "")));
                     const totalOk = Number.isFinite(parsedTotal) && parsedTotal >= 0;
                     return (
-                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 space-y-3">
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
-                            <div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Multi-month package</div>
-                            <div className="mt-0.5 text-sm font-medium text-slate-700">Billing month {billingMonth}</div>
+                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Multi-month package</div>
+                            <div className="mt-0.5 text-sm font-medium text-slate-900">Billing month {billingMonth}</div>
                           </div>
                           {prepaidPkgBilling?.confirmed ? (
                             <span className="rounded-full bg-emerald-600 px-2.5 py-0.5 text-xs font-semibold text-white">Confirmed</span>
                           ) : (
-                            <span className="rounded-full bg-amber-500 px-2.5 py-0.5 text-xs font-semibold text-white">Draft</span>
+                            <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-950">Draft</span>
                           )}
                         </div>
 
                         {prepaidPkgLoading ? (
-                          <p className="text-xs text-slate-600 border-t border-emerald-200/80 pt-3">Loading engine estimate…</p>
+                          <p className="text-xs text-slate-600 border-t border-slate-200 pt-3">Loading engine estimate…</p>
                         ) : est ? (
-                          <div className="space-y-2 border-t border-emerald-200/80 pt-3 text-sm">
-                            <div className="flex justify-between text-slate-700">
-                              <span>Engine estimate (package total)</span>
-                              <span className="font-semibold">{est.estimatedTotalVnd.toLocaleString()} ₫</span>
-                            </div>
-                            {(est.midCyclePayablesVnd ?? 0) > 0 ? (
-                              <p className="text-xs text-slate-600">
-                                Includes mid-cycle payables (fines, laundry, gate): {est.midCyclePayablesVnd?.toLocaleString()} ₫
-                              </p>
-                            ) : null}
-                            <label className="block text-xs font-medium text-slate-600">
+                          <div className="space-y-3 border-t border-slate-200 pt-3">
+                            <PrepaidPackageBreakdownRows
+                              est={est}
+                              billMonthLabel={formatBillingMonthLabel(billingMonth, language)}
+                              t={t}
+                              className="mt-0"
+                            />
+                            <label className="block text-xs font-medium text-slate-700">
                               Manager package total (₫)
                               <input
                                 type="number"
@@ -4024,16 +4013,16 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 step={1000}
                                 value={prepaidPkgTotalInput}
                                 onChange={(e) => setPrepaidPkgTotalInput(e.target.value)}
-                                className="mt-1 w-full max-w-xs rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                                className="mt-1 w-full max-w-xs rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900"
                               />
                             </label>
-                            <label className="block text-xs font-medium text-slate-600">
+                            <label className="block text-xs font-medium text-slate-700">
                               Note to resident (optional)
                               <textarea
                                 value={prepaidPkgNoteInput}
                                 onChange={(e) => setPrepaidPkgNoteInput(e.target.value)}
                                 rows={2}
-                                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900"
                               />
                             </label>
                             {(prepaidPkgBilling?.lastAppNotifyAt || prepaidPkgBilling?.lastEmailNotifyAt) && (
@@ -4044,11 +4033,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             )}
                           </div>
                         ) : (
-                          <p className="text-xs text-amber-900 border-t border-emerald-200/80 pt-3">No engine estimate for this client or month.</p>
+                          <p className="text-xs text-amber-950 border-t border-slate-200 pt-3">No engine estimate for this client or month.</p>
                         )}
 
                         {!prepaidPkgLoading && est ? (
-                          <div className="flex flex-wrap gap-2 border-t border-emerald-200/80 pt-3">
+                          <div className="flex flex-wrap gap-2 border-t border-slate-200 pt-3">
                             <button
                               type="button"
                               disabled={prepaidPkgActionLoading || !totalOk}
@@ -4066,7 +4055,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                       managerNote: prepaidPkgNoteInput
                                     })
                                   });
-                                  const data = (await res.json()) as { error?: string; billing?: typeof prepaidPkgBilling; estimate?: typeof est };
+                                  const data = (await res.json()) as {
+                                    error?: string;
+                                    billing?: typeof prepaidPkgBilling;
+                                    estimate?: PrepaidNextPaymentEstimatePayload;
+                                  };
                                   if (!res.ok || data.error) {
                                     setStatus(data.error ?? "Could not save package draft");
                                     return;

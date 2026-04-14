@@ -85,78 +85,116 @@ function BreakdownRows({
   );
 }
 
-function PrepaidPackageBreakdownRows({
+export function PrepaidPackageBreakdownRows({
   est,
   billMonthLabel,
-  t
+  t,
+  className = "mt-3"
 }: {
   est: PrepaidNextPaymentEstimatePayload;
   billMonthLabel: string;
   t: (key: string, fallback?: string, params?: Record<string, string | number>) => string;
+  className?: string;
 }) {
   const fmt = (n: number) => new Intl.NumberFormat("vi-VN").format(n);
+  const rc = est.recurringComponents;
   const gross = est.recurringMonthlyVnd * est.planMonths;
-  const rows: { label: string; value: number }[] = [
-    {
-      label: t("prepaidLineRecurringMonthly"),
-      value: est.recurringMonthlyVnd
-    },
+  const laundryUses = est.laundryCashUses ?? 0;
+
+  const packageRows: { label: string; value: number }[] = [
     {
       label: t("prepaidLinePackageGross", undefined, { months: est.planMonths }),
       value: gross
     }
   ];
   if (est.frequencyDiscountVnd > 0) {
-    rows.push({
+    packageRows.push({
       label: t("prepaidLinePlanDiscount"),
       value: -est.frequencyDiscountVnd
     });
   }
-  rows.push({
+  packageRows.push({
     label: t("prepaidLinePackageNet"),
     value: est.packageRecurringSubtotalVnd
   });
-  if (est.laundryFeeVnd > 0) {
-    rows.push({
-      label: `${t("laundryServices")} — ${est.laundryBillingPrevMonth || "—"}`,
+
+  const payablesRows: { label: string; value: number }[] = [
+    {
+      label: `${t("laundryServices")} — ${est.laundryBillingPrevMonth || "—"} (${t("prepaidLaundryCashUsesLabel", undefined, { n: laundryUses })})`,
       value: est.laundryFeeVnd
-    });
-  }
-  if (est.gateParkingFeeVnd > 0) {
-    rows.push({ label: t("gateParking"), value: est.gateParkingFeeVnd });
-  }
-  if (est.finesVnd > 0) {
-    rows.push({ label: t("fines"), value: est.finesVnd });
+    },
+    { label: t("gateParking"), value: est.gateParkingFeeVnd },
+    { label: t("fines"), value: est.finesVnd }
+  ];
+
+  function Row({ label, value }: { label: string; value: number }) {
+    return (
+      <div className="flex items-center justify-between gap-3 text-sm">
+        <span className={value < 0 ? "text-emerald-700" : "text-slate-700"}>{label}</span>
+        <span className={`shrink-0 font-semibold tabular-nums ${value < 0 ? "text-emerald-700" : "text-slate-900"}`}>
+          {value < 0 ? "-" : ""}
+          {fmt(Math.abs(value))} ₫
+        </span>
+      </div>
+    );
   }
 
   return (
-    <div className="mt-3 space-y-2 rounded-xl border border-amber-200/80 bg-white/80 p-4">
-      <p className="text-xs font-semibold uppercase tracking-wide text-amber-800/90">
+    <div className={`${className} space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm`}>
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-800">
         {t("prepaidNextPackageTitle")} · {billMonthLabel}
       </p>
-      {rows.map((item, idx) => (
-        <div key={`prepaid-row-${idx}`} className="flex items-center justify-between gap-3 text-sm">
-          <span className={item.value < 0 ? "text-emerald-700" : "text-slate-700"}>{item.label}</span>
-          <span className={`shrink-0 font-semibold ${item.value < 0 ? "text-emerald-700" : "text-slate-900"}`}>
-            {item.value < 0 ? "-" : ""}
-            {fmt(Math.abs(item.value))} ₫
-          </span>
+
+      {rc ? (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-slate-600">{t("prepaidEachMonthNoDeposit")}</p>
+          <Row label={t("rent", "Rent")} value={rc.baseRentVnd} />
+          <Row
+            label={`${t("tenureSurcharge")} (${(rc.tenureSurchargeRate * 100).toFixed(0)}%)`}
+            value={rc.tenureSurchargeVnd}
+          />
+          <Row label={t("monthlyAdjustmentSurcharge")} value={rc.monthlyAdjustmentSurchargeVnd} />
+          <Row label={t("professionalDiscount")} value={-rc.professionalDiscountVnd} />
+          <Row label={t("parking")} value={rc.parkingFeeVnd} />
+          <div className="flex items-center justify-between border-t border-slate-200 pt-2 text-sm font-semibold text-slate-900">
+            <span>{t("prepaidRecurringMonthlyTotalLabel")}</span>
+            <span className="tabular-nums">{fmt(rc.recurringMonthlyVnd)} ₫</span>
+          </div>
         </div>
-      ))}
-      <div className="flex items-center justify-between border-t border-amber-200/80 pt-3 text-sm font-bold text-slate-900">
-        <span>{t("totalDue", "Total Due")}</span>
-        <span className="text-amber-800">{fmt(est.estimatedTotalVnd)} ₫</span>
+      ) : (
+        <div className="space-y-2">
+          <Row label={t("prepaidLineRecurringMonthly")} value={est.recurringMonthlyVnd} />
+        </div>
+      )}
+
+      <div className="space-y-2 border-t border-slate-200 pt-3">
+        <p className="text-xs font-semibold text-slate-600">{t("prepaidPackagePortionTitle")}</p>
+        {packageRows.map((item, idx) => (
+          <Row key={`pkg-${idx}`} label={item.label} value={item.value} />
+        ))}
       </div>
-      <p className="text-xs text-slate-500">{t("prepaidEstimateDisclaimer")}</p>
+
+      <div className="space-y-2 border-t border-slate-200 pt-3">
+        <p className="text-xs font-semibold text-slate-600">{t("prepaidBillAddOnsTitle")}</p>
+        {payablesRows.map((item, idx) => (
+          <Row key={`pay-${idx}`} label={item.label} value={item.value} />
+        ))}
+      </div>
+
+      <div className="flex items-center justify-between border-t border-slate-200 pt-3 text-sm font-bold text-slate-900">
+        <span>{t("totalDue", "Total Due")}</span>
+        <span className="text-slate-900 tabular-nums">{fmt(est.estimatedTotalVnd)} ₫</span>
+      </div>
+      <p className="text-xs text-slate-600">{t("prepaidEstimateDisclaimer")}</p>
       {est.prepaidManagerConfirmed ? (
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-slate-600">
           {t(
             "prepaidDetailsEngineNote",
             "Line items reflect the system calculation; the total above may differ if your manager adjusted the package amount."
           )}
         </p>
       ) : null}
-      <p className="text-xs text-slate-500">{t("contactManagerForPayment")}</p>
+      <p className="text-xs text-slate-600">{t("contactManagerForPayment")}</p>
     </div>
   );
 }
@@ -270,7 +308,7 @@ export function NextPaymentSummary({
       {packageExpiryNote ? <p className="mt-2 text-sm text-slate-700">{packageExpiryNote}</p> : null}
 
       {rentPaidStatus?.onPrepaidPlan ? (
-        <p className="mt-3 text-sm text-emerald-800">
+        <p className="mt-3 text-sm text-slate-800">
           {t("rentOnPrepaidPlan", "You are on a multi-month prepaid plan. Monthly rent notices may not apply each month.")}
         </p>
       ) : null}
@@ -282,24 +320,24 @@ export function NextPaymentSummary({
           </p>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-amber-800/90">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-800">
                 {t("prepaidNextPackageTitle")}
               </div>
               <div className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">
                 {new Intl.NumberFormat("vi-VN").format(prepaidEst.estimatedTotalVnd)} ₫
               </div>
               {prepaidEst.prepaidManagerConfirmed && prepaidEst.engineEstimatedTotalVnd != null ? (
-                <p className="mt-2 text-xs font-medium text-emerald-900">
+                <p className="mt-2 text-xs font-medium text-slate-800">
                   {language === "vi"
                     ? `Quản lý xác nhận số tiền này (ước tính hệ thống: ${new Intl.NumberFormat("vi-VN").format(prepaidEst.engineEstimatedTotalVnd)} ₫).`
                     : `Your manager confirmed this amount (system estimate was ${new Intl.NumberFormat("vi-VN").format(prepaidEst.engineEstimatedTotalVnd)} ₫).`}
                 </p>
               ) : null}
               {prepaidEst.managerPackageNote?.trim() ? (
-                <p className="mt-2 rounded-lg border border-amber-200/80 bg-white/80 p-2 text-xs text-slate-700">{prepaidEst.managerPackageNote.trim()}</p>
+                <p className="mt-2 rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-800">{prepaidEst.managerPackageNote.trim()}</p>
               ) : null}
               {(prepaidEst.midCyclePayablesVnd ?? 0) > 0 ? (
-                <p className="mt-2 text-xs font-medium text-slate-600">
+                <p className="mt-2 text-xs font-medium text-slate-700">
                   {t("prepaidMidCyclePayables", undefined, {
                     amount: new Intl.NumberFormat("vi-VN").format(prepaidEst.midCyclePayablesVnd ?? 0)
                   })}
@@ -309,7 +347,7 @@ export function NextPaymentSummary({
             <button
               type="button"
               onClick={() => setPrepaidDetailsOpen((v) => !v)}
-              className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-900 shadow-sm hover:bg-amber-50"
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm hover:bg-slate-50"
             >
               {prepaidDetailsOpen ? t("hideDetails", "Hide details") : t("paymentDetails", "Details")}
               <svg

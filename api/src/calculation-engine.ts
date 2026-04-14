@@ -330,15 +330,22 @@ export async function calculateRentBreakdown(
   };
 }
 
-/**
- * Monthly rent-related sheet charges only (share rent, tenure surcharge, monthly adjustment, parking).
- * Omits plan-frequency lump discounts, laundry, fines, and gate tickets — used to build prepaid package totals.
- */
-export function computeRecurringMonthlyRentVndFromSheet(client: ClientRow): number {
-  const baseRentRaw = parseVndAmount(client["Số tiền chia sẻ mỗi tháng"]);
+/** Sheet-derived monthly recurring charges (same rules as monthly rent engine, excluding coins / gate / laundry / fines / multi-month frequency lump). */
+export type RecurringMonthlyRentComponents = {
+  baseRentVnd: number;
+  tenureSurchargeVnd: number;
+  tenureSurchargeRate: number;
+  monthlyAdjustmentSurchargeVnd: number;
+  professionalDiscountVnd: number;
+  parkingFeeVnd: number;
+  recurringMonthlyVnd: number;
+};
+
+export function computeRecurringMonthlyRentComponentsFromSheet(client: ClientRow): RecurringMonthlyRentComponents {
+  const baseRentVnd = parseVndAmount(client["Số tiền chia sẻ mỗi tháng"]);
   const durationMonths = parseInt(String(client["Thời hạn hợp đồng (tháng)"] || "0"), 10);
-  const surchargeRate = getTenureSurchargeRate(durationMonths);
-  const tenureSurchargeVnd = Math.round(baseRentRaw * surchargeRate);
+  const tenureSurchargeRate = getTenureSurchargeRate(durationMonths);
+  const tenureSurchargeVnd = Math.round(baseRentVnd * tenureSurchargeRate);
   const monthlyAdjustmentVnd = getMonthlyAdjustmentVnd(client);
   const professionalDiscountVnd = monthlyAdjustmentVnd < 0 ? Math.abs(monthlyAdjustmentVnd) : 0;
   const monthlyAdjustmentSurchargeVnd = monthlyAdjustmentVnd > 0 ? monthlyAdjustmentVnd : 0;
@@ -346,23 +353,44 @@ export function computeRecurringMonthlyRentVndFromSheet(client: ClientRow): numb
   if (parkingFeeVnd === 0 && client["Biển số xe máy đăng ký gởi xe"]) {
     parkingFeeVnd = PARKING_PRICES.MOTORBIKE;
   }
-  return Math.max(
+  const recurringMonthlyVnd = Math.max(
     0,
-    baseRentRaw +
+    baseRentVnd +
       tenureSurchargeVnd +
       monthlyAdjustmentSurchargeVnd -
       professionalDiscountVnd +
       parkingFeeVnd
   );
+  return {
+    baseRentVnd,
+    tenureSurchargeVnd,
+    tenureSurchargeRate,
+    monthlyAdjustmentSurchargeVnd,
+    professionalDiscountVnd,
+    parkingFeeVnd,
+    recurringMonthlyVnd
+  };
+}
+
+/**
+ * Monthly rent-related sheet charges only (share rent, tenure surcharge, monthly adjustment, parking).
+ * Omits plan-frequency lump discounts, laundry, fines, and gate tickets — used to build prepaid package totals.
+ */
+export function computeRecurringMonthlyRentVndFromSheet(client: ClientRow): number {
+  return computeRecurringMonthlyRentComponentsFromSheet(client).recurringMonthlyVnd;
 }
 
 export type PrepaidNextPaymentEstimate = {
   planMonths: 3 | 6;
   recurringMonthlyVnd: number;
+  /** Rent + surcharges + parking per month (no deposit); mirrors monthly bill line items from the sheet. */
+  recurringComponents: RecurringMonthlyRentComponents;
   frequencyDiscountVnd: number;
   /** recurringMonthly * planMonths - frequencyDiscount */
   packageRecurringSubtotalVnd: number;
   laundryFeeVnd: number;
+  /** Cash laundry loads counted toward laundryFeeVnd for this estimate */
+  laundryCashUses: number;
   finesVnd: number;
   gateParkingFeeVnd: number;
   /** Fines + cash laundry (billing rules) + gate — owed anytime, included in estimatedTotalVnd */
@@ -395,7 +423,8 @@ export async function computePrepaidNextPaymentEstimate(
     return null;
   }
 
-  const recurringMonthlyVnd = computeRecurringMonthlyRentVndFromSheet(client);
+  const recurringComponents = computeRecurringMonthlyRentComponentsFromSheet(client);
+  const recurringMonthlyVnd = recurringComponents.recurringMonthlyVnd;
   const frequencyDiscountVnd = planMonths === 3 ? 500_000 : recurringMonthlyVnd;
   const packageRecurringSubtotalVnd = Math.max(0, recurringMonthlyVnd * planMonths - frequencyDiscountVnd);
 
@@ -405,13 +434,16 @@ export async function computePrepaidNextPaymentEstimate(
   const gateParkingFeeVnd = bd.gateParkingFeeVnd;
   const midCyclePayablesVnd = laundryFeeVnd + finesVnd + gateParkingFeeVnd;
   const estimatedTotalVnd = Math.max(0, packageRecurringSubtotalVnd + midCyclePayablesVnd);
+  const laundryCashUses = bd.details.laundryCount?.cash ?? 0;
 
   return {
     planMonths,
     recurringMonthlyVnd,
+    recurringComponents,
     frequencyDiscountVnd,
     packageRecurringSubtotalVnd,
     laundryFeeVnd,
+    laundryCashUses,
     finesVnd,
     gateParkingFeeVnd,
     midCyclePayablesVnd,
