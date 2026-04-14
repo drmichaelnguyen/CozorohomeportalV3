@@ -126,15 +126,16 @@ function BeeGameCanvas({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const maybeCtx = canvas.getContext("2d");
+    if (!maybeCtx) return;
+    const c2d: CanvasRenderingContext2D = maybeCtx;
 
     const dpr = Math.min(window.devicePixelRatio ?? 1, 2);
     canvas.width = W * dpr;
     canvas.height = H * dpr;
     canvas.style.width = `${W}px`;
     canvas.style.height = `${H}px`;
-    ctx.scale(dpr, dpr);
+    c2d.scale(dpr, dpr);
 
     function hitTest(): boolean {
       const y = beeYRef.current;
@@ -158,18 +159,18 @@ function BeeGameCanvas({
       last = now;
       wingTRef.current += dt;
 
-      const sky = ctx.createLinearGradient(0, 0, 0, H);
+      const sky = c2d.createLinearGradient(0, 0, 0, H);
       sky.addColorStop(0, "#38bdf8");
       sky.addColorStop(0.55, "#0369a1");
       sky.addColorStop(1, "#0c4a6e");
-      ctx.fillStyle = sky;
-      ctx.fillRect(0, 0, W, H);
+      c2d.fillStyle = sky;
+      c2d.fillRect(0, 0, W, H);
 
-      ctx.fillStyle = "rgba(255,255,255,0.12)";
-      ctx.beginPath();
-      ctx.ellipse(80 + Math.sin(now * 0.0003) * 10, 90, 48, 18, 0, 0, Math.PI * 2);
-      ctx.ellipse(260 + Math.cos(now * 0.00025) * 8, 130, 42, 15, 0, 0, Math.PI * 2);
-      ctx.fill();
+      c2d.fillStyle = "rgba(255,255,255,0.12)";
+      c2d.beginPath();
+      c2d.ellipse(80 + Math.sin(now * 0.0003) * 10, 90, 48, 18, 0, 0, Math.PI * 2);
+      c2d.ellipse(260 + Math.cos(now * 0.00025) * 8, 130, 42, 15, 0, 0, Math.PI * 2);
+      c2d.fill();
 
       if (phaseRef.current === "playing") {
         beeVyRef.current += GRAVITY * (dt / 16.67);
@@ -200,32 +201,32 @@ function BeeGameCanvas({
       }
 
       for (const p of pipesRef.current) {
-        ctx.fillStyle = "#b45309";
-        ctx.strokeStyle = "#78350f";
-        ctx.lineWidth = 3;
+        c2d.fillStyle = "#b45309";
+        c2d.strokeStyle = "#78350f";
+        c2d.lineWidth = 3;
         const g0 = p.gapCenter - GAP_H / 2;
         const g1 = p.gapCenter + GAP_H / 2;
-        ctx.fillRect(p.x, 0, PIPE_W, Math.max(0, g0));
-        ctx.strokeRect(p.x, 0, PIPE_W, Math.max(0, g0));
-        ctx.fillRect(p.x, g1, PIPE_W, H - g1);
-        ctx.strokeRect(p.x, g1, PIPE_W, H - g1);
-        ctx.fillStyle = "rgba(254, 243, 199, 0.35)";
-        ctx.fillRect(p.x + 6, 0, PIPE_W - 12, Math.max(0, g0));
-        ctx.fillRect(p.x + 6, g1, PIPE_W - 12, H - g1);
+        c2d.fillRect(p.x, 0, PIPE_W, Math.max(0, g0));
+        c2d.strokeRect(p.x, 0, PIPE_W, Math.max(0, g0));
+        c2d.fillRect(p.x, g1, PIPE_W, H - g1);
+        c2d.strokeRect(p.x, g1, PIPE_W, H - g1);
+        c2d.fillStyle = "rgba(254, 243, 199, 0.35)";
+        c2d.fillRect(p.x + 6, 0, PIPE_W - 12, Math.max(0, g0));
+        c2d.fillRect(p.x + 6, g1, PIPE_W - 12, H - g1);
       }
 
-      drawBee(ctx, BEE_X, beeYRef.current, wingTRef.current);
+      drawBee(c2d, BEE_X, beeYRef.current, wingTRef.current);
 
       if (phaseRef.current === "playing") {
         const label = String(scoreRef.current);
-        ctx.font = "bold 28px system-ui,Segoe UI,sans-serif";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillStyle = "rgba(255,255,255,0.95)";
-        ctx.strokeStyle = "rgba(15,23,42,0.5)";
-        ctx.lineWidth = 4;
-        ctx.strokeText(label, W / 2, 36);
-        ctx.fillText(label, W / 2, 36);
+        c2d.font = "bold 28px system-ui,Segoe UI,sans-serif";
+        c2d.textAlign = "center";
+        c2d.textBaseline = "middle";
+        c2d.fillStyle = "rgba(255,255,255,0.95)";
+        c2d.strokeStyle = "rgba(15,23,42,0.5)";
+        c2d.lineWidth = 4;
+        c2d.strokeText(label, W / 2, 36);
+        c2d.fillText(label, W / 2, 36);
       }
 
       rafRef.current = requestAnimationFrame(frame);
