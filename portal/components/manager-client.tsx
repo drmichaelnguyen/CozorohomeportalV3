@@ -239,6 +239,8 @@ type RentBreakdown = {
   recommendedCoinUsage: number;
   recommendedCoinValueVnd: number;
   finalTotalVnd: number;
+  coinRateVndPerCoin: number;
+  currentCoinsBalance: number;
   details: {
     durationMonths: number;
     professionalStatus: string;
@@ -256,11 +258,45 @@ type GateParkingTicketRow = {
   residentEmail: string;
   periodMonth: string;
   amountVnd: number;
+  sessionStartAt: string | null;
+  durationHours: number | null;
   note: string | null;
   createdBy: string;
   createdAt: string;
   paidAt: string | null;
 };
+
+function gateParkingDefaultDatetimeLocal(): string {
+  const d = new Date();
+  d.setSeconds(0, 0);
+  d.setMinutes(Math.round(d.getMinutes() / 15) * 15);
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const h = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${y}-${mo}-${day}T${h}:${mi}`;
+}
+
+function formatGateSessionDisplay(iso: string | null | undefined, lang: "en" | "vi"): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString(lang === "vi" ? "vi-VN" : "en-GB", { dateStyle: "short", timeStyle: "short" });
+}
+
+function formatGateDurationHours(h: number | null | undefined): string {
+  if (h == null || !Number.isFinite(h)) return "—";
+  return Number.isInteger(h) ? String(h) : h.toFixed(1);
+}
+
+/** Manager gate parking ticket: default bill = duration × this rate (VND/hour); amount remains editable. */
+const GATE_PARKING_VND_PER_HOUR = 5000;
+
+function gateParkingSuggestedAmountVnd(durationHours: number): number {
+  if (!Number.isFinite(durationHours) || durationHours <= 0) return 0;
+  return Math.round(durationHours * GATE_PARKING_VND_PER_HOUR);
+}
 
 function normalizeRentBreakdown(input: Partial<RentBreakdown> | null | undefined): RentBreakdown | null {
   if (!input) {
@@ -286,6 +322,8 @@ function normalizeRentBreakdown(input: Partial<RentBreakdown> | null | undefined
     recommendedCoinUsage: Number(input.recommendedCoinUsage ?? 0),
     recommendedCoinValueVnd: Number(input.recommendedCoinValueVnd ?? 0),
     finalTotalVnd: Number(input.finalTotalVnd ?? 0),
+    coinRateVndPerCoin: Number(input.coinRateVndPerCoin ?? 0),
+    currentCoinsBalance: Number(input.currentCoinsBalance ?? 0),
     details: {
       durationMonths: Number(input.details?.durationMonths ?? 0),
       professionalStatus: input.details?.professionalStatus ?? "",
@@ -985,6 +1023,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [finePaidSavingKey, setFinePaidSavingKey] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<StatsTab>("laundry");
   const [rentPaidStatus, setRentPaidStatus] = useState<boolean | null>(null);
+  const [rentCoinRedeemInfo, setRentCoinRedeemInfo] = useState<{
+    coins: number;
+    valueVnd: number;
+    at: string | null;
+  } | null>(null);
   const [rentPaidMonth, setRentPaidMonth] = useState("");
   const [rentPaidLoading, setRentPaidLoading] = useState(false);
   const [rentSectionCollapsed, setRentSectionCollapsed] = useState(true);
@@ -997,8 +1040,10 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [infoRentCalculating, setInfoRentCalculating] = useState(false);
   const [gateParkingTickets, setGateParkingTickets] = useState<GateParkingTicketRow[]>([]);
   const [gateTicketsLoading, setGateTicketsLoading] = useState(false);
-  const [gateNewPeriodMonth, setGateNewPeriodMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  const [gateNewAmount, setGateNewAmount] = useState("");
+  const [gateNewSessionStart, setGateNewSessionStart] = useState(() => gateParkingDefaultDatetimeLocal());
+  const [gateNewDurationHours, setGateNewDurationHours] = useState("1");
+  const [gateNewBillingMonthOverride, setGateNewBillingMonthOverride] = useState("");
+  const [gateNewAmount, setGateNewAmount] = useState(() => String(gateParkingSuggestedAmountVnd(1)));
   const [gateNewNote, setGateNewNote] = useState("");
   const [prepaidPkgLoading, setPrepaidPkgLoading] = useState(false);
   const [prepaidPkgEngineEstimate, setPrepaidPkgEngineEstimate] = useState<PrepaidNextPaymentEstimatePayload | null>(null);
@@ -2016,6 +2061,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
     setRentPaidMonth(month);
     setRentPaidStatus(null);
+    setRentCoinRedeemInfo(null);
     setInfoRentBreakdown(null);
     setInfoManagerDiscount("0");
     setInfoShortTermSurchargeRate("0");
@@ -2030,8 +2076,22 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         })
       ]);
       if (statusResponse.ok) {
-        const data = (await statusResponse.json()) as { isPaid: boolean };
+        const data = (await statusResponse.json()) as {
+          isPaid: boolean;
+          rentCoinRedeemCoins?: number | null;
+          rentCoinRedeemValueVnd?: number | null;
+          rentCoinRedeemAt?: string | null;
+        };
         setRentPaidStatus(data.isPaid);
+        if (data.rentCoinRedeemCoins != null && data.rentCoinRedeemCoins > 0) {
+          setRentCoinRedeemInfo({
+            coins: data.rentCoinRedeemCoins,
+            valueVnd: data.rentCoinRedeemValueVnd ?? 0,
+            at: data.rentCoinRedeemAt ?? null
+          });
+        } else {
+          setRentCoinRedeemInfo(null);
+        }
       }
       if (breakdownResponse.ok) {
         const data = normalizeRentBreakdown((await breakdownResponse.json()) as Partial<RentBreakdown>);
@@ -2151,27 +2211,44 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
   async function createGateParkingTicketForSelected() {
     if (!selectedClient?.email) return;
+    const sessionStart = gateNewSessionStart.trim();
+    const sessionDate = sessionStart ? new Date(sessionStart) : null;
+    const durationHours = Number(gateNewDurationHours);
     const amount = Math.round(Number(gateNewAmount) || 0);
-    if (!/^\d{4}-\d{2}$/.test(gateNewPeriodMonth) || amount <= 0) {
-      alert("Choose period month (YYYY-MM) and a positive amount.");
+    if (
+      !sessionDate ||
+      Number.isNaN(sessionDate.getTime()) ||
+      !Number.isFinite(durationHours) ||
+      durationHours <= 0 ||
+      amount <= 0
+    ) {
+      alert(t("gateParkingValidationRequired"));
       return;
+    }
+    const payload: Record<string, unknown> = {
+      actorEmail: normalizedEmail,
+      email: selectedClient.email.trim().toLowerCase(),
+      sessionStartAt: sessionDate.toISOString(),
+      durationHours,
+      amountVnd: amount,
+      note: gateNewNote.trim()
+    };
+    if (/^\d{4}-\d{2}$/.test(gateNewBillingMonthOverride.trim())) {
+      payload.periodMonth = gateNewBillingMonthOverride.trim();
     }
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/manager/gate-parking-tickets`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          actorEmail: normalizedEmail,
-          email: selectedClient.email.trim().toLowerCase(),
-          periodMonth: gateNewPeriodMonth,
-          amountVnd: amount,
-          note: gateNewNote.trim()
-        })
+        body: JSON.stringify(payload)
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(data.error ?? "Failed to add ticket");
-      setGateNewAmount("");
+      setGateNewSessionStart(gateParkingDefaultDatetimeLocal());
+      setGateNewDurationHours("1");
+      setGateNewBillingMonthOverride("");
+      setGateNewAmount(String(gateParkingSuggestedAmountVnd(1)));
       setGateNewNote("");
       await loadGateParkingTickets(selectedClient.email);
       await loadRentPaidStatus(selectedClient.email);
@@ -2201,7 +2278,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   }
 
   async function removeGateTicket(id: string) {
-    if (!window.confirm("Delete this gate parking ticket?")) return;
+    if (!window.confirm(t("gateParkingDeleteConfirm"))) return;
     try {
       const res = await fetch(
         `${API_BASE_URL}/manager/gate-parking-tickets/${encodeURIComponent(id)}?actorEmail=${encodeURIComponent(normalizedEmail)}`,
@@ -4905,6 +4982,21 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         <p className="text-xs text-slate-500 border-t border-slate-200 pt-3">Calculating…</p>
                       ) : infoRentBreakdown ? (
                         <div className="space-y-1.5 border-t border-slate-200 pt-3 text-sm">
+                          {rentCoinRedeemInfo ? (
+                            <p className="text-xs font-medium text-emerald-800 bg-emerald-50 border border-emerald-100 rounded-lg px-2 py-1.5">
+                              {language === "vi"
+                                ? `Đã đổi coin cho hóa đơn: ${rentCoinRedeemInfo.coins.toLocaleString()} coin (≈ ${rentCoinRedeemInfo.valueVnd.toLocaleString()} ₫)${
+                                    rentCoinRedeemInfo.at
+                                      ? ` — ${new Date(rentCoinRedeemInfo.at).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" })}`
+                                      : ""
+                                  }`
+                                : `Coins exchanged for this bill: ${rentCoinRedeemInfo.coins.toLocaleString()} coins (≈ ${rentCoinRedeemInfo.valueVnd.toLocaleString()} VND)${
+                                    rentCoinRedeemInfo.at
+                                      ? ` — ${new Date(rentCoinRedeemInfo.at).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" })}`
+                                      : ""
+                                  }`}
+                            </p>
+                          ) : null}
                           {[
                             { label: "Base rent", value: infoRentBreakdown.baseRent ?? 0, color: "" },
                             {
@@ -4931,20 +5023,61 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               value: infoRentBreakdown.laundryFeeVnd ?? 0,
                               color: ""
                             },
-                            { label: `Fines (unpaid, sheet)`, value: infoRentBreakdown.finesVnd ?? 0, color: "" }
+                            { label: `Fines (unpaid, sheet)`, value: infoRentBreakdown.finesVnd ?? 0, color: "" },
+                            ...(infoRentBreakdown.maxCoinUsageVnd > 0 &&
+                            infoRentBreakdown.coinRateVndPerCoin > 0 &&
+                            (infoRentBreakdown.recommendedCoinValueVnd > 0 || rentCoinRedeemInfo)
+                              ? ([
+                                  {
+                                    label: `Max coin credit (10% of bill): ${(infoRentBreakdown.maxCoinUsageVnd ?? 0).toLocaleString()} ₫`,
+                                    value: 0,
+                                    color: "text-slate-500"
+                                  },
+                                  {
+                                    label: `1 coin = ${infoRentBreakdown.coinRateVndPerCoin} ₫ (tier ${infoRentBreakdown.details?.memberTier ?? ""})`,
+                                    value: 0,
+                                    color: "text-slate-500"
+                                  },
+                                  {
+                                    label: `Cozoro Coins balance (sheet): ${(infoRentBreakdown.currentCoinsBalance ?? 0).toLocaleString()}`,
+                                    value: 0,
+                                    color: "text-slate-500"
+                                  }
+                                ] as const)
+                              : []),
+                            ...(infoRentBreakdown.recommendedCoinValueVnd > 0
+                              ? ([
+                                  {
+                                    label: "Bill before coin credit",
+                                    value: infoRentBreakdown.totalBeforeCoinsVnd ?? 0,
+                                    color: ""
+                                  },
+                                  {
+                                    label: `Coin credit (${infoRentBreakdown.recommendedCoinUsage} coins)`,
+                                    value: -(infoRentBreakdown.recommendedCoinValueVnd ?? 0),
+                                    color: "text-emerald-600"
+                                  }
+                                ] as const)
+                              : [])
                           ].map((item) => (
                             <div key={item.label} className={`flex justify-between ${item.color || "text-slate-700"}`}>
                               <span>{item.label}</span>
                               <span className="font-medium">
-                                {item.value < 0 ? "−" : ""}
-                                {Math.abs(item.value).toLocaleString()} ₫
+                                {item.value === 0 && item.color === "text-slate-500" ? (
+                                  <span className="text-slate-400">—</span>
+                                ) : (
+                                  <>
+                                    {item.value < 0 ? "−" : ""}
+                                    {Math.abs(item.value).toLocaleString()} ₫
+                                  </>
+                                )}
                               </span>
                             </div>
                           ))}
                           <div className="flex items-center justify-between border-t border-slate-200 pt-2 gap-2">
-                            <span className="font-bold text-slate-900">Total due</span>
+                            <span className="font-bold text-slate-900">Total due (cash)</span>
                             <div className="flex items-center gap-2">
-                              <span className="font-bold text-slate-900">{(infoRentBreakdown.totalBeforeCoinsVnd ?? 0).toLocaleString()} ₫</span>
+                              <span className="font-bold text-slate-900">{(infoRentBreakdown.finalTotalVnd ?? 0).toLocaleString()} ₫</span>
                               {canCreatePaymentReceipt && (
                                 <button
                                   type="button"
@@ -6093,22 +6226,16 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
               {activeAction === "gateParking" ? (
                 <div className="mt-4 space-y-3">
-                  <p className="text-sm text-slate-600">
-                    {language === "vi"
-                      ? "Vé gửi xe cổng được cộng vào tiền phòng cho đến khi đánh dấu đã thanh toán hoặc vé được thanh toán."
-                      : "Unpaid gate parking tickets roll into monthly rent until rent is marked paid or each ticket is paid."}
-                  </p>
+                  <p className="text-sm text-slate-600">{t("gateParkingRollIntoRentDesc")}</p>
                   <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="text-sm font-semibold text-slate-800">{t("gateParkingTickets")}</p>
-                      {gateTicketsLoading ? <span className="text-xs text-slate-400">Loading…</span> : null}
+                      {gateTicketsLoading ? (
+                        <span className="text-xs text-slate-400">{t("gateParkingLoading")}</span>
+                      ) : null}
                     </div>
                     {gateParkingTickets.length === 0 ? (
-                      <p className="text-sm text-slate-500">
-                        {language === "vi"
-                          ? "Chưa có vé. Thêm vé để tính phí gửi xe cổng cho cư dân này."
-                          : "No tickets yet. Add one to bill gate parking for this resident."}
-                      </p>
+                      <p className="text-sm text-slate-500">{t("gateParkingTicketsEmptyHint")}</p>
                     ) : (
                       <div className="max-h-48 overflow-y-auto space-y-2">
                         {gateParkingTickets.map((tk) => (
@@ -6116,23 +6243,36 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             key={tk.id}
                             className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-sm"
                           >
-                            <span className="font-mono text-slate-800">{tk.periodMonth}</span>
-                            <span className="font-semibold">{tk.amountVnd.toLocaleString("vi-VN")} ₫</span>
-                            <span className={tk.paidAt ? "text-emerald-600" : "text-amber-600"}>{tk.paidAt ? "Paid" : "Unpaid"}</span>
+                            <div className="min-w-0 flex-1 space-y-0.5">
+                              <p className="text-xs text-slate-500">
+                                {formatGateSessionDisplay(tk.sessionStartAt, language)}
+                                <span className="mx-1.5 text-slate-300">·</span>
+                                {formatGateDurationHours(tk.durationHours)}{" "}
+                                {t("gateParkingHoursUnit")}
+                              </p>
+                              <p className="font-mono text-slate-800">
+                                {t("gateParkingBillingMonthShort")}: {tk.periodMonth}
+                                <span className="mx-1.5 font-sans text-slate-300">·</span>
+                                <span className="font-semibold">{tk.amountVnd.toLocaleString("vi-VN")} ₫</span>
+                              </p>
+                            </div>
+                            <span className={tk.paidAt ? "text-emerald-600" : "text-amber-600"}>
+                              {tk.paidAt ? t("paidLabel") : t("unpaidLabel")}
+                            </span>
                             <div className="flex gap-2 ml-auto">
                               <button
                                 type="button"
                                 onClick={() => void updateGateTicketPaid(tk.id, !tk.paidAt)}
                                 className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
                               >
-                                {tk.paidAt ? "Unpay" : "Paid"}
+                                {tk.paidAt ? t("gateParkingButtonUnpay") : t("gateParkingButtonMarkPaid")}
                               </button>
                               <button
                                 type="button"
                                 onClick={() => void removeGateTicket(tk.id)}
                                 className="rounded-lg border border-rose-200 bg-white px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
                               >
-                                Delete
+                                {t("deleteLabel")}
                               </button>
                             </div>
                           </div>
@@ -6141,16 +6281,49 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     )}
                     <div className="flex flex-wrap gap-3 items-end border-t border-slate-100 pt-3">
                       <label className="block text-xs font-medium text-slate-600">
-                        Period
+                        {t("gateParkingSessionStartLabel")}
                         <input
-                          type="month"
-                          value={gateNewPeriodMonth}
-                          onChange={(e) => setGateNewPeriodMonth(e.target.value)}
+                          type="datetime-local"
+                          value={gateNewSessionStart}
+                          onChange={(e) => setGateNewSessionStart(e.target.value)}
                           className="mt-1 block rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
                         />
                       </label>
                       <label className="block text-xs font-medium text-slate-600">
-                        Amount (₫)
+                        {t("gateParkingDurationHoursLabel")}
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.25}
+                          value={gateNewDurationHours}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setGateNewDurationHours(v);
+                            const h = Number(v);
+                            if (Number.isFinite(h) && h > 0) {
+                              setGateNewAmount(String(gateParkingSuggestedAmountVnd(h)));
+                            }
+                          }}
+                          className="mt-1 block w-24 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                        />
+                      </label>
+                      <p className="w-full text-[11px] text-slate-400">
+                        {t("gateParkingRateAutoHint", {
+                          rate: `${GATE_PARKING_VND_PER_HOUR.toLocaleString(language === "vi" ? "vi-VN" : "en-US")} ₫`
+                        })}
+                      </p>
+                      <label className="block text-xs font-medium text-slate-600">
+                        {t("gateParkingBillingMonthOptional")}
+                        <input
+                          type="month"
+                          value={gateNewBillingMonthOverride}
+                          onChange={(e) => setGateNewBillingMonthOverride(e.target.value)}
+                          className="mt-1 block rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                        />
+                      </label>
+                      <p className="w-full text-[11px] text-slate-400">{t("gateParkingBillingMonthOptionalHint")}</p>
+                      <label className="block text-xs font-medium text-slate-600">
+                        {t("gateParkingAmountLabel")}
                         <input
                           type="number"
                           min={0}
@@ -6160,13 +6333,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         />
                       </label>
                       <label className="block min-w-[140px] flex-1 text-xs font-medium text-slate-600">
-                        Note
+                        {t("gateParkingNoteLabel")}
                         <input
                           type="text"
                           value={gateNewNote}
                           onChange={(e) => setGateNewNote(e.target.value)}
                           className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
-                          placeholder="Optional"
+                          placeholder={t("optionalShort")}
                         />
                       </label>
                       <button
@@ -6175,7 +6348,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         onClick={() => void createGateParkingTicketForSelected()}
                         className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
                       >
-                        Add ticket
+                        {t("gateParkingAddTicket")}
                       </button>
                     </div>
                   </div>
@@ -8207,6 +8380,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             <ManagerSupportInbox
               operatorEmail={normalizedEmail}
               enabled={isStaffSession}
+              operatorIsOwner={isOwnerSession}
               onViewClient={(email) => {
                 const client = clients.find((c) => c.email?.toLowerCase() === email.toLowerCase())
                   ?? inactiveClients.find((c) => c.email?.toLowerCase() === email.toLowerCase());

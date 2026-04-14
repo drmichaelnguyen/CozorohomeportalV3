@@ -3,6 +3,8 @@
  * (manager AI + resident Bee). Client may show a short full-screen starfield when `showStarfieldEffect` is true.
  */
 
+import { detectCozoroVentHate } from "./cozoro-vent-hammer-easter-egg.js";
+
 export type FounderEggLanguage = "en" | "vi";
 
 export type FounderEasterEggResult = {
@@ -24,6 +26,7 @@ function normalizeForMatch(text: string): string {
 /** Named references to Trọng / founder (ASCII-ish after normalize). */
 const TRONG_PERSON_MARKERS = [
   "anh trong",
+  "ong trong",
   "mr trong",
   "trong nguyen",
   "nguyen trong",
@@ -100,6 +103,9 @@ export function tryFounderEasterEggReply(
 ): FounderEasterEggResult | null {
   const raw = lastUserMessage?.trim();
   if (!raw) return null;
+  if (detectCozoroVentHate(raw)) {
+    return null;
+  }
   const n = normalizeForMatch(raw);
   if (!n) return null;
 

@@ -3498,6 +3498,16 @@ export async function getPaymentsForEmail(email: string) {
     });
 }
 
+/** Current Cozoro Coin balance from the main client roster row (not the coins history sheet). */
+export function parseCurrentCozoroCoinsFromClientRow(client: ClientRow): number {
+  return (
+    Number.parseInt(
+      String(client[CLIENT_CURRENT_COINS_COLUMN] ?? client["Cozoro coins hiện có"] ?? "0").replace(/[^0-9-]/g, ""),
+      10
+    ) || 0
+  );
+}
+
 export async function getFinesForEmail(email: string) {
   const normalizedEmail = email.trim().toLowerCase();
   const cache = (await readCachedFines()) ?? (await syncFinesFromSheet());

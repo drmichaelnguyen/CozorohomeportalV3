@@ -1,7 +1,20 @@
+import { COZORO_TIMEZONE } from "./google-sheets.js";
 import { prisma } from "./prisma.js";
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
+}
+
+/** YYYY-MM for rent roll-up, using the configured Cozoro business timezone. */
+export function billingPeriodMonthForGateSession(sessionStart: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: COZORO_TIMEZONE,
+    year: "numeric",
+    month: "2-digit"
+  }).formatToParts(sessionStart);
+  const y = parts.find((p) => p.type === "year")?.value ?? "";
+  const m = parts.find((p) => p.type === "month")?.value ?? "";
+  return `${y}-${m}`;
 }
 
 /** Sum unpaid gate parking tickets with period strictly before the billing month (YYYY-MM). */

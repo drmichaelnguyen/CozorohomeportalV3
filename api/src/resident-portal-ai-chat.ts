@@ -16,12 +16,14 @@ import {
   tryVentHammerPendingRefusalReply
 } from "./cozoro-vent-hammer-easter-egg.js";
 
-import { calculateRentBreakdown, computePrepaidNextPaymentEstimate } from "./calculation-engine.js";
+import { computePrepaidNextPaymentEstimate } from "./calculation-engine.js";
+import { calculateRentBreakdownForBillingMonth } from "./monthly-rent-breakdown.js";
 import { getCleaningOverviewForUser } from "./cleaning.js";
 import {
   createLaundryBooking,
   getActiveClientByEmail,
   getCoinsForEmail,
+  getFinesForEmail,
   getLaundryAvailabilityForMachine,
   getLaundryBookingContextForEmail,
   getLaundryBookingsForEmail,
@@ -41,6 +43,24 @@ export type ResidentPortalAiMessage = {
 };
 
 type UiLanguage = "en" | "vi";
+
+/** Shown when Gemini returns quota / rate-limit errors (exact copy per product request). */
+const GEMINI_QUOTA_HOLIDAY_REPLY =
+  "Anh Trong is bankcrupted and cannot afford me, so i'm on holiday and unavailable";
+
+function isGeminiQuotaExceeded(response: Response, data: GeminiResponse): boolean {
+  if (response.status === 429) return true;
+  const err = data.error;
+  if (!err) return false;
+  const msg = (err.message ?? "").toLowerCase();
+  const code = (err as { code?: number }).code;
+  if (code === 429) return true;
+  if (msg.includes("quota")) return true;
+  if (msg.includes("resource exhausted")) return true;
+  if (msg.includes("rate limit")) return true;
+  if (msg.includes("too many requests")) return true;
+  return false;
+}
 
 function residentGeminiEndpoint(): string {
   const key = process.env.GEMINI_RESIDENT_PORTAL_AI_API_KEY?.trim();
@@ -80,7 +100,7 @@ type GeminiResponse = {
     };
     finishReason?: string;
   }>;
-  error?: { message: string };
+  error?: { message: string; code?: number; status?: string };
 };
 
 function clipJson(value: unknown, maxLen: number): string {
@@ -104,6 +124,16 @@ function assertEligibleForResidentPortalAi(email: string) {
     throw new Error("Cozoro Bee: this login is not allowed.");
   });
 }
+
+/** Coin / fine sheet header keys (aligned with `google-sheets.ts` roster). */
+const COIN_DELTA = "COINS";
+const COIN_EVENT = "S\u1ef1 ki\u1ec7n";
+const COIN_BAL_AFTER = "S\u1ed1 Coins hi\u1ec7n c\u00f3";
+const COIN_OPERATOR = "Ng\u01b0\u1eddi thao t\u00e1c";
+const CLIENT_COINS_COL = "Cozoro coins hi\u1ec7n c\u00f3";
+const FINE_AMT = "CHI PH\u00cd THANH TO\u00c1N CHO VI PH\u1ea0M";
+const FINE_BODY = "N\u1ed8I DUNG VI PH\u1ea0M";
+const FINE_PAID = "\u0110\u00c3 THANH TO\u00c1N?";
 
 const PROFILE_COLUMNS = [
   "Họ và tên",
@@ -177,15 +207,17 @@ async function buildRentSnapshot(email: string): Promise<Record<string, unknown>
     };
   }
 
-  const breakdown = await calculateRentBreakdown(client, month, {
-    managerDiscountVnd: 0,
-    applyCoinsTowardRent
+  const { breakdown } = await calculateRentBreakdownForBillingMonth(client, month, {
+    managerDiscountVnd: 0
   });
   return {
     email,
     month,
     isPaid: false,
     applyCoinsTowardRent,
+    rentCoinRedeemCoins: record?.rentCoinRedeemCoins ?? null,
+    rentCoinRedeemValueVnd: record?.rentCoinRedeemValueVnd ?? null,
+    rentCoinRedeemAt: record?.rentCoinRedeemAt?.toISOString() ?? null,
     breakdown,
     onPrepaidPlan: false,
     blockingRentDuePopupEnabled: portalUx.blockingRentDuePopupEnabled
@@ -259,6 +291,75 @@ async function executeResidentTool(
       });
       return { ok: true, availabilityJson: clipJson(result, 14000) };
     }
+    case "suggest_closest_laundry_slot": {
+      const machineType = String(args.machineType ?? "").trim().toUpperCase();
+      if (machineType !== "WASHER" && machineType !== "DRYER") {
+        return { ok: false, message: "machineType must be WASHER or DRYER." };
+      }
+      const preferredRaw = String(args.preferredStartIso ?? "").trim();
+      const preferred = preferredRaw ? new Date(preferredRaw) : null;
+      if (preferredRaw && (preferred == null || Number.isNaN(preferred.getTime()))) {
+        return { ok: false, message: "Invalid preferredStartIso (use ISO 8601)." };
+      }
+      const ctx = await getLaundryBookingContextForEmail(residentEmail);
+      if (!ctx) {
+        return { ok: false, message: "Laundry is not available (no active client row)." };
+      }
+      const machines = ctx.machines.filter((m) => m.type === machineType);
+      if (!machines.length) {
+        return { ok: false, message: `No ${machineType} machines at your branch (${ctx.branchId}).` };
+      }
+      const nowMs = Date.now();
+      const hasPreferred = Boolean(preferred && !Number.isNaN(preferred.getTime()));
+      type Cand = { machineId: string; machineLabel: string; startIso: string; sortKey: number };
+      const cands: Cand[] = [];
+      for (const m of machines) {
+        const av = await getLaundryAvailabilityForMachine({
+          email: residentEmail,
+          machineId: m.id,
+          days: 7,
+          forceRefresh: true
+        });
+        for (const day of av.availability) {
+          for (const iso of day.slots) {
+            const t = new Date(iso).getTime();
+            if (Number.isNaN(t) || t < nowMs) continue;
+            const sortKey = hasPreferred ? Math.abs(t - preferred!.getTime()) : t;
+            cands.push({
+              machineId: m.id,
+              machineLabel: m.label,
+              startIso: iso,
+              sortKey
+            });
+          }
+        }
+      }
+      cands.sort((a, b) => a.sortKey - b.sortKey || new Date(a.startIso).getTime() - new Date(b.startIso).getTime());
+      const suggestions = cands.slice(0, 8).map(({ machineId: mid, machineLabel, startIso }) => ({
+        machineId: mid,
+        machineLabel,
+        startIso
+      }));
+      if (!suggestions.length) {
+        return {
+          ok: true,
+          branchId: ctx.branchId,
+          machineType,
+          suggestions: [],
+          message: "No open slots in the next 7 days for this machine type at your branch."
+        };
+      }
+      return {
+        ok: true,
+        branchId: ctx.branchId,
+        machineType,
+        preferredProvided: hasPreferred,
+        suggestions,
+        hint: hasPreferred
+          ? "Pick the first suggestion if the resident's exact time was unavailable; times are in Asia/Ho_Chi_Minh calendar logic from the server."
+          : "Earliest available slots for this machine type on the resident's branch only."
+      };
+    }
     case "book_my_laundry": {
       const machineId = String(args.machineId ?? "").trim();
       const start = String(args.start ?? "").trim();
@@ -313,8 +414,18 @@ async function executeResidentTool(
       }
     }
     case "get_my_coins": {
+      const client = await getActiveClientByEmail(residentEmail);
+      const totalOnContract =
+        Number.parseInt(String(client?.[CLIENT_COINS_COL] ?? "0").replace(/[^0-9-]/g, ""), 10) || 0;
       const entries = await getCoinsForEmail(residentEmail);
-      const slim = entries.slice(0, 18).map(({ row, parsedTimestamp }) => ({
+      const last5 = entries.slice(0, 5).map(({ row, parsedTimestamp }) => ({
+        time: parsedTimestamp,
+        deltaCoins: String(row[COIN_DELTA] ?? "").trim(),
+        event: String(row[COIN_EVENT] ?? "").trim(),
+        balanceAfter: String(row[COIN_BAL_AFTER] ?? "").trim(),
+        operator: String(row[COIN_OPERATOR] ?? "").trim()
+      }));
+      const slimLegacy = entries.slice(0, 12).map(({ row, parsedTimestamp }) => ({
         time: parsedTimestamp,
         row: Object.fromEntries(
           Object.entries(row)
@@ -322,7 +433,51 @@ async function executeResidentTool(
             .slice(0, 12)
         )
       }));
-      return { ok: true, recentEntriesJson: clipJson(slim, 12000) };
+      return {
+        ok: true,
+        totalCoinsOnContractSheet: totalOnContract,
+        fiveMostRecentCoinEntries: last5,
+        recentEntriesJson: clipJson(slimLegacy, 12000)
+      };
+    }
+    case "get_my_financial_overview": {
+      const normalized = residentEmail.trim().toLowerCase();
+      const client = await getActiveClientByEmail(normalized);
+      const totalOnContract =
+        Number.parseInt(String(client?.[CLIENT_COINS_COL] ?? "0").replace(/[^0-9-]/g, ""), 10) || 0;
+      const entries = await getCoinsForEmail(normalized);
+      const last5 = entries.slice(0, 5).map(({ row, parsedTimestamp }) => ({
+        time: parsedTimestamp,
+        deltaCoins: String(row[COIN_DELTA] ?? "").trim(),
+        event: String(row[COIN_EVENT] ?? "").trim(),
+        balanceAfter: String(row[COIN_BAL_AFTER] ?? "").trim(),
+        operator: String(row[COIN_OPERATOR] ?? "").trim()
+      }));
+      const [rentSnap, fines, laundryCtx] = await Promise.all([
+        buildRentSnapshot(normalized),
+        getFinesForEmail(normalized),
+        getLaundryBookingContextForEmail(normalized)
+      ]);
+      const topFine = fines[0];
+      const mostRecentFine = topFine
+        ? {
+            recordedAt: topFine.parsedTimestamp,
+            amountVnd: String(topFine.row[FINE_AMT] ?? "").trim(),
+            content: String(topFine.row[FINE_BODY] ?? "").trim(),
+            paymentStatusCell: String(topFine.row[FINE_PAID] ?? "").trim(),
+            isPaid: topFine.coinPayment.isPaid,
+            coinCostIfPayingByCoins: topFine.coinPayment.coinCost
+          }
+        : null;
+      return {
+        ok: true,
+        totalCoinsOnContractSheet: totalOnContract,
+        laundryAvailableCoinBalance: laundryCtx?.allowance.availableCoinBalance ?? null,
+        laundryCurrentCoinsBalance: laundryCtx?.allowance.currentCoinsBalance ?? null,
+        fiveMostRecentCoinEntries: last5,
+        nextPaymentAndRentJson: clipJson(rentSnap, 14000),
+        mostRecentFine
+      };
     }
     case "get_my_payments": {
       const entries = await getPaymentsForEmail(residentEmail);
@@ -367,7 +522,8 @@ const TOOLS: GeminiTool[] = [
       },
       {
         name: "get_laundry_open_slots",
-        description: "Open time slots for a specific machine over the next 7 days. Always pick machineId from get_my_laundry_status.",
+        description:
+          "Open time slots for a specific machine over the next 7 days. machineId MUST belong to the resident's branch from get_my_laundry_status (never another branch).",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -377,9 +533,29 @@ const TOOLS: GeminiTool[] = [
         }
       },
       {
+        name: "suggest_closest_laundry_slot",
+        description:
+          "Find the closest open laundry slots for WASHER or DRYER on the resident's branch only. Use when they want 'soonest' or when their requested time is not in get_laundry_open_slots — then suggest the nearest alternative from this tool.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            machineType: {
+              type: "STRING",
+              description: "WASHER or DRYER",
+              enum: ["WASHER", "DRYER"]
+            },
+            preferredStartIso: {
+              type: "STRING",
+              description: "Optional ISO 8601 start time the resident asked for; omit to get earliest available."
+            }
+          },
+          required: ["machineType"]
+        }
+      },
+      {
         name: "book_my_laundry",
         description:
-          "Create a laundry booking for this resident. Use an ISO start time that appears in get_laundry_open_slots for the same machine.",
+          "Create a laundry booking for this resident. Use an ISO start time that appears in get_laundry_open_slots for the same machine (or from suggest_closest_laundry_slot).",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -396,7 +572,14 @@ const TOOLS: GeminiTool[] = [
       },
       {
         name: "get_my_coins",
-        description: "Recent coin ledger rows for this resident's email only.",
+        description:
+          "Coin ledger for this resident: total on contract sheet plus the five most recent entries. Prefer get_my_financial_overview if they also ask about rent or fines.",
+        parameters: { type: "OBJECT", properties: {} }
+      },
+      {
+        name: "get_my_financial_overview",
+        description:
+          "One call: total coins on contract, five latest coin ledger lines, laundry-available coin balance, next payment / rent snapshot, and the most recent fine row. Use for account/balance questions.",
         parameters: { type: "OBJECT", properties: {} }
       },
       {
@@ -430,13 +613,23 @@ function buildSystemPrompt(language: UiLanguage, residentEmail: string) {
 - Only use facts returned by your tools (each tool is server-scoped to this email's sheet rows and portal data).
 - If tools return nothing or an error, say so honestly; do not invent numbers.
 - Prefer **concise** answers. Offer step-by-step only when booking laundry or interpreting a schedule.
-- For laundry booking: first call get_my_laundry_status, then get_laundry_open_slots for the chosen machine, then book_my_laundry with an exact slot. Confirm date/time in local wording.
+- **Laundry booking workflow (mandatory):**
+  1. Call **get_my_laundry_status** first — machines are already limited to **the resident's branch**; never use another branch's machineId.
+  2. Ask whether they want a **washer** or **dryer** (if not already clear).
+  3. Ask for a **date and time**, OR if they want the **soonest** slot — then call **suggest_closest_laundry_slot** (omit preferredStartIso) or pass their requested time as **preferredStartIso** to find the nearest open slot on an eligible machine of that type.
+  4. If their exact time is not open, call **get_laundry_open_slots** for the chosen machineId and/or **suggest_closest_laundry_slot** and **propose the closest available** start time in plain language (local timezone context: Vietnam).
+  5. Only then call **book_my_laundry** with a start ISO that is still open for that machineId (re-check slots if needed).
+- For **coins / rent / fines**: call **get_my_financial_overview** when they ask about balance, payments, or penalties together; otherwise **get_my_coins** or **get_my_rent_status** as appropriate.
 - Payments/rent: summarize amounts and due status clearly; mention if figures are estimates from the roster.
 - This Bee chat is **not** the same as the human **Messages / Support** thread — still be professional; for disputes or sensitive issues, suggest that thread.
 - When introducing yourself, say you are **Cozoro Bee**, CozoroHome's bee mascot (in Vietnamese you may say "mình là Cozoro Bee, linh vật ong của CozoroHome").`;
 
   if (language === "vi") {
     return `${common}
+
+## Giặt sấy (laundry) — quy trình
+- Chỉ máy thuộc **chi nhánh đang ở** (dữ liệu từ get_my_laundry_status). Hỏi rõ **máy giặt hay máy sấy** nếu chưa rõ.
+- Hỏi **ngày giờ** hoặc nếu muốn **sớm nhất** thì dùng suggest_closest_laundry_slot (bỏ preferredStartIso). Nếu giờ họ chọn không còn trống, đề xuất **khung giờ gần nhất** còn mở (có thể gọi suggest_closest_laundry_slot với preferredStartIso).
 
 ## Ngôn ngữ
 - Luôn trả lời bằng **tiếng Việt** rõ ràng, thân thiện (kể cả khi lịch sử chat có câu tiếng Anh); xưng hô là Cozoro Bee ("mình") như linh vật ong nhỏ (có thể giữ từ tiếng Anh ngắn: laundry, coins).`;
@@ -465,20 +658,6 @@ export async function handleResidentPortalAiChat(
   await assertEligibleForResidentPortalAi(residentEmail);
   const language: UiLanguage = options?.language === "vi" ? "vi" : "en";
   const lastUserEgg = [...history].reverse().find((m) => m.role === "user");
-  const founderEgg = tryFounderEasterEggReply(lastUserEgg?.text ?? "", language);
-  if (founderEgg) {
-    const normalizedEmail = residentEmail.trim().toLowerCase();
-    void appendAiTrainingExchange({
-      channel: "resident_portal",
-      identifier: normalizedEmail,
-      language,
-      userText: lastUserEgg?.text ?? "",
-      modelText: founderEgg.reply,
-      meta: { founderEasterEgg: true }
-    });
-    return { reply: founderEgg.reply, showStarfieldEffect: founderEgg.showStarfieldEffect };
-  }
-
   const normalizedEmailEarly = residentEmail.trim().toLowerCase();
   const lastUserText = lastUserEgg?.text ?? "";
 
@@ -521,6 +700,20 @@ export async function handleResidentPortalAiChat(
     return { reply: ventHate.reply, ventGameOfferPending: ventHate.ventGameOfferPending };
   }
 
+  const founderEgg = tryFounderEasterEggReply(lastUserText, language);
+  if (founderEgg) {
+    const normalizedEmail = residentEmail.trim().toLowerCase();
+    void appendAiTrainingExchange({
+      channel: "resident_portal",
+      identifier: normalizedEmail,
+      language,
+      userText: lastUserText,
+      modelText: founderEgg.reply,
+      meta: { founderEasterEgg: true }
+    });
+    return { reply: founderEgg.reply, showStarfieldEffect: founderEgg.showStarfieldEffect };
+  }
+
   const systemPrompt = buildSystemPrompt(language, residentEmail.trim().toLowerCase());
 
   const limitedHistory = history.slice(-AI_CHAT_CONTEXT_MESSAGE_LIMIT);
@@ -530,7 +723,7 @@ export async function handleResidentPortalAiChat(
   }));
 
   const normalizedEmail = residentEmail.trim().toLowerCase();
-  let maxRounds = 6;
+  let maxRounds = 8;
 
   while (maxRounds-- > 0) {
     const body = {
@@ -550,7 +743,27 @@ export async function handleResidentPortalAiChat(
       body: JSON.stringify(body)
     });
 
-    const data = (await res.json()) as GeminiResponse;
+    const raw = await res.text();
+    let data: GeminiResponse;
+    try {
+      data = JSON.parse(raw) as GeminiResponse;
+    } catch {
+      throw new Error("Cozoro Bee: invalid response from AI gateway.");
+    }
+
+    if (isGeminiQuotaExceeded(res, data)) {
+      const lastUser = [...history].reverse().find((m) => m.role === "user");
+      void appendAiTrainingExchange({
+        channel: "resident_portal",
+        identifier: normalizedEmail,
+        language,
+        userText: lastUser?.text ?? "",
+        modelText: GEMINI_QUOTA_HOLIDAY_REPLY,
+        meta: { geminiQuotaExceeded: true }
+      });
+      return { reply: GEMINI_QUOTA_HOLIDAY_REPLY };
+    }
+
     if (data.error) {
       throw new Error(data.error.message ?? "Gemini error");
     }

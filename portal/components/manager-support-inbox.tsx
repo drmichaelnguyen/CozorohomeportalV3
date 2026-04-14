@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
+import { supportMessageDisplayBody } from "../lib/support-message-meta";
 import { usePortalLanguage } from "./portal-language";
 
 type SupportConversationListItem = {
@@ -73,10 +74,10 @@ function isStaffRole(role: SupportMessage["senderRole"]) {
 
 function senderShortName(message: SupportMessage, t: (key: any, ...args: any[]) => string) {
   if (message.senderRole === "ASSISTANT") {
-    return t("cozoroAssistant", "Cozoro Assistant");
+    return t("cozoroAssistant");
   }
   if (isStaffRole(message.senderRole)) {
-    return message.senderName?.trim() || (message.senderRole === "OWNER" ? t("roleOwner", "Owner") : t("roleManager", "Manager"));
+    return message.senderName?.trim() || (message.senderRole === "OWNER" ? t("roleOwner") : t("roleManager"));
   }
   return message.senderName?.trim() || t("residentLabelShort");
 }
@@ -84,10 +85,13 @@ function senderShortName(message: SupportMessage, t: (key: any, ...args: any[]) 
 export function ManagerSupportInbox({
   operatorEmail,
   enabled,
+  operatorIsOwner = false,
   onViewClient
 }: {
   operatorEmail: string;
   enabled: boolean;
+  /** When true, owner can delete an entire thread or individual messages (API enforces owner role). */
+  operatorIsOwner?: boolean;
   onViewClient?: (email: string) => void;
 }) {
   const { t } = usePortalLanguage();
@@ -114,7 +118,8 @@ export function ManagerSupportInbox({
     scrollToBottom();
   }, [messages]);
 
-  async function loadInbox(targetConversationId?: string) {
+  /** Pass `null` after deleting a thread to select the first remaining conversation (ignores stale selection). */
+  async function loadInbox(targetConversationId?: string | null) {
     if (!enabled || !operatorEmail.trim()) {
       return;
     }
@@ -132,7 +137,7 @@ export function ManagerSupportInbox({
       };
 
       if (!inboxResponse.ok) {
-        setStatus(inboxData.error ?? t("loadingInboxError", "Unable to load support inbox."));
+        setStatus(inboxData.error ?? t("loadingInboxError"));
         return;
       }
 
@@ -140,7 +145,9 @@ export function ManagerSupportInbox({
       setConversations(nextConversations);
 
       const nextConversationId =
-        targetConversationId ?? selectedConversationId ?? nextConversations[0]?.id ?? "";
+        targetConversationId === null
+          ? nextConversations[0]?.id ?? ""
+          : (targetConversationId ?? selectedConversationId ?? nextConversations[0]?.id ?? "");
       setSelectedConversationId(nextConversationId);
 
       if (!nextConversationId) {
@@ -161,7 +168,7 @@ export function ManagerSupportInbox({
       };
 
       if (!threadResponse.ok) {
-        setStatus(threadData.error ?? "Unable to load this conversation.");
+        setStatus(threadData.error ?? t("supportUnableLoadThread"));
         return;
       }
 
@@ -174,7 +181,7 @@ export function ManagerSupportInbox({
         body: JSON.stringify({ operatorEmail })
       });
     } catch {
-      setStatus("Unable to load support inbox.");
+      setStatus(t("loadingInboxError"));
     } finally {
       setLoading(false);
     }
@@ -207,14 +214,14 @@ export function ManagerSupportInbox({
 
       const data = (await response.json()) as { error?: string };
       if (!response.ok) {
-        setStatus(data.error ?? "Unable to send reply.");
+        setStatus(data.error ?? t("supportUnableSendReply"));
         return;
       }
 
       setDraft("");
       await loadInbox(selectedConversationId);
     } catch {
-      setStatus("Unable to send reply.");
+      setStatus(t("supportUnableSendReply"));
     } finally {
       setLoading(false);
     }
@@ -224,6 +231,58 @@ export function ManagerSupportInbox({
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void sendReply();
+    }
+  }
+
+  async function deleteEntireConversation() {
+    if (!operatorIsOwner || !selectedConversationId) return;
+    if (!window.confirm(t("supportOwnerDeleteConversationConfirm"))) return;
+
+    setLoading(true);
+    setStatus("");
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/manager/support/conversations/${encodeURIComponent(
+          selectedConversationId
+        )}?operatorEmail=${encodeURIComponent(operatorEmail)}`,
+        { method: "DELETE" }
+      );
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        setStatus(data.error ?? t("errorSomethingWrong"));
+        return;
+      }
+      await loadInbox(null);
+    } catch {
+      setStatus(t("errorConnection"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deleteOneMessage(messageId: string) {
+    if (!operatorIsOwner) return;
+    if (!window.confirm(t("supportOwnerDeleteMessageConfirm"))) return;
+
+    setLoading(true);
+    setStatus("");
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/manager/support/messages/${encodeURIComponent(messageId)}?operatorEmail=${encodeURIComponent(
+          operatorEmail
+        )}`,
+        { method: "DELETE" }
+      );
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        setStatus(data.error ?? t("errorSomethingWrong"));
+        return;
+      }
+      await loadInbox(selectedConversationId);
+    } catch {
+      setStatus(t("errorConnection"));
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -245,14 +304,14 @@ export function ManagerSupportInbox({
 
       const data = (await response.json()) as { error?: string };
       if (!response.ok) {
-        setStatus(data.error ?? "Unable to update conversation status.");
+        setStatus(data.error ?? t("supportUnableUpdateStatus"));
         return;
       }
 
-      setStatus(nextStatus === "CLOSED" ? "Conversation closed." : "Conversation reopened.");
+      setStatus(nextStatus === "CLOSED" ? t("supportConversationClosed") : t("supportConversationReopened"));
       await loadInbox(selectedConversationId);
     } catch {
-      setStatus("Unable to update conversation status.");
+      setStatus(t("supportUnableUpdateStatus"));
     } finally {
       setLoading(false);
     }
@@ -319,21 +378,38 @@ export function ManagerSupportInbox({
                   : `bg-slate-100 text-slate-900 ${isFirstInGroup ? "rounded-tl-sm" : ""}`
               }`}
             >
-              <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.body}</p>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed">
+                {message.senderRole === "ASSISTANT" ? supportMessageDisplayBody(message.body) : message.body}
+              </p>
               {message.pagePath ? (
                 <p
                   className={`mt-1 text-[10px] ${
                     isStaff ? (isAssistant ? "text-violet-200" : "text-blue-200") : "text-slate-400"
                   }`}
                 >
-                  {t("fromLabel", "from")} {message.pagePath}
+                  {t("messageFromPageLabel")} {message.pagePath}
                 </p>
               ) : null}
             </div>
             {isLastInGroup && (
-              <span className={`mt-1 px-1 text-[10px] text-slate-400 ${isStaff ? "text-right" : "text-left"}`}>
-                {formatTime(message.createdAt)}
-              </span>
+              <div
+                className={`mt-1 flex items-center gap-2 px-1 ${isStaff ? "justify-end" : "justify-start"} ${operatorIsOwner ? "min-h-[22px]" : ""}`}
+              >
+                <span className={`text-[10px] text-slate-400 ${isStaff ? "text-right" : "text-left"}`}>
+                  {formatTime(message.createdAt)}
+                </span>
+                {operatorIsOwner ? (
+                  <button
+                    type="button"
+                    title={t("supportOwnerDeleteMessage")}
+                    disabled={loading}
+                    onClick={() => void deleteOneMessage(message.id)}
+                    className="rounded p-0.5 text-[10px] font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-40"
+                  >
+                    {t("supportOwnerDeleteMessage")}
+                  </button>
+                ) : null}
+              </div>
             )}
           </div>
         </div>
@@ -366,7 +442,7 @@ export function ManagerSupportInbox({
         {["BRANCH_D2", "BRANCH_D7"].map((groupId) => {
           const conv = conversations.find((c) => c.id === groupId);
           const unreadCount = conv?.unreadCount || 0;
-          const label = groupId.replace("BRANCH_", `${t("branchLabelShort", "Branch")} `);
+          const label = groupId.replace("BRANCH_", `${t("branchLabelShort")} `);
           const isSelected = selectedConversationId === groupId;
 
           return (
@@ -439,7 +515,7 @@ export function ManagerSupportInbox({
                   {conversation.latestMessage ? (
                     <div className={`mt-1.5 flex items-end justify-between gap-2`}>
                       <p className={`line-clamp-1 flex-1 text-xs ${isSelected ? "text-blue-100" : hasUnread ? "font-semibold text-slate-800" : "text-slate-500"}`}>
-                        {conversation.latestMessage.body}
+                        {supportMessageDisplayBody(conversation.latestMessage.body)}
                       </p>
                       <span className={`shrink-0 text-[10px] ${isSelected ? "text-blue-200" : "text-slate-400"}`}>
                         {formatConversationTime(conversation.lastMessageAt)}
@@ -456,7 +532,7 @@ export function ManagerSupportInbox({
         <div className="flex flex-col">
           {!selectedConversation && !selectedPreview ? (
             <div className="flex flex-1 items-center justify-center p-8">
-              <p className="text-sm text-slate-400">{t("selectConversationPrompt", "Select a conversation to start reading")}</p>
+              <p className="text-sm text-slate-400">{t("selectConversationPrompt")}</p>
             </div>
           ) : (
             <>
@@ -464,13 +540,13 @@ export function ManagerSupportInbox({
               <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
                 <div>
                   <p className="text-sm font-semibold text-slate-900">
-                    {selectedConversation?.residentName || selectedPreview?.label || t("conversationLabel", "Conversation")}
+                    {selectedConversation?.residentName || selectedPreview?.label || t("conversationLabel")}
                   </p>
                   <p className="text-xs text-slate-400">
                     {selectedConversation?.residentEmail || selectedPreview?.subLabel}
                   </p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-2">
                   <button
                     type="button"
                     onClick={() => void updateStatus("OPEN")}
@@ -487,6 +563,16 @@ export function ManagerSupportInbox({
                   >
                     {t("closeLabel")}
                   </button>
+                  {operatorIsOwner && selectedConversationId ? (
+                    <button
+                      type="button"
+                      onClick={() => void deleteEntireConversation()}
+                      disabled={loading}
+                      className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-100 disabled:opacity-40"
+                    >
+                      {t("supportOwnerDeleteConversation")}
+                    </button>
+                  ) : null}
                 </div>
               </div>
 
@@ -499,22 +585,22 @@ export function ManagerSupportInbox({
                 selectedConversation.residentContactOther) ? (
                 <div className="border-b border-violet-100 bg-violet-50/80 px-5 py-2.5">
                   <p className="text-[10px] font-bold uppercase tracking-wide text-violet-700">
-                    {t("supportCallbackTitle", "Callback details (from chat)")}
+                    {t("supportCallbackTitle")}
                   </p>
                   <div className="mt-1 flex flex-wrap gap-2 text-xs text-violet-950">
                     {selectedConversation.residentContactPhone ? (
                       <span className="rounded-lg bg-white/80 px-2 py-1 ring-1 ring-violet-200">
-                        {t("supportCallbackPhone", "Phone")}: {selectedConversation.residentContactPhone}
+                        {t("supportCallbackPhone")}: {selectedConversation.residentContactPhone}
                       </span>
                     ) : null}
                     {selectedConversation.residentContactFacebook ? (
                       <span className="rounded-lg bg-white/80 px-2 py-1 ring-1 ring-violet-200">
-                        {t("supportCallbackFacebook", "Facebook")}: {selectedConversation.residentContactFacebook}
+                        {t("supportCallbackFacebook")}: {selectedConversation.residentContactFacebook}
                       </span>
                     ) : null}
                     {selectedConversation.residentContactOther ? (
                       <span className="rounded-lg bg-white/80 px-2 py-1 ring-1 ring-violet-200">
-                        {t("supportCallbackOther", "Other")}: {selectedConversation.residentContactOther}
+                        {t("supportCallbackOther")}: {selectedConversation.residentContactOther}
                       </span>
                     ) : null}
                   </div>
@@ -565,7 +651,7 @@ export function ManagerSupportInbox({
                     </svg>
                   </button>
                 </form>
-                <p className="mt-1.5 text-center text-[10px] text-slate-300">{t("chatKeyboardHint", "Enter to send · Shift+Enter for new line")}</p>
+                <p className="mt-1.5 text-center text-[10px] text-slate-300">{t("chatKeyboardHint")}</p>
               </div>
             </>
           )}

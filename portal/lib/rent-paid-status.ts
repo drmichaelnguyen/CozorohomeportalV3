@@ -10,6 +10,12 @@ export type RentBreakdownPayload = {
   recommendedCoinValueVnd?: number;
   /** Raw coin count applied toward rent */
   recommendedCoinUsage?: number;
+  /** Max VND that can be covered by coins (10% of full bill before coin credit). */
+  maxCoinUsageVnd?: number;
+  /** VND credited per 1 Cozoro Coin for this member tier. */
+  coinRateVndPerCoin?: number;
+  /** Sheet roster coin balance when the breakdown was computed. */
+  currentCoinsBalance?: number;
   finalTotalVnd: number;
   tenureSurchargeVnd: number;
   tenureSurchargeRate?: number;
@@ -67,6 +73,10 @@ export type RentPaidStatusPayload = {
   isPaid: boolean;
   /** Resident opt-in: apply coins toward this month’s bill (capped in engine). */
   applyCoinsTowardRent?: boolean;
+  /** After resident confirms coin exchange for this month. */
+  rentCoinRedeemCoins?: number | null;
+  rentCoinRedeemValueVnd?: number | null;
+  rentCoinRedeemAt?: string | null;
   onPrepaidPlan: boolean;
   /** Present when `onPrepaidPlan` — rough next lump-sum at package renewal. */
   prepaidNextPaymentEstimate?: PrepaidNextPaymentEstimatePayload | null;

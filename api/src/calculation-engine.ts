@@ -5,7 +5,7 @@ import {
   getFineAmountVndFromEntry,
   laundryMachines,
   getLaundryAllowance,
-  getCoinsForEmail,
+  parseCurrentCozoroCoinsFromClientRow,
   LaundryCalendarEvent,
   FineEntry
 } from "./google-sheets.js";
@@ -54,10 +54,15 @@ export interface RentBreakdown {
   laundryFeeVnd: number;
   finesVnd: number;
   totalBeforeCoinsVnd: number;
+  /** Max VND that can be covered by coins this month (10% of full bill before coin credit). */
   maxCoinUsageVnd: number;
   recommendedCoinUsage: number;
   recommendedCoinValueVnd: number;
   finalTotalVnd: number;
+  /** Member tier: VND value per 1 Cozoro Coin when applied toward rent. */
+  coinRateVndPerCoin: number;
+  /** Sheet roster balance at calculation time. */
+  currentCoinsBalance: number;
   details: {
     durationMonths: number;
     professionalStatus: string;
@@ -78,9 +83,11 @@ export interface RentCalculationOptions {
   gateParkingFeeVnd?: number | null;
   /**
    * When true, apply automatic coin credit up to the 10% cap (resident opted in for this month).
-   * When false/omitted, no coin amount is deducted from the bill (managers pass true from calculate-rent by default).
+   * When false/omitted, no coin amount is deducted from the bill unless `committedRentCoinRedemption` is set (resident already exchanged coins).
    */
   applyCoinsTowardRent?: boolean;
+  /** Locked redemption after resident confirms coin exchange (coins already deducted from sheet). */
+  committedRentCoinRedemption?: { coinsUsed: number; valueVnd: number } | null;
 }
 
 function parseVndAmount(value: unknown): number {
@@ -90,6 +97,29 @@ function parseVndAmount(value: unknown): number {
   }
   const parsed = Number.parseInt(digits, 10);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/** Maximize VND credit from whole coins without exceeding `maxCreditVnd`. */
+function computeRentCoinRedemptionCoins(params: {
+  maxCreditVnd: number;
+  coinRateVndPerCoin: number;
+  currentCoinsBalance: number;
+}): { coinsUsed: number; coinValueVnd: number } {
+  const { coinRateVndPerCoin, currentCoinsBalance } = params;
+  const maxCreditVnd = Math.max(0, Math.round(params.maxCreditVnd));
+  if (maxCreditVnd <= 0 || !Number.isFinite(coinRateVndPerCoin) || coinRateVndPerCoin <= 0 || currentCoinsBalance <= 0) {
+    return { coinsUsed: 0, coinValueVnd: 0 };
+  }
+  let coinsUsed = Math.min(
+    Math.max(0, Math.trunc(currentCoinsBalance)),
+    Math.floor(maxCreditVnd / coinRateVndPerCoin + 1e-9)
+  );
+  let coinValueVnd = Math.round(coinsUsed * coinRateVndPerCoin);
+  while (coinsUsed > 0 && coinValueVnd > maxCreditVnd) {
+    coinsUsed -= 1;
+    coinValueVnd = Math.round(coinsUsed * coinRateVndPerCoin);
+  }
+  return { coinsUsed, coinValueVnd };
 }
 
 /** Previous calendar month (YYYY-MM) relative to billing month. */
@@ -273,27 +303,37 @@ export async function calculateRentBreakdown(
       finesVnd
   );
 
-  // 8. Coin Usage (Cap: 10% of rent part)
-  // "Clients can use coins to cover up to 10% of the monthly rent"
-  // I'll define "monthly rent" as rentWithSurcharges.
-  const maxCoinUsageVnd = Math.round(rentWithSurcharges * 0.1);
-  const rentLimitForCoins = rentWithSurcharges;
-  const maxAllowedFromCoinsVnd = Math.round(rentLimitForCoins * 0.1);
+  // 8. Coin usage — up to 10% of the **full** bill (before coin credit), tier VND-per-coin rate, whole coins only.
+  const maxAllowedFromCoinsVnd = Math.round(totalBeforeCoinsVnd * 0.1);
+  const coinRateVndPerCoin = RENT_COIN_RATES[memberTier] || 0.6;
+  const currentCoinsBalance = parseCurrentCozoroCoinsFromClientRow(client);
 
-  const coinRate = RENT_COIN_RATES[memberTier] || 0.6;
-  const currentCoins = await getCoinsForEmail(email);
+  const committed = options.committedRentCoinRedemption;
+  const hasCommitted =
+    committed &&
+    Number.isFinite(committed.coinsUsed) &&
+    committed.coinsUsed > 0 &&
+    Number.isFinite(committed.valueVnd) &&
+    committed.valueVnd > 0;
 
-  const useCoinCredit = options.applyCoinsTowardRent === true;
+  const useCoinCredit = options.applyCoinsTowardRent === true || Boolean(hasCommitted);
 
   let recommendedCoinValueVnd = 0;
   let recommendedCoinUsage = 0;
-  if (useCoinCredit) {
-    const availableCoinValueVnd = Math.round(Number(currentCoins) * coinRate);
-    recommendedCoinValueVnd = Math.min(maxAllowedFromCoinsVnd, availableCoinValueVnd);
-    recommendedCoinUsage = Math.ceil(recommendedCoinValueVnd / coinRate);
+  if (hasCommitted) {
+    recommendedCoinUsage = Math.trunc(committed!.coinsUsed);
+    recommendedCoinValueVnd = Math.round(committed!.valueVnd);
+  } else if (useCoinCredit) {
+    const dyn = computeRentCoinRedemptionCoins({
+      maxCreditVnd: maxAllowedFromCoinsVnd,
+      coinRateVndPerCoin,
+      currentCoinsBalance
+    });
+    recommendedCoinUsage = dyn.coinsUsed;
+    recommendedCoinValueVnd = dyn.coinValueVnd;
   }
 
-  const finalTotalVnd = totalBeforeCoinsVnd - (recommendedCoinUsage * coinRate);
+  const finalTotalVnd = totalBeforeCoinsVnd - recommendedCoinValueVnd;
 
   return {
     email: emailRaw,
@@ -312,8 +352,10 @@ export async function calculateRentBreakdown(
     totalBeforeCoinsVnd,
     maxCoinUsageVnd: maxAllowedFromCoinsVnd,
     recommendedCoinUsage,
-    recommendedCoinValueVnd: useCoinCredit ? Math.round(recommendedCoinUsage * coinRate) : 0,
+    recommendedCoinValueVnd: useCoinCredit ? recommendedCoinValueVnd : 0,
     finalTotalVnd: Math.max(0, finalTotalVnd),
+    coinRateVndPerCoin,
+    currentCoinsBalance,
     details: {
       durationMonths,
       professionalStatus:

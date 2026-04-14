@@ -6,11 +6,38 @@
 import { SupportMessageSenderRole } from "@prisma/client";
 
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
+import {
+  stripSupportAssistantMetaSuffix,
+  type SupportAssistantStoredMeta
+} from "./support-assistant-message-meta.js";
 import { appendAiTrainingExchange } from "./ai-training-log.js";
+import { tryFounderEasterEggReply } from "./cozoro-founder-easter-egg.js";
+import {
+  tryVentHammerConsentReply,
+  tryVentHammerHateReply,
+  tryVentHammerPendingRefusalReply
+} from "./cozoro-vent-hammer-easter-egg.js";
 import { getActiveClientByEmail } from "./google-sheets.js";
 import { prisma } from "./prisma.js";
 
 const ASSISTANT_SENDER_EMAIL = "cozoro-assistant@system";
+
+const GEMINI_QUOTA_HOLIDAY_REPLY =
+  "Anh Trong is bankcrupted and cannot afford me, so i'm on holiday and unavailable";
+
+function isGeminiQuotaExceeded(response: Response, data: GeminiResponse): boolean {
+  if (response.status === 429) return true;
+  const err = data.error;
+  if (!err) return false;
+  const msg = (err.message ?? "").toLowerCase();
+  const code = (err as { code?: number }).code;
+  if (code === 429) return true;
+  if (msg.includes("quota")) return true;
+  if (msg.includes("resource exhausted")) return true;
+  if (msg.includes("rate limit")) return true;
+  if (msg.includes("too many requests")) return true;
+  return false;
+}
 
 const GEMINI_ENDPOINT = () => {
   const key = process.env.GEMINI_API_KEY;
@@ -35,7 +62,7 @@ type GeminiResponse = {
       parts: GeminiPart[];
     };
   }>;
-  error?: { message: string };
+  error?: { message: string; code?: number; status?: string };
 };
 
 function looksVietnamese(text: string) {
@@ -77,7 +104,10 @@ function compressThreadForGemini(
         : m.senderRole === SupportMessageSenderRole.RESIDENT
           ? "Resident"
           : m.senderName?.trim() || "Staff";
-    const text = m.senderRole === SupportMessageSenderRole.RESIDENT ? m.body : `[${label}] ${m.body}`;
+    const bodyForModel =
+      m.senderRole === SupportMessageSenderRole.ASSISTANT ? stripSupportAssistantMetaSuffix(m.body) : m.body;
+    const text =
+      m.senderRole === SupportMessageSenderRole.RESIDENT ? bodyForModel : `[${label}] ${bodyForModel}`;
     const last = chunks[chunks.length - 1];
     if (last && last.role === role) {
       last.text += `\n\n${text}`;
@@ -174,10 +204,12 @@ ${input.contactBlock}
 - Call **save_resident_contact** when the resident clearly provides or confirms a phone number, Facebook username/link, or other contact (Zalo, etc.). Use partial updates: only pass fields you are saving now.`;
 }
 
+export type ResidentSupportAssistantMeta = SupportAssistantStoredMeta;
+
 export async function runResidentSupportAssistantTurn(input: {
   conversationId: string;
   residentEmail: string;
-}): Promise<{ replyText: string | null }> {
+}): Promise<{ replyText: string | null; assistantMeta?: ResidentSupportAssistantMeta }> {
   if (process.env.RESIDENT_SUPPORT_AI_DISABLED === "1") {
     return { replyText: null };
   }
@@ -214,6 +246,62 @@ export async function runResidentSupportAssistantTurn(input: {
   const contactBlock = contactLines.length ? contactLines.join("\n") : "(none yet)";
 
   const preferVietnamese = looksVietnamese(last.body);
+  const eggLang = preferVietnamese ? "vi" : "en";
+  const normalizedResidentEmail = input.residentEmail.trim().toLowerCase();
+  const lastBody = last.body;
+
+  const ventRefusal = tryVentHammerPendingRefusalReply(normalizedResidentEmail, lastBody, eggLang);
+  if (ventRefusal) {
+    void appendAiTrainingExchange({
+      channel: "resident_support_thread",
+      identifier: input.residentEmail,
+      userText: lastBody,
+      modelText: ventRefusal.reply,
+      conversationId: input.conversationId,
+      meta: { ventHammerRefusal: true, preferVietnamese }
+    });
+    return { replyText: ventRefusal.reply };
+  }
+
+  const ventConsent = tryVentHammerConsentReply(normalizedResidentEmail, lastBody, eggLang);
+  if (ventConsent) {
+    void appendAiTrainingExchange({
+      channel: "resident_support_thread",
+      identifier: input.residentEmail,
+      userText: lastBody,
+      modelText: ventConsent.reply,
+      conversationId: input.conversationId,
+      meta: { ventHammerStart: true, preferVietnamese }
+    });
+    return { replyText: ventConsent.reply, assistantMeta: "vent-start" };
+  }
+
+  const ventHate = tryVentHammerHateReply(lastBody, eggLang, normalizedResidentEmail);
+  if (ventHate) {
+    void appendAiTrainingExchange({
+      channel: "resident_support_thread",
+      identifier: input.residentEmail,
+      userText: lastBody,
+      modelText: ventHate.reply,
+      conversationId: input.conversationId,
+      meta: { ventHammerOffer: true, preferVietnamese }
+    });
+    return { replyText: ventHate.reply, assistantMeta: "vent-offer" };
+  }
+
+  const founderEgg = tryFounderEasterEggReply(lastBody, eggLang);
+  if (founderEgg) {
+    void appendAiTrainingExchange({
+      channel: "resident_support_thread",
+      identifier: input.residentEmail,
+      userText: lastBody,
+      modelText: founderEgg.reply,
+      conversationId: input.conversationId,
+      meta: { founderEasterEgg: true, preferVietnamese }
+    });
+    return { replyText: founderEgg.reply, assistantMeta: "founder-egg" };
+  }
+
   const systemPrompt = buildSystemPrompt({
     email: input.residentEmail,
     clientBlock,
@@ -268,7 +356,27 @@ export async function runResidentSupportAssistantTurn(input: {
       body: JSON.stringify(body)
     });
 
-    const data = (await res.json()) as GeminiResponse;
+    const raw = await res.text();
+    let data: GeminiResponse;
+    try {
+      data = JSON.parse(raw) as GeminiResponse;
+    } catch {
+      console.warn("[resident-support-ai] Gemini non-JSON response");
+      return { replyText: null };
+    }
+
+    if (isGeminiQuotaExceeded(res, data)) {
+      void appendAiTrainingExchange({
+        channel: "resident_support_thread",
+        identifier: input.residentEmail,
+        userText: last.body,
+        modelText: GEMINI_QUOTA_HOLIDAY_REPLY,
+        conversationId: input.conversationId,
+        meta: { geminiQuotaExceeded: true, preferVietnamese }
+      });
+      return { replyText: GEMINI_QUOTA_HOLIDAY_REPLY };
+    }
+
     if (data.error) {
       console.warn("[resident-support-ai] Gemini error", data.error.message);
       return { replyText: null };

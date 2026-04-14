@@ -40,6 +40,7 @@ import { getClientGroupContext, getGroupMessages, markGroupRead, postGroupMessag
 import { VAPID_PUBLIC_KEY, savePushSubscription, deletePushSubscription } from "./push.js";
 import { getPortalUxSettings, updatePortalUxSettings } from "./portal-ux-settings.js";
 import { calculateRentBreakdown, computePrepaidNextPaymentEstimate } from "./calculation-engine.js";
+import { calculateRentBreakdownForBillingMonth } from "./monthly-rent-breakdown.js";
 import {
   managerGetPrepaidPackageBilling,
   managerUpsertPrepaidPackageBilling,
@@ -154,7 +155,7 @@ import {
   updateCleaningAutoSchedulerConfig
 } from "./cleaning-scheduler-config.js";
 import { prisma } from "./prisma.js";
-import { markGateParkingTicketsPaidForBilling } from "./gate-parking-tickets.js";
+import { billingPeriodMonthForGateSession, markGateParkingTicketsPaidForBilling } from "./gate-parking-tickets.js";
 import {
   terminateContract,
   getTerminationByEmail,
@@ -208,6 +209,8 @@ import {
   listResidentSupportNotifications,
   listStaffSupportNotifications,
   markSupportConversationRead,
+  ownerDeleteSupportConversation,
+  ownerDeleteSupportMessage,
   postOperatorSupportMessage,
   postOperatorSupportMessageToResident,
   postResidentSupportMessage,
@@ -2385,6 +2388,50 @@ app.get("/manager/support/conversations/:id", async (request, response) => {
   }
 });
 
+app.delete("/manager/support/conversations/:id", async (request, response) => {
+  const parsed = supportInboxQuerySchema.safeParse({
+    operatorEmail: request.query.operatorEmail
+  });
+
+  if (!parsed.success || !(await isPrivilegedSupportOperator(parsed.data.operatorEmail))) {
+    return response.status(403).json({ error: "Forbidden" });
+  }
+
+  try {
+    const result = await ownerDeleteSupportConversation({
+      operatorEmail: parsed.data.operatorEmail,
+      conversationOrGroupId: request.params.id ?? ""
+    });
+    return response.json(result);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unable to delete conversation";
+    const status = msg.includes("Only owners") ? 403 : msg.toLowerCase().includes("not found") ? 404 : 400;
+    return response.status(status).json({ error: msg });
+  }
+});
+
+app.delete("/manager/support/messages/:messageId", async (request, response) => {
+  const parsed = supportInboxQuerySchema.safeParse({
+    operatorEmail: request.query.operatorEmail
+  });
+
+  if (!parsed.success || !(await isPrivilegedSupportOperator(parsed.data.operatorEmail))) {
+    return response.status(403).json({ error: "Forbidden" });
+  }
+
+  try {
+    const result = await ownerDeleteSupportMessage({
+      operatorEmail: parsed.data.operatorEmail,
+      messageId: request.params.messageId ?? ""
+    });
+    return response.json(result);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unable to delete message";
+    const status = msg.includes("Only owners") ? 403 : msg.toLowerCase().includes("not found") ? 404 : 400;
+    return response.status(status).json({ error: msg });
+  }
+});
+
 app.post("/manager/support/messages", async (request, response) => {
   const parsed = supportOperatorMessageSchema.safeParse(request.body);
 
@@ -4205,14 +4252,10 @@ app.post("/client/maintenance/feedback", async (req, res) => {
 });
 
 app.post("/calculate-rent", async (req, res) => {
-  const { email, targetMonth, managerDiscountVnd, shortTermSurchargeRate, parkingFeeVnd, gateParkingFeeVnd, applyCoinsTowardRent } =
-    req.body;
+  const { email, targetMonth, managerDiscountVnd, shortTermSurchargeRate, parkingFeeVnd, gateParkingFeeVnd } = req.body;
   if (!email || !targetMonth) {
     return res.status(400).json({ error: "email and targetMonth are required" });
   }
-
-  const applyCoins =
-    typeof applyCoinsTowardRent === "boolean" ? applyCoinsTowardRent : true;
 
   try {
     const cache = (await readCachedClients()) ?? (await syncClientsFromSheet());
@@ -4221,7 +4264,7 @@ app.post("/calculate-rent", async (req, res) => {
       return res.status(404).json({ error: "Client not found" });
     }
 
-    const breakdown = await calculateRentBreakdown(client, targetMonth, {
+    const { breakdown } = await calculateRentBreakdownForBillingMonth(client, targetMonth, {
       managerDiscountVnd: Number(managerDiscountVnd) || 0,
       shortTermSurchargeRate:
         typeof shortTermSurchargeRate === "number" && Number.isFinite(shortTermSurchargeRate)
@@ -4234,8 +4277,7 @@ app.post("/calculate-rent", async (req, res) => {
       gateParkingFeeVnd:
         typeof gateParkingFeeVnd === "number" && Number.isFinite(gateParkingFeeVnd)
           ? gateParkingFeeVnd
-          : undefined,
-      applyCoinsTowardRent: applyCoins
+          : undefined
     });
     res.json(breakdown);
   } catch (error) {
@@ -4273,10 +4315,7 @@ app.post("/pay-rent", async (req, res) => {
     }
 
     const emailKey = String(email).trim().toLowerCase();
-    const rentPrefRow = await prisma.monthlyRentStatus.findUnique({
-      where: { email_month: { email: emailKey, month: targetMonth } }
-    });
-    const breakdown = await calculateRentBreakdown(client, targetMonth, {
+    const { breakdown, record: rentPrefRow } = await calculateRentBreakdownForBillingMonth(client, targetMonth, {
       managerDiscountVnd: Number(managerDiscountVnd) || 0,
       shortTermSurchargeRate:
         typeof shortTermSurchargeRate === "number" && Number.isFinite(shortTermSurchargeRate)
@@ -4289,8 +4328,7 @@ app.post("/pay-rent", async (req, res) => {
       gateParkingFeeVnd:
         typeof gateParkingFeeVnd === "number" && Number.isFinite(gateParkingFeeVnd)
           ? gateParkingFeeVnd
-          : undefined,
-      applyCoinsTowardRent: rentPrefRow?.applyCoinsTowardRent === true
+          : undefined
     });
 
     const maHd = client["MÃ HD"] || client["MÃ HD".normalize("NFC")] || "";
@@ -4298,16 +4336,19 @@ app.post("/pay-rent", async (req, res) => {
       typeof discountAmount === "number" && Number.isFinite(discountAmount)
         ? discountAmount
         : breakdown.professionalDiscountVnd + breakdown.planDiscountVnd + (Number(managerDiscountVnd) || 0);
-    const coinsAllowedForResident = rentPrefRow?.applyCoinsTowardRent === true;
+    const coinsAllowedForResident =
+      rentPrefRow?.applyCoinsTowardRent === true || (rentPrefRow?.rentCoinRedeemCoins ?? 0) > 0;
     const resolvedCoinUsage = coinsAllowedForResident
       ? typeof coinUsage === "number" && Number.isFinite(coinUsage)
         ? coinUsage
         : breakdown.recommendedCoinUsage
       : 0;
     const resolvedCoinValue =
-      breakdown.totalBeforeCoinsVnd > 0
-        ? Math.round(resolvedCoinUsage * (breakdown.finalTotalVnd / breakdown.totalBeforeCoinsVnd))
-        : 0;
+      coinsAllowedForResident && resolvedCoinUsage === breakdown.recommendedCoinUsage
+        ? breakdown.recommendedCoinValueVnd
+        : coinsAllowedForResident
+          ? Math.round(resolvedCoinUsage * breakdown.coinRateVndPerCoin)
+          : 0;
 
     // Record to BIEN NHAN sheet using the manager-compatible column mapping
     await managerCreatePaymentReceipt({
@@ -4470,7 +4511,10 @@ app.get("/manager/rent-paid-status", async (req, res) => {
     snapshotFinesVnd: record?.snapshotFinesVnd ?? null,
     snapshotFinalTotalVnd: record?.snapshotFinalTotalVnd ?? null,
     snapshotCoinValueVnd: record?.snapshotCoinValueVnd ?? null,
-    applyCoinsTowardRent: record?.applyCoinsTowardRent ?? false
+    applyCoinsTowardRent: record?.applyCoinsTowardRent ?? false,
+    rentCoinRedeemCoins: record?.rentCoinRedeemCoins ?? null,
+    rentCoinRedeemValueVnd: record?.rentCoinRedeemValueVnd ?? null,
+    rentCoinRedeemAt: record?.rentCoinRedeemAt?.toISOString() ?? null
   });
 });
 
@@ -4644,11 +4688,14 @@ app.get("/manager/gate-parking-tickets", async (req, res) => {
 app.post("/manager/gate-parking-tickets", async (req, res) => {
   const actorEmail = String(req.body.actorEmail ?? "").trim();
   const email = String(req.body.email ?? "").trim().toLowerCase();
-  const periodMonth = String(req.body.periodMonth ?? "").trim();
   const amountVnd = Number(req.body.amountVnd);
   const note = String(req.body.note ?? "").trim();
-  if (!actorEmail || !email || !periodMonth || !/^\d{4}-\d{2}$/.test(periodMonth)) {
-    return res.status(400).json({ error: "actorEmail, email, and periodMonth (YYYY-MM) are required" });
+  const sessionStartRaw = req.body.sessionStartAt;
+  const durationHoursRaw = req.body.durationHours;
+  const periodMonthOverride = String(req.body.periodMonth ?? "").trim();
+
+  if (!actorEmail || !email) {
+    return res.status(400).json({ error: "actorEmail and email are required" });
   }
   if (!Number.isFinite(amountVnd) || amountVnd < 0) {
     return res.status(400).json({ error: "amountVnd must be a non-negative number" });
@@ -4656,12 +4703,38 @@ app.post("/manager/gate-parking-tickets", async (req, res) => {
   if (!(await isPrivilegedSupportOperator(actorEmail))) {
     return res.status(403).json({ error: "Forbidden" });
   }
+
+  const sessionStartAt =
+    sessionStartRaw != null && String(sessionStartRaw).trim()
+      ? new Date(String(sessionStartRaw).trim())
+      : null;
+  const durationHours =
+    durationHoursRaw != null && String(durationHoursRaw).trim() !== ""
+      ? Number(durationHoursRaw)
+      : NaN;
+
+  if (!sessionStartAt || Number.isNaN(sessionStartAt.getTime())) {
+    return res.status(400).json({ error: "sessionStartAt (ISO date-time) is required" });
+  }
+  if (!Number.isFinite(durationHours) || durationHours <= 0) {
+    return res.status(400).json({ error: "durationHours must be a positive number" });
+  }
+
+  let periodMonth: string;
+  if (periodMonthOverride && /^\d{4}-\d{2}$/.test(periodMonthOverride)) {
+    periodMonth = periodMonthOverride;
+  } else {
+    periodMonth = billingPeriodMonthForGateSession(sessionStartAt);
+  }
+
   try {
     const ticket = await prisma.gateParkingTicket.create({
       data: {
         residentEmail: email,
         periodMonth,
         amountVnd: Math.round(amountVnd),
+        sessionStartAt,
+        durationHours,
         note: note || null,
         createdBy: actorEmail
       }
@@ -4685,13 +4758,44 @@ app.patch("/manager/gate-parking-tickets/:id", async (req, res) => {
   if (!existing) {
     return res.status(404).json({ error: "Ticket not found" });
   }
-  const data: { periodMonth?: string; amountVnd?: number; note?: string | null; paidAt?: Date | null } = {};
+  const data: {
+    periodMonth?: string;
+    amountVnd?: number;
+    note?: string | null;
+    paidAt?: Date | null;
+    sessionStartAt?: Date | null;
+    durationHours?: number | null;
+  } = {};
   if (req.body.periodMonth != null) {
     const pm = String(req.body.periodMonth).trim();
     if (!/^\d{4}-\d{2}$/.test(pm)) {
       return res.status(400).json({ error: "periodMonth must be YYYY-MM" });
     }
     data.periodMonth = pm;
+  }
+  if (req.body.sessionStartAt !== undefined) {
+    const raw = String(req.body.sessionStartAt ?? "").trim();
+    if (!raw) {
+      data.sessionStartAt = null;
+    } else {
+      const d = new Date(raw);
+      if (Number.isNaN(d.getTime())) {
+        return res.status(400).json({ error: "sessionStartAt must be a valid ISO date-time" });
+      }
+      data.sessionStartAt = d;
+    }
+  }
+  if (req.body.durationHours !== undefined) {
+    const raw = req.body.durationHours;
+    if (raw === null || raw === "") {
+      data.durationHours = null;
+    } else {
+      const dh = Number(raw);
+      if (!Number.isFinite(dh) || dh <= 0) {
+        return res.status(400).json({ error: "durationHours must be positive when set" });
+      }
+      data.durationHours = dh;
+    }
   }
   if (req.body.amountVnd != null) {
     const amt = Number(req.body.amountVnd);
@@ -4787,6 +4891,12 @@ app.post("/rent-paid-status/apply-coins", async (req, res) => {
     if (existing?.isPaid) {
       return res.status(400).json({ error: "Rent is already recorded as paid for this month; coin preference cannot be changed." });
     }
+    if ((existing?.rentCoinRedeemCoins ?? 0) > 0 && applyCoinsTowardRent === false) {
+      return res.status(400).json({
+        error:
+          "Coins have already been exchanged for this month's bill. Contact your manager if you need this adjusted."
+      });
+    }
 
     await prisma.monthlyRentStatus.upsert({
       where: { email_month: { email, month } },
@@ -4806,6 +4916,95 @@ app.post("/rent-paid-status/apply-coins", async (req, res) => {
     return res.json({ email, month, applyCoinsTowardRent });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to save preference" });
+  }
+});
+
+// POST /rent-paid-status/redeem-coins-for-bill — resident confirms coin exchange (deducts sheet coins, locks redemption on the row)
+app.post("/rent-paid-status/redeem-coins-for-bill", async (req, res) => {
+  const email = String(req.body.email ?? "").trim().toLowerCase();
+  const now = new Date();
+  const defaultMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const monthRaw = String(req.body.month ?? "").trim();
+  const month = /^\d{4}-\d{2}$/.test(monthRaw) ? monthRaw : defaultMonth;
+
+  if (!email || !email.includes("@")) {
+    return res.status(400).json({ error: "Valid email is required" });
+  }
+
+  try {
+    const client = await getActiveClientByEmail(email);
+    if (!client) {
+      return res.status(404).json({ error: "Client not found" });
+    }
+    const existing = await prisma.monthlyRentStatus.findUnique({
+      where: { email_month: { email, month } }
+    });
+    if (existing?.isPaid) {
+      return res.status(400).json({ error: "Rent is already recorded as paid for this month." });
+    }
+    if ((existing?.rentCoinRedeemCoins ?? 0) > 0) {
+      return res.status(400).json({ error: "Coins have already been exchanged for this bill." });
+    }
+    if (existing?.applyCoinsTowardRent !== true) {
+      return res.status(400).json({
+        error: "Opt in to apply Cozoro Coins toward this bill first, then submit the exchange."
+      });
+    }
+
+    const { breakdown } = await calculateRentBreakdownForBillingMonth(client, month, { managerDiscountVnd: 0 });
+    const coinsToSpend = breakdown.recommendedCoinUsage;
+    const valueVnd = breakdown.recommendedCoinValueVnd;
+    if (!coinsToSpend || valueVnd <= 0) {
+      return res.status(400).json({
+        error: "There are no coins to exchange toward this bill (check your balance and the 10% cap)."
+      });
+    }
+
+    const maHd = String(client["MÃ HD"] || client["MÃ HD".normalize("NFC")] || "").trim();
+    if (!maHd) {
+      return res.status(400).json({ error: "Contract code missing; cannot record coin adjustment." });
+    }
+
+    await managerAdjustCoins({
+      maHd,
+      delta: -coinsToSpend,
+      reason: `Tiền phòng ${month} — đổi Cozoro Coins / Rent ${month} — coin exchange toward bill`,
+      operator: email
+    });
+
+    await prisma.monthlyRentStatus.upsert({
+      where: { email_month: { email, month } },
+      create: {
+        email,
+        month,
+        isPaid: false,
+        applyCoinsTowardRent: true,
+        rentCoinRedeemCoins: coinsToSpend,
+        rentCoinRedeemValueVnd: valueVnd,
+        rentCoinRedeemAt: new Date(),
+        updatedBy: "resident-redeem-coins"
+      },
+      update: {
+        rentCoinRedeemCoins: coinsToSpend,
+        rentCoinRedeemValueVnd: valueVnd,
+        rentCoinRedeemAt: new Date(),
+        updatedBy: "resident-redeem-coins"
+      }
+    });
+
+    const { breakdown: nextBreakdown } = await calculateRentBreakdownForBillingMonth(client, month, {
+      managerDiscountVnd: 0
+    });
+    return res.json({
+      email,
+      month,
+      rentCoinRedeemCoins: coinsToSpend,
+      rentCoinRedeemValueVnd: valueVnd,
+      rentCoinRedeemAt: new Date().toISOString(),
+      breakdown: nextBreakdown
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to redeem coins" });
   }
 });
 
@@ -4835,6 +5034,9 @@ app.get("/rent-paid-status", async (req, res) => {
         month,
         isPaid: record?.isPaid ?? false,
         applyCoinsTowardRent,
+        rentCoinRedeemCoins: record?.rentCoinRedeemCoins ?? null,
+        rentCoinRedeemValueVnd: record?.rentCoinRedeemValueVnd ?? null,
+        rentCoinRedeemAt: record?.rentCoinRedeemAt?.toISOString() ?? null,
         breakdown: null,
         onPrepaidPlan: false,
         blockingRentDuePopupEnabled: portalUx.blockingRentDuePopupEnabled
@@ -4871,6 +5073,9 @@ app.get("/rent-paid-status", async (req, res) => {
         month,
         isPaid: record?.isPaid ?? onPrepaidPlan,
         applyCoinsTowardRent,
+        rentCoinRedeemCoins: record?.rentCoinRedeemCoins ?? null,
+        rentCoinRedeemValueVnd: record?.rentCoinRedeemValueVnd ?? null,
+        rentCoinRedeemAt: record?.rentCoinRedeemAt?.toISOString() ?? null,
         breakdown: null,
         onPrepaidPlan,
         prepaidNextPaymentEstimate,
@@ -4878,15 +5083,17 @@ app.get("/rent-paid-status", async (req, res) => {
       });
     }
 
-    const breakdown = await calculateRentBreakdown(client, month, {
-      managerDiscountVnd: 0,
-      applyCoinsTowardRent
+    const { breakdown } = await calculateRentBreakdownForBillingMonth(client, month, {
+      managerDiscountVnd: 0
     });
     return res.json({
       email,
       month,
       isPaid: false,
       applyCoinsTowardRent,
+      rentCoinRedeemCoins: record?.rentCoinRedeemCoins ?? null,
+      rentCoinRedeemValueVnd: record?.rentCoinRedeemValueVnd ?? null,
+      rentCoinRedeemAt: record?.rentCoinRedeemAt?.toISOString() ?? null,
       breakdown,
       onPrepaidPlan: false,
       blockingRentDuePopupEnabled: portalUx.blockingRentDuePopupEnabled

@@ -2,10 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
+import { parseSupportAssistantMeta, supportMessageDisplayBody } from "../lib/support-message-meta";
+import { CozoroStarfieldBurst } from "./cozoro-starfield-burst";
 import { usePortalSession } from "./portal-session";
 import { usePortalLanguage } from "./portal-language";
 import { ManagerSupportInbox } from "./manager-support-inbox";
 import { ResidentPortalAiBee } from "./resident-portal-ai-bee";
+import { VentHammerGameModal } from "./vent-hammer-game-modal";
 
 const SOUND_PREF_KEY = "chat_sound_enabled";
 const POLL_INTERVAL_MS = 10000;
@@ -105,7 +108,7 @@ function senderLabel(message: SupportMessage, sessionEmail: string, t: (key: str
 }
 
 export function SupportClient() {
-  const { sessionEmail } = usePortalSession();
+  const { sessionEmail, sessionRole } = usePortalSession();
   const { t } = usePortalLanguage();
 
 
@@ -132,6 +135,9 @@ export function SupportClient() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastMessageIdRef = useRef<string | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const processedAssistantMetaIdsRef = useRef<Set<string>>(new Set());
+  const [ventHammerOpen, setVentHammerOpen] = useState(false);
+  const [starfieldBurstKey, setStarfieldBurstKey] = useState(0);
 
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
@@ -150,6 +156,28 @@ export function SupportClient() {
   useEffect(() => {
     requestNotificationPermission();
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== "personal" || !sessionEmail.trim()) {
+      return;
+    }
+    const now = Date.now();
+    for (const m of messages) {
+      if (m.senderRole !== "ASSISTANT") continue;
+      if (processedAssistantMetaIdsRef.current.has(m.id)) continue;
+      const meta = parseSupportAssistantMeta(m.body);
+      if (!meta) continue;
+      processedAssistantMetaIdsRef.current.add(m.id);
+      const ageMs = now - new Date(m.createdAt).getTime();
+      if (ageMs > 120_000) continue;
+      if (meta === "vent-start") {
+        setVentHammerOpen(true);
+      }
+      if (meta === "founder-egg") {
+        setStarfieldBurstKey((k) => k + 1);
+      }
+    }
+  }, [messages, activeTab, sessionEmail]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -453,11 +481,23 @@ export function SupportClient() {
   }
 
   if (staffOnlyMode) {
-    return <ManagerSupportInbox operatorEmail={sessionEmail.trim().toLowerCase()} enabled={Boolean(sessionEmail.trim())} />;
+    return (
+      <ManagerSupportInbox
+        operatorEmail={sessionEmail.trim().toLowerCase()}
+        enabled={Boolean(sessionEmail.trim())}
+        operatorIsOwner={sessionRole === "owner"}
+      />
+    );
   }
 
   return (
     <div className="flex h-[calc(100vh-140px)] min-h-0 flex-col overflow-hidden bg-white md:h-[700px] md:rounded-3xl md:border md:border-slate-200 md:shadow-lg">
+      <CozoroStarfieldBurst burstKey={starfieldBurstKey} />
+      <VentHammerGameModal
+        open={ventHammerOpen}
+        onOpenChange={setVentHammerOpen}
+        email={sessionEmail.trim().toLowerCase()}
+      />
       {/* Header */}
       <header className="shrink-0 border-b border-slate-100 bg-white/80 p-4 backdrop-blur-md">
         <div className="flex flex-wrap items-center justify-between gap-3">
