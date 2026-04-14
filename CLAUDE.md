@@ -1,11 +1,11 @@
-# CozoroHome Webapp — Agent Guide
+# CozoroHome Webapp â€” Agent Guide
 
 ## Project Overview
 
 CozoroHome is a resident management portal for co-living housing (branches D2 and D7). It has two main parts:
 
-- **portal/** — Next.js 16 frontend (TypeScript, Tailwind CSS)
-- **api/** — Node.js/Express backend (TypeScript, Prisma ORM, MariaDB)
+- **portal/** â€” Next.js 16 frontend (TypeScript, Tailwind CSS)
+- **api/** â€” Node.js/Express backend (TypeScript, Prisma ORM, MariaDB)
 
 ---
 
@@ -38,7 +38,7 @@ start-sandbox.cmd
 ### Git worktree setup
 Production runs as a git worktree of the same repo:
 ```bash
-# Already created — do not run again:
+# Already created â€” do not run again:
 git worktree add ../cozorohome-prod main
 ```
 Current branch policy:
@@ -83,8 +83,8 @@ Operational note:
 ### Cloudflare tunnel
 Named tunnel `cozorohome-portal` (ID: `ace69517-369e-44a3-9f00-3304bf2153df`)
 - Config: `C:\Users\User\.cloudflared\config.yml`
-- Routes `app.cozorohome.com` → `localhost:3000` and `api.cozorohome.com` → `localhost:4000`
-- `cloudflared.exe` lives in `tools/` (not in git — copy from `cozorohome-public/tools/` if missing)
+- Routes `app.cozorohome.com` â†’ `localhost:3000` and `api.cozorohome.com` â†’ `localhost:4000`
+- `cloudflared.exe` lives in `tools/` (not in git â€” copy from `cozorohome-public/tools/` if missing)
 
 ### After pulling or changing Prisma schema
 ```bash
@@ -98,7 +98,7 @@ cd api && npm install
 ```
 
 ### Login broken via public URL (Cloudflare tunnel)
-**Symptom:** Login page loads at `https://app.cozorohome.com` but submitting does nothing — form appears interactive but clicks/submits have no effect.
+**Symptom:** Login page loads at `https://app.cozorohome.com` but submitting does nothing â€” form appears interactive but clicks/submits have no effect.
 
 **Cause:** Next.js 16+ dev mode blocks HMR SSE connections (`/_next/webpack-hmr`) from non-localhost origins by default. When the browser can't establish the HMR connection, the `AppDevOverlayErrorBoundary` silently prevents React from fully hydrating, so event handlers (including the login form's `onSubmit`) are never attached.
 
@@ -129,7 +129,7 @@ const nextConfig: NextConfig = {
 | Component | Description |
 |-----------|-------------|
 | `mobile-nav.tsx` | Bottom nav bar (user, manager, mechanic roles). Shows per-button notification badges fetched from `/support/notifications`. |
-| `site-shell.tsx` | Root layout wrapper — header, nav, providers |
+| `site-shell.tsx` | Root layout wrapper â€” header, nav, providers |
 | `portal-session.tsx` | Session context (`sessionEmail`, `sessionRole`, `isLoggedIn`) |
 | `portal-language.tsx` | i18n context with `t()` helper (Vietnamese/English) |
 | `cleaning-schedule-client.tsx` | Full cleaning calendar with self-assign, availability, task management |
@@ -140,9 +140,9 @@ const nextConfig: NextConfig = {
 | `route-error.tsx` | Shared error boundary components (Critical / Standard) |
 
 **Roles:**
-- `user` / resident — sees resident nav and pages
-- `manager`, `owner`, `app_admin` — manager workspace at `/manager?view=...`
-- `mechanic` — mechanic workspace at `/mechanic`
+- `user` / resident â€” sees resident nav and pages
+- `manager`, `owner`, `app_admin` â€” manager workspace at `/manager?view=...`
+- `mechanic` â€” mechanic workspace at `/mechanic`
 
 **Nav badge logic (mobile-nav.tsx):**
 - Fetches `/support/notifications?email=` (resident) or `/manager/support/notifications?operatorEmail=` (staff)
@@ -177,30 +177,30 @@ const nextConfig: NextConfig = {
 | `POST /manager/support/conversations/:id/read` | Mark conversation read |
 | `GET /clients/laundry-bookings?email=` | Resident laundry bookings |
 | `GET /staff/clients/duplicates?actorEmail=` | List clients with multiple active rows in the sheet |
-| `POST /staff/clients/set-inactive` | Set a specific contract row (by maHd) to Hiện còn ở = −1 |
+| `POST /staff/clients/set-inactive` | Set a specific contract row (by maHd) to Hiá»‡n cÃ²n á»Ÿ = âˆ’1 |
 
 ---
 
-## Google Sheet — Client Row Schema
+## Google Sheet â€” Client Row Schema
 
 The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contract registration. Key columns:
 
 | Column | Notes |
 |--------|-------|
-| `DẤU THỜI GIAN` | Form submission timestamp — format `dd/mm/yyyy hh:mm:ss`. **This is the tiebreaker** when a client has multiple active rows: the row with the latest `DẤU THỜI GIAN` is treated as the current contract by `getActiveClientByEmail`. |
-| `Địa chỉ email` | Resident email (primary lookup key) |
-| `Hiện còn ở` | Active status: `1` = currently staying, `0` = moved out, `-1` = left/removed/inactive, blank = new registration not yet confirmed |
-| `MÃ HD` | Contract code — unique identifier for a row (used by `updateClientColumns`) |
-| `Ngày bắt đầu hợp đồng` | Contract start date (`dd/mm/yyyy`) |
-| `Ngày hết hạn hợp đồng` | Contract end date (`dd/mm/yyyy`) |
-| `Thời hạn hợp đồng (tháng)` | Contract duration in months |
-| `số giường` | Bed number |
-| `Chi nhánh Cozoro dorm` | Branch — `2` or `7` (normalized to `D2`/`D7`) |
-| `Phí gởi xe` | Parking fee (VND) |
-| `Biển số xe máy đăng ký gởi xe` | Motorbike licence plate |
-| `Ảnh đính kèm CMND hoặc căn cước công dân` | ID scan URL |
+| `Dáº¤U THá»œI GIAN` | Form submission timestamp â€” format `dd/mm/yyyy hh:mm:ss`. **This is the tiebreaker** when a client has multiple active rows: the row with the latest `Dáº¤U THá»œI GIAN` is treated as the current contract by `getActiveClientByEmail`. |
+| `Äá»‹a chá»‰ email` | Resident email (primary lookup key) |
+| `Hiá»‡n cÃ²n á»Ÿ` | Active status: `1` = currently staying, `0` = moved out, `-1` = left/removed/inactive, blank = new registration not yet confirmed |
+| `MÃƒ HD` | Contract code â€” unique identifier for a row (used by `updateClientColumns`) |
+| `NgÃ y báº¯t Ä‘áº§u há»£p Ä‘á»“ng` | Contract start date (`dd/mm/yyyy`) |
+| `NgÃ y háº¿t háº¡n há»£p Ä‘á»“ng` | Contract end date (`dd/mm/yyyy`) |
+| `Thá»i háº¡n há»£p Ä‘á»“ng (thÃ¡ng)` | Contract duration in months |
+| `sá»‘ giÆ°á»ng` | Bed number |
+| `Chi nhÃ¡nh Cozoro dorm` | Branch â€” `2` or `7` (normalized to `D2`/`D7`) |
+| `PhÃ­ gá»Ÿi xe` | Parking fee (VND) |
+| `Biá»ƒn sá»‘ xe mÃ¡y Ä‘Äƒng kÃ½ gá»Ÿi xe` | Motorbike licence plate |
+| `áº¢nh Ä‘Ã­nh kÃ¨m CMND hoáº·c cÄƒn cÆ°á»›c cÃ´ng dÃ¢n` | ID scan URL |
 
-**Duplicate row rule:** A client extending their contract gets a new row appended; the old row should be set to `Hiện còn ở = -1`. If both rows remain active (non -1), the app uses the one with the latest `DẤU THỜI GIAN`. Managers can detect and resolve duplicates from the bed diagram (amber highlight) → client detail panel → "Mark Inactive (−1)" button.
+**Duplicate row rule:** A client extending their contract gets a new row appended; the old row should be set to `Hiá»‡n cÃ²n á»Ÿ = -1`. If both rows remain active (non -1), the app uses the one with the latest `Dáº¤U THá»œI GIAN`. Managers can detect and resolve duplicates from the bed diagram (amber highlight) â†’ client detail panel â†’ "Mark Inactive (âˆ’1)" button.
 
 ---
 
@@ -209,8 +209,8 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 - **Self-assign**: residents can claim open slots for today or future dates
 - **Take Over**: if today is after 20:00 and an assigned resident hasn't completed the task, others can take over
 - **Task types**: `KITCHEN_D2`, `KITCHEN_D7`, `TRASH_D7`
-- **Completion window**: `KITCHEN_D7` = 17:00–23:00 on assigned date; others = any time that day
-- **Release penalties**: 5+ days ahead = no fine; 1–4 days = 50%; same day = 75%; past = no release
+- **Completion window**: `KITCHEN_D7` = 17:00â€“23:00 on assigned date; others = any time that day
+- **Release penalties**: 5+ days ahead = no fine; 1â€“4 days = 50%; same day = 75%; past = no release
 - **Calendar colors**: green = open slot, blue = taken by another resident, amber dot = your task
 
 ---
@@ -219,17 +219,18 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.7.2 | Manager deposit refund email (preview, editable amount, bilingual VI/EN, 5–10 business days); checkout step 5 deposit timing copy; API routes for deposit refund |
 | 3.7.1 | Multi-month prepaid: full package calculator breakdown (register-style recurring lines, no deposit; laundry / gate / fines explicit); readable UI on manager package card and resident next payment |
 | 3.7.0 | Named motorbike parking tiers per branch (`ParkingPricingTier`), manager Settings + registration multi-choice; portable dev start without `migrate deploy`; rebuild-restart / start-sandbox helpers |
 | 3.6.10 | Multi-month prepaid: manager draft/confirm package total and note, in-app (`PREPAID_PACKAGE`) and email notify; resident next payment shows manager-confirmed amount vs engine estimate; `PrepaidPackageBilling` in Prisma |
 | 3.6.9 | Resident personal support: optional Cozoro Assistant (Gemini) replies in the same thread as manager inbox; optional callback fields (phone, Facebook, other) on conversation; `ASSISTANT` message role; manager Messages workspace: open-maintenance count on tab + mobile nav badge, compact scroll area with sticky subtab row; `bot/README` clarifies `chatbot.cozorohome.com` as standalone HTTPS bot vs portal and Facebook as optional |
 | 3.6.6 | Darken inactive nav items in dark mode (text-slate-100, hover white, removed black pill background) |
-| 3.6.5 | Manager AI chat assistant (Gemini Flash 2.5) inline in Settings — add coins, create fine/receipt, query bed availability, navigate to views; chat history persisted in localStorage (20-msg cap); staff messages display as "Cozoro"; group-context polling skipped for staff sessions; IoT device controller grouped by branch→area→floor, collapsed by default; dark mode toggle in manager Settings; tap sender name in support chat to view client details; auto-scheduler section collapsed by default; D7 cleaning task remove fixed (stale calendar event IDs no longer block DB deletion) |
-| 3.6.1 | Duplicate active contract detection and resolution: bed diagram highlights duplicate clients (amber + ! badge); client detail panel shows all active rows sorted by DẤU THỜI GIAN with "Mark Inactive (−1)" button per old row; getActiveClientByEmail auto-picks latest DẤU THỜI GIAN row when duplicates exist; contract extension now generates a unique MÃ HD for the new row; support message sender names fixed (staff display name stored, not email); Google Sheet column schema documented in CLAUDE.md |
-| 3.6.0 | Unified pricing management: Settings tab replaces Employees tab; long-term bed prices editable via full bed diagram (per-bed, by-room+tier, or by-branch+tier bulk modes); deposit auto-set equal to monthly price; discounts stored in Google Sheets "DISCOUNTS" tab with debounced write queue (30s flush, batched API calls); discount eligibility rules expanded (status, minMonths, referral, bed tier T/M/B, gender, occupation); registration form shows claimable discounts as checkboxes with bilingual EN/VI labels — registrant self-attests with proof-required notice; bed availability loads after branch + sex selection |
+| 3.6.5 | Manager AI chat assistant (Gemini Flash 2.5) inline in Settings â€” add coins, create fine/receipt, query bed availability, navigate to views; chat history persisted in localStorage (20-msg cap); staff messages display as "Cozoro"; group-context polling skipped for staff sessions; IoT device controller grouped by branchâ†’areaâ†’floor, collapsed by default; dark mode toggle in manager Settings; tap sender name in support chat to view client details; auto-scheduler section collapsed by default; D7 cleaning task remove fixed (stale calendar event IDs no longer block DB deletion) |
+| 3.6.1 | Duplicate active contract detection and resolution: bed diagram highlights duplicate clients (amber + ! badge); client detail panel shows all active rows sorted by Dáº¤U THá»œI GIAN with "Mark Inactive (âˆ’1)" button per old row; getActiveClientByEmail auto-picks latest Dáº¤U THá»œI GIAN row when duplicates exist; contract extension now generates a unique MÃƒ HD for the new row; support message sender names fixed (staff display name stored, not email); Google Sheet column schema documented in CLAUDE.md |
+| 3.6.0 | Unified pricing management: Settings tab replaces Employees tab; long-term bed prices editable via full bed diagram (per-bed, by-room+tier, or by-branch+tier bulk modes); deposit auto-set equal to monthly price; discounts stored in Google Sheets "DISCOUNTS" tab with debounced write queue (30s flush, batched API calls); discount eligibility rules expanded (status, minMonths, referral, bed tier T/M/B, gender, occupation); registration form shows claimable discounts as checkboxes with bilingual EN/VI labels â€” registrant self-attests with proof-required notice; bed availability loads after branch + sex selection |
 | 3.5.5 | Pre-login landing page with hero, vision (4 pillars), founder bio, cozorohome.com link; global EN/VI language toggle in header (visible on all pages including pre-login) |
-| 3.5.4 | Manager delete for coins/fines/payments/laundry entries; laundry stats table redesigned (name, start, end, machine — 1 row per entry); fix laundry overlap from old-system events with wrong end times (always use machine duration); open slots limited to current month; fine creator field shown to residents and managers; About section collapses by default |
-| 3.5.3 | Hide air fryer section entirely for D2 users; hide microwave section entirely for D7 users (no "branch only" message — section simply absent); About section on account page (app history, Dr. Trong Nguyen, Facebook link) |
+| 3.5.4 | Manager delete for coins/fines/payments/laundry entries; laundry stats table redesigned (name, start, end, machine â€” 1 row per entry); fix laundry overlap from old-system events with wrong end times (always use machine duration); open slots limited to current month; fine creator field shown to residents and managers; About section collapses by default |
+| 3.5.3 | Hide air fryer section entirely for D2 users; hide microwave section entirely for D7 users (no "branch only" message â€” section simply absent); About section on account page (app history, Dr. Trong Nguyen, Facebook link) |
 | 3.5.2 | D2 microwave controller: IFTTT trigger, pre-use inspection (Clean/Dirty/Damage), 5-min cooldown window, current/last user display, usage logged to Google Sheet (Name/Time/Email/Inspection columns) |
 | 3.5.1 | Hide Contract Status card for inactive clients; fix session flash (users seeing login screen on page return) by deferring login-required UI until localStorage is read |
 | 3.5.0 | Short-term portal merged into client list (Long term / Short term tabs); bed pricing diagram UI with T/M/B tiers (150k/250k defaults); manager permissions modal sticky footer fix; inactive tab compile fix; short-term booking confirmation (imports standalone booking app guest into main portal with auto account creation); contract termination + checkout form; manager can book services (bed 0); manager permissions data model (per-branch + per-category read/write, owner-configurable) |
@@ -245,8 +246,8 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 ## Error Boundaries
 
 Every route in `portal/app/**/error.tsx` uses either:
-- `CriticalRouteError` — for critical services (bookings, controller, laundry) — auto-retries after 8s
-- `StandardRouteError` — for standard pages — manual retry only
+- `CriticalRouteError` â€” for critical services (bookings, controller, laundry) â€” auto-retries after 8s
+- `StandardRouteError` â€” for standard pages â€” manual retry only
 
 `portal/app/global-error.tsx` is the last-resort fallback (renders its own `<html>`).
 

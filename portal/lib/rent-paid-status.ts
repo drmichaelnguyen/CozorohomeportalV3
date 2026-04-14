@@ -37,6 +37,8 @@ export type PrepaidRecurringComponentsPayload = {
 /** Server estimate for the next multi-month package renewal (sheet + engine as of billing month). */
 export type PrepaidNextPaymentEstimatePayload = {
   planMonths: 3 | 6;
+  /** When omitted, UI treats 6-month sheet plan as 7 gross months (6+1). */
+  packageGrossMonths?: number;
   recurringMonthlyVnd: number;
   /** Present on current API; omitted on very old snapshots only. */
   recurringComponents?: PrepaidRecurringComponentsPayload;
@@ -49,6 +51,8 @@ export type PrepaidNextPaymentEstimatePayload = {
   /** Unpaid fines + laundry + gate per engine (current billing month) */
   midCyclePayablesVnd?: number;
   estimatedTotalVnd: number;
+  /** True when owner line overrides are applied over the engine package / payables. */
+  breakdownHasOwnerOverrides?: boolean;
   /** When manager confirmed a custom package total, engine lump-sum before override. */
   engineEstimatedTotalVnd?: number;
   managerPackageNote?: string | null;

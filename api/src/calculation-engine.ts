@@ -384,11 +384,13 @@ export function computeRecurringMonthlyRentVndFromSheet(client: ClientRow): numb
 
 export type PrepaidNextPaymentEstimate = {
   planMonths: 3 | 6;
+  /** Months of recurring multiplied before plan discount (6+1 sheet plan = 7 × recurring − 1 month free). */
+  packageGrossMonths: number;
   recurringMonthlyVnd: number;
   /** Rent + surcharges + parking per month (no deposit); mirrors monthly bill line items from the sheet. */
   recurringComponents: RecurringMonthlyRentComponents;
   frequencyDiscountVnd: number;
-  /** recurringMonthly * planMonths - frequencyDiscount */
+  /** recurringMonthly × packageGrossMonths − frequencyDiscount */
   packageRecurringSubtotalVnd: number;
   laundryFeeVnd: number;
   /** Cash laundry loads counted toward laundryFeeVnd for this estimate */
@@ -407,8 +409,8 @@ export type PrepaidNextPaymentEstimate = {
 };
 
 /**
- * Rough next lump-sum when the prepaid package renews: N × recurring (from sheet today) minus the same
- * frequency discount used on registration (500k for 3 months; one full recurring month for 6 months),
+ * Rough next lump-sum when the prepaid package renews: gross months × recurring (from sheet today) minus the same
+ * frequency discount as registration (500k for 3 months; for 6+1 plan: 7 × recurring − 1 full month free),
  * plus laundry (previous calendar month vs billing month), gate tickets, and unpaid fines as of the engine.
  */
 export async function computePrepaidNextPaymentEstimate(
@@ -427,8 +429,10 @@ export async function computePrepaidNextPaymentEstimate(
 
   const recurringComponents = computeRecurringMonthlyRentComponentsFromSheet(client);
   const recurringMonthlyVnd = recurringComponents.recurringMonthlyVnd;
+  /** Sheet “06 tháng” = pay for 6 effective months over 7 covered months → bill 7× recurring − 1 month free. */
+  const packageGrossMonths = planMonths === 6 ? 7 : planMonths;
   const frequencyDiscountVnd = planMonths === 3 ? 500_000 : recurringMonthlyVnd;
-  const packageRecurringSubtotalVnd = Math.max(0, recurringMonthlyVnd * planMonths - frequencyDiscountVnd);
+  const packageRecurringSubtotalVnd = Math.max(0, recurringMonthlyVnd * packageGrossMonths - frequencyDiscountVnd);
 
   const bd = await calculateRentBreakdown(client, billingMonthYyyyMm, { applyCoinsTowardRent: false });
   const laundryFeeVnd = bd.laundryFeeVnd;
@@ -440,6 +444,7 @@ export async function computePrepaidNextPaymentEstimate(
 
   return {
     planMonths,
+    packageGrossMonths,
     recurringMonthlyVnd,
     recurringComponents,
     frequencyDiscountVnd,

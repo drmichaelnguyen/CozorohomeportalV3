@@ -369,6 +369,8 @@ model PrepaidPackageBilling {
   billingMonth           String
   /// Engine snapshot when manager last saved (JSON)
   calculatedSnapshot     Json
+  /// Owner-only line overrides (package net, laundry, gate, fines) merged over the engine for display; see `prepaid-breakdown-overrides.ts`
+  breakdownOverrides     Json?
   /// Final total shown to resident after confirm (₫)
   managerPackageTotalVnd Int
   managerNote            String?   @db.Text

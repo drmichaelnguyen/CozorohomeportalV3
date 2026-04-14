@@ -18,6 +18,16 @@ export async function sumUnpaidGateParkingVndBeforeMonth(residentEmail: string, 
   return agg._sum.amountVnd ?? 0;
 }
 
+/** Sum all unpaid gate parking tickets for a resident (any period). */
+export async function sumAllUnpaidGateParkingVndForEmail(residentEmail: string): Promise<number> {
+  const email = normalizeEmail(residentEmail);
+  const agg = await prisma.gateParkingTicket.aggregate({
+    where: { residentEmail: email, paidAt: null },
+    _sum: { amountVnd: true }
+  });
+  return agg._sum.amountVnd ?? 0;
+}
+
 export async function markGateParkingTicketsPaidForBilling(billingMonth: string, residentEmail: string): Promise<number> {
   const email = normalizeEmail(residentEmail);
   const now = new Date();

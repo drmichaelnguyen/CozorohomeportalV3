@@ -18,7 +18,7 @@ const contractDueCheckoutFilePath = path.join(dataDir, "contract-due-checkouts.j
 export const checkoutPhotosDirPath = path.join(dataDir, "checkout-photos");
 
 /** Days until contract end (negative = expired). */
-function daysUntilContractEnd(endDateStr: string | undefined): number | null {
+export function daysUntilContractEnd(endDateStr: string | undefined): number | null {
   const trimmed = String(endDateStr ?? "").trim();
   if (!trimmed) return null;
   const match = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
@@ -171,7 +171,7 @@ export type CheckoutContext = {
   submittedAt?: string;
 };
 
-const CONTRACT_DUE_CHECKOUT_WINDOW_DAYS = 7;
+export const CONTRACT_DUE_CHECKOUT_WINDOW_DAYS = 7;
 
 export async function getCheckoutContext(email: string): Promise<CheckoutContext> {
   const normalized = email.trim().toLowerCase();

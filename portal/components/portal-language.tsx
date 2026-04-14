@@ -91,8 +91,8 @@ const translations: Record<string, { en: string; vi: string }> = {
     vi: "Tổng phần định kỳ mỗi tháng"
   },
   prepaidPackagePortionTitle: {
-    en: "Prepaid package (months × recurring, then plan discount)",
-    vi: "Gói trả trước (tháng × phần định kỳ, rồi giảm theo gói)"
+    en: "Prepaid package (gross months × monthly recurring, then plan discount)",
+    vi: "Gói trả trước (số tháng tính phí × phần định kỳ mỗi tháng, rồi giảm theo gói)"
   },
   prepaidBillAddOnsTitle: {
     en: "Unpaid laundry, gate parking, and fines (added to total)",

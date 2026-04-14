@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
+import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 import Link from "next/link";
 
@@ -30,10 +31,52 @@ const STEP_LABELS: Record<Step, string> = {
   5: "Hoàn cọc & lưu ý"
 };
 
+const STEP_LABELS_EN: Record<Step, string> = {
+  1: "Luggage & cleaning",
+  2: "Bedding",
+  3: "Keys & locker",
+  4: "Bed & locker photos",
+  5: "Deposit & notes"
+};
+
+function checkoutNotYetMessage(ctx: CheckoutContext | null, language: "en" | "vi"): string {
+  const r = ctx?.reason;
+  const days = ctx?.daysUntilContractEnd;
+  if (r === "contract_not_due_yet") {
+    return language === "vi"
+      ? `Hợp đồng của bạn chưa đến kỳ trả phòng trên cổng (còn ${days ?? "—"} ngày đến ngày hết hạn). Khi còn tối đa 7 ngày trước ngày hết hạn, các nút gửi check-out bên dưới sẽ mở.`
+      : `Your contract is not in the check-out window yet (${days ?? "—"} days until end date). When you are within 7 days of your contract end date, the submit buttons on this page will unlock.`;
+  }
+  if (r === "no_client") {
+    return language === "vi"
+      ? "Không tìm thấy hồ sơ khách đang ở cho email này. Nếu bạn vừa đăng ký, vui lòng đợi đồng bộ hoặc liên hệ quản lý."
+      : "No active resident profile was found for this email. If you just registered, wait for sync or contact your manager.";
+  }
+  if (r === "not_active_stay") {
+    return language === "vi"
+      ? "Hợp đồng của bạn không còn trạng thái đang ở trên hệ thống. Liên hệ quản lý nếu cần hỗ trợ."
+      : "Your contract is not marked as currently staying in our system. Contact your manager if you need help.";
+  }
+  if (r === "no_mahd" || r === "no_contract_end") {
+    return language === "vi"
+      ? "Thiếu thông tin hợp đồng trên hồ sơ (mã HĐ hoặc ngày hết hạn). Vui lòng liên hệ quản lý."
+      : "Your profile is missing contract details (contract code or end date). Please contact your manager.";
+  }
+  if (r === "load_error") {
+    return language === "vi"
+      ? "Không tải được trạng thái check-out. Thử tải lại trang."
+      : "Could not load check-out status. Try refreshing the page.";
+  }
+  return language === "vi"
+    ? "Bạn chưa có yêu cầu check-out mở (chấm dứt hợp đồng hoặc trong vòng 7 ngày trước ngày hết hạn). Bạn vẫn có thể đọc hướng dẫn bên dưới; nút gửi sẽ mở đúng thời điểm."
+    : "You do not have an open check-out request yet (contract termination, or within 7 days of your end date). You can still read the guide below; submit actions unlock at the right time.";
+}
+
 const GOOGLE_FORM_URL = process.env.NEXT_PUBLIC_CHECKOUT_GOOGLE_FORM_URL ?? "";
 
 export function CheckoutFormClient() {
   const { sessionEmail } = usePortalSession();
+  const { language } = usePortalLanguage();
   const [step, setStep] = useState<Step>(1);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -216,23 +259,6 @@ export function CheckoutFormClient() {
     );
   }
 
-  if (!ctx?.eligible) {
-    return (
-      <div className="mx-auto max-w-md py-16 text-center">
-        <div className="text-4xl">🏠</div>
-        <h2 className="mt-4 text-xl font-bold text-slate-900">Chưa có quy trình trả phòng</h2>
-        <p className="mt-2 text-sm text-slate-600">
-          {ctx?.reason === "contract_not_due_yet"
-            ? `Hợp đồng của bạn chưa đến kỳ trả phòng trên cổng (còn ${ctx.daysUntilContractEnd ?? "—"} ngày). Khi còn tối đa 7 ngày trước ngày hết hạn, nút Check-out sẽ xuất hiện ở trang tài khoản.`
-            : "Bạn không có yêu cầu check-out đang mở (chấm dứt hợp đồng hoặc sắp hết hạn trong 7 ngày). Nếu cần hỗ trợ, vui lòng liên hệ quản lý."}
-        </p>
-        <Link href="/" className="mt-6 inline-block rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-medium text-white">
-          Về trang chủ
-        </Link>
-      </div>
-    );
-  }
-
   if (ctx.completed || done) {
     return (
       <div className="mx-auto max-w-md py-16 text-center">
@@ -244,6 +270,54 @@ export function CheckoutFormClient() {
         <Link href="/" className="mt-6 inline-block rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-medium text-white">
           Về trang chủ
         </Link>
+      </div>
+    );
+  }
+
+  if (!ctx?.eligible) {
+    const stepLabels = language === "vi" ? STEP_LABELS : STEP_LABELS_EN;
+    return (
+      <div className="mx-auto max-w-lg space-y-6 py-8 px-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-widest text-rose-600">Check-out</p>
+          <h1 className="mt-1 text-2xl font-bold text-slate-900">
+            {language === "vi" ? "Quy trình Trả phòng" : "Check-out guide"}
+          </h1>
+          <p className="mt-2 text-sm text-sky-900/90 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2">
+            {language === "vi"
+              ? "Trang này luôn mở để bạn đọc trước. Chỉ khi đến đúng thời điểm (hợp đồng bị chấm dứt hoặc trong vòng 7 ngày trước ngày hết hạn) thì các nút upload ảnh và gửi hoàn tất check-out mới hoạt động."
+              : "This page stays open for everyone so you can read ahead. Photo uploads and the final check-out submit only turn on at the right time: when your contract is terminated, or within 7 days of your contract end date."}
+          </p>
+          <p className="mt-3 text-sm text-slate-700">{checkoutNotYetMessage(ctx, language)}</p>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            {language === "vi" ? "Các bước (xem trước)" : "Steps (preview)"}
+          </p>
+          <ol className="mt-3 space-y-3 text-sm text-slate-700">
+            {([1, 2, 3, 4, 5] as Step[]).map((s) => (
+              <li key={s} className="flex gap-2">
+                <span className="shrink-0 font-semibold text-slate-900">{s}.</span>
+                <span>{stepLabels[s]}</span>
+              </li>
+            ))}
+          </ol>
+          <p className="mt-4 text-xs text-slate-500">
+            {language === "vi"
+              ? "Biểu mẫu đầy đủ theo từng bước (checkbox, upload) sẽ xuất hiện tại đây khi cổng mở check-out cho bạn."
+              : "The full step-by-step form (checkboxes, uploads) will appear here when the portal opens check-out for your stay."}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-3">
+          <Link href="/" className="inline-block rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-medium text-white">
+            {language === "vi" ? "Về trang chủ" : "Home"}
+          </Link>
+          <Link href="/account" className="inline-block rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-medium text-slate-800">
+            {language === "vi" ? "Tài khoản" : "Account"}
+          </Link>
+        </div>
       </div>
     );
   }
@@ -503,7 +577,7 @@ export function CheckoutFormClient() {
               <span className="mt-0.5 text-slate-400">•</span>
               <span>
                 <strong>Hoàn cọc:</strong> Tiền cọc (nếu có) sẽ được chuyển hoàn vào số tài khoản của bạn trong vòng{" "}
-                <strong>30–60 phút</strong> sau khi chúng tôi xác nhận tình trạng giường.
+                <strong>5–10 ngày làm việc</strong> sau khi chúng tôi xác nhận tình trạng giường và nhận đủ thông tin tài khoản ngân hàng của bạn.
               </span>
             </li>
             <li className="flex gap-2">

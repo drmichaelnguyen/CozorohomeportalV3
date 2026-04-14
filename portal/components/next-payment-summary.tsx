@@ -96,14 +96,17 @@ export function PrepaidPackageBreakdownRows({
   t: (key: string, fallback?: string, params?: Record<string, string | number>) => string;
   className?: string;
 }) {
+  const { language } = usePortalLanguage();
   const fmt = (n: number) => new Intl.NumberFormat("vi-VN").format(n);
   const rc = est.recurringComponents;
-  const gross = est.recurringMonthlyVnd * est.planMonths;
+  const packageGrossMonths =
+    est.packageGrossMonths ?? (est.planMonths === 6 ? 7 : est.planMonths);
+  const gross = est.recurringMonthlyVnd * packageGrossMonths;
   const laundryUses = est.laundryCashUses ?? 0;
 
   const packageRows: { label: string; value: number }[] = [
     {
-      label: t("prepaidLinePackageGross", undefined, { months: est.planMonths }),
+      label: t("prepaidLinePackageGross", undefined, { months: packageGrossMonths }),
       value: gross
     }
   ];
@@ -143,6 +146,11 @@ export function PrepaidPackageBreakdownRows({
     <div className={`${className} space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm`}>
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-800">
         {t("prepaidNextPackageTitle")} · {billMonthLabel}
+        {est.breakdownHasOwnerOverrides ? (
+          <span className="ml-2 font-normal normal-case text-violet-700">
+            {language === "vi" ? "· Điều chỉnh chủ" : "· Owner-adjusted lines"}
+          </span>
+        ) : null}
       </p>
 
       {rc ? (

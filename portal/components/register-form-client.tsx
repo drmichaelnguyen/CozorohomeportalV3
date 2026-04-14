@@ -410,7 +410,7 @@ function addMonthsMinusOneDay(startDate: string, months: number) {
 
 function getFirstPaymentMultiplier(paymentFrequency: string) {
   if (paymentFrequency.includes("06")) {
-    return 6;
+    return 7;
   }
 
   if (paymentFrequency.includes("03")) {
@@ -654,10 +654,10 @@ export function RegisterFormClient() {
         // Full recurring monthly cost (bed after recurring discounts + fees)
         const monthlyRecurringTotal = discountedMonthlyPrice + tenureSurchargeVnd + parkingFee + cleaningFee;
         // Payment frequency discount spread over months for average display:
-        // 6-month plan: pay 6 months, 7th free → discount = 1 full month / 6
+        // 6+1 plan: 7× gross − 1 month free → net 6 months over 7 months of coverage → ~1/7 off per month
         // 3-month plan: flat 500k off
         const paymentFreqMonthlyDiscount = form.paymentFrequency.includes("06")
-          ? Math.round(monthlyRecurringTotal / 6)
+          ? Math.round(monthlyRecurringTotal / 7)
           : form.paymentFrequency.includes("03")
             ? Math.round(500000 / 3)
             : 0;

@@ -3,6 +3,12 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
+import {
+  hasPrepaidBreakdownOverridesPayload,
+  mergePrepaidEstimateWithOverrides,
+  suggestedTotalFromEstimate,
+  type PrepaidBreakdownOverridesPayload
+} from "../lib/prepaid-breakdown-overrides";
 import { formatBillingMonthLabel, type PrepaidNextPaymentEstimatePayload } from "../lib/rent-paid-status";
 import { parseVietnamDate } from "../lib/contract-utils";
 import { AdminCleaningClient } from "./admin-cleaning-client";
@@ -917,6 +923,26 @@ function ManagerClientPanelCollapsible({
   );
 }
 
+function buildPrepaidOwnerLinesDiff(
+  engine: PrepaidNextPaymentEstimatePayload,
+  lines: { packageNet: number; laundry: number; fines: number; gate: number }
+): PrepaidBreakdownOverridesPayload {
+  const out: PrepaidBreakdownOverridesPayload = {};
+  if (lines.packageNet !== engine.packageRecurringSubtotalVnd) {
+    out.packageRecurringSubtotalVnd = lines.packageNet;
+  }
+  if (lines.laundry !== engine.laundryFeeVnd) {
+    out.laundryFeeVnd = lines.laundry;
+  }
+  if (lines.fines !== engine.finesVnd) {
+    out.finesVnd = lines.fines;
+  }
+  if (lines.gate !== engine.gateParkingFeeVnd) {
+    out.gateParkingFeeVnd = lines.gate;
+  }
+  return out;
+}
+
 export function ManagerClient({ initialView = "overview" }: { initialView?: ManagerView }) {
 
   const router = useRouter();
@@ -929,6 +955,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const isAppAdminSession = sessionRole === "app_admin";
   const canManageOwnersEmployees = isOwnerSession || isAppAdminSession;
   const canCreatePaymentReceipt =
+    sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin";
+  const canSendDepositRefundEmail =
     sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin";
 
   const [loading, setLoading] = useState(false);
@@ -970,17 +998,36 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [gateNewAmount, setGateNewAmount] = useState("");
   const [gateNewNote, setGateNewNote] = useState("");
   const [prepaidPkgLoading, setPrepaidPkgLoading] = useState(false);
-  const [prepaidPkgEstimate, setPrepaidPkgEstimate] = useState<PrepaidNextPaymentEstimatePayload | null>(null);
+  const [prepaidPkgEngineEstimate, setPrepaidPkgEngineEstimate] = useState<PrepaidNextPaymentEstimatePayload | null>(null);
   const [prepaidPkgBilling, setPrepaidPkgBilling] = useState<{
     confirmed?: boolean;
     managerPackageTotalVnd?: number;
     managerNote?: string | null;
     lastAppNotifyAt?: string | null;
     lastEmailNotifyAt?: string | null;
+    breakdownOverrides?: PrepaidBreakdownOverridesPayload | null;
+  } | null>(null);
+  /** Absolute amounts for owner-editable package lines (initialized from engine + saved overrides). */
+  const [prepaidOwnerLineValues, setPrepaidOwnerLineValues] = useState<{
+    packageNet: number;
+    laundry: number;
+    fines: number;
+    gate: number;
   } | null>(null);
   const [prepaidPkgTotalInput, setPrepaidPkgTotalInput] = useState("");
   const [prepaidPkgNoteInput, setPrepaidPkgNoteInput] = useState("");
   const [prepaidPkgActionLoading, setPrepaidPkgActionLoading] = useState(false);
+  const canEditPrepaidOwnerLines = isOwnerSession || isAppAdminSession;
+  const prepaidDisplayEstimate = useMemo(() => {
+    if (!prepaidPkgEngineEstimate) {
+      return null;
+    }
+    const eng = prepaidPkgEngineEstimate;
+    if (!prepaidOwnerLineValues) {
+      return mergePrepaidEstimateWithOverrides(eng, (prepaidPkgBilling?.breakdownOverrides as PrepaidBreakdownOverridesPayload) ?? null);
+    }
+    return mergePrepaidEstimateWithOverrides(eng, buildPrepaidOwnerLinesDiff(eng, prepaidOwnerLineValues));
+  }, [prepaidPkgEngineEstimate, prepaidOwnerLineValues, prepaidPkgBilling?.breakdownOverrides]);
   const [monthlyRentPaidByEmail, setMonthlyRentPaidByEmail] = useState<Record<string, boolean>>({});
   const [monthlyRentPaidMapLoaded, setMonthlyRentPaidMapLoaded] = useState(false);
   const [clientNewPassword, setClientNewPassword] = useState("");
@@ -1123,6 +1170,21 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [terminateDialog, setTerminateDialog] = useState(false);
   const [terminateNote, setTerminateNote] = useState("");
   const [terminateLoading, setTerminateLoading] = useState(false);
+  const [depositRefundOpen, setDepositRefundOpen] = useState(false);
+  const [depositRefundPreview, setDepositRefundPreview] = useState<{
+    eligibilityReason: string;
+    clientEmail: string;
+    clientName: string;
+    maHd: string;
+    depositVnd: number;
+    unpaidFinesVnd: number;
+    unpaidGateVnd: number;
+    suggestedRefundVnd: number;
+  } | null>(null);
+  const [depositRefundLoading, setDepositRefundLoading] = useState(false);
+  const [depositRefundSending, setDepositRefundSending] = useState(false);
+  const [depositRefundInput, setDepositRefundInput] = useState("");
+  const [depositRefundModalError, setDepositRefundModalError] = useState("");
   const [terminationStatus, setTerminationStatus] = useState<{ maHd: string; terminatedAt: string; checkOut: { submittedAt: string } | null } | null | "loading">("loading");
   const [permissionsEntry, setPermissionsEntry] = useState<StaffEntry | null>(null);
   const [editingPermissions, setEditingPermissions] = useState<ManagerPermissionsState | null>(null);
@@ -1648,7 +1710,16 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const selectedClientTelHref = toPhoneHref(selectedClientPhone);
   const selectedClientSmsHref = toSmsHref(selectedClientPhone);
 
-
+  const showDepositRefundButton = useMemo(() => {
+    if (!selectedClient || !canSendDepositRefundEmail) return false;
+    const stay = String(selectedClient.activeStay ?? "").trim();
+    if (stay !== "1") return true;
+    if (terminationStatus && terminationStatus !== "loading") return true;
+    const end = parseLooseDate(selectedClient.row?.["Ngày hết hạn hợp đồng"]);
+    if (!end) return false;
+    const days = Math.ceil((end.getTime() - Date.now()) / 86400000);
+    return days <= 7;
+  }, [canSendDepositRefundEmail, selectedClient, terminationStatus]);
 
   useEffect(() => {
     // Don't auto-override the branch when the user has explicitly chosen "inactive"
@@ -1976,8 +2047,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     const email = client?.email?.trim();
     const plan = String(client?.row?.["Bạn muốn thanh toán chi phí như thế nào?"] ?? "");
     if (!email || !normalizedEmail || (!plan.includes("03 tháng") && !plan.includes("06 tháng"))) {
-      setPrepaidPkgEstimate(null);
+      setPrepaidPkgEngineEstimate(null);
       setPrepaidPkgBilling(null);
+      setPrepaidOwnerLineValues(null);
       setPrepaidPkgTotalInput("");
       setPrepaidPkgNoteInput("");
       return;
@@ -1996,33 +2068,51 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         const data = (await res.json()) as {
           error?: string;
           estimate?: PrepaidNextPaymentEstimatePayload;
+          engineEstimate?: PrepaidNextPaymentEstimatePayload;
           billing?: {
             confirmed?: boolean;
             managerPackageTotalVnd?: number;
             managerNote?: string | null;
             lastAppNotifyAt?: string | null;
             lastEmailNotifyAt?: string | null;
+            breakdownOverrides?: PrepaidBreakdownOverridesPayload | null;
           } | null;
         };
         if (cancelled) return;
         if (!res.ok || data.error) {
-          setPrepaidPkgEstimate(null);
+          setPrepaidPkgEngineEstimate(null);
           setPrepaidPkgBilling(null);
+          setPrepaidOwnerLineValues(null);
           setPrepaidPkgTotalInput("");
           setPrepaidPkgNoteInput("");
           return;
         }
-        const est = data.estimate ?? null;
-        setPrepaidPkgEstimate(est);
+        const engine = data.engineEstimate ?? data.estimate ?? null;
+        setPrepaidPkgEngineEstimate(engine);
         setPrepaidPkgBilling(data.billing ?? null);
         const bill = data.billing;
-        const defaultTotal = bill?.managerPackageTotalVnd ?? est?.estimatedTotalVnd ?? 0;
+        const defaultTotal = bill?.managerPackageTotalVnd ?? engine?.estimatedTotalVnd ?? 0;
         setPrepaidPkgTotalInput(String(defaultTotal));
         setPrepaidPkgNoteInput(String(bill?.managerNote ?? ""));
+        if (engine) {
+          const mergedInit = mergePrepaidEstimateWithOverrides(
+            engine,
+            (bill?.breakdownOverrides as PrepaidBreakdownOverridesPayload) ?? null
+          );
+          setPrepaidOwnerLineValues({
+            packageNet: mergedInit.packageRecurringSubtotalVnd,
+            laundry: mergedInit.laundryFeeVnd,
+            fines: mergedInit.finesVnd,
+            gate: mergedInit.gateParkingFeeVnd
+          });
+        } else {
+          setPrepaidOwnerLineValues(null);
+        }
       } catch {
         if (!cancelled) {
-          setPrepaidPkgEstimate(null);
+          setPrepaidPkgEngineEstimate(null);
           setPrepaidPkgBilling(null);
+          setPrepaidOwnerLineValues(null);
         }
       } finally {
         if (!cancelled) setPrepaidPkgLoading(false);
@@ -2444,8 +2534,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       setParkingFeeInput("0");
       setRentBreakdown(null);
       setGateParkingTickets([]);
-      setPrepaidPkgEstimate(null);
+      setPrepaidPkgEngineEstimate(null);
       setPrepaidPkgBilling(null);
+      setPrepaidOwnerLineValues(null);
       setPrepaidPkgTotalInput("");
       setPrepaidPkgNoteInput("");
     }
@@ -4031,6 +4122,68 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 })()}
                 </ManagerClientPanelCollapsible>
 
+                {selectedClient && showDepositRefundButton ? (
+                  <div className="rounded-2xl border border-sky-200 bg-sky-50/90 p-4 space-y-3">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-wide text-sky-900">Deposit refund (email)</div>
+                      <p className="mt-1 text-xs text-sky-950/80">
+                        Shows deposit on file minus unpaid fines and gate parking tickets. You can change the refund amount before sending a bilingual notice (Vietnamese + English) to the resident.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={loading || !String(selectedClient.maHd ?? "").trim()}
+                      onClick={async () => {
+                        setDepositRefundOpen(true);
+                        setDepositRefundModalError("");
+                        setDepositRefundPreview(null);
+                        setDepositRefundInput("");
+                        setDepositRefundLoading(true);
+                        try {
+                          const res = await fetch(
+                            `${API_BASE_URL}/manager/deposit-refund-preview?actorEmail=${encodeURIComponent(normalizedEmail)}&maHd=${encodeURIComponent(selectedClient.maHd)}`
+                          );
+                          const data = (await res.json()) as {
+                            error?: string;
+                            eligibilityReason?: string;
+                            clientEmail?: string;
+                            clientName?: string;
+                            maHd?: string;
+                            depositVnd?: number;
+                            unpaidFinesVnd?: number;
+                            unpaidGateVnd?: number;
+                            suggestedRefundVnd?: number;
+                          };
+                          if (!res.ok) {
+                            throw new Error(data.error ?? "Unable to load preview");
+                          }
+                          if (data.error) {
+                            throw new Error(data.error);
+                          }
+                          setDepositRefundPreview({
+                            eligibilityReason: String(data.eligibilityReason ?? ""),
+                            clientEmail: String(data.clientEmail ?? ""),
+                            clientName: String(data.clientName ?? ""),
+                            maHd: String(data.maHd ?? selectedClient.maHd),
+                            depositVnd: Number(data.depositVnd ?? 0),
+                            unpaidFinesVnd: Number(data.unpaidFinesVnd ?? 0),
+                            unpaidGateVnd: Number(data.unpaidGateVnd ?? 0),
+                            suggestedRefundVnd: Number(data.suggestedRefundVnd ?? 0)
+                          });
+                          setDepositRefundInput(String(Math.round(Number(data.suggestedRefundVnd ?? 0))));
+                        } catch (err) {
+                          setDepositRefundModalError(err instanceof Error ? err.message : "Unable to load preview");
+                        } finally {
+                          setDepositRefundLoading(false);
+                        }
+                      }}
+                      className="rounded-lg border border-sky-400 bg-white px-3 py-2 text-xs font-semibold text-sky-900 shadow-sm hover:bg-sky-100 disabled:opacity-50"
+                    >
+                      Deposit refund…
+                    </button>
+                  </div>
+                ) : null}
+
                 {/* Contract Termination — hidden for inactive clients */}
                 {selectedClient && selectedClient.activeStay !== "0" && selectedClient.activeStay !== "-1" ? (
                 <ManagerClientPanelCollapsible
@@ -4149,6 +4302,160 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   </div>
                 )}
 
+                {depositRefundOpen && selectedClient ? (
+                  <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+                    <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-xl space-y-4 max-h-[90vh] overflow-y-auto">
+                      <div className="flex items-start justify-between gap-2">
+                        <h3 className="font-semibold text-slate-900">Deposit refund email</h3>
+                        <button
+                          type="button"
+                          className="rounded-lg px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100"
+                          onClick={() => {
+                            setDepositRefundOpen(false);
+                            setDepositRefundPreview(null);
+                            setDepositRefundModalError("");
+                            setDepositRefundInput("");
+                          }}
+                        >
+                          Close
+                        </button>
+                      </div>
+                      {depositRefundLoading ? (
+                        <p className="text-sm text-slate-600">Loading preview…</p>
+                      ) : depositRefundPreview ? (
+                        <>
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 space-y-1">
+                            <div>
+                              <span className="font-semibold text-slate-800">Resident: </span>
+                              {depositRefundPreview.clientName} ({depositRefundPreview.clientEmail})
+                            </div>
+                            <div>
+                              <span className="font-semibold text-slate-800">Eligibility: </span>
+                              {depositRefundPreview.eligibilityReason === "inactive"
+                                ? "Inactive / not currently staying"
+                                : depositRefundPreview.eligibilityReason === "terminated"
+                                  ? "Contract terminated"
+                                  : depositRefundPreview.eligibilityReason === "contract_due"
+                                    ? "Contract ending within 7 days"
+                                    : depositRefundPreview.eligibilityReason}
+                            </div>
+                          </div>
+                          <dl className="grid grid-cols-1 gap-2 text-sm">
+                            <div className="flex justify-between gap-2">
+                              <dt className="text-slate-600">Deposit (sheet)</dt>
+                              <dd className="font-medium text-slate-900">{formatCurrency(depositRefundPreview.depositVnd)}</dd>
+                            </div>
+                            <div className="flex justify-between gap-2">
+                              <dt className="text-slate-600">Unpaid fines</dt>
+                              <dd className="font-medium text-rose-700">−{formatCurrency(depositRefundPreview.unpaidFinesVnd)}</dd>
+                            </div>
+                            <div className="flex justify-between gap-2">
+                              <dt className="text-slate-600">Unpaid gate tickets</dt>
+                              <dd className="font-medium text-rose-700">−{formatCurrency(depositRefundPreview.unpaidGateVnd)}</dd>
+                            </div>
+                            <div className="flex justify-between gap-2 border-t border-slate-200 pt-2">
+                              <dt className="text-slate-800 font-semibold">Suggested refund</dt>
+                              <dd className="font-semibold text-emerald-800">{formatCurrency(depositRefundPreview.suggestedRefundVnd)}</dd>
+                            </div>
+                          </dl>
+                          <div>
+                            <label className="text-xs font-medium text-slate-600">Refund amount to notify (VND)</label>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={depositRefundInput}
+                              onChange={(e) => setDepositRefundInput(e.target.value)}
+                              className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                              placeholder="e.g. 1980000"
+                            />
+                            <p className="mt-1 text-xs text-slate-500">
+                              Cannot exceed deposit on file ({formatCurrency(depositRefundPreview.depositVnd)}). Email is Vietnamese + English; processing time stated as 5–10 business days.
+                            </p>
+                          </div>
+                          {depositRefundModalError ? (
+                            <p className="text-sm font-medium text-rose-600">{depositRefundModalError}</p>
+                          ) : null}
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDepositRefundOpen(false);
+                                setDepositRefundPreview(null);
+                                setDepositRefundModalError("");
+                                setDepositRefundInput("");
+                              }}
+                              className="flex-1 rounded-xl border border-slate-200 py-2 text-sm font-medium text-slate-700"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              disabled={depositRefundSending}
+                              onClick={async () => {
+                                const parsed = Math.round(Number.parseInt(String(depositRefundInput).replace(/\D/g, ""), 10));
+                                if (!Number.isFinite(parsed) || parsed < 0) {
+                                  setDepositRefundModalError("Enter a valid non-negative amount.");
+                                  return;
+                                }
+                                if (parsed > depositRefundPreview.depositVnd) {
+                                  setDepositRefundModalError("Refund cannot exceed the deposit on file.");
+                                  return;
+                                }
+                                setDepositRefundSending(true);
+                                setDepositRefundModalError("");
+                                try {
+                                  const res = await fetch(`${API_BASE_URL}/manager/deposit-refund-email`, {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      actorEmail: normalizedEmail,
+                                      maHd: selectedClient.maHd,
+                                      refundAmountVnd: parsed
+                                    })
+                                  });
+                                  const data = (await res.json()) as { ok?: boolean; sentTo?: string; error?: string };
+                                  if (!res.ok) {
+                                    throw new Error(data.error ?? "Send failed");
+                                  }
+                                  setStatus(`Deposit refund email sent to ${data.sentTo ?? depositRefundPreview.clientEmail}.`);
+                                  setDepositRefundOpen(false);
+                                  setDepositRefundPreview(null);
+                                  setDepositRefundInput("");
+                                } catch (err) {
+                                  setDepositRefundModalError(err instanceof Error ? err.message : "Send failed");
+                                } finally {
+                                  setDepositRefundSending(false);
+                                }
+                              }}
+                              className="flex-1 rounded-xl bg-sky-600 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                            >
+                              {depositRefundSending ? "Sending…" : "Send email"}
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="space-y-3">
+                          {depositRefundModalError ? (
+                            <p className="text-sm font-medium text-rose-600">{depositRefundModalError}</p>
+                          ) : (
+                            <p className="text-sm text-slate-600">No preview loaded.</p>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDepositRefundOpen(false);
+                              setDepositRefundModalError("");
+                            }}
+                            className="w-full rounded-xl border border-slate-200 py-2 text-sm font-medium text-slate-700"
+                          >
+                            Close
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+
                 <ManagerClientPanelCollapsible
                   title="Rent & package billing"
                   open={clientPanelSections.billing}
@@ -4168,7 +4475,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       : new Date().toISOString().slice(0, 7);
 
                   if (isOnPrepaidPlan) {
-                    const est = prepaidPkgEstimate;
+                    const est = prepaidPkgEngineEstimate;
                     const parsedTotal = Math.round(Number(String(prepaidPkgTotalInput).replace(/[^\d.-]/g, "")));
                     const totalOk = Number.isFinite(parsedTotal) && parsedTotal >= 0;
                     return (
@@ -4196,13 +4503,118 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             >
                               {prepaidPkgBreakdownOpen ? "Hide package estimate breakdown" : "Show package estimate breakdown"}
                             </button>
-                            {prepaidPkgBreakdownOpen ? (
-                              <PrepaidPackageBreakdownRows
-                                est={est}
-                                billMonthLabel={formatBillingMonthLabel(billingMonth, language)}
-                                t={t}
-                                className="mt-0"
-                              />
+                            {prepaidPkgBreakdownOpen && prepaidDisplayEstimate ? (
+                              <>
+                                <PrepaidPackageBreakdownRows
+                                  est={prepaidDisplayEstimate}
+                                  billMonthLabel={formatBillingMonthLabel(billingMonth, language)}
+                                  t={t}
+                                  className="mt-0"
+                                />
+                                {canEditPrepaidOwnerLines && prepaidOwnerLineValues && prepaidPkgEngineEstimate ? (
+                                  <div className="mt-3 space-y-2 rounded-lg border border-violet-200 bg-violet-50/70 p-3 text-xs text-violet-950">
+                                    <p className="font-semibold text-violet-950">
+                                      {language === "vi" ? "Chủ sở hữu: chỉnh dòng gói (ghi đè máy tính)" : "Owner: package line overrides (not auto)"}
+                                    </p>
+                                    <p className="text-violet-900/85">
+                                      {language === "vi"
+                                        ? "Chỉnh các khoản ước tính (gói sau giảm, giặt, cổng, phạt). Phần tiền phòng theo sheet ở trên không chỉnh tại đây."
+                                        : "Adjust estimated lines only (package after discount, laundry, gate, fines). Sheet rent lines above are not edited here."}
+                                    </p>
+                                    <div className="grid gap-2 sm:grid-cols-2">
+                                      <label className="block text-[11px] font-medium text-violet-900">
+                                        {language === "vi" ? "Gói sau giảm (₫)" : "Package after discount (₫)"}
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          step={1000}
+                                          className="mt-0.5 w-full rounded border border-violet-200 bg-white px-2 py-1 text-sm text-slate-900"
+                                          value={prepaidOwnerLineValues.packageNet}
+                                          onChange={(e) => {
+                                            const n = Math.round(Number(e.target.value));
+                                            if (!Number.isFinite(n) || n < 0) return;
+                                            setPrepaidOwnerLineValues((prev) => (prev ? { ...prev, packageNet: n } : prev));
+                                          }}
+                                        />
+                                      </label>
+                                      <label className="block text-[11px] font-medium text-violet-900">
+                                        {language === "vi" ? "Giặt tiền mặt (₫)" : "Cash laundry (₫)"}
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          step={1000}
+                                          className="mt-0.5 w-full rounded border border-violet-200 bg-white px-2 py-1 text-sm text-slate-900"
+                                          value={prepaidOwnerLineValues.laundry}
+                                          onChange={(e) => {
+                                            const n = Math.round(Number(e.target.value));
+                                            if (!Number.isFinite(n) || n < 0) return;
+                                            setPrepaidOwnerLineValues((prev) => (prev ? { ...prev, laundry: n } : prev));
+                                          }}
+                                        />
+                                      </label>
+                                      <label className="block text-[11px] font-medium text-violet-900">
+                                        {language === "vi" ? "Gửi xe cổng (₫)" : "Gate parking (₫)"}
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          step={1000}
+                                          className="mt-0.5 w-full rounded border border-violet-200 bg-white px-2 py-1 text-sm text-slate-900"
+                                          value={prepaidOwnerLineValues.gate}
+                                          onChange={(e) => {
+                                            const n = Math.round(Number(e.target.value));
+                                            if (!Number.isFinite(n) || n < 0) return;
+                                            setPrepaidOwnerLineValues((prev) => (prev ? { ...prev, gate: n } : prev));
+                                          }}
+                                        />
+                                      </label>
+                                      <label className="block text-[11px] font-medium text-violet-900">
+                                        {language === "vi" ? "Phạt (₫)" : "Fines (₫)"}
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          step={1000}
+                                          className="mt-0.5 w-full rounded border border-violet-200 bg-white px-2 py-1 text-sm text-slate-900"
+                                          value={prepaidOwnerLineValues.fines}
+                                          onChange={(e) => {
+                                            const n = Math.round(Number(e.target.value));
+                                            if (!Number.isFinite(n) || n < 0) return;
+                                            setPrepaidOwnerLineValues((prev) => (prev ? { ...prev, fines: n } : prev));
+                                          }}
+                                        />
+                                      </label>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2 pt-1">
+                                      <button
+                                        type="button"
+                                        className="rounded-lg border border-violet-300 bg-white px-2 py-1 text-[11px] font-semibold text-violet-900 hover:bg-violet-50"
+                                        onClick={() => {
+                                          if (!prepaidDisplayEstimate) return;
+                                          setPrepaidPkgTotalInput(String(suggestedTotalFromEstimate(prepaidDisplayEstimate)));
+                                        }}
+                                      >
+                                        {language === "vi" ? "Điền tổng = các dòng" : "Set total from lines"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="rounded-lg border border-violet-300 bg-white px-2 py-1 text-[11px] font-semibold text-violet-900 hover:bg-violet-50"
+                                        onClick={() => {
+                                          if (!prepaidPkgEngineEstimate) return;
+                                          const eng = prepaidPkgEngineEstimate;
+                                          setPrepaidOwnerLineValues({
+                                            packageNet: eng.packageRecurringSubtotalVnd,
+                                            laundry: eng.laundryFeeVnd,
+                                            fines: eng.finesVnd,
+                                            gate: eng.gateParkingFeeVnd
+                                          });
+                                          setPrepaidPkgTotalInput(String(eng.estimatedTotalVnd));
+                                        }}
+                                      >
+                                        {language === "vi" ? "Hoàn tác dòng (chưa lưu)" : "Reset lines (unsaved)"}
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : null}
+                              </>
                             ) : null}
                             <label className="block text-xs font-medium text-slate-700">
                               Manager package total (₫)
@@ -4243,6 +4655,15 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               onClick={async () => {
                                 setPrepaidPkgActionLoading(true);
                                 try {
+                                  const ownerExtra: Record<string, unknown> = {};
+                                  if (canEditPrepaidOwnerLines && prepaidPkgEngineEstimate && prepaidOwnerLineValues) {
+                                    const diff = buildPrepaidOwnerLinesDiff(prepaidPkgEngineEstimate, prepaidOwnerLineValues);
+                                    if (hasPrepaidBreakdownOverridesPayload(diff)) {
+                                      ownerExtra.breakdownOverrides = diff;
+                                    } else if (prepaidPkgBilling?.breakdownOverrides) {
+                                      ownerExtra.clearBreakdownOverrides = true;
+                                    }
+                                  }
                                   const res = await fetch(`${API_BASE_URL}/manager/prepaid-package-billing`, {
                                     method: "POST",
                                     headers: { "Content-Type": "application/json" },
@@ -4251,19 +4672,35 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                       clientEmail: selectedClient.email,
                                       billingMonth,
                                       managerPackageTotalVnd: parsedTotal,
-                                      managerNote: prepaidPkgNoteInput
+                                      managerNote: prepaidPkgNoteInput,
+                                      ...ownerExtra
                                     })
                                   });
                                   const data = (await res.json()) as {
                                     error?: string;
                                     billing?: typeof prepaidPkgBilling;
                                     estimate?: PrepaidNextPaymentEstimatePayload;
+                                    engineEstimate?: PrepaidNextPaymentEstimatePayload;
                                   };
                                   if (!res.ok || data.error) {
                                     setStatus(data.error ?? "Could not save package draft");
                                     return;
                                   }
-                                  if (data.estimate) setPrepaidPkgEstimate(data.estimate);
+                                  const engSaved = data.engineEstimate ?? data.estimate ?? null;
+                                  if (engSaved) {
+                                    setPrepaidPkgEngineEstimate(engSaved);
+                                    const billSaved = data.billing;
+                                    const mergedAfterSave = mergePrepaidEstimateWithOverrides(
+                                      engSaved,
+                                      (billSaved?.breakdownOverrides as PrepaidBreakdownOverridesPayload) ?? null
+                                    );
+                                    setPrepaidOwnerLineValues({
+                                      packageNet: mergedAfterSave.packageRecurringSubtotalVnd,
+                                      laundry: mergedAfterSave.laundryFeeVnd,
+                                      fines: mergedAfterSave.finesVnd,
+                                      gate: mergedAfterSave.gateParkingFeeVnd
+                                    });
+                                  }
                                   if (data.billing) setPrepaidPkgBilling(data.billing);
                                   setStatus("Package draft saved (re-confirm to lock amount).");
                                 } catch {

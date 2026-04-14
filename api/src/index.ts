@@ -47,6 +47,8 @@ import {
   managerNotifyPrepaidPackageBilling,
   getConfirmedPrepaidBillingForResident
 } from "./manager-prepaid-package.js";
+import { applyPrepaidBreakdownOverridesToEstimate } from "./prepaid-breakdown-overrides.js";
+import type { PrepaidBreakdownOverrides } from "./prepaid-breakdown-overrides.js";
 import { 
   createAutomaticFineForEmail,
   sendGmailReceipt,
@@ -163,6 +165,10 @@ import {
 } from "./checkout.js";
 import { getShortTermConfig, updateShortTermConfig } from "./short-term-config.js";
 import { handleManagerAiChat, type AiChatMessage } from "./manager-ai-chat.js";
+import {
+  managerGetDepositRefundPreview,
+  managerSendDepositRefundEmail
+} from "./manager-deposit-refund.js";
 import {
   getBedOverrides,
   getDiscounts,
@@ -4411,13 +4417,20 @@ app.post("/manager/prepaid-package-billing", async (req, res) => {
     if (!row) {
       return res.status(404).json({ error: "Client not found in cache" });
     }
+    const body = req.body as Record<string, unknown>;
+    const clearBreakdownOverrides = body.clearBreakdownOverrides === true;
+    const breakdownOverrides =
+      body.breakdownOverrides !== undefined ? body.breakdownOverrides : undefined;
+
     const result = await managerUpsertPrepaidPackageBilling({
       actorEmail,
       clientEmail,
       billingMonth,
       clientRow: row,
       managerPackageTotalVnd,
-      managerNote
+      managerNote,
+      ...(clearBreakdownOverrides ? { clearBreakdownOverrides: true } : {}),
+      ...(breakdownOverrides !== undefined ? { breakdownOverrides } : {})
     });
     if ("error" in result && result.error) {
       return res.status(400).json({ error: result.error });
@@ -4710,8 +4723,15 @@ app.get("/rent-paid-status", async (req, res) => {
       if (baseEstimate) {
         const billing = await getConfirmedPrepaidBillingForResident(email, month);
         if (billing?.confirmed) {
+          const withLines =
+            billing.breakdownOverrides != null
+              ? applyPrepaidBreakdownOverridesToEstimate(
+                  baseEstimate,
+                  billing.breakdownOverrides as PrepaidBreakdownOverrides
+                )
+              : baseEstimate;
           prepaidNextPaymentEstimate = {
-            ...baseEstimate,
+            ...withLines,
             engineEstimatedTotalVnd: baseEstimate.estimatedTotalVnd,
             estimatedTotalVnd: billing.managerPackageTotalVnd,
             managerPackageNote: billing.managerNote ?? null,
@@ -5465,6 +5485,45 @@ app.get("/manager/termination-status", async (request, response) => {
     return response.json({ record: record ?? null });
   } catch (error) {
     return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to load termination status" });
+  }
+});
+
+app.get("/manager/deposit-refund-preview", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "").trim();
+  const maHd = String(request.query.maHd ?? "").trim();
+  if (!actorEmail || !maHd) {
+    return response.status(400).json({ error: "actorEmail and maHd are required" });
+  }
+  try {
+    const result = await managerGetDepositRefundPreview({ actorEmail, maHd });
+    if ("error" in result && result.error) {
+      return response.status(400).json({ error: result.error });
+    }
+    return response.json(result);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unable to load deposit refund preview";
+    const forbidden = msg.toLowerCase().includes("staff only") || msg.toLowerCase().includes("permission");
+    return response.status(forbidden ? 403 : 500).json({ error: msg });
+  }
+});
+
+app.post("/manager/deposit-refund-email", async (request, response) => {
+  const actorEmail = String(request.body?.actorEmail ?? "").trim();
+  const maHd = String(request.body?.maHd ?? "").trim();
+  const refundAmountVnd = Number(request.body?.refundAmountVnd);
+  if (!actorEmail || !maHd) {
+    return response.status(400).json({ error: "actorEmail and maHd are required" });
+  }
+  try {
+    const result = await managerSendDepositRefundEmail({ actorEmail, maHd, refundAmountVnd });
+    if ("error" in result && result.error) {
+      return response.status(400).json({ error: result.error });
+    }
+    return response.json(result);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unable to send deposit refund email";
+    const forbidden = msg.toLowerCase().includes("staff only") || msg.toLowerCase().includes("permission");
+    return response.status(forbidden ? 403 : 500).json({ error: msg });
   }
 });
 

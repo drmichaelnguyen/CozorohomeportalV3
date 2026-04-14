@@ -1,6 +1,11 @@
 import { computePrepaidNextPaymentEstimate } from "./calculation-engine.js";
 import { sendGmailReceipt } from "./google-sheets.js";
 import type { ClientRow } from "./google-sheets.js";
+import {
+  applyPrepaidBreakdownOverridesToEstimate,
+  sanitizePrepaidBreakdownOverrides,
+  type PrepaidBreakdownOverrides
+} from "./prepaid-breakdown-overrides.js";
 import { prisma } from "./prisma.js";
 import { requirePortalRole } from "./staff-access.js";
 import { clearResidentNotificationCacheForEmail } from "./support.js";
@@ -32,7 +37,9 @@ export async function managerGetPrepaidPackageBilling(input: {
   const billing = await prisma.prepaidPackageBilling.findUnique({
     where: { residentEmail_billingMonth: { residentEmail: email, billingMonth: input.billingMonth } }
   });
-  return { estimate, billing };
+  const rawOverrides = billing?.breakdownOverrides as PrepaidBreakdownOverrides | null | undefined;
+  const mergedEstimate = applyPrepaidBreakdownOverridesToEstimate(estimate, rawOverrides ?? null);
+  return { estimate: mergedEstimate, engineEstimate: estimate, billing };
 }
 
 export async function managerUpsertPrepaidPackageBilling(input: {
@@ -42,6 +49,10 @@ export async function managerUpsertPrepaidPackageBilling(input: {
   clientRow: ClientRow;
   managerPackageTotalVnd: number;
   managerNote?: string | null;
+  /** Owner / app_admin only; omit to leave existing overrides unchanged. */
+  breakdownOverrides?: unknown;
+  /** When true with owner role, clears stored breakdown overrides. */
+  clearBreakdownOverrides?: boolean;
 }) {
   await requirePortalRole(normalizeEmail(input.actorEmail), ["manager", "owner", "app_admin"], "Staff only.");
   const email = normalizeEmail(input.clientEmail);
@@ -57,12 +68,32 @@ export async function managerUpsertPrepaidPackageBilling(input: {
     return { error: "Could not compute prepaid estimate for this client." };
   }
   const snapshot = estimate as unknown as object;
+
+  type BreakdownPatch = PrepaidBreakdownOverrides | null | "__keep__";
+  let breakdownPatch: BreakdownPatch = "__keep__";
+  if (input.clearBreakdownOverrides === true) {
+    await requirePortalRole(
+      normalizeEmail(input.actorEmail),
+      ["owner", "app_admin"],
+      "Only owners can clear package breakdown overrides."
+    );
+    breakdownPatch = null;
+  } else if (input.breakdownOverrides !== undefined) {
+    await requirePortalRole(
+      normalizeEmail(input.actorEmail),
+      ["owner", "app_admin"],
+      "Only owners can edit package breakdown lines."
+    );
+    breakdownPatch = sanitizePrepaidBreakdownOverrides(input.breakdownOverrides);
+  }
+
   const billing = await prisma.prepaidPackageBilling.upsert({
     where: { residentEmail_billingMonth: { residentEmail: email, billingMonth: input.billingMonth } },
     create: {
       residentEmail: email,
       billingMonth: input.billingMonth,
       calculatedSnapshot: snapshot,
+      ...(breakdownPatch !== "__keep__" ? { breakdownOverrides: breakdownPatch } : {}),
       managerPackageTotalVnd: total,
       managerNote: input.managerNote?.trim() || null,
       confirmed: false,
@@ -71,6 +102,7 @@ export async function managerUpsertPrepaidPackageBilling(input: {
     },
     update: {
       calculatedSnapshot: snapshot,
+      ...(breakdownPatch !== "__keep__" ? { breakdownOverrides: breakdownPatch } : {}),
       managerPackageTotalVnd: total,
       managerNote: input.managerNote?.trim() || null,
       confirmed: false,
@@ -78,7 +110,10 @@ export async function managerUpsertPrepaidPackageBilling(input: {
       confirmedAt: null
     }
   });
-  return { billing, estimate };
+
+  const storedOverrides = billing.breakdownOverrides as PrepaidBreakdownOverrides | null | undefined;
+  const mergedEstimate = applyPrepaidBreakdownOverridesToEstimate(estimate, storedOverrides ?? null);
+  return { billing, estimate: mergedEstimate, engineEstimate: estimate };
 }
 
 export async function managerConfirmPrepaidPackageBilling(input: {
