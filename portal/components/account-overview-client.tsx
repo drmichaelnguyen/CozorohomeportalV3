@@ -12,6 +12,7 @@ import {
 import { API_BASE_URL } from "../lib/api-base-url";
 import { APP_VERSION } from "../lib/app-version";
 import { parseVietnamDate } from "../lib/contract-utils";
+import { formatResidentCoinsOperatorLabel } from "../lib/resident-coin-operator";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 import { usePortalTheme } from "./portal-theme";
@@ -1475,7 +1476,7 @@ export function AccountOverviewClient() {
                           </div>
                           <div className="mt-0.5 text-xs text-slate-500">
                             {entry.parsedTimestamp ? new Date(entry.parsedTimestamp).toLocaleDateString() : ""}
-                            {entry.row["Người thao tác"] ? ` · ${entry.row["Người thao tác"]}` : ""}
+                            {` · ${formatResidentCoinsOperatorLabel(entry.row["Người thao tác"], activeEmail, language)}`}
                           </div>
                         </div>
                         <div className={`shrink-0 font-semibold ${isPositive ? "text-emerald-600" : "text-red-600"}`}>
