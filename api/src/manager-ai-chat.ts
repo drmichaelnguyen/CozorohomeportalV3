@@ -7,7 +7,7 @@
  *   create_payment — POST /manager/payments/create
  *   navigate       — tell the frontend to switch to a manager view
  *   query_beds     — answer which beds are available / occupied
- *   delete_*       — POST /staff/*/delete (one sheet row per call; max one successful delete per chat turn)
+ *   delete_*       — POST /staff/{entity}/delete (one sheet row per call; max one successful delete per chat turn)
  */
 
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
