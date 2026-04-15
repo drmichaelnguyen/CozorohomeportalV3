@@ -1023,11 +1023,12 @@ function getLaundryMemberBonus(memberValue: string) {
   return { washer: 0, dryer: 1 };
 }
 
-function getLaundryBaseAllowance(client: ClientRow, branchId: "D2" | "D7") {
+function getLaundryBaseAllowance(client: ClientRow, branchId: "D2" | "D7", memberTierForLaundryBonus: string) {
   const gender = (client["Giới tính"] ?? "").trim();
   const floor = branchId === "D7" ? inferFloorFromBed(client["sá»‘ giÆ°á»ng"] ?? "") : null;
-  const recordedMember = (client["Cozoro Member"] ?? "").trim() || "Silver";
-  const bonus = getLaundryMemberBonus(recordedMember);
+  const recordedMember = (client[COINS_MEMBER_COLUMN] ?? "").trim() || "Silver";
+  const tierForBonus = (memberTierForLaundryBonus ?? "").trim() || "Silver";
+  const bonus = getLaundryMemberBonus(tierForBonus);
   const normalizedBonus =
     branchId === "D2"
       ? {
@@ -1049,14 +1050,14 @@ function getLaundryBaseAllowance(client: ClientRow, branchId: "D2" | "D7") {
   if (normalizedBonus.washer > 0 || normalizedBonus.dryer > 0) {
     notes.push(
       branchId === "D2"
-        ? `Recorded Cozoro Member adds ${normalizedBonus.washer} free washer use${normalizedBonus.washer === 1 ? "" : "s"} per month. / Hạng thành viên hiện tại được cộng thêm ${normalizedBonus.washer} lượt giặt miễn phí mỗi tháng.`
-        : `Recorded Cozoro Member adds ${normalizedBonus.washer} free washer use${normalizedBonus.washer === 1 ? "" : "s"} and ${normalizedBonus.dryer} free dryer use${normalizedBonus.dryer === 1 ? "" : "s"} per month. / Hạng thành viên hiện tại được cộng thêm ${normalizedBonus.washer} lượt giặt và ${normalizedBonus.dryer} lượt sấy miễn phí mỗi tháng.`
+        ? `Calculated Cozoro Member (${tierForBonus}) adds ${normalizedBonus.washer} free washer use${normalizedBonus.washer === 1 ? "" : "s"} per month. / Hạng tính toán (${tierForBonus}) được cộng thêm ${normalizedBonus.washer} lượt giặt miễn phí mỗi tháng.`
+        : `Calculated Cozoro Member (${tierForBonus}) adds ${normalizedBonus.washer} free washer use${normalizedBonus.washer === 1 ? "" : "s"} and ${normalizedBonus.dryer} free dryer use${normalizedBonus.dryer === 1 ? "" : "s"} per month. / Hạng tính toán (${tierForBonus}) được cộng thêm ${normalizedBonus.washer} lượt giặt và ${normalizedBonus.dryer} lượt sấy miễn phí mỗi tháng.`
     );
   } else {
     notes.push(
       branchId === "D2"
-        ? "Current recorded Cozoro Member does not add extra washer uses yet. / Hạng thành viên hiện tại chưa được cộng thêm lượt giặt miễn phí."
-        : "Current recorded Cozoro Member does not add extra washer or dryer uses yet. / Hạng thành viên hiện tại chưa được cộng thêm lượt giặt/sấy miễn phí."
+        ? "Calculated Cozoro Member does not add extra washer uses this month. / Hạng tính toán hiện không cộng thêm lượt giặt miễn phí."
+        : "Calculated Cozoro Member does not add extra washer or dryer uses this month. / Hạng tính toán hiện không cộng thêm lượt giặt/sấy miễn phí."
     );
   }
 
@@ -1074,8 +1075,19 @@ function getLaundryBaseAllowance(client: ClientRow, branchId: "D2" | "D7") {
 
 
 export async function getLaundryAllowance(client: ClientRow, branchId: "D2" | "D7") {
-  const base = getLaundryBaseAllowance(client, branchId);
   const normalizedEmail = (client[EMAIL_COLUMN] ?? "").trim().toLowerCase();
+  const coinsCached = await readCachedCoins();
+  const coinsHistory =
+    coinsCached?.rows && coinsCached.rows.length > 0 ? coinsCached.rows : (await readCoinsSheetRows()) || [];
+  const previousMonthEarnings = calculatePreviousMonthEarnings(coinsHistory, normalizedEmail);
+  const recordedMemberForLive = (client[COINS_MEMBER_COLUMN] ?? "").trim() || "Silver";
+  const memberTierForLaundryBonus = calculateLiveCozoroMember({
+    branchId,
+    totalAccumulatedCoins: String(client[CLIENT_TOTAL_COINS_COLUMN] ?? "0"),
+    recordedMember: recordedMemberForLive,
+    previousMonthEarnings
+  });
+  const base = getLaundryBaseAllowance(client, branchId, memberTierForLaundryBonus);
   const now = new Date();
   const couponSummary = await getLaundryCouponSummary(normalizedEmail, now);
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -1095,7 +1107,13 @@ export async function getLaundryAllowance(client: ClientRow, branchId: "D2" | "D
   let usedBonusDryerThisMonth = 0;
   let reservedFutureCoinUses = 0;
 
-  for (const booking of monthlyBookings) {
+  const totalBaseAndCouponFreeUses = base.baseFreeUsesPerMonth + couponSummary.couponFreeUsesPerMonth;
+  /** Uses drawn from the branch monthly pool + coupon (any machine), before tier washer/dryer bonuses. */
+  let usedFromBaseAndCouponPool = 0;
+
+  const sortedMonthlyBookings = [...monthlyBookings].sort((left, right) => left.start.localeCompare(right.start));
+
+  for (const booking of sortedMonthlyBookings) {
     const rawEvent = {
       description: booking.description,
       summary: booking.summary,
@@ -1112,10 +1130,21 @@ export async function getLaundryAllowance(client: ClientRow, branchId: "D2" | "D
 
     if (paymentMethod === "FREE_LAUNDRY") {
       usedFreeLaundryThisMonth += 1;
-      if (machine?.type === "WASHER" && usedBonusWasherThisMonth < base.bonusWasherUsesPerMonth) {
-        usedBonusWasherThisMonth += 1;
-      } else if (machine?.type === "DRYER" && usedBonusDryerThisMonth < base.bonusDryerUsesPerMonth) {
-        usedBonusDryerThisMonth += 1;
+      // Branch pool (+ coupon) is consumed first; Diamond/Gold/etc. washer/dryer bonuses only after that.
+      if (machine?.type === "WASHER") {
+        if (usedFromBaseAndCouponPool < totalBaseAndCouponFreeUses) {
+          usedFromBaseAndCouponPool += 1;
+        } else if (usedBonusWasherThisMonth < base.bonusWasherUsesPerMonth) {
+          usedBonusWasherThisMonth += 1;
+        }
+      } else if (machine?.type === "DRYER") {
+        if (usedFromBaseAndCouponPool < totalBaseAndCouponFreeUses) {
+          usedFromBaseAndCouponPool += 1;
+        } else if (usedBonusDryerThisMonth < base.bonusDryerUsesPerMonth) {
+          usedBonusDryerThisMonth += 1;
+        }
+      } else if (usedFromBaseAndCouponPool < totalBaseAndCouponFreeUses) {
+        usedFromBaseAndCouponPool += 1;
       }
     }
   }
@@ -1132,8 +1161,7 @@ export async function getLaundryAllowance(client: ClientRow, branchId: "D2" | "D
 
   const remainingBonusWasherUses = Math.max(0, base.bonusWasherUsesPerMonth - usedBonusWasherThisMonth);
   const remainingBonusDryerUses = Math.max(0, base.bonusDryerUsesPerMonth - usedBonusDryerThisMonth);
-  const usedBaseFreeLaundry = Math.max(0, usedFreeLaundryThisMonth - usedBonusWasherThisMonth - usedBonusDryerThisMonth);
-  const totalBaseAndCouponFreeUses = base.baseFreeUsesPerMonth + couponSummary.couponFreeUsesPerMonth;
+  const usedBaseFreeLaundry = usedFromBaseAndCouponPool;
   const remainingBaseFreeUses = Math.max(0, totalBaseAndCouponFreeUses - usedBaseFreeLaundry);
   const remainingCouponFreeUses = Math.max(
     0,
@@ -1145,6 +1173,7 @@ export async function getLaundryAllowance(client: ClientRow, branchId: "D2" | "D
 
   return {
     ...base,
+    calculatedMemberTierForLaundry: memberTierForLaundryBonus,
     couponFreeUsesPerMonth: couponSummary.couponFreeUsesPerMonth,
     usedFreeLaundryThisMonth,
     remainingBaseFreeUses,
@@ -1453,6 +1482,8 @@ export type LaundryAllowanceSummary = {
   gender: string;
   floor: number | null;
   recordedMember: string;
+  /** Live tier from coins history + sheet (same rules as portal); drives washer/dryer bonus counts. */
+  calculatedMemberTierForLaundry: string;
   baseFreeUsesPerMonth: number;
   couponFreeUsesPerMonth: number;
   bonusWasherUsesPerMonth: number;

@@ -22,6 +22,7 @@ import { usePortalTheme } from "./portal-theme";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { InlineHelp } from "./inline-help";
+import { ManagerSettingsTools } from "./manager-settings-tools";
 
 
 type StaffRole = "manager" | "owner" | "app_admin" | "mechanic";
@@ -179,19 +180,23 @@ function CollapsibleSettingsSection({
   children: ReactNode;
 }) {
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+    <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden dark:border-slate-600/80">
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between gap-4 px-6 py-5 text-left transition-colors hover:bg-slate-50"
+        className="flex w-full items-center justify-between gap-4 px-6 py-5 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-700/50"
       >
         <div>
-          <h3 className="text-base font-semibold text-slate-900">{title}</h3>
-          <p className="mt-1 text-sm text-slate-500">{description}</p>
+          <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">{title}</h3>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{description}</p>
         </div>
-        <span className="text-xl text-slate-400">{expanded ? "▲" : "▼"}</span>
+        <span className="shrink-0 text-xl text-slate-400 dark:text-slate-500" aria-hidden>
+          {expanded ? "▲" : "▼"}
+        </span>
       </button>
-      {expanded ? <div className="border-t border-slate-100 p-6">{children}</div> : null}
+      {expanded ? (
+        <div className="border-t border-slate-100 p-6 dark:border-slate-600/80">{children}</div>
+      ) : null}
     </div>
   );
 }
@@ -1174,10 +1179,10 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     parkingTiers: ParkingPricingTierRow[];
   } | null>(null);
   const [pricingConfigLoading, setPricingConfigLoading] = useState(false);
-  const [pricingSettingsTab, setPricingSettingsTab] = useState<"long_term" | "short_term" | "staff">("long_term");
+  const [pricingSettingsTab, setPricingSettingsTab] = useState<"long_term" | "short_term" | "staff" | "tools">("long_term");
   const [bedPricingExpanded, setBedPricingExpanded] = useState(false);
   const [pricingSettingsExpanded, setPricingSettingsExpanded] = useState<Record<PricingSettingsSectionKey, boolean>>({
-    parking_tiers: true,
+    parking_tiers: false,
     branch_fees: false,
     resident_portal: false,
     bed_prices: false,
@@ -6780,19 +6785,25 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-xl font-bold text-slate-900">{t("pricing")}</h2>
-                <p className="mt-1 text-sm text-slate-500">{t("pricingDesc")}</p>
+                <h2 className="text-xl font-bold text-slate-900">
+                  {pricingSettingsTab === "tools" ? t("settingsToolsTitle") : t("pricing")}
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {pricingSettingsTab === "tools" ? t("settingsToolsDesc") : t("pricingDesc")}
+                </p>
               </div>
-              <button type="button" onClick={() => void loadPricingConfig()} disabled={pricingConfigLoading}
-                className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-50">
-                {pricingConfigLoading ? t("refreshing") : t("refreshData")}
-              </button>
+              {pricingSettingsTab !== "tools" ? (
+                <button type="button" onClick={() => void loadPricingConfig()} disabled={pricingConfigLoading}
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-50">
+                  {pricingConfigLoading ? t("refreshing") : t("refreshData")}
+                </button>
+              ) : null}
             </div>
             <div className="mt-5 flex flex-wrap gap-2">
-              {(["long_term", "short_term", "staff"] as const).map((tab) => (
+              {(["long_term", "short_term", "staff", "tools"] as const).map((tab) => (
                 <button key={tab} type="button" onClick={() => setPricingSettingsTab(tab)}
                   className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${pricingSettingsTab === tab ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-50"}`}>
-                  {tab === "long_term" ? t("longTermTab") : tab === "short_term" ? t("shortTermTab") : t("staffAccountsTab")}
+                  {tab === "long_term" ? t("longTermTab") : tab === "short_term" ? t("shortTermTab") : tab === "staff" ? t("staffAccountsTab") : t("settingsToolsTab")}
                 </button>
               ))}
             </div>
@@ -7797,6 +7808,17 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             </CollapsibleSettingsSection>
           ) : null}
 
+          {pricingSettingsTab === "tools" ? (
+            <ManagerSettingsTools
+              normalizedEmail={normalizedEmail}
+              clients={clients}
+              t={t}
+              onRefreshClients={async () => {
+                await loadClients(true);
+              }}
+            />
+          ) : null}
+
         </section>
       ) : null}
 
@@ -8516,10 +8538,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           </td>
                           <td className="py-4 px-2 text-right">
                             <button
-                                onClick={() => resolveMaintenanceTicket(ticket.id)}
-                                className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100 transition-all opacity-0 group-hover:opacity-100"
+                              type="button"
+                              onClick={() => resolveMaintenanceTicket(ticket.id)}
+                              className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 transition-colors hover:bg-emerald-100 dark:text-emerald-300 dark:hover:bg-emerald-800/80 dark:hover:text-emerald-200"
                             >
-                                {t("resolveLabel")}
+                              {t("resolveLabel")}
                             </button>
                           </td>
                         </tr>

@@ -67,6 +67,17 @@ export type PrepaidNextPaymentEstimatePayload = {
   laundryBillingPrevMonth: string;
 };
 
+/**
+ * Lump renewal total (package after frequency discount + laundry + gate + fines) spread across
+ * the plan’s billing months (3 or 6 on sheet) — not the raw recurring line sum before discount.
+ */
+export function prepaidAverageMonthlyAfterFeesVnd(
+  est: Pick<PrepaidNextPaymentEstimatePayload, "estimatedTotalVnd" | "planMonths">
+): number {
+  const months = est.planMonths > 0 ? est.planMonths : 1;
+  return Math.round(est.estimatedTotalVnd / months);
+}
+
 export type RentPaidStatusPayload = {
   email?: string;
   month: string;

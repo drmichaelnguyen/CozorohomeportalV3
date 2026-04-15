@@ -15,7 +15,7 @@ export function ContractExtension({
   onExtended: () => void;
   forceExpand?: boolean;
 }) {
-  const { t } = usePortalLanguage();
+  const { t, language } = usePortalLanguage();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [duration, setDuration] = useState<number | "hostel">(6);
@@ -128,7 +128,7 @@ export function ContractExtension({
       return;
     }
     if (!agreed || !hasSignature || !fullName.trim()) {
-      setError(t("mustSignAndAgree", "You must sign, provide your full name, and agree to the terms to proceed."));
+      setError(t("mustSignAndAgree"));
       return;
     }
 
@@ -172,13 +172,13 @@ export function ContractExtension({
               </div>
             )}
           </div>
-          <h2 className="text-2xl font-bold text-emerald-900">{t("extensionSubmitted", "Extension Submitted!")}</h2>
+          <h2 className="text-2xl font-bold text-emerald-900">{t("extensionSubmitted")}</h2>
           <div className="max-w-md">
             <p className="text-emerald-800 font-medium">
-              {t("processingWait", "Success! Our system is generating your new contract email now.")}
+              {t("processingWait")}
             </p>
             <p className="text-emerald-700 text-sm mt-3 leading-relaxed">
-              {t("checkEmailFifteenSeconds", "Your contract is being processed. Please wait about 15 seconds for your account to reactivate automatically. An email will also be sent to your inbox.")}
+              {t("checkEmailFifteenSeconds")}
             </p>
           </div>
           <button 
@@ -189,7 +189,7 @@ export function ContractExtension({
             }} 
             className="mt-4 rounded-full bg-emerald-600 px-8 py-3 text-sm font-bold text-white hover:bg-emerald-700 transition shadow-lg flex items-center gap-2"
           >
-            <span>{t("gotIt", "Got it!")}</span>
+            <span>{t("gotIt")}</span>
             {countdown > 0 && <span className="opacity-60 text-xs font-normal">({countdown}s)</span>}
           </button>
         </div>
@@ -208,13 +208,10 @@ export function ContractExtension({
           </div>
           <div>
             <h2 className="text-lg font-bold text-amber-900">
-              {t("contractEndingSoon", "Contract Ending Soon")}
+              {t("contractEndingSoon")}
             </h2>
             <p className="text-sm text-amber-800">
-              {t(
-                "contractEndingDesc",
-                `Your contract is scheduled to end on ${endDateStr}. You can extend it right here.`
-              )}
+              {t("contractEndingDesc", { date: endDateStr })}
             </p>
           </div>
         </div>
@@ -223,7 +220,7 @@ export function ContractExtension({
             onClick={() => setIsExpanded(true)}
             className="shrink-0 rounded-full bg-amber-600 px-6 py-2.5 text-sm font-bold text-white hover:bg-amber-700 transition shadow-sm hover:shadow-md"
           >
-            {t("extendNow", "Extend Now")}
+            {t("extendNow")}
           </button>
         )}
       </div>
@@ -233,7 +230,7 @@ export function ContractExtension({
           <div className="space-y-6 max-w-2xl">
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-amber-700 mb-3">
-                {t("selectExtensionDuration", "Select Duration")}
+                {t("selectExtensionDuration")}
               </label>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 {/* Hostel redirect option */}
@@ -247,15 +244,14 @@ export function ContractExtension({
                       : "border-rose-200 bg-white hover:border-rose-300"
                   }`}
                 >
-                  <p className="text-sm font-bold text-rose-900">{"< 1 " + t("month", "Month")}</p>
-                  <p className="text-xs text-rose-700">Dưới 1 tháng</p>
-                  <p className="mt-1.5 text-xs font-semibold text-rose-600">🏨 {t("hostelBooking", "Hostel booking")}</p>
+                  <p className="text-sm font-bold text-rose-900">{t("extensionUnderOneMonth")}</p>
+                  <p className="mt-1.5 text-xs font-semibold text-rose-600">🏨 {t("hostelBooking")}</p>
                 </button>
                 {([
-                  { months: 1, label: t("oneMonth", "1 Month"), labelVi: "1 tháng", coins: 0, surcharge: 12 },
-                  { months: 3, label: t("threeMonths", "3 Months"), labelVi: "3 tháng", coins: 10000, surcharge: 12 },
-                  { months: 6, label: t("sixMonths", "6 Months"), labelVi: "6 tháng", coins: 25000, surcharge: 0 },
-                  { months: 12, label: t("twelveMonths", "12 Months"), labelVi: "12 tháng", coins: 50000, surcharge: 0 },
+                  { months: 1, durKey: "extensionDuration1m", coins: 0, surcharge: 12 },
+                  { months: 3, durKey: "extensionDuration3m", coins: 10000, surcharge: 12 },
+                  { months: 6, durKey: "extensionDuration6m", coins: 25000, surcharge: 0 },
+                  { months: 12, durKey: "extensionDuration12m", coins: 50000, surcharge: 0 }
                 ] as const).map((opt) => (
                   <button
                     key={opt.months}
@@ -268,14 +264,20 @@ export function ContractExtension({
                         : "border-amber-200 bg-white hover:border-amber-400"
                     }`}
                   >
-                    <p className="text-sm font-bold text-amber-900">{opt.label}</p>
-                    <p className="text-xs text-amber-700">{opt.labelVi}</p>
+                    <p className="text-sm font-bold text-amber-900">{t(opt.durKey)}</p>
                     {opt.surcharge > 0 ? (
-                      <p className="mt-1.5 text-xs font-semibold text-orange-600">+{opt.surcharge}% {t("surcharge", "surcharge")}</p>
+                      <p className="mt-1.5 text-xs font-semibold text-orange-600">
+                        {t("extensionSurchargeShort", { pct: opt.surcharge })}
+                      </p>
                     ) : opt.coins > 0 ? (
-                      <p className="mt-1.5 text-xs font-semibold text-emerald-700">+{opt.coins.toLocaleString()} coins 🪙</p>
+                      <p className="mt-1.5 text-xs font-semibold text-emerald-700">
+                        {t("extensionBonusCoinsLine", {
+                          amount: opt.coins.toLocaleString(language === "vi" ? "vi-VN" : "en-US")
+                        })}{" "}
+                        🪙
+                      </p>
                     ) : (
-                      <p className="mt-1.5 text-xs text-slate-400">{t("noCoins", "No coins")}</p>
+                      <p className="mt-1.5 text-xs text-slate-400">{t("extensionNoCoinsLine")}</p>
                     )}
                   </button>
                 ))}
@@ -285,11 +287,11 @@ export function ContractExtension({
                 <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 flex items-start gap-3">
                   <span className="text-rose-500 text-lg shrink-0">🏨</span>
                   <div>
-                    <p className="text-sm font-semibold text-rose-900">{t("hostelRedirectTitle", "Short-term stay (< 1 month)")}</p>
-                    <p className="text-xs text-rose-700 mt-1">{t("hostelRedirectDesc", "Stays under 1 month are booked through our hostel portal. Click the button below to go there.")}</p>
+                    <p className="text-sm font-semibold text-rose-900">{t("hostelRedirectTitle")}</p>
+                    <p className="text-xs text-rose-700 mt-1">{t("hostelRedirectDesc")}</p>
                     <a href="https://hostel.cozorohome.com" target="_blank" rel="noopener noreferrer"
                       className="mt-2 inline-block rounded-full bg-rose-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-rose-500">
-                      {t("goToHostel", "Go to hostel.cozorohome.com")} →
+                      {t("goToHostel")} →
                     </a>
                   </div>
                 </div>
@@ -300,14 +302,10 @@ export function ContractExtension({
                   <span className="text-amber-500 text-lg shrink-0">⚠️</span>
                   <div>
                     <p className="text-sm font-semibold text-amber-900">
-                      {extensionSurchargeRate === 0.12
-                        ? t("surcharge12Title", "Short-stay surcharge: +12%")
-                        : t("surcharge8Title", "Short-stay surcharge: +8%")}
+                      {extensionSurchargeRate === 0.12 ? t("surcharge12Title") : t("surcharge8Title")}
                     </p>
                     <p className="text-xs text-amber-700 mt-1">
-                      {extensionSurchargeRate === 0.12
-                        ? t("surcharge12Desc", "Extending for 1–3 months adds a 12% surcharge on your base monthly rent for the extension period. This will be included in your next month's payment.")
-                        : t("surcharge8Desc", "Extending for 4–5 months adds an 8% surcharge on your base monthly rent for the extension period. This will be included in your next month's payment.")}
+                      {extensionSurchargeRate === 0.12 ? t("surcharge12Desc") : t("surcharge8Desc")}
                     </p>
                   </div>
                 </div>
@@ -321,11 +319,11 @@ export function ContractExtension({
               <>
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-amber-700 mb-2">
-                    {t("yourFullName", "Your Full Name")}
+                    {t("yourFullName")}
                   </label>
                   <input
                     type="text"
-                    placeholder={t("fullNamePlaceholder", "Enter your legal full name")}
+                    placeholder={t("fullNamePlaceholder")}
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
                     className="w-full rounded-2xl border border-amber-300 bg-white px-4 py-3 text-sm outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-200/50 transition-all font-medium"
@@ -335,10 +333,10 @@ export function ContractExtension({
 
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-amber-700 mb-2 flex justify-between">
-                    <span>{t("signatureLabel", "E-Signature")}</span>
+                    <span>{t("signatureLabel")}</span>
                     {hasSignature && (
                       <button onClick={clearSignature} className="text-amber-600 hover:text-amber-800 underline lowercase">
-                        {t("clearSignature", "Clear")}
+                        {t("clearSignature")}
                       </button>
                     )}
                   </label>
@@ -358,7 +356,7 @@ export function ContractExtension({
                     />
                     {!hasSignature && (
                       <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-slate-400 text-sm italic">
-                        {t("signHere", "Sign here...")}
+                        {t("signHere")}
                       </div>
                     )}
                   </div>
@@ -385,10 +383,7 @@ export function ContractExtension({
                     </svg>
                   </div>
                   <span className="text-sm text-amber-950 font-medium font-bold leading-relaxed">
-                    {t(
-                      "contractAgreeTermsFormal",
-                      "By signing this, I agree to extend my contract by the selected duration and explicitly accept the current internal rules and policies of Cozoro Home."
-                    )}
+                    {t("contractAgreeTermsFormal")}
                   </span>
                 </label>
               </>
@@ -403,15 +398,15 @@ export function ContractExtension({
                 className={`flex-1 rounded-full px-8 py-3.5 text-sm font-bold text-white transition shadow-lg translate-y-0 active:translate-y-0.5 disabled:opacity-50 disabled:shadow-none ${duration === "hostel" ? "bg-rose-600 hover:bg-rose-500" : "bg-slate-900 hover:bg-slate-800"}`}
               >
                 {duration === "hostel"
-                  ? t("goToHostel", "Go to hostel.cozorohome.com") + " →"
-                  : loading ? t("processing", "Processing...") : t("confirmExtension", "Confirm & Sign Extension")}
+                  ? `${t("goToHostel")} →`
+                  : loading ? t("processing") : t("confirmExtension")}
               </button>
               <button
                 onClick={() => setIsExpanded(false)}
                 disabled={loading}
                 className="px-6 py-3.5 text-sm font-bold text-amber-900 hover:bg-amber-200/50 rounded-full transition"
               >
-                {t("cancel", "Cancel")}
+                {t("cancel")}
               </button>
             </div>
           </div>

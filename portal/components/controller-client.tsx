@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { parseContractEndDate } from "../lib/contract-utils";
+import { InlineHelp } from "./inline-help";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 
@@ -434,6 +435,17 @@ export function ControllerClient({
     [accountLockOverride, clientRecord]
   );
 
+  const acResidentDetailsBody = useMemo(() => {
+    if (!context) return "";
+    return [
+      `${t("controllerGuestLabel")}: ${context.name || context.email}`,
+      `${t("branchLabel")}: ${context.branchId}`,
+      `${t("bedLabel")}: ${context.bed || "—"}`,
+      `${t("roomLabel")}: ${context.roomCode || "—"}`,
+      `${t("controllerContractLabel")}: ${context.contractCode || "—"}`
+    ].join("\n");
+  }, [context, t]);
+
   return (
     <div className="space-y-6">
       <div className="space-y-2">
@@ -471,23 +483,13 @@ export function ControllerClient({
         <div className="space-y-6">
           {showAcSection && context ? (
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-semibold text-slate-900">{language === "vi" ? "Phòng được phép điều khiển" : "Allowed room"}</h2>
-              <div className="mt-4 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
-                <div>
-                  <span className="font-medium">{language === "vi" ? "Khách" : "Client"}:</span> {context.name || context.email}
-                </div>
-                <div>
-                  <span className="font-medium">{language === "vi" ? "Chi nhánh" : "Branch"}:</span> {context.branchId}
-                </div>
-                <div>
-                  <span className="font-medium">{language === "vi" ? "Giường" : "Bed"}:</span> {context.bed || "-"}
-                </div>
-                <div>
-                  <span className="font-medium">{language === "vi" ? "Phòng" : "Room"}:</span> {context.roomCode || "-"}
-                </div>
-                <div>
-                  <span className="font-medium">{language === "vi" ? "Mã hợp đồng" : "Contract code"}:</span> {context.contractCode || "-"}
-                </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-xl font-semibold text-slate-900">{t("controllerAllowedRoomHeading")}</h2>
+                <InlineHelp
+                  label={t("controllerResidentDetailsHelp")}
+                  title={t("controllerResidentDetailsTitle")}
+                  body={acResidentDetailsBody}
+                />
               </div>
 
               {context.room ? (

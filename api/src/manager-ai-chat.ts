@@ -7,10 +7,11 @@
  *   create_payment — POST /manager/payments/create
  *   navigate       — tell the frontend to switch to a manager view
  *   query_beds     — answer which beds are available / occupied
+ *   delete_*       — POST /staff/*/delete (one sheet row per call; max one successful delete per chat turn)
  */
 
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
-import { appendAiTrainingExchange } from "./ai-training-log.js";
+import { appendAiToolInvocation, appendAiTrainingExchange } from "./ai-training-log.js";
 import { geminiModelDoesNotKnowReply } from "./gemini-capacity-reply.js";
 import { tryFounderEasterEggReply } from "./cozoro-founder-easter-egg.js";
 import { getManagerClients, getManagerInactiveClients } from "./google-sheets.js";
@@ -58,6 +59,9 @@ type GeminiResponse = {
   }>;
   error?: { message: string };
 };
+
+const SAFETY_ONE_DELETE_PER_MESSAGE =
+  "Safety: Only one sheet row may be deleted per manager message. To delete another row, send a new message.";
 
 // ─── Tool definitions ─────────────────────────────────────────────────────────
 
@@ -157,6 +161,66 @@ const TOOLS: GeminiTool[] = [
           },
           required: ["view", "reason"]
         }
+      },
+      {
+        name: "delete_coin_sheet_row",
+        description:
+          "Delete ONE coin ledger row in Google Sheets for a resident. Destructive — requires exact row keys from the manager portal (Coins tab). Never delete multiple rows in one user request; at most one deletion succeeds per message.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            email: { type: "STRING", description: "Resident email for that row" },
+            timestamp: { type: "STRING", description: "Row timestamp exactly as shown (sheet / portal)" },
+            transactionCode: { type: "STRING", description: "Optional transaction code if the sheet uses it to disambiguate" },
+            reason: { type: "STRING", description: "Why this row should be removed" }
+          },
+          required: ["email", "timestamp", "reason"]
+        }
+      },
+      {
+        name: "delete_payment_sheet_row",
+        description:
+          "Delete ONE payment receipt row in Google Sheets. Destructive — exact keys from the Payments tab. Max one successful delete per manager message.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            email: { type: "STRING", description: "Resident email for that row" },
+            timestamp: { type: "STRING", description: "Row timestamp exactly as shown" },
+            amount: { type: "STRING", description: "Optional amount string to match the row" },
+            purpose: { type: "STRING", description: "Optional purpose string to match the row" },
+            reason: { type: "STRING", description: "Why this row should be removed" }
+          },
+          required: ["email", "timestamp", "reason"]
+        }
+      },
+      {
+        name: "delete_fine_sheet_row",
+        description:
+          "Delete ONE fine row in Google Sheets. Destructive — exact email, timestamp, and fine title/content from the Fines tab. Max one successful delete per manager message.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            email: { type: "STRING", description: "Resident email for that row" },
+            timestamp: { type: "STRING", description: "Row timestamp exactly as shown" },
+            content: { type: "STRING", description: "Fine title/content exactly as in the sheet" },
+            reason: { type: "STRING", description: "Why this row should be removed" }
+          },
+          required: ["email", "timestamp", "content", "reason"]
+        }
+      },
+      {
+        name: "delete_laundry_booking",
+        description:
+          "Delete ONE laundry calendar event (one booking). Requires calendarId and eventId from the laundry workspace — destructive. Max one successful delete per manager message.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            calendarId: { type: "STRING", description: "Google Calendar id for the laundry calendar" },
+            eventId: { type: "STRING", description: "Calendar event id of the booking to remove" },
+            reason: { type: "STRING", description: "Why this booking entry should be removed" }
+          },
+          required: ["calendarId", "eventId", "reason"]
+        }
       }
     ]
   }
@@ -184,7 +248,8 @@ async function buildClientContext() {
 async function executeTool(
   toolName: string,
   args: Record<string, unknown>,
-  operatorEmail: string
+  operatorEmail: string,
+  deleteBudget?: { remaining: number }
 ): Promise<{ result: Record<string, unknown>; navigateTo?: string }> {
   const API_BASE = `http://localhost:${process.env.PORT ?? 4000}`;
 
@@ -327,6 +392,106 @@ async function executeTool(
     };
   }
 
+  if (toolName === "delete_coin_sheet_row") {
+    if (!deleteBudget || deleteBudget.remaining < 1) {
+      return { result: { error: SAFETY_ONE_DELETE_PER_MESSAGE } };
+    }
+    const res = await fetch(`${API_BASE}/staff/coins/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        actorEmail: operatorEmail,
+        email: String(args.email ?? "").trim(),
+        timestamp: String(args.timestamp ?? "").trim(),
+        transactionCode: args.transactionCode != null && String(args.transactionCode).trim() !== "" ? String(args.transactionCode).trim() : undefined
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) return { result: { error: (data as { error?: string }).error ?? "Failed to delete coin row" } };
+    deleteBudget.remaining -= 1;
+    return {
+      result: {
+        success: true,
+        message: `Deleted one coin sheet row for ${String(args.email ?? "")}`
+      }
+    };
+  }
+
+  if (toolName === "delete_payment_sheet_row") {
+    if (!deleteBudget || deleteBudget.remaining < 1) {
+      return { result: { error: SAFETY_ONE_DELETE_PER_MESSAGE } };
+    }
+    const res = await fetch(`${API_BASE}/staff/payments/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        actorEmail: operatorEmail,
+        email: String(args.email ?? "").trim(),
+        timestamp: String(args.timestamp ?? "").trim(),
+        amount: args.amount != null && String(args.amount).trim() !== "" ? String(args.amount).trim() : undefined,
+        purpose: args.purpose != null && String(args.purpose).trim() !== "" ? String(args.purpose).trim() : undefined
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) return { result: { error: (data as { error?: string }).error ?? "Failed to delete payment row" } };
+    deleteBudget.remaining -= 1;
+    return {
+      result: {
+        success: true,
+        message: `Deleted one payment sheet row for ${String(args.email ?? "")}`
+      }
+    };
+  }
+
+  if (toolName === "delete_fine_sheet_row") {
+    if (!deleteBudget || deleteBudget.remaining < 1) {
+      return { result: { error: SAFETY_ONE_DELETE_PER_MESSAGE } };
+    }
+    const res = await fetch(`${API_BASE}/staff/fines/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        actorEmail: operatorEmail,
+        email: String(args.email ?? "").trim(),
+        timestamp: String(args.timestamp ?? "").trim(),
+        content: String(args.content ?? "").trim()
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) return { result: { error: (data as { error?: string }).error ?? "Failed to delete fine row" } };
+    deleteBudget.remaining -= 1;
+    return {
+      result: {
+        success: true,
+        message: `Deleted one fine sheet row for ${String(args.email ?? "")}`
+      }
+    };
+  }
+
+  if (toolName === "delete_laundry_booking") {
+    if (!deleteBudget || deleteBudget.remaining < 1) {
+      return { result: { error: SAFETY_ONE_DELETE_PER_MESSAGE } };
+    }
+    const res = await fetch(`${API_BASE}/staff/laundry/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        actorEmail: operatorEmail,
+        calendarId: String(args.calendarId ?? "").trim(),
+        eventId: String(args.eventId ?? "").trim()
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) return { result: { error: (data as { error?: string }).error ?? "Failed to delete laundry booking" } };
+    deleteBudget.remaining -= 1;
+    return {
+      result: {
+        success: true,
+        message: "Deleted one laundry calendar booking"
+      }
+    };
+  }
+
   if (toolName === "navigate") {
     return {
       result: { navigating: true, view: args.view, reason: args.reason },
@@ -358,8 +523,11 @@ ${clientList || "  (chưa tải được danh sách)"}
 - Tạo biên lai thanh toán / dịch vụ (create_payment)
 - Kiểm tra giường trống hoặc đang có người (query_beds — luôn gọi công cụ này khi hỏi số giường trống/đang ở; đừng đoán từ danh sách cư dân)
 - Chuyển quản lý sang màn hình phù hợp khi việc phức tạp hơn khả năng tự động (navigate)
+- Xóa **một dòng** trong sheet (coin / thanh toán / phạt) hoặc **một** lịch giặt — chỉ khi quản lý yêu cầu rõ ràng và cung cấp đúng khóa dòng (delete_coin_sheet_row, delete_payment_sheet_row, delete_fine_sheet_row, delete_laundry_booking)
 
 ## Quy tắc
+- **An toàn xóa:** Mỗi tin nhắn của quản lý chỉ được phép xóa thành công **tối đa một dòng** (một lần xóa). Nếu cần xóa nhiều dòng, hãy xóa một dòng rồi bảo quản lý gửi tin nhắn mới cho dòng tiếp theo. Không gọi nhiều công cụ xóa thành công trong cùng một lượt.
+- Khi xóa sheet: bắt buộc dùng đúng email, timestamp, nội dung như trên portal/sheet — không đoán.
 - Luôn nhận diện cư dân bằng tên, email, số giường, hoặc mã hợp đồng (maHd) trong danh sách trên.
 - Nếu không chắc chắn một người, hỏi lại quản lý trước khi gọi công cụ.
 - Thiếu số tiền, lý do, v.v. thì hỏi bổ sung trước khi thực hiện.
@@ -384,8 +552,11 @@ ${clientList || "  (no active residents loaded)"}
 - Create a payment receipt for a resident (use the create_payment tool)
 - Check which beds are available or occupied (use the query_beds tool — always call it for counts or lists of empty beds; do not infer availability only from the resident list)
 - Navigate to a specific manager view for complex actions (use the navigate tool)
+- Delete **one** sheet row (coins / payments / fines) or **one** laundry booking when the manager explicitly requests it and provides exact row keys (delete_coin_sheet_row, delete_payment_sheet_row, delete_fine_sheet_row, delete_laundry_booking)
 
 ## Rules
+- **Delete safety:** At most **one successful row deletion per manager message.** Each delete tool removes exactly one row. If multiple rows must be removed, delete one and tell the manager to send another message for the next row. Do not complete more than one successful delete in the same turn.
+- For sheet deletes, require exact email, timestamp, and content fields as shown in the portal — never guess.
 - Always identify the resident by matching name, email, bed number, or contract code (maHd) from the list above.
 - If the resident cannot be uniquely identified, ask the manager for clarification before calling any action tool.
 - If required fields are missing (e.g. amount, reason), ask for them before executing.
@@ -432,6 +603,7 @@ export async function handleManagerAiChat(
   }));
 
   let navigateTo: string | undefined;
+  const deleteBudget = { remaining: 1 };
   let maxRounds = 5; // prevent infinite tool loops
 
   while (maxRounds-- > 0) {
@@ -487,8 +659,18 @@ export async function handleManagerAiChat(
 
     // Execute the tool
     const { name, args } = functionCallPart.functionCall;
-    const toolResult = await executeTool(name, args, operatorEmail);
+    const toolResult = await executeTool(name, args, operatorEmail, deleteBudget);
     if (toolResult.navigateTo) navigateTo = toolResult.navigateTo;
+
+    void appendAiToolInvocation({
+      channel: "manager",
+      identifier: operatorEmail,
+      toolName: name,
+      args: (args ?? {}) as Record<string, unknown>,
+      result: toolResult.result,
+      language,
+      meta: toolResult.navigateTo ? { navigateTo: toolResult.navigateTo } : undefined
+    });
 
     // Append model turn (function call) and tool result to contents
     contents.push({ role: "model", parts: [{ functionCall: { name, args } }] });

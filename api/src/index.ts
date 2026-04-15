@@ -37,7 +37,8 @@ import {
 import { adminSetPortalPassword, changePortalPassword, loginWithPortalPassword, setPortalPassword, upsertStoredPassword } from "./portal-auth.js";
 import { getAccountLockOverride, setAccountLockOverride } from "./account-lock-overrides.js";
 import { getClientGroupContext, getGroupMessages, markGroupRead, postGroupMessage } from "./group-support.js";
-import { VAPID_PUBLIC_KEY, savePushSubscription, deletePushSubscription } from "./push.js";
+import { VAPID_PUBLIC_KEY, savePushSubscription, deletePushSubscription, sendPushToEmail } from "./push.js";
+import { getCleaningRewardSettings, updateCleaningRewardSettings } from "./cleaning-reward-settings.js";
 import { getPortalUxSettings, updatePortalUxSettings } from "./portal-ux-settings.js";
 import { calculateRentBreakdown, computePrepaidNextPaymentEstimate } from "./calculation-engine.js";
 import { calculateRentBreakdownForBillingMonth } from "./monthly-rent-breakdown.js";
@@ -635,6 +636,53 @@ const managerCoinAdjustmentSchema = z.object({
   reason: z.string().trim().min(1),
   operator: z.string().trim().min(1)
 });
+const cleaningRewardSettingsPutSchema = z.object({
+  actorEmail: z.string().email(),
+  baseRewards: z
+    .object({
+      KITCHEN_D2: z.coerce.number().int().min(0).max(500000).optional(),
+      KITCHEN_D7: z.coerce.number().int().min(0).max(500000).optional(),
+      TRASH_D7: z.coerce.number().int().min(0).max(500000).optional()
+    })
+    .optional(),
+  selfAssignBonusMultiplier: z.coerce.number().min(1).max(3).optional()
+});
+const managerBulkCoinAdjustSchema = z
+  .object({
+    actorEmail: z.string().email(),
+    reason: z.string().trim().min(1).max(500),
+    items: z
+      .array(
+        z.object({
+          maHd: z.string().min(1),
+          delta: z.coerce.number().int().refine((n) => n !== 0, "delta must not be 0")
+        })
+      )
+      .min(1)
+      .max(150)
+  })
+  .superRefine((data, ctx) => {
+    const set = new Set(data.items.map((i) => i.maHd));
+    if (set.size !== data.items.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Each contract (Mã HD) must appear only once in the batch."
+      });
+    }
+  });
+const managerBulkPushSchema = z
+  .object({
+    actorEmail: z.string().email(),
+    title: z.string().trim().min(1).max(120),
+    body: z.string().trim().min(1).max(2000),
+    emails: z.array(z.string().email()).min(1).max(400)
+  })
+  .superRefine((data, ctx) => {
+    const lower = data.emails.map((e) => e.trim().toLowerCase());
+    if (new Set(lower).size !== lower.length) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Duplicate emails are not allowed." });
+    }
+  });
 const managerPaymentReceiptCreateSchema = z.object({
   actorEmail: z.string().email(),
   maHd: z.string().min(1),
@@ -2923,6 +2971,11 @@ app.post("/manager/coins/adjust", async (request, response) => {
   }
 
   try {
+    await requirePortalRole(
+      parsed.data.operator.trim(),
+      ["manager", "owner", "app_admin"],
+      "Only managers or owners can adjust client coins."
+    );
     const result = await runWithWriteGuard({
       key: createWriteGuardKey("/manager/coins/adjust", parsed.data),
       duplicateMessage: "This coin adjustment was just submitted. Please wait a few seconds.",
@@ -5134,6 +5187,115 @@ app.put("/manager/portal-ux-settings", async (req, res) => {
     return res.json(settings);
   } catch (error) {
     return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+// GET /manager/cleaning-reward-settings — staff reads cleaning coin reward config
+app.get("/manager/cleaning-reward-settings", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim();
+  if (!actorEmail) {
+    return res.status(400).json({ error: "actorEmail is required" });
+  }
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const settings = await getCleaningRewardSettings();
+    return res.json(settings);
+  } catch (error) {
+    return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+// PUT /manager/cleaning-reward-settings — staff updates cleaning coin rewards
+app.put("/manager/cleaning-reward-settings", async (req, res) => {
+  const parsed = cleaningRewardSettingsPutSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid cleaning reward settings payload" });
+  }
+  try {
+    const settings = await updateCleaningRewardSettings(parsed.data.actorEmail, {
+      baseRewards: parsed.data.baseRewards,
+      selfAssignBonusMultiplier: parsed.data.selfAssignBonusMultiplier
+    });
+    return res.json(settings);
+  } catch (error) {
+    return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+// POST /manager/coins/bulk-adjust — apply the same coin reason to multiple contracts
+app.post("/manager/coins/bulk-adjust", async (request, response) => {
+  const parsed = managerBulkCoinAdjustSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({
+      error: parsed.error.issues[0]?.message ?? "Invalid bulk coin adjustment payload"
+    });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail.trim(),
+      ["manager", "owner", "app_admin"],
+      "Only managers or owners can adjust client coins."
+    );
+    const results: Array<{ maHd: string; ok: boolean; currentCoins?: number; error?: string }> = [];
+    for (let i = 0; i < parsed.data.items.length; i++) {
+      const item = parsed.data.items[i];
+      try {
+        const result = await runWithWriteGuard({
+          key: createWriteGuardKey("/manager/coins/bulk-adjust", {
+            actorEmail: parsed.data.actorEmail,
+            reason: parsed.data.reason,
+            maHd: item.maHd,
+            delta: item.delta,
+            index: i
+          }),
+          duplicateMessage: "This bulk adjustment was just submitted. Please wait a few seconds.",
+          action: () =>
+            managerAdjustCoins({
+              maHd: item.maHd,
+              delta: item.delta,
+              reason: `${parsed.data.reason.trim()} (bulk)`,
+              operator: parsed.data.actorEmail.trim()
+            })
+        });
+        results.push({ maHd: item.maHd, ok: true, currentCoins: result.currentCoins });
+      } catch (error) {
+        results.push({
+          maHd: item.maHd,
+          ok: false,
+          error: error instanceof Error ? error.message : "Unable to adjust coins"
+        });
+      }
+    }
+    return response.json({ results });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+// POST /manager/bulk/push — send the same web push to multiple resident emails
+app.post("/manager/bulk/push", async (request, response) => {
+  const parsed = managerBulkPushSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({
+      error: parsed.error.issues[0]?.message ?? "Invalid bulk push payload"
+    });
+  }
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail.trim(),
+      ["manager", "owner", "app_admin"],
+      "Only managers or owners can send bulk notifications."
+    );
+    const emails = [...new Set(parsed.data.emails.map((e) => e.trim().toLowerCase()))];
+    let sent = 0;
+    for (const email of emails) {
+      await sendPushToEmail(email, parsed.data.title.trim(), parsed.data.body.trim(), "/");
+      sent += 1;
+    }
+    return response.json({ ok: true, attempted: emails.length });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
   }
 });
 

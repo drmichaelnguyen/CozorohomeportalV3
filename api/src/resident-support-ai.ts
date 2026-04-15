@@ -10,7 +10,7 @@ import {
   stripSupportAssistantMetaSuffix,
   type SupportAssistantStoredMeta
 } from "./support-assistant-message-meta.js";
-import { appendAiTrainingExchange } from "./ai-training-log.js";
+import { appendAiToolInvocation, appendAiTrainingExchange } from "./ai-training-log.js";
 import { tryFounderEasterEggReply } from "./cozoro-founder-easter-egg.js";
 import {
   tryVentHammerConsentReply,
@@ -402,6 +402,16 @@ export async function runResidentSupportAssistantTurn(input: {
     } else {
       toolResponse = { ok: false, note: "Unknown tool." };
     }
+
+    void appendAiToolInvocation({
+      channel: "resident_support_thread",
+      identifier: input.residentEmail,
+      toolName: name,
+      args: (args ?? {}) as Record<string, unknown>,
+      result: toolResponse,
+      conversationId: input.conversationId,
+      meta: { preferVietnamese }
+    });
 
     contents.push({ role: "model", parts: [{ functionCall: { name, args } }] });
     contents.push({

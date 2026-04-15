@@ -106,23 +106,40 @@ const branchTierMatrix: MemberTier[] = [
   }
 ];
 
-export const COZORO_MEMBER_RULE_DETAILS = [
-  "Tier order: Silver -> Gold -> Platinum -> Diamond -> Elite.",
-  "Lifetime accumulated coins decide which tiers you are allowed to aim for.",
-  "Previous month's earned coins decide whether you qualify for that tier now and whether you keep it.",
-  "Upgrade cost is a one-time payment when moving up into a tier that has a fee.",
-  "If you stay at the same tier, you do not pay that upgrade cost again.",
-  "If you lose a tier and later upgrade back to it, you must pay that tier's upgrade cost again."
+/** Keys in `portal-language` for the Cozoro Member rule explainer (same order as English copy). */
+export const COZORO_MEMBER_RULE_DETAIL_KEYS = [
+  "memberRuleDetailTierOrder",
+  "memberRuleDetailLifetimeAcc",
+  "memberRuleDetailPrevMonth",
+  "memberRuleDetailUpgradeFee",
+  "memberRuleDetailStaySameTier",
+  "memberRuleDetailLoseTier"
 ] as const;
 
-export const COZORO_MEMBER_DIAMOND_EXAMPLE = [
-  "Diamond requires 300,000 accumulated coins.",
-  "Diamond also requires 20,000 coins earned in the previous month.",
-  "If you dropped below Diamond and want to upgrade back, it also costs 10,000 current coins once."
+/** Keys in `portal-language` for the Diamond tier example box. */
+export const COZORO_MEMBER_DIAMOND_EXAMPLE_KEYS = [
+  "memberDiamondExampleAccumulated",
+  "memberDiamondExamplePrevMonth",
+  "memberDiamondExampleReupgrade"
 ] as const;
 
 function normalizeRank(value: string | null | undefined) {
   return (value ?? "").trim().toLowerCase();
+}
+
+/** Sheet may store `7` / `2`; live tier math only runs for D7 / D2 (same idea as API `normalizeClientBranch`). */
+export function normalizeMemberBranchId(value: string | null | undefined): "D2" | "D7" | "" {
+  const normalized = (value ?? "").trim().toUpperCase().replace(/\s+/g, "");
+  if (!normalized) {
+    return "";
+  }
+  if (normalized === "7" || normalized === "D7" || normalized.includes("D7") || normalized.includes("AD7")) {
+    return "D7";
+  }
+  if (normalized === "2" || normalized === "D2" || normalized.includes("D2") || normalized.includes("AD2")) {
+    return "D2";
+  }
+  return "";
 }
 
 function parseCoins(value: string | number | null | undefined) {
@@ -238,7 +255,7 @@ export function buildCozoroMemberProgram(input: {
 }): CozoroMemberProgram {
   const recordedRank = (input.rankValue ?? "").trim() || "Silver";
   const normalizedRank = normalizeRank(recordedRank);
-  const branchId = (input.branchId ?? "").trim();
+  const branchId = normalizeMemberBranchId(input.branchId);
   const totalAccumulatedCoins = parseCoins(input.totalAccumulatedCoins);
   const previousMonthEarnings = parseCoins(input.previousMonthEarnings);
   const recordedTier = getRecordedTier(recordedRank);

@@ -29,6 +29,8 @@ type LaundryAllowanceSummary = {
   gender: string;
   floor: number | null;
   recordedMember: string;
+  /** Live tier for washer/dryer bonus; older APIs omit — fall back to recorded. */
+  calculatedMemberTierForLaundry?: string;
   baseFreeUsesPerMonth: number;
   couponFreeUsesPerMonth: number;
   bonusWasherUsesPerMonth: number;
@@ -172,6 +174,27 @@ function getBookingPaymentType(booking: LaundryBooking): "FREE_LAUNDRY" | "COINS
   return "OTHER";
 }
 
+function translateLaundryPaymentCode(
+  code: string,
+  t: (key: string, fallback?: string, params?: Record<string, string | number>) => string
+): string {
+  if (!code || code === "-") {
+    return "—";
+  }
+  switch (code) {
+    case "FREE_LAUNDRY":
+      return t("laundryPaymentCodeFreeLaundry");
+    case "COINS":
+      return t("laundryPaymentCodeCoins");
+    case "CASH":
+      return t("laundryPaymentCodeCash");
+    case "OTHER":
+      return t("laundryPaymentCodeOther");
+    default:
+      return code;
+  }
+}
+
 function parseLooseDate(value: string | undefined): Date | null {
   return parseContractEndDate(value);
 }
@@ -264,6 +287,7 @@ export function BookingsClient() {
   const [acceptedBasketWarning, setAcceptedBasketWarning] = useState(false);
   const [showBookingHelp, setShowBookingHelp] = useState(false);
   const [showAllowanceDetails, setShowAllowanceDetails] = useState(false);
+  const [bookingFiltersExpanded, setBookingFiltersExpanded] = useState(false);
 
   const selectedMachine = useMemo(
     () => machines.find((machine) => machine.id === selectedMachineId) ?? null,
@@ -308,36 +332,36 @@ export function BookingsClient() {
     return [
       {
         value: "FREE_LAUNDRY" as const,
-        label: "Free laundry",
+        label: t("laundryPayOptionFreeLaundry"),
         disabled: !selectedMachine.allowsFreeLaundry || remainingFreeUsesForSelectedMachine <= 0
       },
       {
         value: "COINS" as const,
-        label: "Pay by coins",
+        label: t("laundryPayOptionCoins"),
         disabled: !canPayWithCoins
       },
       {
         value: "CASH" as const,
-        label: "Pay by cash",
+        label: t("laundryPayOptionCash"),
         disabled: false
       }
     ];
-  }, [canPayWithCoins, remainingFreeUsesForSelectedMachine, selectedMachine]);
+  }, [canPayWithCoins, remainingFreeUsesForSelectedMachine, selectedMachine, t]);
   const paymentRuleNote = useMemo(() => {
     if (!selectedMachine) {
-      return "Select a machine to see its allowed payment methods.";
+      return t("laundryPaymentRuleSelectMachine");
     }
 
     if (selectedMachine.id === "d7-washer-paid") {
-      return "Giặt D7 paid Whirlpool only accepts cash or coins.";
+      return t("laundryPaymentRuleD7PaidWhirlpool");
     }
 
     if (selectedMachine.branchId === "D7") {
-      return "This D7 machine accepts free laundry, coins, or cash when available.";
+      return t("laundryPaymentRuleD7General");
     }
 
-    return "Payment methods depend on your allowance and available coins.";
-  }, [selectedMachine]);
+    return t("laundryPaymentRuleDefault");
+  }, [selectedMachine, t]);
   const bookingCalendarOptions = useMemo(
     () => Array.from(new Set(bookings.map((booking) => booking.calendarSummary))).sort(),
     [bookings]
@@ -828,7 +852,14 @@ export function BookingsClient() {
                       <>
                         <div className="pt-1 font-medium text-slate-900">{language === "vi" ? "Ưu đãi giặt miễn phí hằng tháng" : "Monthly Free Laundry"}</div>
                         <div>
-                          {language === "vi" ? "Hạng thành viên" : "Recorded member"}: <span className="font-medium">{allowance.recordedMember}</span>
+                          {language === "vi" ? "Hạng thành viên (sheet)" : "Recorded member"}:{" "}
+                          <span className="font-medium">{allowance.recordedMember}</span>
+                        </div>
+                        <div className="text-xs text-slate-600">
+                          {language === "vi" ? "Hạng dùng cho ưu đãi giặt (tính toán)" : "Calculated tier (laundry bonus)"}:{" "}
+                          <span className="font-medium text-slate-800">
+                            {allowance.calculatedMemberTierForLaundry ?? allowance.recordedMember}
+                          </span>
                         </div>
                         <div>
                           {language === "vi" ? "Lượt miễn phí cơ bản" : "Base free uses"}: <span className="font-medium">{allowance.baseFreeUsesPerMonth}</span>
@@ -938,16 +969,18 @@ export function BookingsClient() {
             </label>
 
             <div className="rounded-xl border border-slate-200 p-4 text-sm text-slate-700">
-              <div className="font-medium text-slate-900">Automatic Payment Type</div>
-              <div className="mt-2 text-sm text-slate-900">{automaticPaymentMethod}</div>
-              <div className="mt-1 text-xs text-slate-500">
-                Order: free laundry first, then coins if available, then cash.
+              <div className="font-medium text-slate-900">{t("laundryAutoPaymentTitle")}</div>
+              <div className="mt-2 text-sm text-slate-900">
+                {automaticPaymentMethod === "-"
+                  ? "—"
+                  : translateLaundryPaymentCode(automaticPaymentMethod, t)}
               </div>
+              <div className="mt-1 text-xs text-slate-500">{t("laundryPaymentPriorityOrder")}</div>
               <div className="mt-2 text-xs text-slate-500">{paymentRuleNote}</div>
             </div>
 
             <label className="block text-sm font-medium text-slate-700">
-              Payment
+              {t("laundryPayLabel")}
               <select
                 value={selectedPaymentMethod}
                 onChange={(event) =>
@@ -956,12 +989,12 @@ export function BookingsClient() {
                 disabled={!selectedMachine}
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
               >
-                {!selectedMachine ? <option value="">Select a machine first</option> : null}
+                {!selectedMachine ? <option value="">{t("laundrySelectMachineFirst")}</option> : null}
                 {paymentOptions.map((option) => (
                   <option key={option.value} value={option.value} disabled={option.disabled}>
                     {option.label}
-                    {option.value === automaticPaymentMethod ? " (Recommended)" : ""}
-                    {option.disabled ? " (Unavailable)" : ""}
+                    {option.value === automaticPaymentMethod ? t("laundrySuffixRecommended") : ""}
+                    {option.disabled ? t("laundrySuffixUnavailable") : ""}
                   </option>
                 ))}
               </select>
@@ -974,25 +1007,36 @@ export function BookingsClient() {
                 value={couponCode}
                 onChange={(event) => setCouponCode(event.target.value.toUpperCase())}
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-                placeholder="Optional coupon code"
+                placeholder={t("laundryCouponPlaceholder")}
               />
             </label>
 
             <div className="rounded-xl border border-slate-200 p-4 text-sm text-slate-700">
-              <div className="font-medium text-slate-900">Booking Summary</div>
+              <div className="font-medium text-slate-900">{t("laundryBookingSummaryTitle")}</div>
               <div className="mt-2">
-                Machine: {selectedMachine?.label ?? "-"}
+                {t("laundrySummaryMachine")} {selectedMachine?.label ?? "—"}
               </div>
               <div className="mt-1">
-                Duration: {selectedMachine ? formatDuration(selectedMachine.durationMinutes) : "-"}
+                {t("laundrySummaryDuration")}{" "}
+                {selectedMachine ? formatDuration(selectedMachine.durationMinutes) : "—"}
               </div>
               <div className="mt-1">
-                Cooldown after booking: {selectedMachine ? formatDuration(selectedMachine.cooldownMinutes) : "-"}
+                {t("laundrySummaryCooldown")}{" "}
+                {selectedMachine ? formatDuration(selectedMachine.cooldownMinutes) : "—"}
               </div>
-              <div className="mt-1">Payment: {selectedPaymentMethod || automaticPaymentMethod}</div>
-              <div className="mt-1">Coupon: {couponCode || "-"}</div>
               <div className="mt-1">
-                Time: {selectedStart ? formatDateTimeInTimeZone(selectedStart, timeZone) : "-"}
+                {t("laundrySummaryPayment")}{" "}
+                {translateLaundryPaymentCode(
+                  selectedPaymentMethod || (automaticPaymentMethod === "-" ? "" : automaticPaymentMethod),
+                  t
+                )}
+              </div>
+              <div className="mt-1">
+                {t("laundrySummaryCoupon")} {couponCode.trim() ? couponCode : "—"}
+              </div>
+              <div className="mt-1">
+                {t("laundrySummaryTime")}{" "}
+                {selectedStart ? formatDateTimeInTimeZone(selectedStart, timeZone) : "—"}
               </div>
             </div>
 
@@ -1068,14 +1112,25 @@ export function BookingsClient() {
           </div>
 
           <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
-            <h2 className="text-lg font-semibold text-slate-900">
-              {language === "vi" ? "Lịch đặt của tôi" : "My bookings"}
-            </h2>
-            <div className="mt-4 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold text-slate-900">
+                {language === "vi" ? "Lịch đặt của tôi" : "My bookings"}
+              </h2>
               {bookings.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setBookingFiltersExpanded((current) => !current)}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+                >
+                  {bookingFiltersExpanded ? t("laundryBookingFiltersHide") : t("laundryBookingFiltersShow")}
+                </button>
+              ) : null}
+            </div>
+            <div className="mt-4 space-y-4">
+              {bookings.length > 0 && bookingFiltersExpanded ? (
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   <label className="block text-sm font-medium text-slate-700">
-                    Calendar
+                    {t("laundryBookingsFilterCalendar")}
                     <select
                       value={bookingCalendarFilter}
                       onChange={(event) => {
@@ -1084,7 +1139,7 @@ export function BookingsClient() {
                       }}
                       className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
                     >
-                      <option value="all">All calendars</option>
+                      <option value="all">{t("laundryAllCalendars")}</option>
                       {bookingCalendarOptions.map((option) => (
                         <option key={option} value={option}>
                           {option}
@@ -1094,7 +1149,7 @@ export function BookingsClient() {
                   </label>
 
                   <label className="block text-sm font-medium text-slate-700">
-                    Time
+                    {t("laundryBookingsFilterTime")}
                     <select
                       value={bookingTimeFilter}
                       onChange={(event) => {
@@ -1103,14 +1158,14 @@ export function BookingsClient() {
                       }}
                       className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
                     >
-                      <option value="all">All bookings</option>
-                      <option value="future">Future only</option>
-                      <option value="past">Past only</option>
+                      <option value="all">{t("laundryAllBookings")}</option>
+                      <option value="future">{t("laundryTimeFutureOnly")}</option>
+                      <option value="past">{t("laundryTimePastOnly")}</option>
                     </select>
                   </label>
 
                   <label className="block text-sm font-medium text-slate-700">
-                    Year
+                    {t("yearFilterLabel")}
                     <select
                       value={bookingYearFilter}
                       onChange={(event) => {
@@ -1119,7 +1174,7 @@ export function BookingsClient() {
                       }}
                       className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
                     >
-                      <option value="all">All years</option>
+                      <option value="all">{t("allYears")}</option>
                       {bookingYearOptions.map((option) => (
                         <option key={option} value={option}>
                           {option}
@@ -1129,7 +1184,7 @@ export function BookingsClient() {
                   </label>
 
                   <label className="block text-sm font-medium text-slate-700">
-                    Month
+                    {t("monthFilterLabel")}
                     <select
                       value={bookingMonthFilter}
                       onChange={(event) => {
@@ -1138,7 +1193,7 @@ export function BookingsClient() {
                       }}
                       className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
                     >
-                      <option value="all">All months</option>
+                      <option value="all">{t("allMonths")}</option>
                       {bookingMonthOptions.map((option) => (
                         <option key={option} value={option}>
                           {option}
@@ -1148,7 +1203,7 @@ export function BookingsClient() {
                   </label>
 
                   <label className="block text-sm font-medium text-slate-700">
-                    Date
+                    {t("laundryBookingsFilterDate")}
                     <select
                       value={bookingDayFilter}
                       onChange={(event) => {
@@ -1157,7 +1212,7 @@ export function BookingsClient() {
                       }}
                       className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
                     >
-                      <option value="all">All dates</option>
+                      <option value="all">{t("laundryAllDates")}</option>
                       {bookingDayOptions.map((option) => (
                         <option key={option} value={option}>
                           {option}
@@ -1167,7 +1222,7 @@ export function BookingsClient() {
                   </label>
 
                   <label className="block text-sm font-medium text-slate-700">
-                    Payment
+                    {t("laundryBookingsFilterPayment")}
                     <select
                       value={bookingPaymentFilter}
                       onChange={(event) => {
@@ -1178,16 +1233,16 @@ export function BookingsClient() {
                       }}
                       className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
                     >
-                      <option value="all">All payment types</option>
-                      <option value="FREE_LAUNDRY">Free laundry</option>
-                      <option value="COINS">Coins</option>
-                      <option value="CASH">Cash</option>
-                      <option value="OTHER">Other / Unknown</option>
+                      <option value="all">{t("laundryAllPaymentTypes")}</option>
+                      <option value="FREE_LAUNDRY">{t("laundryPaymentFilterFree")}</option>
+                      <option value="COINS">{t("laundryPaymentFilterCoins")}</option>
+                      <option value="CASH">{t("laundryPaymentFilterCash")}</option>
+                      <option value="OTHER">{t("laundryPaymentFilterOther")}</option>
                     </select>
                   </label>
 
                   <label className="block text-sm font-medium text-slate-700">
-                    Sort
+                    {t("laundryBookingsFilterSort")}
                     <select
                       value={bookingSortDirection}
                       onChange={(event) => {
@@ -1196,15 +1251,15 @@ export function BookingsClient() {
                       }}
                       className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
                     >
-                      <option value="desc">Latest first</option>
-                      <option value="asc">Oldest first</option>
+                      <option value="desc">{t("laundrySortLatestFirst")}</option>
+                      <option value="asc">{t("laundrySortOldestFirst")}</option>
                     </select>
                   </label>
                 </div>
               ) : null}
 
               {filteredBookings.length === 0 ? (
-                <p className="text-sm text-slate-600">No laundry bookings match the current filters.</p>
+                <p className="text-sm text-slate-600">{t("laundryNoMatchingBookings")}</p>
               ) : null}
 
               {visibleBookings.map((booking) => (
@@ -1216,7 +1271,8 @@ export function BookingsClient() {
                   </div>
                   <div className="mt-1 text-sm text-slate-600">Calendar: {booking.calendarSummary}</div>
                   <div className="mt-1 text-sm text-slate-600">
-                    Payment: {getBookingPaymentType(booking).replace("_", " ")}
+                    {t("laundrySummaryPayment")}{" "}
+                    {translateLaundryPaymentCode(getBookingPaymentType(booking), t)}
                   </div>
                   {booking.htmlLink ? (
                     <div className="mt-3 flex flex-wrap items-center gap-4">
