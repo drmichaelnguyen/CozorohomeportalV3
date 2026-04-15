@@ -127,6 +127,21 @@ function normalizeRank(value: string | null | undefined) {
   return (value ?? "").trim().toLowerCase();
 }
 
+/** Sheet may store `7` / `2`; live tier math only runs for D7 / D2 (same idea as API `normalizeClientBranch`). */
+export function normalizeMemberBranchId(value: string | null | undefined): "D2" | "D7" | "" {
+  const normalized = (value ?? "").trim().toUpperCase().replace(/\s+/g, "");
+  if (!normalized) {
+    return "";
+  }
+  if (normalized === "7" || normalized === "D7" || normalized.includes("D7") || normalized.includes("AD7")) {
+    return "D7";
+  }
+  if (normalized === "2" || normalized === "D2" || normalized.includes("D2") || normalized.includes("AD2")) {
+    return "D2";
+  }
+  return "";
+}
+
 function parseCoins(value: string | number | null | undefined) {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : 0;
@@ -240,7 +255,7 @@ export function buildCozoroMemberProgram(input: {
 }): CozoroMemberProgram {
   const recordedRank = (input.rankValue ?? "").trim() || "Silver";
   const normalizedRank = normalizeRank(recordedRank);
-  const branchId = (input.branchId ?? "").trim();
+  const branchId = normalizeMemberBranchId(input.branchId);
   const totalAccumulatedCoins = parseCoins(input.totalAccumulatedCoins);
   const previousMonthEarnings = parseCoins(input.previousMonthEarnings);
   const recordedTier = getRecordedTier(recordedRank);

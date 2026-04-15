@@ -9,7 +9,7 @@ import type {
   RentBreakdownPayload,
   RentPaidStatusPayload
 } from "../lib/rent-paid-status";
-import { formatBillingMonthLabel } from "../lib/rent-paid-status";
+import { formatBillingMonthLabel, prepaidAverageMonthlyAfterFeesVnd } from "../lib/rent-paid-status";
 import { usePortalLanguage } from "./portal-language";
 
 function BreakdownRows({
@@ -237,6 +237,15 @@ export function PrepaidPackageBreakdownRows({
         <span>{t("totalDue", "Total Due")}</span>
         <span className="text-slate-900 tabular-nums">{fmt(est.estimatedTotalVnd)} ₫</span>
       </div>
+      <div className="flex flex-col gap-1 rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2 text-sm text-slate-800">
+        <div className="flex items-center justify-between gap-3 font-semibold">
+          <span>{t("prepaidAverageMonthlyAfterFeesLabel")}</span>
+          <span className="tabular-nums text-slate-900">{fmt(prepaidAverageMonthlyAfterFeesVnd(est))} ₫</span>
+        </div>
+        <p className="text-xs font-normal leading-snug text-slate-600">
+          {t("prepaidAverageMonthlyAfterFeesHelp", undefined, { months: est.planMonths })}
+        </p>
+      </div>
       <p className="text-xs text-slate-600">{t("prepaidEstimateDisclaimer")}</p>
       {est.prepaidManagerConfirmed ? (
         <p className="text-xs text-slate-600">
@@ -409,6 +418,15 @@ export function NextPaymentSummary({
               <div className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">
                 {new Intl.NumberFormat("vi-VN").format(prepaidEst.estimatedTotalVnd)} ₫
               </div>
+              <p className="mt-1 text-sm font-medium text-slate-700">
+                {t("prepaidAverageMonthlyAfterFeesLabel")}:{" "}
+                <span className="tabular-nums text-slate-900">
+                  {new Intl.NumberFormat("vi-VN").format(prepaidAverageMonthlyAfterFeesVnd(prepaidEst))} ₫
+                </span>
+                <span className="block text-xs font-normal text-slate-600 sm:inline sm:ml-1">
+                  ({t("prepaidAverageMonthlyAfterFeesHelp", undefined, { months: prepaidEst.planMonths })})
+                </span>
+              </p>
               {prepaidEst.prepaidManagerConfirmed && prepaidEst.engineEstimatedTotalVnd != null ? (
                 <p className="mt-2 text-xs font-medium text-slate-800">
                   {language === "vi"

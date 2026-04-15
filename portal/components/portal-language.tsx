@@ -106,6 +106,14 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "This is an estimate for your next prepaid renewal; managers may adjust the final amount. Laundry uses cash usage from the month before the billing month shown.",
     vi: "Đây là ước tính cho kỳ gia hạn gói trả trước; quản lý có thể điều chỉnh số cuối. Phí giặt dựa trên lượt tiền mặt của tháng trước tháng hóa đơn hiển thị."
   },
+  prepaidAverageMonthlyAfterFeesLabel: {
+    en: "Average per plan month (after discounts & fees)",
+    vi: "Trung bình mỗi tháng trong gói (sau giảm giá và các phí)"
+  },
+  prepaidAverageMonthlyAfterFeesHelp: {
+    en: "Total due ÷ {months} months on your prepaid plan.",
+    vi: "Tổng phải trả chia cho {months} tháng của gói trả trước."
+  },
   prepaidMidCyclePayables: {
     en: "Other amounts due now (fines, cash laundry, gate): {amount} ₫ — included in the total above.",
     vi: "Các khoản phải trả ngay (phạt, giặt tiền mặt, gửi xe cổng): {amount} ₫ — đã gồm trong tổng phía trên."

@@ -29,6 +29,8 @@ type LaundryAllowanceSummary = {
   gender: string;
   floor: number | null;
   recordedMember: string;
+  /** Live tier for washer/dryer bonus; older APIs omit — fall back to recorded. */
+  calculatedMemberTierForLaundry?: string;
   baseFreeUsesPerMonth: number;
   couponFreeUsesPerMonth: number;
   bonusWasherUsesPerMonth: number;
@@ -850,7 +852,14 @@ export function BookingsClient() {
                       <>
                         <div className="pt-1 font-medium text-slate-900">{language === "vi" ? "Ưu đãi giặt miễn phí hằng tháng" : "Monthly Free Laundry"}</div>
                         <div>
-                          {language === "vi" ? "Hạng thành viên" : "Recorded member"}: <span className="font-medium">{allowance.recordedMember}</span>
+                          {language === "vi" ? "Hạng thành viên (sheet)" : "Recorded member"}:{" "}
+                          <span className="font-medium">{allowance.recordedMember}</span>
+                        </div>
+                        <div className="text-xs text-slate-600">
+                          {language === "vi" ? "Hạng dùng cho ưu đãi giặt (tính toán)" : "Calculated tier (laundry bonus)"}:{" "}
+                          <span className="font-medium text-slate-800">
+                            {allowance.calculatedMemberTierForLaundry ?? allowance.recordedMember}
+                          </span>
                         </div>
                         <div>
                           {language === "vi" ? "Lượt miễn phí cơ bản" : "Base free uses"}: <span className="font-medium">{allowance.baseFreeUsesPerMonth}</span>
