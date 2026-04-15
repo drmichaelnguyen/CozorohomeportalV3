@@ -230,6 +230,23 @@ const translations: Record<string, { en: string; vi: string }> = {
   laundrySuffixRecommended: { en: " (Recommended)", vi: " (Gợi ý)" },
   laundrySuffixUnavailable: { en: " (Unavailable)", vi: " (Không khả dụng)" },
   laundrySelectMachineFirst: { en: "Select a machine first", vi: "Chọn máy trước" },
+  laundryMaintenanceUserNotice: {
+    en: "This machine is offline for maintenance. Online booking is temporarily unavailable — please choose another machine or ask staff.",
+    vi: "Máy này đang bảo trì, tạm không đặt lịch trực tuyến — vui lòng chọn máy khác hoặc hỏi nhân viên."
+  },
+  laundryMaintenanceBadge: { en: "maintenance", vi: "bảo trì" },
+  laundryMaintenanceConfirmOffline: {
+    en: "Mark this machine offline for maintenance? Residents will not be able to book it online.",
+    vi: "Đánh dấu máy này đang bảo trì? Cư dân sẽ không thể đặt lịch trực tuyến."
+  },
+  laundryMaintenanceConfirmOnline: {
+    en: "Bring this machine back online for bookings?",
+    vi: "Mở lại máy này để cư dân có thể đặt lịch?"
+  },
+  laundryMaintenanceMarkedOffline: { en: "Marked offline for maintenance.", vi: "Đã đánh dấu đang bảo trì." },
+  laundryMaintenanceMarkedOnline: { en: "Machine is online for bookings again.", vi: "Đã mở lại đặt lịch trực tuyến." },
+  laundryMaintenanceMarkOffline: { en: "Mark maintenance", vi: "Đánh dấu bảo trì" },
+  laundryMaintenanceMarkOnline: { en: "End maintenance", vi: "Hết bảo trì" },
   laundryPaymentCodeFreeLaundry: { en: "Free laundry", vi: "Giặt miễn phí" },
   laundryPaymentCodeCoins: { en: "Coins", vi: "Coin" },
   laundryPaymentCodeCash: { en: "Cash", vi: "Tiền mặt" },

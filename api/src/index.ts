@@ -98,6 +98,7 @@ import {
   deleteFineSheetEntry,
   updateLaundryBookingEntry,
   updateLaundryMachineSettings,
+  setLaundryMachineMaintenanceMode,
   updatePaymentSheetEntry,
   deletePaymentSheetEntry,
   readCachedMaintenance,
@@ -802,6 +803,12 @@ const laundryMachineSettingsUpdateSchema = z.object({
   machineId: z.string().min(1),
   durationMinutes: z.coerce.number().int().min(10).max(24 * 60),
   cooldownMinutes: z.coerce.number().int().min(0).max(24 * 60)
+});
+
+const laundryMachineMaintenanceSchema = z.object({
+  actorEmail: z.string().email(),
+  machineId: z.string().min(1),
+  offlineForMaintenance: z.boolean()
 });
 
 const clientUpdateSchema = z.object({
@@ -1643,8 +1650,21 @@ app.get("/controller/ac/rooms", async (_request, response) => {
 
 app.get("/manager/controller/devices", async (_request, response) => {
   try {
-    const devices = await listAllDevices();
-    return response.json(devices);
+    const [devices, laundryConfigured] = await Promise.all([listAllDevices(), getConfiguredLaundryMachines()]);
+    const mapById = new Map(laundryConfigured.map((m) => [m.id, m]));
+    const laundry = (devices.laundry as Array<Record<string, unknown>>).map((entry) => {
+      const id = String(entry.id ?? "");
+      const cfg = mapById.get(id);
+      return {
+        ...entry,
+        offlineForMaintenance: cfg?.offlineForMaintenance ?? false,
+        durationMinutes: cfg?.durationMinutes ?? entry.durationMinutes,
+        cooldownMinutes: cfg?.cooldownMinutes ?? entry.cooldownMinutes,
+        updatedAt: cfg?.updatedAt ?? entry.updatedAt,
+        updatedBy: cfg?.updatedBy ?? entry.updatedBy
+      };
+    });
+    return response.json({ ...devices, laundry });
   } catch (error) {
     return response.status(500).json({
       error: error instanceof Error ? error.message : "Unable to list devices"
@@ -1687,6 +1707,7 @@ app.get("/manager/laundry/schedule", async (_request, response) => {
         type: machine?.type ?? null,
         durationMinutes: machine?.durationMinutes ?? null,
         cooldownMinutes: machine?.cooldownMinutes ?? 0,
+        offlineForMaintenance: machine?.offlineForMaintenance ?? false,
         updatedAt: machine?.updatedAt ?? null,
         updatedBy: machine?.updatedBy ?? null,
         previous,
@@ -1768,6 +1789,27 @@ app.post("/manager/laundry/machines/settings", async (request, response) => {
   } catch (error) {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to update laundry machine settings"
+    });
+  }
+});
+
+app.post("/manager/laundry/machines/maintenance", async (request, response) => {
+  const parsed = laundryMachineMaintenanceSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid laundry maintenance payload" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only Cozoro team members can change laundry machine maintenance mode."
+    );
+    const machine = await setLaundryMachineMaintenanceMode(parsed.data);
+    return response.json({ machine });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to update laundry maintenance mode"
     });
   }
 });

@@ -17,7 +17,16 @@ type LaundryMachine = {
   cooldownMinutes: number;
   coinPrice: number;
   allowsFreeLaundry: boolean;
+  offlineForMaintenance?: boolean;
 };
+
+function firstBookableMachineId(machineList: LaundryMachine[]) {
+  const online = machineList.find((m) => !m.offlineForMaintenance);
+  if (online) {
+    return online.id;
+  }
+  return machineList[0]?.id ?? "";
+}
 
 type LaundryAvailabilityDay = {
   date: string;
@@ -466,9 +475,23 @@ export function BookingsClient() {
     setBookings(result.bookings ?? []);
   }
 
-  async function loadAvailability(machineId: string, emailValue?: string, shouldRefresh = false) {
+  async function loadAvailability(
+    machineId: string,
+    emailValue?: string,
+    shouldRefresh = false,
+    machineList?: LaundryMachine[]
+  ) {
     const trimmedEmail = (emailValue ?? activeEmail).trim();
     if (!trimmedEmail || !machineId) {
+      setAvailability([]);
+      setSelectedDate("");
+      setSelectedStart("");
+      return;
+    }
+
+    const list = machineList ?? machines;
+    const machineMeta = list.find((m) => m.id === machineId);
+    if (machineMeta?.offlineForMaintenance) {
       setAvailability([]);
       setSelectedDate("");
       setSelectedStart("");
@@ -513,9 +536,10 @@ export function BookingsClient() {
       setCoins(machineResult.coins ?? "");
       setTimeZone(machineResult.timeZone || "Asia/Ho_Chi_Minh");
       setAllowance(machineResult.allowance ?? null);
-      setMachines(machineResult.machines ?? []);
+      const machineList = machineResult.machines ?? [];
+      setMachines(machineList);
       login(trimmedEmail);
-      const nextMachineId = machineResult.machines[0]?.id ?? "";
+      const nextMachineId = firstBookableMachineId(machineList);
       setSelectedMachineId(nextMachineId);
       setShowAllBookings(false);
       setBookingCalendarFilter("all");
@@ -527,7 +551,7 @@ export function BookingsClient() {
       setBookingSortDirection("desc");
       const [bookingsResult, availabilityResult, clientResult, overrideResult] = await Promise.allSettled([
         loadBookings(trimmedEmail),
-        nextMachineId ? loadAvailability(nextMachineId, trimmedEmail, true) : Promise.resolve(),
+        nextMachineId ? loadAvailability(nextMachineId, trimmedEmail, true, machineList) : Promise.resolve(),
         fetchJson<Record<string, string>>(`${API_BASE_URL}/clients?email=${encodeURIComponent(trimmedEmail)}`),
         fetchJson<{ override?: AccountLockOverride | null }>(`${API_BASE_URL}/account-lock-override?email=${encodeURIComponent(trimmedEmail)}`)
       ]);
@@ -647,6 +671,11 @@ export function BookingsClient() {
   async function createBooking() {
     if (!selectedMachineId || !selectedStart || !activeEmail.trim()) {
       setMessage("Choose a machine and an available time.");
+      return;
+    }
+
+    if (selectedMachine?.offlineForMaintenance) {
+      setMessage(t("laundryMaintenanceUserNotice"));
       return;
     }
 
@@ -805,7 +834,9 @@ export function BookingsClient() {
               <button
                 type="button"
                 onClick={() => void refreshAvailabilityNow()}
-                disabled={refreshingAvailability || !selectedMachineId}
+                disabled={
+                  refreshingAvailability || !selectedMachineId || Boolean(selectedMachine?.offlineForMaintenance)
+                }
                 className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-60 sm:w-auto"
               >
                 {refreshingAvailability ? (language === "vi" ? "Đang làm mới..." : "Refreshing...") : (language === "vi" ? "Làm mới lịch trống" : "Refresh availability")}
@@ -915,6 +946,11 @@ export function BookingsClient() {
 
             <label className="block text-sm font-medium text-slate-700">
               {language === "vi" ? "Máy" : "Machine"}
+              {selectedMachine?.offlineForMaintenance ? (
+                <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-normal text-amber-950">
+                  {t("laundryMaintenanceUserNotice")}
+                </div>
+              ) : null}
               <select
                 value={selectedMachineId}
                 onChange={(event) => setSelectedMachineId(event.target.value)}
@@ -923,8 +959,9 @@ export function BookingsClient() {
               >
                 {machines.length === 0 ? <option value="">{language === "vi" ? "Không có máy" : "No machines available"}</option> : null}
                 {machines.map((machine) => (
-                  <option key={machine.id} value={machine.id}>
+                  <option key={machine.id} value={machine.id} disabled={Boolean(machine.offlineForMaintenance)}>
                     {machine.label} ({formatDuration(machine.durationMinutes)})
+                    {machine.offlineForMaintenance ? ` — ${t("laundryMaintenanceBadge")}` : ""}
                   </option>
                 ))}
               </select>
@@ -935,7 +972,7 @@ export function BookingsClient() {
               <select
                 value={selectedDate}
                 onChange={(event) => setSelectedDate(event.target.value)}
-                disabled={!selectedMachineId || availability.length === 0}
+                disabled={!selectedMachineId || availability.length === 0 || Boolean(selectedMachine?.offlineForMaintenance)}
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
               >
                 {availability.length === 0 ? <option value="">No dates loaded</option> : null}
@@ -953,7 +990,11 @@ export function BookingsClient() {
               <select
                 value={selectedStart}
                 onChange={(event) => setSelectedStart(event.target.value)}
-                disabled={!selectedDayAvailability || selectedDayAvailability.slots.length === 0}
+                disabled={
+                  !selectedDayAvailability ||
+                  selectedDayAvailability.slots.length === 0 ||
+                  Boolean(selectedMachine?.offlineForMaintenance)
+                }
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
               >
                 {!selectedDayAvailability || selectedDayAvailability.slots.length === 0 ? (
@@ -986,7 +1027,7 @@ export function BookingsClient() {
                 onChange={(event) =>
                   setSelectedPaymentMethod(event.target.value as "FREE_LAUNDRY" | "COINS" | "CASH" | "")
                 }
-                disabled={!selectedMachine}
+                disabled={!selectedMachine || Boolean(selectedMachine.offlineForMaintenance)}
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
               >
                 {!selectedMachine ? <option value="">{t("laundrySelectMachineFirst")}</option> : null}
@@ -1082,7 +1123,8 @@ export function BookingsClient() {
                 !selectedStart ||
                 isPastSlot(selectedStart) ||
                 !acceptedLoadWarning ||
-                !acceptedBasketWarning
+                !acceptedBasketWarning ||
+                Boolean(selectedMachine?.offlineForMaintenance)
               }
               className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
             >
@@ -1102,10 +1144,20 @@ export function BookingsClient() {
               {machines.length === 0 ? <p className="text-sm text-slate-600">Load your email to see your branch machines.</p> : null}
               {machines.map((machine) => (
                 <div key={machine.id} className="rounded-xl border border-slate-200 p-4">
-                  <div className="font-medium text-slate-900">{machine.label}</div>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-medium text-slate-900">{machine.label}</div>
+                    {machine.offlineForMaintenance ? (
+                      <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">
+                        {t("laundryMaintenanceBadge")}
+                      </span>
+                    ) : null}
+                  </div>
                   <div className="mt-1 text-sm text-slate-600">
                       {machine.branchId} | {machine.type} | {formatDuration(machine.durationMinutes)} cycle | {formatDuration(machine.cooldownMinutes)} cooldown
                   </div>
+                  {machine.offlineForMaintenance ? (
+                    <p className="mt-2 text-xs text-amber-900">{t("laundryMaintenanceUserNotice")}</p>
+                  ) : null}
                 </div>
               ))}
             </div>

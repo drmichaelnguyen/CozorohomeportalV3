@@ -1454,6 +1454,8 @@ type LaundryMachineSettingsEntry = {
   machineId: string;
   durationMinutes: number;
   cooldownMinutes: number;
+  /** When true, residents cannot book this machine online (manager physical trigger still allowed). */
+  offlineForMaintenance?: boolean;
   updatedAt: string;
   updatedBy?: string | null;
 };
@@ -1468,6 +1470,7 @@ export type LaundryMachine = {
   coinPrice: number;
   allowsFreeLaundry: boolean;
   cooldownMinutes: number;
+  offlineForMaintenance: boolean;
   updatedAt?: string;
   updatedBy?: string | null;
 };
@@ -1640,6 +1643,7 @@ function mergeLaundryMachineSettings(
     coinPrice: machine.coinPrice,
     allowsFreeLaundry: machine.allowsFreeLaundry,
     cooldownMinutes: setting?.cooldownMinutes ?? machine.defaultCooldownMinutes,
+    offlineForMaintenance: Boolean(setting?.offlineForMaintenance),
     ...(setting?.updatedAt ? { updatedAt: setting.updatedAt } : {}),
     ...(setting?.updatedBy ? { updatedBy: setting.updatedBy } : {})
   };
@@ -1678,11 +1682,42 @@ export async function updateLaundryMachineSettings(input: {
   const normalizedDuration = Math.max(10, Math.round(input.durationMinutes));
   const normalizedCooldown = Math.max(0, Math.round(input.cooldownMinutes));
   const settings = await readLaundryMachineSettings();
+  const prior = settings.find((entry) => entry.machineId === input.machineId);
   const nextSettings = settings.filter((entry) => entry.machineId !== input.machineId);
   nextSettings.push({
     machineId: input.machineId,
     durationMinutes: normalizedDuration,
     cooldownMinutes: normalizedCooldown,
+    offlineForMaintenance: prior?.offlineForMaintenance ?? false,
+    updatedAt: new Date().toISOString(),
+    updatedBy: input.actorEmail.trim().toLowerCase()
+  });
+  await writeLaundryMachineSettings(nextSettings);
+
+  const settingsMap = new Map(nextSettings.map((entry) => [entry.machineId, entry]));
+  return mergeLaundryMachineSettings(machine, settingsMap);
+}
+
+export async function setLaundryMachineMaintenanceMode(input: {
+  actorEmail: string;
+  machineId: string;
+  offlineForMaintenance: boolean;
+}) {
+  const machine = getLaundryMachineById(input.machineId);
+  if (!machine) {
+    throw new Error("Laundry machine not found.");
+  }
+
+  const settings = await readLaundryMachineSettings();
+  const prior = settings.find((entry) => entry.machineId === input.machineId);
+  const durationMinutes = prior?.durationMinutes ?? machine.durationMinutes;
+  const cooldownMinutes = prior?.cooldownMinutes ?? machine.defaultCooldownMinutes;
+  const nextSettings = settings.filter((entry) => entry.machineId !== input.machineId);
+  nextSettings.push({
+    machineId: input.machineId,
+    durationMinutes,
+    cooldownMinutes,
+    offlineForMaintenance: input.offlineForMaintenance,
     updatedAt: new Date().toISOString(),
     updatedBy: input.actorEmail.trim().toLowerCase()
   });
@@ -2005,6 +2040,11 @@ export async function createLaundryBooking(input: {
   const machine = await getLaundryMachineByIdWithSettings(input.machineId);
   if (!machine || machine.branchId !== context.branchId) {
     throw new Error("This machine is not available for your branch");
+  }
+  if (machine.offlineForMaintenance) {
+    throw new Error(
+      "This machine is offline for maintenance. Online booking is temporarily disabled — please try another machine or ask staff."
+    );
   }
 
   const start = new Date(input.start);
@@ -2379,6 +2419,10 @@ export async function getLaundryAvailabilityForMachine(input: {
   const machine = await getLaundryMachineByIdWithSettings(input.machineId);
   if (!machine || machine.branchId !== context.branchId) {
     throw new Error("This machine is not available for your branch");
+  }
+
+  if (machine.offlineForMaintenance) {
+    return { machine, availability: [] as LaundryAvailabilityDay[], offlineForMaintenance: true as const };
   }
 
   const totalDays = Math.min(Math.max(input.days ?? 7, 1), 7);

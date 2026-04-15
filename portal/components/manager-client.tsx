@@ -2778,6 +2778,54 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }
   };
 
+  const handleLaundryMaintenanceToggle = async (machine: { id: string; offlineForMaintenance?: boolean }) => {
+    const maintKey = `laundry-maint:${machine.id}`;
+    const nextOffline = !machine.offlineForMaintenance;
+    if (
+      !window.confirm(
+        nextOffline ? t("laundryMaintenanceConfirmOffline") : t("laundryMaintenanceConfirmOnline")
+      )
+    ) {
+      return;
+    }
+    setControllerActionPending((current) => ({ ...current, [maintKey]: "TOGGLE" }));
+    try {
+      const response = await fetch(`${API_BASE_URL}/manager/laundry/machines/maintenance`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actorEmail: normalizedEmail,
+          machineId: machine.id,
+          offlineForMaintenance: nextOffline
+        })
+      });
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        setControllerFeedback(maintKey, {
+          tone: "error",
+          message: data.error || t("requestFailed")
+        });
+        return;
+      }
+      setControllerFeedback(maintKey, {
+        tone: "success",
+        message: nextOffline ? t("laundryMaintenanceMarkedOffline") : t("laundryMaintenanceMarkedOnline")
+      });
+      await fetchDevices();
+    } catch {
+      setControllerFeedback(maintKey, {
+        tone: "error",
+        message: t("requestFailed")
+      });
+    } finally {
+      setControllerActionPending((current) => {
+        const next = { ...current };
+        delete next[maintKey];
+        return next;
+      });
+    }
+  };
+
   useEffect(() => {
     if (activeManagerView === "controller") {
       void fetchDevices();
@@ -8779,21 +8827,56 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                         <div className="px-4 pb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                                           {branchLaundry.map((machine) => {
                                             const actionKey = `laundry:${machine.id}`;
+                                            const maintKey = `laundry-maint:${machine.id}`;
                                             const pendingAction = controllerActionPending[actionKey];
+                                            const pendingMaint = controllerActionPending[maintKey];
                                             const feedback = controllerActionFeedback[actionKey];
+                                            const feedbackMaint = controllerActionFeedback[maintKey];
+                                            const offline = Boolean(machine.offlineForMaintenance);
                                             return (
                                               <div key={machine.id} className="rounded-xl border border-sky-100 bg-sky-50/30 p-3">
-                                                <div className="text-sm font-bold text-sky-900">{machine.label}</div>
-                                                <button
-                                                  onClick={() => handleMachineTrigger(machine.id, "laundry")}
-                                                  disabled={Boolean(pendingAction)}
-                                                  className="mt-3 w-full rounded-lg bg-sky-600 py-2 text-xs font-black text-white hover:bg-sky-700 active:scale-95 transition-all disabled:cursor-not-allowed disabled:opacity-60"
-                                                >
-                                                  {pendingAction ? t("triggering") : t("trigger")}
-                                                </button>
+                                                <div className="flex items-start justify-between gap-2">
+                                                  <div className="text-sm font-bold text-sky-900">{machine.label}</div>
+                                                  {offline ? (
+                                                    <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-900">
+                                                      {t("laundryMaintenanceBadge")}
+                                                    </span>
+                                                  ) : null}
+                                                </div>
+                                                <div className="mt-3 flex flex-col gap-2">
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => handleMachineTrigger(machine.id, "laundry")}
+                                                    disabled={Boolean(pendingAction || pendingMaint)}
+                                                    className="w-full rounded-lg bg-sky-600 py-2 text-xs font-black text-white hover:bg-sky-700 active:scale-95 transition-all disabled:cursor-not-allowed disabled:opacity-60"
+                                                  >
+                                                    {pendingAction ? t("triggering") : t("trigger")}
+                                                  </button>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => void handleLaundryMaintenanceToggle(machine)}
+                                                    disabled={Boolean(pendingAction || pendingMaint)}
+                                                    className={`w-full rounded-lg border-2 py-2 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-60 ${
+                                                      offline
+                                                        ? "border-emerald-600 bg-white text-emerald-800 hover:bg-emerald-50"
+                                                        : "border-amber-600 bg-white text-amber-900 hover:bg-amber-50"
+                                                    }`}
+                                                  >
+                                                    {pendingMaint
+                                                      ? "…"
+                                                      : offline
+                                                        ? t("laundryMaintenanceMarkOnline")
+                                                        : t("laundryMaintenanceMarkOffline")}
+                                                  </button>
+                                                </div>
                                                 {feedback ? (
                                                   <div className={`mt-2 text-xs font-medium ${feedback.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}>
                                                     {feedback.message}
+                                                  </div>
+                                                ) : null}
+                                                {feedbackMaint ? (
+                                                  <div className={`mt-2 text-xs font-medium ${feedbackMaint.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}>
+                                                    {feedbackMaint.message}
                                                   </div>
                                                 ) : null}
                                               </div>
