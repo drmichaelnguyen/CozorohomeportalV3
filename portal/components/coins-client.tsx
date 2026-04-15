@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
+import { formatResidentCoinsOperatorLabel } from "../lib/resident-coin-operator";
 import {
   buildCozoroMemberProgram,
   COZORO_MEMBER_DIAMOND_EXAMPLE_KEYS,
@@ -649,7 +650,9 @@ export function CoinsClient() {
                           >
                             {entry.row[COINS_COLUMN] || "-"}
                           </td>
-                          <td className="px-4 py-3">{entry.row["Người thao tác"] || "-"}</td>
+                          <td className="px-4 py-3">
+                            {formatResidentCoinsOperatorLabel(entry.row["Người thao tác"], activeEmail, language)}
+                          </td>
                           <td className="px-4 py-3">{entry.row["Cozoro Member"] || "-"}</td>
                           <td className="px-4 py-3 break-all">{entry.row[EMAIL_COLUMN] || "-"}</td>
                         </tr>
