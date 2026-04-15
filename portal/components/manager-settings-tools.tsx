@@ -22,7 +22,8 @@ const TASK_KEYS = ["KITCHEN_D2", "KITCHEN_D7", "TRASH_D7"] as const;
 type Props = {
   normalizedEmail: string;
   clients: ManagerSettingsToolsClient[];
-  t: (key: string, fallback?: string, params?: Record<string, string | number>) => string;
+  /** Matches `usePortalLanguage().t` — second arg may be params when omitting fallback. */
+  t: (key: string, fallback?: string | Record<string, unknown>, params?: Record<string, string | number>) => string;
   onRefreshClients: () => Promise<void>;
 };
 
@@ -227,7 +228,7 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
       if (!res.ok) {
         throw new Error(data.error ?? "Bulk push failed");
       }
-      setPushMessage(t("toolsPushSentTo", { n: data.attempted ?? emails.length }));
+      setPushMessage(t("toolsPushSentTo", undefined, { n: data.attempted ?? emails.length }));
     } catch (e) {
       setPushMessage(e instanceof Error ? e.message : "Bulk push failed");
     } finally {
@@ -321,7 +322,7 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
             {t("toolsClearSelection")}
           </button>
         </div>
-        <p className="mt-2 text-xs text-slate-500">{t("toolsSelectedCount", { n: selectedMaHds.length })}</p>
+        <p className="mt-2 text-xs text-slate-500">{t("toolsSelectedCount", undefined, { n: selectedMaHds.length })}</p>
 
         <div className="mt-3 max-h-56 overflow-auto rounded-xl border border-slate-200 bg-slate-50">
           {filteredClients.length === 0 ? (
@@ -383,7 +384,7 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h3 className="text-lg font-semibold text-slate-900">{t("toolsBulkPushTitle")}</h3>
         <p className="mt-1 text-sm text-slate-600">{t("toolsBulkPushDesc")}</p>
-        <p className="mt-2 text-xs text-slate-500">{t("toolsSelectedCount", { n: selectedMaHds.length })}</p>
+        <p className="mt-2 text-xs text-slate-500">{t("toolsSelectedCount", undefined, { n: selectedMaHds.length })}</p>
         <div className="mt-3 space-y-3">
           <label className="block text-sm">
             <span className="font-medium text-slate-700">{t("toolsPushTitle")}</span>
