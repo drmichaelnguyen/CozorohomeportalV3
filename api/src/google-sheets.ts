@@ -4160,7 +4160,7 @@ export async function uploadFineImageToDrive(input: {
   base64Data: string;
 }) {
   const drive = await getAuthorizedDriveClient();
-  let buffer = Buffer.from(input.base64Data, "base64");
+  let buffer: Buffer<ArrayBufferLike> = Buffer.from(input.base64Data, "base64");
 
   if (!buffer.length) {
     throw new Error("The uploaded file is empty.");

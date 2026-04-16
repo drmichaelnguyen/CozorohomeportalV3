@@ -209,11 +209,13 @@ export async function updateResidentGuide(
     contentType: input.contentType ? toPrismaContentType(input.contentType) : undefined,
     updatedBy: input.actorEmail.trim().toLowerCase()
   };
+  const stepsForPrisma =
+    nextStepsJson === Prisma.JsonNull ? Prisma.JsonNull : (nextStepsJson as Prisma.InputJsonValue);
   if (input.videoUrl !== undefined || input.contentType === "steps" || input.contentType === "video") {
     data.videoUrl = nextVideo;
   }
   if (input.steps || input.contentType === "steps" || input.contentType === "video") {
-    data.stepsJson = nextStepsJson === Prisma.JsonNull ? Prisma.JsonNull : nextStepsJson;
+    data.stepsJson = stepsForPrisma;
   }
 
   const row = await prisma.residentGuideSection.update({
