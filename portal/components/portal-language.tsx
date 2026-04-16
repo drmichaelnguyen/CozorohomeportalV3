@@ -1056,8 +1056,8 @@ const translations: Record<string, { en: string; vi: string }> = {
   toolsSaveCleaningRewards: { en: "Save cleaning rewards", vi: "Lưu thưởng vệ sinh" },
   toolsFridgeDrainTitle: { en: "Fridge drain & clean (shared fridges)", vi: "Xả / vệ sinh tủ lạnh (tủ chung)" },
   toolsFridgeDrainDesc: {
-    en: "Set the next cleaning day per branch. The portal writes two Google Calendar events with fixed titles for IFTTT: power off the previous day at 17:00, power back on the cleaning morning. Residents get reminders 5, 3, and 1 day before.",
-    vi: "Chọn ngày vệ sinh tiếp theo cho từng chi nhánh. Hệ thống ghi hai sự kiện Google Calendar với tiêu đề cố định cho IFTTT: tắt ngày hôm trước lúc 17:00, bật lại vào sáng ngày vệ sinh. Cư dân nhận nhắc trước 5, 3 và 1 ngày."
+    en: "Set the next cleaning day per branch and the local times for power off (day before) and power on (cleaning day). Defaults are 17:00 for both. The portal writes two Google Calendar events with fixed titles for IFTTT. Residents get reminders 5, 3, and 1 day before.",
+    vi: "Chọn ngày vệ sinh tiếp theo và giờ tắt (ngày hôm trước) / bật lại (ngày vệ sinh) theo giờ địa phương. Mặc định 17:00 cho cả hai. Hệ thống ghi hai sự kiện Google Calendar với tiêu đề cố định cho IFTTT. Cư dân nhận nhắc trước 5, 3 và 1 ngày."
   },
   toolsFridgeDrainIftttNote: {
     en: "Do not change event titles in Google Calendar — IFTTT matches the exact Vietnamese keywords.",
@@ -1065,9 +1065,17 @@ const translations: Record<string, { en: string; vi: string }> = {
   },
   toolsFridgeDrainBranch: { en: "Branch", vi: "Chi nhánh" },
   toolsFridgeDrainCleaningDay: { en: "Cleaning day (fridges back ON)", vi: "Ngày vệ sinh (bật tủ lại)" },
+  toolsFridgeDrainOffTime: {
+    en: "Power-off time (day before cleaning)",
+    vi: "Giờ tắt tủ (ngày trước ngày vệ sinh)"
+  },
+  toolsFridgeDrainOnTime: {
+    en: "Power-on time (cleaning day)",
+    vi: "Giờ bật lại (ngày vệ sinh)"
+  },
   toolsFridgeDrainOffNote: {
-    en: "Power-off is scheduled automatically the day before at 17:00 (Asia/Ho_Chi_Minh).",
-    vi: "Tắt tủ được đặt tự động vào ngày hôm trước lúc 17:00 (Asia/Ho_Chi_Minh)."
+    en: "Times use Asia/Ho_Chi_Minh. They are written to Google Calendar for IFTTT keywords.",
+    vi: "Giờ theo Asia/Ho_Chi_Minh, được ghi vào Google Calendar cho từ khóa IFTTT."
   },
   toolsFridgeDrainSave: { en: "Save to calendar", vi: "Lưu vào lịch" },
   toolsFridgeDrainLoadError: { en: "Could not load fridge schedule.", vi: "Không tải được lịch tủ lạnh." },

@@ -2,6 +2,13 @@ import { COZORO_TIMEZONE, getAuthorizedCalendarClient } from "./google-sheets.js
 
 export type FridgeDrainBranchId = "D2" | "D7";
 
+/** VN local times used when creating calendar events (defaults). */
+export const DEFAULT_FRIDGE_OFF_TIME = "17:00";
+export const DEFAULT_FRIDGE_ON_TIME = "17:00";
+
+const DEFAULT_OFF_HM = { hh: 17, mm: 0 };
+const DEFAULT_ON_HM = { hh: 17, mm: 0 };
+
 const FRIDGE_OFF_SUMMARY: Record<FridgeDrainBranchId, string> = {
   D2: "D2 xả tủ lạnh OFFD2",
   D7: "D7 xả tủ lạnh OFF D7"
@@ -67,6 +74,44 @@ function atVnLocal(y: number, m: number, d: number, hh: number, mm: number) {
   );
 }
 
+export function vnFormatHm(d: Date): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: COZORO_TIMEZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(d);
+  const hour = parts.find((p) => p.type === "hour")?.value ?? "00";
+  const minute = parts.find((p) => p.type === "minute")?.value ?? "00";
+  return `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
+}
+
+export function parseFridgeHm(
+  value: unknown,
+  fallback: { hh: number; mm: number }
+): { hh: number; mm: number } {
+  if (value == null) {
+    return fallback;
+  }
+  if (typeof value !== "string") {
+    throw new Error("offTime and onTime must be HH:mm strings (Asia/Ho_Chi_Minh).");
+  }
+  const t = value.trim();
+  if (t === "") {
+    return fallback;
+  }
+  const m = t.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) {
+    throw new Error("offTime and onTime must be HH:mm (e.g. 17:00).");
+  }
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+    throw new Error("Invalid fridge schedule time.");
+  }
+  return { hh, mm };
+}
+
 export function getFridgeDrainCalendarId(branchId: FridgeDrainBranchId): string | null {
   return calendarIdByBranch[branchId] ?? null;
 }
@@ -105,6 +150,60 @@ async function listFutureFridgeEvents(calendarId: string, branchId: FridgeDrainB
   });
 }
 
+export type FridgeDrainNextPair = {
+  offAt: Date;
+  onAt: Date;
+  cleaningDateYmd: string;
+};
+
+/** Next OFF/ON pair from Google Calendar (actual event start times). */
+export async function loadNextFridgeDrainPair(branchId: FridgeDrainBranchId): Promise<FridgeDrainNextPair | null> {
+  const calendarId = getFridgeDrainCalendarId(branchId);
+  if (!calendarId) {
+    return null;
+  }
+
+  const events = await listFutureFridgeEvents(calendarId, branchId);
+  const onSummary = FRIDGE_ON_SUMMARY[branchId];
+  const offSummary = FRIDGE_OFF_SUMMARY[branchId];
+
+  const onEvents = events
+    .filter((ev) => (ev.summary ?? "").trim() === onSummary)
+    .map((ev) => ({ ev, start: eventStartDate(ev) }))
+    .filter((x): x is { ev: (typeof events)[number]; start: Date } => x.start !== null)
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  const now = new Date();
+  const nextOn = onEvents.find((x) => x.start.getTime() >= now.getTime() - 6 * 60 * 60 * 1000);
+  if (!nextOn) {
+    return null;
+  }
+
+  const onAt = nextOn.start;
+  const cleaningDateYmd = vnDateKeyForDate(onAt);
+  const ymd = cleaningDateYmd.split("-").map(Number);
+  const [y, m, d] = ymd;
+  if (!y || !m || !d) {
+    return null;
+  }
+
+  const offParts = ymdAddDays(y, m, d, -1);
+  const offDateKey = `${offParts.y}-${String(offParts.m).padStart(2, "0")}-${String(offParts.d).padStart(2, "0")}`;
+
+  const offCandidates = events
+    .filter((ev) => (ev.summary ?? "").trim() === offSummary)
+    .map((ev) => ({ ev, start: eventStartDate(ev) }))
+    .filter((x): x is { ev: (typeof events)[number]; start: Date } => x.start !== null);
+
+  const offEv = offCandidates.find((x) => vnDateKeyForDate(x.start) === offDateKey);
+
+  const offAt = offEv
+    ? offEv.start
+    : atVnLocal(offParts.y, offParts.m, offParts.d, DEFAULT_OFF_HM.hh, DEFAULT_OFF_HM.mm);
+
+  return { offAt, onAt, cleaningDateYmd };
+}
+
 export async function getNextFridgeDrainCleaningOn(branchId: FridgeDrainBranchId): Promise<Date | null> {
   const calendarId = getFridgeDrainCalendarId(branchId);
   if (!calendarId) {
@@ -117,17 +216,8 @@ export async function getNextFridgeDrainCleaningOn(branchId: FridgeDrainBranchId
   }
 
   try {
-    const events = await listFutureFridgeEvents(calendarId, branchId);
-    const onSummary = FRIDGE_ON_SUMMARY[branchId];
-    const onEvents = events
-      .filter((ev) => (ev.summary ?? "").trim() === onSummary)
-      .map((ev) => ({ ev, start: eventStartDate(ev) }))
-      .filter((x): x is { ev: (typeof events)[number]; start: Date } => x.start !== null)
-      .sort((a, b) => a.start.getTime() - b.start.getTime());
-
-    const now = new Date();
-    const next = onEvents.find((x) => x.start.getTime() >= now.getTime() - 6 * 60 * 60 * 1000);
-    const cleaningOn = next?.start ?? null;
+    const pair = await loadNextFridgeDrainPair(branchId);
+    const cleaningOn = pair?.onAt ?? null;
     scheduleCache.set(branchId, { loadedAt: Date.now(), cleaningOn });
     return cleaningOn;
   } catch {
@@ -147,24 +237,26 @@ export type FridgeDrainReminder = {
 };
 
 export async function buildFridgeDrainReminderNotifications(branchId: FridgeDrainBranchId): Promise<FridgeDrainReminder[]> {
-  const cleaningOn = await getNextFridgeDrainCleaningOn(branchId);
-  if (!cleaningOn) {
+  const pair = await loadNextFridgeDrainPair(branchId);
+  if (!pair) {
     return [];
   }
 
-  const days = vnCalendarDaysUntil(cleaningOn, new Date());
+  const days = vnCalendarDaysUntil(pair.onAt, new Date());
   if (days !== 5 && days !== 3 && days !== 1) {
     return [];
   }
 
   const dayWord = days === 5 ? "5 days" : days === 3 ? "3 days" : "1 day";
-  const dateStr = cleaningOn.toLocaleDateString("en-GB", { timeZone: COZORO_TIMEZONE });
+  const dateStr = pair.onAt.toLocaleDateString("en-GB", { timeZone: COZORO_TIMEZONE });
+  const offHm = vnFormatHm(pair.offAt);
+  const onHm = vnFormatHm(pair.onAt);
   return [
     {
-      id: `fridge-drain-${branchId}-${vnDateKeyForDate(cleaningOn)}-${days}`,
+      id: `fridge-drain-${branchId}-${vnDateKeyForDate(pair.onAt)}-${days}`,
       type: "FRIDGE_DRAIN_REMINDER",
       title: `Shared fridge drain (${branchId}) in ${dayWord}`,
-      body: `Fridges switch off the day before at 17:00 and back on the cleaning day. Cleaning day (${branchId}): ${dateStr}.`,
+      body: `Fridges switch off the day before at ${offHm} and back on the cleaning day at ${onHm} (${COZORO_TIMEZONE}). Cleaning day (${branchId}): ${dateStr}.`,
       createdAt: new Date().toISOString(),
       unreadCount: 1,
       href: "/"
@@ -182,8 +274,8 @@ export async function getManagerFridgeDrainSchedule(branchId: FridgeDrainBranchI
     };
   }
 
-  const cleaningOn = await getNextFridgeDrainCleaningOn(branchId);
-  if (!cleaningOn) {
+  const pair = await loadNextFridgeDrainPair(branchId);
+  if (!pair) {
     return {
       branchId,
       configured: true as const,
@@ -192,12 +284,13 @@ export async function getManagerFridgeDrainSchedule(branchId: FridgeDrainBranchI
       offSummary: FRIDGE_OFF_SUMMARY[branchId],
       onSummary: FRIDGE_ON_SUMMARY[branchId],
       offAt: null as string | null,
-      onAt: null as string | null
+      onAt: null as string | null,
+      offTime: null as string | null,
+      onTime: null as string | null
     };
   }
 
-  const ymd = vnDateKeyForDate(cleaningOn).split("-").map(Number);
-  const [y, m, d] = ymd;
+  const [y, m, d] = pair.cleaningDateYmd.split("-").map(Number);
   if (!y || !m || !d) {
     return {
       branchId,
@@ -207,29 +300,33 @@ export async function getManagerFridgeDrainSchedule(branchId: FridgeDrainBranchI
       offSummary: FRIDGE_OFF_SUMMARY[branchId],
       onSummary: FRIDGE_ON_SUMMARY[branchId],
       offAt: null,
-      onAt: null
+      onAt: null,
+      offTime: null,
+      onTime: null
     };
   }
-
-  const offParts = ymdAddDays(y, m, d, -1);
-  const offAt = atVnLocal(offParts.y, offParts.m, offParts.d, 17, 0);
-  const onAt = atVnLocal(y, m, d, 9, 0);
 
   return {
     branchId,
     configured: true as const,
     calendarId,
-    cleaningDate: `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`,
+    cleaningDate: pair.cleaningDateYmd,
     offSummary: FRIDGE_OFF_SUMMARY[branchId],
     onSummary: FRIDGE_ON_SUMMARY[branchId],
-    offAt: offAt.toISOString(),
-    onAt: onAt.toISOString()
+    offAt: pair.offAt.toISOString(),
+    onAt: pair.onAt.toISOString(),
+    offTime: vnFormatHm(pair.offAt),
+    onTime: vnFormatHm(pair.onAt)
   };
 }
 
 export async function upsertFridgeDrainCleaningDate(input: {
   branchId: FridgeDrainBranchId;
   cleaningDate: string;
+  /** VN local time on the day before cleaning (power off). Default 17:00. */
+  offTime?: string;
+  /** VN local time on cleaning day (power on). Default 17:00. */
+  onTime?: string;
 }) {
   const calendarId = getFridgeDrainCalendarId(input.branchId);
   if (!calendarId) {
@@ -241,6 +338,9 @@ export async function upsertFridgeDrainCleaningDate(input: {
     throw new Error("cleaningDate must be YYYY-MM-DD.");
   }
 
+  const offHm = parseFridgeHm(input.offTime, DEFAULT_OFF_HM);
+  const onHm = parseFridgeHm(input.onTime, DEFAULT_ON_HM);
+
   const calendar = await getAuthorizedCalendarClient();
   const existing = await listFutureFridgeEvents(calendarId, input.branchId);
   for (const ev of existing) {
@@ -251,9 +351,9 @@ export async function upsertFridgeDrainCleaningDate(input: {
 
   const { y, m, d } = ymd;
   const offParts = ymdAddDays(y, m, d, -1);
-  const offStart = atVnLocal(offParts.y, offParts.m, offParts.d, 17, 0);
+  const offStart = atVnLocal(offParts.y, offParts.m, offParts.d, offHm.hh, offHm.mm);
   const offEnd = new Date(offStart.getTime() + 15 * 60 * 1000);
-  const onStart = atVnLocal(y, m, d, 9, 0);
+  const onStart = atVnLocal(y, m, d, onHm.hh, onHm.mm);
   const onEnd = new Date(onStart.getTime() + 30 * 60 * 1000);
 
   await calendar.events.insert({

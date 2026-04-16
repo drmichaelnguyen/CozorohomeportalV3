@@ -34,6 +34,10 @@ type FridgeBranchUi = {
   error: string;
   message: string;
   cleaningDate: string;
+  /** HH:mm — VN local, day before cleaning (power off). */
+  offTime: string;
+  /** HH:mm — VN local, cleaning day (power on). */
+  onTime: string;
   configured: boolean;
   configError: string;
   offAt: string | null;
@@ -48,6 +52,8 @@ type FridgeApiRow =
       cleaningDate: string | null;
       offAt: string | null;
       onAt: string | null;
+      offTime?: string | null;
+      onTime?: string | null;
     };
 
 type ToolPanelKey = "cleaning" | "fridge" | "bulk_coins" | "bulk_push";
@@ -95,6 +101,8 @@ function emptyFridgeRow(loading: boolean): FridgeBranchUi {
     error: "",
     message: "",
     cleaningDate: "",
+    offTime: "17:00",
+    onTime: "17:00",
     configured: false,
     configError: "",
     offAt: null,
@@ -194,6 +202,8 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
           ...emptyFridgeRow(false),
           configured: true,
           cleaningDate: row.cleaningDate ?? "",
+          offTime: row.offTime?.trim() || "17:00",
+          onTime: row.onTime?.trim() || "17:00",
           offAt: row.offAt ?? null,
           onAt: row.onAt ?? null
         };
@@ -224,7 +234,13 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
       const res = await fetch(`${API_BASE_URL}/manager/fridge-drain-schedule`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actorEmail: normalizedEmail, branchId, cleaningDate: ymd })
+        body: JSON.stringify({
+          actorEmail: normalizedEmail,
+          branchId,
+          cleaningDate: ymd,
+          offTime: row.offTime.trim() || "17:00",
+          onTime: row.onTime.trim() || "17:00"
+        })
       });
       const data = (await res.json()) as FridgeApiRow & { error?: string };
       if (!res.ok) {
@@ -238,6 +254,8 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
         ...emptyFridgeRow(false),
         configured: true,
         cleaningDate: ok.cleaningDate ?? ymd,
+        offTime: ok.offTime?.trim() || row.offTime.trim() || "17:00",
+        onTime: ok.onTime?.trim() || row.onTime.trim() || "17:00",
         offAt: ok.offAt ?? null,
         onAt: ok.onAt ?? null,
         message: t("toolsFridgeDrainSaved")
@@ -527,6 +545,28 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
                       onChange={(e) => setRow((f) => ({ ...f, cleaningDate: e.target.value, error: "", message: "" }))}
                     />
                   </label>
+                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="block text-sm">
+                      <span className="font-medium text-slate-700 dark:text-slate-300">{t("toolsFridgeDrainOffTime")}</span>
+                      <input
+                        type="time"
+                        step={60}
+                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+                        value={row.offTime}
+                        onChange={(e) => setRow((f) => ({ ...f, offTime: e.target.value, error: "", message: "" }))}
+                      />
+                    </label>
+                    <label className="block text-sm">
+                      <span className="font-medium text-slate-700 dark:text-slate-300">{t("toolsFridgeDrainOnTime")}</span>
+                      <input
+                        type="time"
+                        step={60}
+                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+                        value={row.onTime}
+                        onChange={(e) => setRow((f) => ({ ...f, onTime: e.target.value, error: "", message: "" }))}
+                      />
+                    </label>
+                  </div>
                   <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">{t("toolsFridgeDrainOffNote")}</p>
                   {row.offAt && row.onAt ? (
                     <p className="mt-2 text-xs text-slate-500">
