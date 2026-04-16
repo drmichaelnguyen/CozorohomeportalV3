@@ -258,7 +258,17 @@ export function AccountOverviewClient() {
   const [fines, setFines] = useState<FineEntry[]>([]);
   const [rentPaidStatus, setRentPaidStatus] = useState<RentPaidStatusPayload | null>(null);
   const [checkoutBanner, setCheckoutBanner] = useState<CheckoutBannerContext | null>(null);
-  
+  const [referralPanel, setReferralPanel] = useState<{
+    code: string;
+    enabled: boolean;
+    newRegistrantDiscountVnd: number;
+    newRegistrantCoins: number;
+    referrerCoins: number;
+    headlineEn: string;
+    headlineVi: string;
+  } | null>(null);
+  const [referralCopied, setReferralCopied] = useState(false);
+
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -303,6 +313,8 @@ export function AccountOverviewClient() {
     setFines([]);
     setRentPaidStatus(null);
     setCheckoutBanner(null);
+    setReferralPanel(null);
+    setReferralCopied(false);
     setCleaningOverview(null);
     setExpandedBookingIds([]);
     setCalendarFilter("all");
@@ -327,14 +339,15 @@ export function AccountOverviewClient() {
 
       setClient(data as ClientRecord);
       login(activeEmail);
-      const [laundryResponse, coinsResponse, cleaningResponse, paymentsResponse, finesResponse, rentPaidResponse, checkoutCtxResponse] = await Promise.all([
+      const [laundryResponse, coinsResponse, cleaningResponse, paymentsResponse, finesResponse, rentPaidResponse, checkoutCtxResponse, referralResponse] = await Promise.all([
         fetch(`${API_BASE_URL}/clients/laundry-bookings?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/coins?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/cleaning/me?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/payments?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/fines?email=${encodeURIComponent(activeEmail)}`),
         fetch(`${API_BASE_URL}/rent-paid-status?email=${encodeURIComponent(activeEmail)}`),
-        fetch(`${API_BASE_URL}/client/checkout-context?email=${encodeURIComponent(activeEmail)}`)
+        fetch(`${API_BASE_URL}/client/checkout-context?email=${encodeURIComponent(activeEmail)}`),
+        fetch(`${API_BASE_URL}/clients/referral?email=${encodeURIComponent(activeEmail)}`)
       ]);
       const laundryPayload = (await laundryResponse.json()) as
         | { bookings?: LaundryBooking[]; error?: string }
@@ -382,6 +395,29 @@ export function AccountOverviewClient() {
 
       if (checkoutCtxResponse.ok) {
         setCheckoutBanner((await checkoutCtxResponse.json()) as CheckoutBannerContext);
+      }
+
+      if (referralResponse.ok) {
+        const refData = (await referralResponse.json()) as {
+          code?: string;
+          enabled?: boolean;
+          newRegistrantDiscountVnd?: number;
+          newRegistrantCoins?: number;
+          referrerCoins?: number;
+          headlineEn?: string;
+          headlineVi?: string;
+        };
+        if (refData.code) {
+          setReferralPanel({
+            code: refData.code,
+            enabled: Boolean(refData.enabled),
+            newRegistrantDiscountVnd: Number(refData.newRegistrantDiscountVnd) || 0,
+            newRegistrantCoins: Number(refData.newRegistrantCoins) || 0,
+            referrerCoins: Number(refData.referrerCoins) || 0,
+            headlineEn: refData.headlineEn ?? "",
+            headlineVi: refData.headlineVi ?? ""
+          });
+        }
       }
 
       setMessage("Account information loaded.");
@@ -782,6 +818,54 @@ export function AccountOverviewClient() {
 
         {message ? <p className="mt-4 text-sm text-slate-700">{message}</p> : null}
       </section>
+
+      {referralPanel?.enabled && client && String(client["Hiện còn ở"] ?? "").trim() === "1" ? (
+        <section className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-teal-50 p-6 shadow-sm ring-1 ring-emerald-100">
+          <h2 className="text-lg font-semibold text-emerald-950">
+            {language === "vi" ? "Giới thiệu bạn bè" : "Refer a friend"}
+          </h2>
+          <p className="mt-2 text-sm text-emerald-900/90">
+            {language === "vi" ? referralPanel.headlineVi : referralPanel.headlineEn}
+          </p>
+          <p className="mt-2 text-sm text-emerald-800">
+            {language === "vi"
+              ? `Bạn bè đăng ký lần đầu tại /register nhập mã của bạn: giảm ${referralPanel.newRegistrantDiscountVnd.toLocaleString("vi-VN")} VND tiền cọc, ${referralPanel.newRegistrantCoins.toLocaleString("vi-VN")} coins cho họ và ${referralPanel.referrerCoins.toLocaleString("vi-VN")} coins cho bạn.`
+              : `Friends who register for the first time at /register with your code: ${referralPanel.newRegistrantDiscountVnd.toLocaleString("en-US")} VND off deposit, ${referralPanel.newRegistrantCoins.toLocaleString("en-US")} coins for them and ${referralPanel.referrerCoins.toLocaleString("en-US")} coins for you.`}
+          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <code className="rounded-xl bg-white/90 px-4 py-2 font-mono text-base font-semibold text-slate-900 ring-1 ring-emerald-200">
+              {referralPanel.code}
+            </code>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(referralPanel.code);
+                  setReferralCopied(true);
+                  window.setTimeout(() => setReferralCopied(false), 2000);
+                } catch {
+                  /* ignore */
+                }
+              }}
+              className="rounded-full bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600"
+            >
+              {referralCopied
+                ? language === "vi"
+                  ? "Đã chép!"
+                  : "Copied!"
+                : language === "vi"
+                  ? "Sao chép mã"
+                  : "Copy code"}
+            </button>
+            <Link
+              href={`/register?ref=${encodeURIComponent(referralPanel.code)}`}
+              className="rounded-full border border-emerald-600 bg-white px-4 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-100"
+            >
+              {language === "vi" ? "Link đăng ký có sẵn mã" : "Open register link"}
+            </Link>
+          </div>
+        </section>
+      ) : null}
 
       <section className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
         <button

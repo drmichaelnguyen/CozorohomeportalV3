@@ -84,6 +84,8 @@ type FormState = {
   parkingOptionId: string;
   idScanFile: File | null;
   agreed: boolean;
+  /** Friend's referral code (CZ… or MÃ HD). */
+  referralCode: string;
 };
 
 // Minimal layout for bed tier derivation (top/middle/bottom)
@@ -231,6 +233,15 @@ const T = {
     submitting: "Submitting...",
     submitRegistration: "Submit registration",
     alreadyHaveAccount: "Already have an account? Sign in",
+    referralProgramBanner: "Referral program",
+    referralProgramIntro: (discount: string, cNew: string, cRef: string) =>
+      `First-time registration: ${discount} off deposit, ${cNew} coins for you, ${cRef} coins for your friend who referred you.`,
+    referralCodeLabel: "Referral code (optional)",
+    referralCodePlaceholder: "e.g. CZ… or contract code",
+    referralChecking: "Checking code…",
+    referralValid: "Code accepted",
+    referralInvalid: "Invalid code or program inactive",
+    referralDepositOff: (n: string) => `Referral: −${n} from deposit (estimate)`,
     // Validation errors
     chooseSexBranchBed: "Please choose sex, branch, and an available bed first.",
     invalidContractDate: "Please provide a valid contract start date and contract length.",
@@ -340,6 +351,15 @@ const T = {
     submitting: "Đang gửi...",
     submitRegistration: "Gửi đăng ký",
     alreadyHaveAccount: "Đã có tài khoản? Đăng nhập",
+    referralProgramBanner: "Chương trình giới thiệu",
+    referralProgramIntro: (discount: string, cNew: string, cRef: string) =>
+      `Đăng ký lần đầu: giảm ${discount} tiền cọc, ${cNew} coins cho bạn, ${cRef} coins cho bạn giới thiệu.`,
+    referralCodeLabel: "Mã giới thiệu (không bắt buộc)",
+    referralCodePlaceholder: "VD: CZ… hoặc mã HĐ",
+    referralChecking: "Đang kiểm tra mã…",
+    referralValid: "Mã hợp lệ",
+    referralInvalid: "Mã không hợp lệ hoặc chương trình tắt",
+    referralDepositOff: (n: string) => `Giới thiệu: −${n} tiền cọc (ước tính)`,
     // Validation errors
     chooseSexBranchBed: "Vui lòng chọn giới tính, chi nhánh và giường trống trước.",
     invalidContractDate: "Vui lòng nhập ngày bắt đầu hợp đồng và thời hạn hợp lệ.",
@@ -373,7 +393,8 @@ const initialFormState: FormState = {
   motorbikePlate: "",
   parkingOptionId: "",
   idScanFile: null,
-  agreed: false
+  agreed: false,
+  referralCode: ""
 };
 
 function formatCurrency(value: number) {
@@ -491,6 +512,17 @@ export function RegisterFormClient() {
   const [showRulesModal, setShowRulesModal] = useState(false);
   const [rulesStep, setRulesStep] = useState(0);
   const [showFirstPaymentDetail, setShowFirstPaymentDetail] = useState(false);
+  const [referralMarketing, setReferralMarketing] = useState<{
+    enabled: boolean;
+    newRegistrantDiscountVnd: number;
+    newRegistrantCoins: number;
+    referrerCoins: number;
+    headlineEn: string;
+    headlineVi: string;
+    detailsEn: string;
+    detailsVi: string;
+  } | null>(null);
+  const [referralLookup, setReferralLookup] = useState<"idle" | "checking" | "ok" | "bad">("idle");
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/public/pricing-discounts`)
@@ -501,6 +533,70 @@ export function RegisterFormClient() {
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/api/public/referral-program`)
+      .then((r) => r.json())
+      .then(
+        (data: {
+          enabled?: boolean;
+          newRegistrantDiscountVnd?: number;
+          newRegistrantCoins?: number;
+          referrerCoins?: number;
+          headlineEn?: string;
+          headlineVi?: string;
+          detailsEn?: string;
+          detailsVi?: string;
+        }) => {
+          setReferralMarketing({
+            enabled: Boolean(data.enabled),
+            newRegistrantDiscountVnd: Number(data.newRegistrantDiscountVnd) || 0,
+            newRegistrantCoins: Number(data.newRegistrantCoins) || 0,
+            referrerCoins: Number(data.referrerCoins) || 0,
+            headlineEn: data.headlineEn ?? "",
+            headlineVi: data.headlineVi ?? "",
+            detailsEn: data.detailsEn ?? "",
+            detailsVi: data.detailsVi ?? ""
+          });
+        }
+      )
+      .catch(() => setReferralMarketing(null));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const q = new URLSearchParams(window.location.search).get("ref");
+    if (q) {
+      setForm((cur) => ({ ...cur, referralCode: q }));
+    }
+  }, []);
+
+  useEffect(() => {
+    const code = form.referralCode.trim();
+    if (!code) {
+      setReferralLookup("idle");
+      return;
+    }
+    if (referralMarketing === null) {
+      return;
+    }
+    if (!referralMarketing.enabled) {
+      setReferralLookup("bad");
+      return;
+    }
+    setReferralLookup("checking");
+    const tmr = window.setTimeout(() => {
+      void fetch(`${API_BASE_URL}/api/public/referral/lookup?code=${encodeURIComponent(code)}`)
+        .then((r) => r.json())
+        .then((data: { ok?: boolean }) => {
+          setReferralLookup(data.ok ? "ok" : "bad");
+        })
+        .catch(() => setReferralLookup("bad"));
+    }, 450);
+    return () => window.clearTimeout(tmr);
+  }, [form.referralCode, referralMarketing]);
 
   function updateForm<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -672,9 +768,16 @@ export function RegisterFormClient() {
           : form.paymentFrequency.includes("03")
             ? 500000
             : 0;
+        const referralDepositCut =
+          referralLookup === "ok" && referralMarketing?.enabled
+            ? Math.min(referralMarketing.newRegistrantDiscountVnd, selectedBed.pricing.deposit)
+            : 0;
+        const depositAfterReferral = Math.max(0, selectedBed.pricing.deposit - referralDepositCut);
         return {
           monthlyPrice: selectedBed.pricing.monthlyPrice,
           deposit: selectedBed.pricing.deposit,
+          referralDepositCut,
+          depositAfterReferral,
           discountedMonthlyPrice,
           cleaningFee,
           parkingFee,
@@ -684,7 +787,7 @@ export function RegisterFormClient() {
           oneTimeDiscounts,
           // Average monthly cost = recurring total minus the freq discount spread
           monthlyTotal: monthlyRecurringTotal - paymentFreqMonthlyDiscount,
-          firstPayment: monthlyRecurringTotal * multiplier - oneTimeFlatDiscount - freqDiscount + selectedBed.pricing.deposit,
+          firstPayment: monthlyRecurringTotal * multiplier - oneTimeFlatDiscount - freqDiscount + depositAfterReferral,
         };
       })()
     : null;
@@ -744,6 +847,16 @@ export function RegisterFormClient() {
       }
     }
 
+    const referralTrimmed = form.referralCode.trim();
+    if (referralTrimmed && referralLookup !== "ok") {
+      setSubmitError(
+        lang === "vi"
+          ? "Nhập mã giới thiệu hợp lệ hoặc để trống ô mã."
+          : "Enter a valid referral code or clear the field."
+      );
+      return;
+    }
+
     setSubmitting(true);
 
     try {
@@ -772,7 +885,7 @@ export function RegisterFormClient() {
           contractMonths,
           contractEndDate,
           monthlyPrice: pricingSummary.monthlyPrice,
-          deposit: pricingSummary.deposit,
+          deposit: pricingSummary.depositAfterReferral,
           paymentFrequency: form.paymentFrequency || undefined,
           currentStatus: form.currentStatus || undefined,
           schoolOrWorkplace: form.schoolOrWorkplace || undefined,
@@ -784,20 +897,26 @@ export function RegisterFormClient() {
           motorbikePlate: form.hasMotorbike ? form.motorbikePlate : undefined,
           parkingOptionId: form.hasMotorbike ? form.parkingOptionId : undefined,
           idScanUrl,
+          referralCode: referralTrimmed || undefined,
           claimedDiscounts: eligibleDiscounts.map((d) => d.id)
         })
       });
 
-      const data = (await response.json()) as { contractCode?: string; error?: string };
+      const data = (await response.json()) as {
+        contractCode?: string;
+        error?: string;
+        referralCoinsWarning?: string;
+      };
       if (!response.ok) {
         throw new Error(data.error || "Unable to submit registration.");
       }
 
       setSuccessMessage(
         data.contractCode
-          ? `Registration submitted. Contract code: ${data.contractCode}.`
-          : "Registration submitted successfully."
+          ? `Registration submitted. Contract code: ${data.contractCode}.${data.referralCoinsWarning ? ` Note: ${data.referralCoinsWarning}` : ""}`
+          : `Registration submitted successfully.${data.referralCoinsWarning ? ` Note: ${data.referralCoinsWarning}` : ""}`
       );
+      setReferralLookup("idle");
       setIdScanFileName("");
       setForm((current) => ({ ...initialFormState, sex: current.sex, branchId: current.branchId }));
       setAvailability((current) =>
@@ -905,6 +1024,25 @@ export function RegisterFormClient() {
           {t.heroSubtitle}
         </p>
       </section>
+
+      {referralMarketing?.enabled ? (
+        <section className="rounded-[2rem] border border-emerald-300/80 bg-emerald-50 px-5 py-4 text-emerald-950 shadow-sm sm:px-6">
+          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">{t.referralProgramBanner}</p>
+          <p className="mt-1 text-sm font-semibold">
+            {lang === "vi" ? referralMarketing.headlineVi : referralMarketing.headlineEn}
+          </p>
+          <p className="mt-2 text-sm text-emerald-900/90">
+            {lang === "vi" ? referralMarketing.detailsVi : referralMarketing.detailsEn}
+          </p>
+          <p className="mt-2 text-sm font-medium text-emerald-900">
+            {t.referralProgramIntro(
+              formatCurrency(referralMarketing.newRegistrantDiscountVnd),
+              referralMarketing.newRegistrantCoins.toLocaleString("vi-VN"),
+              referralMarketing.referrerCoins.toLocaleString("vi-VN")
+            )}
+          </p>
+        </section>
+      ) : null}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.85fr)]">
         <form onSubmit={handleSubmit} className="space-y-6 rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
@@ -1015,6 +1153,29 @@ export function RegisterFormClient() {
           <section className="grid gap-4 md:grid-cols-2">
             <label className="space-y-2"><span className="text-sm font-medium text-slate-700">{t.fullName}</span><input value={form.fullName} onChange={(event) => updateForm("fullName", event.target.value)} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-teal-500 focus:bg-white" required /></label>
             <label className="space-y-2"><span className="text-sm font-medium text-slate-700">{t.email}</span><input type="email" value={form.email} onChange={(event) => updateForm("email", event.target.value)} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-teal-500 focus:bg-white" required /></label>
+            {referralMarketing?.enabled ? (
+              <div className="md:col-span-2 rounded-[1.5rem] border border-emerald-200 bg-emerald-50/50 p-4 space-y-2">
+                <label className="space-y-2 block">
+                  <span className="text-sm font-medium text-slate-700">{t.referralCodeLabel}</span>
+                  <input
+                    value={form.referralCode}
+                    onChange={(event) => updateForm("referralCode", event.target.value.toUpperCase())}
+                    placeholder={t.referralCodePlaceholder}
+                    className="w-full rounded-2xl border border-emerald-200 bg-white px-4 py-3 font-mono text-sm outline-none focus:border-teal-500"
+                    autoComplete="off"
+                  />
+                </label>
+                <p className="min-h-[1.25rem] text-xs text-slate-600">
+                  {referralLookup === "checking" ? t.referralChecking : null}
+                  {referralLookup === "ok" ? (
+                    <span className="font-medium text-emerald-700">{t.referralValid}</span>
+                  ) : null}
+                  {referralLookup === "bad" && form.referralCode.trim() ? (
+                    <span className="text-rose-600">{t.referralInvalid}</span>
+                  ) : null}
+                </p>
+              </div>
+            ) : null}
             <label className="space-y-2"><span className="text-sm font-medium text-slate-700">{t.phone}</span><input value={form.phone} onChange={(event) => updateForm("phone", event.target.value)} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-teal-500 focus:bg-white" required /></label>
             <label className="space-y-2"><span className="text-sm font-medium text-slate-700">{t.dateOfBirth}</span><input type="date" value={form.dateOfBirth} onChange={(event) => updateForm("dateOfBirth", event.target.value)} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-teal-500 focus:bg-white" /></label>
             <label className="space-y-2 md:col-span-2"><span className="text-sm font-medium text-slate-700">{t.permanentAddress}</span><input value={form.permanentAddress} onChange={(event) => updateForm("permanentAddress", event.target.value)} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-teal-500 focus:bg-white" /></label>
@@ -1287,7 +1448,24 @@ export function RegisterFormClient() {
                 {pricingSummary.parkingFee > 0 ? (
                   <div className="flex items-center justify-between rounded-2xl bg-amber-50 px-4 py-3 text-amber-900"><span>{t.parkingFeeLabel}</span><span className="font-semibold">{formatCurrency(pricingSummary.parkingFee)}</span></div>
                 ) : null}
-                <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3"><span>{t.depositSideLabel}</span><span className="font-semibold text-slate-900">{formatCurrency(pricingSummary.deposit)}</span></div>
+                <div className="flex flex-col gap-1 rounded-2xl bg-slate-50 px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <span>{t.depositSideLabel}</span>
+                    <div className="text-right">
+                      {pricingSummary.referralDepositCut > 0 ? (
+                        <>
+                          <span className="font-semibold text-slate-400 line-through">{formatCurrency(pricingSummary.deposit)}</span>
+                          <span className="ml-2 font-semibold text-emerald-700">{formatCurrency(pricingSummary.depositAfterReferral)}</span>
+                        </>
+                      ) : (
+                        <span className="font-semibold text-slate-900">{formatCurrency(pricingSummary.deposit)}</span>
+                      )}
+                    </div>
+                  </div>
+                  {pricingSummary.referralDepositCut > 0 ? (
+                    <p className="text-xs text-emerald-700">{t.referralDepositOff(formatCurrency(pricingSummary.referralDepositCut))}</p>
+                  ) : null}
+                </div>
                 <div className="rounded-2xl bg-slate-50 px-4 py-3">
                   <div className="flex items-center justify-between">
                     <span className="text-sm">{t.firstPaymentEstimate}</span>
@@ -1334,7 +1512,25 @@ export function RegisterFormClient() {
                         {is6Month && <div className="flex justify-between text-emerald-700"><span>{lang === "vi" ? "Tháng thứ 7 miễn phí" : "7th month free"}</span><span className="font-medium">−{formatCurrency(monthlyBeforeFreq)}</span></div>}
                         {is3Month && <div className="flex justify-between text-emerald-700"><span>{lang === "vi" ? "Ưu đãi thanh toán 3 tháng" : "3-month payment discount"}</span><span className="font-medium">−{formatCurrency(500000)}</span></div>}
                         {oneTimeFlatDiscount > 0 && <div className="flex justify-between text-emerald-700"><span>{lang === "vi" ? "Giảm giá 1 lần (ưu đãi tháng đầu)" : "One-time discounts (first-month)"}</span><span className="font-medium">−{formatCurrency(oneTimeFlatDiscount)}</span></div>}
-                        <div className="flex justify-between"><span>{lang === "vi" ? "Tiền cọc" : "Deposit"}</span><span className="font-medium">+{formatCurrency(pricingSummary.deposit)}</span></div>
+                        <div className="flex justify-between">
+                          <span>{lang === "vi" ? "Tiền cọc" : "Deposit"}</span>
+                          <span className="font-medium">
+                            {pricingSummary.referralDepositCut > 0 ? (
+                              <>
+                                <span className="text-slate-400 line-through">{formatCurrency(pricingSummary.deposit)}</span>
+                                <span className="ml-1 text-emerald-700">+{formatCurrency(pricingSummary.depositAfterReferral)}</span>
+                              </>
+                            ) : (
+                              <>+{formatCurrency(pricingSummary.deposit)}</>
+                            )}
+                          </span>
+                        </div>
+                        {pricingSummary.referralDepositCut > 0 ? (
+                          <div className="flex justify-between text-emerald-700">
+                            <span>{lang === "vi" ? "Giảm giới thiệu (cọc)" : "Referral (deposit)"}</span>
+                            <span className="font-medium">−{formatCurrency(pricingSummary.referralDepositCut)}</span>
+                          </div>
+                        ) : null}
                         <div className="flex justify-between border-t-2 border-slate-300 pt-1.5 font-bold text-slate-900"><span>{lang === "vi" ? "Tổng lần đầu" : "Total first payment"}</span><span>{formatCurrency(pricingSummary.firstPayment)}</span></div>
                         <p className="mt-2 text-slate-400">{lang === "vi" ? `Thanh toán trung bình mỗi tháng: ${formatCurrency(pricingSummary.monthlyTotal)}` : `Average monthly payment: ${formatCurrency(pricingSummary.monthlyTotal)}`}</p>
                       </div>

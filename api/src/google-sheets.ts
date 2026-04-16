@@ -156,7 +156,7 @@ export const laundryMachines = [
   }
 ] as const;
 
-const EMAIL_COLUMN = "\u0110\u1ecba ch\u1ec9 email";
+export const EMAIL_COLUMN = "\u0110\u1ecba ch\u1ec9 email";
 const HIDDEN_EMAIL_COLUMN = "\u0110\u1ecba ch\u1ec9 email - Hidden";
 export const ACTIVE_STAYING_COLUMN = "Hi\u1ec7n c\u00f2n \u1edf";
 export const CONTRACT_CODE_COLUMN = "M\u00c3 HD";
@@ -307,6 +307,8 @@ export type PublicRegistrationInput = {
   /** Appended to registration note when resident picked a named parking tier */
   parkingPlanSummary?: string;
   idScanUrl?: string;
+  /** Appended to the registration note (e.g. referral summary). */
+  referralNoteLine?: string;
 };
 
 export type FineRow = Record<string, string> & {
@@ -3166,7 +3168,8 @@ export async function submitPublicRegistration(input: PublicRegistrationInput) {
     ["Đã đóng phí tháng"]: "FALSE",
     [CLIENT_NOTE_COLUMN]: [
       "Submitted from app.cozorohome.com/register",
-      input.parkingPlanSummary?.trim() ? `Parking: ${input.parkingPlanSummary.trim()}` : ""
+      input.parkingPlanSummary?.trim() ? `Parking: ${input.parkingPlanSummary.trim()}` : "",
+      input.referralNoteLine?.trim() ?? ""
     ]
       .filter(Boolean)
       .join(" | "),
@@ -3428,6 +3431,14 @@ async function readOrSyncCleaningCalendarCache() {
     }
     throw error;
   }
+}
+
+/** True if any client sheet row exists for this email (any stay status). */
+export async function anyClientRowExistsForEmail(email: string) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const cache = await readCachedClients();
+  const sourceRows = cache?.rows ?? [];
+  return sourceRows.some((row) => row[EMAIL_COLUMN]?.trim().toLowerCase() === normalizedEmail);
 }
 
 export async function getActiveClientByEmail(email: string) {
@@ -3825,6 +3836,32 @@ export async function managerAdjustCoins(input: {
     ok: true,
     currentCoins: nextCoins
   };
+}
+
+export async function applyReferralRegistrationRewards(input: {
+  newUserMaHd: string;
+  newUserCoins: number;
+  referrerMaHd: string;
+  referrerCoins: number;
+}) {
+  const nu = Math.trunc(input.newUserCoins);
+  const ru = Math.trunc(input.referrerCoins);
+  if (nu > 0) {
+    await managerAdjustCoins({
+      maHd: input.newUserMaHd,
+      delta: nu,
+      reason: "Chương trình giới thiệu — thưởng cư dân mới / Referral bonus (new resident)",
+      operator: "Cozoro Referral"
+    });
+  }
+  if (ru > 0) {
+    await managerAdjustCoins({
+      maHd: input.referrerMaHd,
+      delta: ru,
+      reason: "Chương trình giới thiệu — thưởng người giới thiệu / Referral bonus (referrer)",
+      operator: "Cozoro Referral"
+    });
+  }
 }
 
 export async function managerCreatePaymentReceipt(input: {

@@ -1179,7 +1179,22 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     parkingTiers: ParkingPricingTierRow[];
   } | null>(null);
   const [pricingConfigLoading, setPricingConfigLoading] = useState(false);
-  const [pricingSettingsTab, setPricingSettingsTab] = useState<"long_term" | "short_term" | "staff" | "tools">("long_term");
+  const [referralProgramDraft, setReferralProgramDraft] = useState<{
+    enabled: boolean;
+    newRegistrantDiscountVnd: string;
+    newRegistrantCoins: string;
+    referrerCoins: string;
+    headlineEn: string;
+    headlineVi: string;
+    detailsEn: string;
+    detailsVi: string;
+  } | null>(null);
+  const [referralProgramLoading, setReferralProgramLoading] = useState(false);
+  const [referralProgramSaving, setReferralProgramSaving] = useState(false);
+  const [referralProgramMessage, setReferralProgramMessage] = useState("");
+  const [pricingSettingsTab, setPricingSettingsTab] = useState<
+    "long_term" | "short_term" | "referral" | "staff" | "tools"
+  >("long_term");
   const [bedPricingExpanded, setBedPricingExpanded] = useState(false);
   const [pricingSettingsExpanded, setPricingSettingsExpanded] = useState<Record<PricingSettingsSectionKey, boolean>>({
     parking_tiers: false,
@@ -2450,6 +2465,78 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     const perms = data.permissions ?? { branches: [], data: {} };
     setEditingPermissions(perms);
     setPermissionsEntry(entry);
+  }
+
+  async function loadReferralProgramSettings() {
+    setReferralProgramLoading(true);
+    setReferralProgramMessage("");
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/manager/referral-program?actorEmail=${encodeURIComponent(normalizedEmail)}`
+      );
+      const data = (await res.json()) as {
+        enabled?: boolean;
+        newRegistrantDiscountVnd?: number;
+        newRegistrantCoins?: number;
+        referrerCoins?: number;
+        headlineEn?: string;
+        headlineVi?: string;
+        detailsEn?: string;
+        detailsVi?: string;
+      };
+      if (res.ok) {
+        setReferralProgramDraft({
+          enabled: Boolean(data.enabled),
+          newRegistrantDiscountVnd: String(data.newRegistrantDiscountVnd ?? 0),
+          newRegistrantCoins: String(data.newRegistrantCoins ?? 0),
+          referrerCoins: String(data.referrerCoins ?? 0),
+          headlineEn: data.headlineEn ?? "",
+          headlineVi: data.headlineVi ?? "",
+          detailsEn: data.detailsEn ?? "",
+          detailsVi: data.detailsVi ?? ""
+        });
+      } else {
+        setReferralProgramMessage("Unable to load referral settings.");
+      }
+    } finally {
+      setReferralProgramLoading(false);
+    }
+  }
+
+  async function saveReferralProgramSettings() {
+    if (!referralProgramDraft) {
+      return;
+    }
+    setReferralProgramSaving(true);
+    setReferralProgramMessage("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/manager/referral-program`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actorEmail: normalizedEmail,
+          settings: {
+            enabled: referralProgramDraft.enabled,
+            newRegistrantDiscountVnd: Number(referralProgramDraft.newRegistrantDiscountVnd) || 0,
+            newRegistrantCoins: Number(referralProgramDraft.newRegistrantCoins) || 0,
+            referrerCoins: Number(referralProgramDraft.referrerCoins) || 0,
+            headlineEn: referralProgramDraft.headlineEn,
+            headlineVi: referralProgramDraft.headlineVi,
+            detailsEn: referralProgramDraft.detailsEn,
+            detailsVi: referralProgramDraft.detailsVi
+          }
+        })
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        setReferralProgramMessage(data.error ?? "Save failed.");
+        return;
+      }
+      setReferralProgramMessage("Saved.");
+      await loadReferralProgramSettings();
+    } finally {
+      setReferralProgramSaving(false);
+    }
   }
 
   async function loadPricingConfig() {
@@ -6834,24 +6921,51 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-xl font-bold text-slate-900">
-                  {pricingSettingsTab === "tools" ? t("settingsToolsTitle") : t("pricing")}
+                  {pricingSettingsTab === "tools"
+                    ? t("settingsToolsTitle")
+                    : pricingSettingsTab === "referral"
+                      ? language === "vi"
+                        ? "Chương trình giới thiệu"
+                        : "Referral program"
+                      : t("pricing")}
                 </h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  {pricingSettingsTab === "tools" ? t("settingsToolsDesc") : t("pricingDesc")}
+                  {pricingSettingsTab === "tools"
+                    ? t("settingsToolsDesc")
+                    : pricingSettingsTab === "referral"
+                      ? language === "vi"
+                        ? "Bật/tắt, số tiền giảm cọc và Cozoro coins cho cư dân mới và người giới thiệu."
+                        : "Toggle the program and set deposit discount and Cozoro coins for new residents and referrers."
+                      : t("pricingDesc")}
                 </p>
               </div>
-              {pricingSettingsTab !== "tools" ? (
+              {pricingSettingsTab !== "tools" && pricingSettingsTab !== "referral" ? (
                 <button type="button" onClick={() => void loadPricingConfig()} disabled={pricingConfigLoading}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-50">
                   {pricingConfigLoading ? t("refreshing") : t("refreshData")}
                 </button>
               ) : null}
+              {pricingSettingsTab === "referral" ? (
+                <button
+                  type="button"
+                  onClick={() => void loadReferralProgramSettings()}
+                  disabled={referralProgramLoading}
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-50"
+                >
+                  {referralProgramLoading ? t("refreshing") : t("refreshData")}
+                </button>
+              ) : null}
             </div>
             <div className="mt-5 flex flex-wrap gap-2">
-              {(["long_term", "short_term", "staff", "tools"] as const).map((tab) => (
-                <button key={tab} type="button" onClick={() => setPricingSettingsTab(tab)}
+              {(["long_term", "short_term", "referral", "staff", "tools"] as const).map((tab) => (
+                <button key={tab} type="button" onClick={() => {
+                  setPricingSettingsTab(tab);
+                  if (tab === "referral") {
+                    void loadReferralProgramSettings();
+                  }
+                }}
                   className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${pricingSettingsTab === tab ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-50"}`}>
-                  {tab === "long_term" ? t("longTermTab") : tab === "short_term" ? t("shortTermTab") : tab === "staff" ? t("staffAccountsTab") : t("settingsToolsTab")}
+                  {tab === "long_term" ? t("longTermTab") : tab === "short_term" ? t("shortTermTab") : tab === "referral" ? (language === "vi" ? "Giới thiệu" : "Referral") : tab === "staff" ? t("staffAccountsTab") : t("settingsToolsTab")}
                 </button>
               ))}
             </div>
@@ -7832,6 +7946,133 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     )}
                   </CollapsibleSettingsSection>
                 </>
+              )}
+            </section>
+          ) : null}
+
+          {pricingSettingsTab === "referral" ? (
+            <section className="rounded-3xl border border-emerald-200 bg-emerald-50/40 p-6 shadow-sm">
+              {referralProgramLoading ? (
+                <p className="text-sm text-slate-600">{t("refreshing")}</p>
+              ) : referralProgramDraft ? (
+                <div className="mx-auto max-w-2xl space-y-4">
+                  <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-800">
+                    <input
+                      type="checkbox"
+                      checked={referralProgramDraft.enabled}
+                      onChange={(e) =>
+                        setReferralProgramDraft((d) => (d ? { ...d, enabled: e.target.checked } : d))
+                      }
+                      className="h-4 w-4 rounded border-slate-300"
+                    />
+                    {language === "vi" ? "Bật chương trình giới thiệu" : "Enable referral program"}
+                  </label>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block text-sm text-slate-700">
+                      {language === "vi" ? "Giảm tiền cọc (VND, lần đầu)" : "Deposit discount (VND, first-time)"}
+                      <input
+                        type="number"
+                        min={0}
+                        value={referralProgramDraft.newRegistrantDiscountVnd}
+                        onChange={(e) =>
+                          setReferralProgramDraft((d) =>
+                            d ? { ...d, newRegistrantDiscountVnd: e.target.value } : d
+                          )
+                        }
+                        className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2"
+                      />
+                    </label>
+                    <label className="block text-sm text-slate-700">
+                      {language === "vi" ? "Coins cư dân mới" : "Coins (new resident)"}
+                      <input
+                        type="number"
+                        min={0}
+                        value={referralProgramDraft.newRegistrantCoins}
+                        onChange={(e) =>
+                          setReferralProgramDraft((d) =>
+                            d ? { ...d, newRegistrantCoins: e.target.value } : d
+                          )
+                        }
+                        className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2"
+                      />
+                    </label>
+                    <label className="block text-sm text-slate-700 sm:col-span-2">
+                      {language === "vi" ? "Coins người giới thiệu (cư dân đang ở)" : "Coins (referrer)"}
+                      <input
+                        type="number"
+                        min={0}
+                        value={referralProgramDraft.referrerCoins}
+                        onChange={(e) =>
+                          setReferralProgramDraft((d) =>
+                            d ? { ...d, referrerCoins: e.target.value } : d
+                          )
+                        }
+                        className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2"
+                      />
+                    </label>
+                  </div>
+                  <label className="block text-sm text-slate-700">
+                    Headline (EN)
+                    <input
+                      value={referralProgramDraft.headlineEn}
+                      onChange={(e) =>
+                        setReferralProgramDraft((d) => (d ? { ...d, headlineEn: e.target.value } : d))
+                      }
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2"
+                    />
+                  </label>
+                  <label className="block text-sm text-slate-700">
+                    Headline (VI)
+                    <input
+                      value={referralProgramDraft.headlineVi}
+                      onChange={(e) =>
+                        setReferralProgramDraft((d) => (d ? { ...d, headlineVi: e.target.value } : d))
+                      }
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2"
+                    />
+                  </label>
+                  <label className="block text-sm text-slate-700">
+                    Details (EN)
+                    <textarea
+                      rows={3}
+                      value={referralProgramDraft.detailsEn}
+                      onChange={(e) =>
+                        setReferralProgramDraft((d) => (d ? { ...d, detailsEn: e.target.value } : d))
+                      }
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2"
+                    />
+                  </label>
+                  <label className="block text-sm text-slate-700">
+                    Details (VI)
+                    <textarea
+                      rows={3}
+                      value={referralProgramDraft.detailsVi}
+                      onChange={(e) =>
+                        setReferralProgramDraft((d) => (d ? { ...d, detailsVi: e.target.value } : d))
+                      }
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2"
+                    />
+                  </label>
+                  {referralProgramMessage ? (
+                    <p className="text-sm text-slate-700">{referralProgramMessage}</p>
+                  ) : null}
+                  <button
+                    type="button"
+                    disabled={referralProgramSaving}
+                    onClick={() => void saveReferralProgramSettings()}
+                    className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  >
+                    {referralProgramSaving ? "…" : language === "vi" ? "Lưu" : "Save"}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void loadReferralProgramSettings()}
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
+                >
+                  {language === "vi" ? "Tải cấu hình" : "Load settings"}
+                </button>
               )}
             </section>
           ) : null}

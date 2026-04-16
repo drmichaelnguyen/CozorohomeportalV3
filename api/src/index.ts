@@ -56,6 +56,8 @@ import {
   sendGmailReceipt,
   syncClientsFromSheet,
   submitPublicRegistration,
+  anyClientRowExistsForEmail,
+  applyReferralRegistrationRewards,
   upsertPaidGuestBookingClient,
   readCachedClients,
   createAuthUrl,
@@ -124,6 +126,15 @@ import {
   getProspectBedAvailability,
   updateProspectAssistantSettings
 } from "./prospect-assistant.js";
+import type { ReferralProgramSettings } from "./referral-program.js";
+import {
+  computeReferralCodeForEmail,
+  getReferralProgramPublicMarketing,
+  getReferralProgramSettings,
+  resolveReferralForNewRegistration,
+  resolveReferrerFromCode,
+  updateReferralProgramSettings
+} from "./referral-program.js";
 
 
 import {
@@ -860,7 +871,8 @@ const publicRegistrationSchema = z.object({
   motorbikePlate: z.string().trim().optional(),
   /** Required when hasMotorbike and more than one parking tier exists; otherwise server picks the only option. */
   parkingOptionId: z.string().trim().optional(),
-  idScanUrl: z.string().trim().optional()
+  idScanUrl: z.string().trim().optional(),
+  referralCode: z.string().trim().optional()
 });
 const cleaningAvailabilitySchema = z.object({
   email: z.string().email(),
@@ -1247,6 +1259,37 @@ app.get("/clients", async (request, response) => {
   }
 
   return response.json(client);
+});
+
+app.get("/clients/referral", async (request, response) => {
+  const parsed = clientLookupSchema.safeParse({
+    email: request.query.email
+  });
+
+  if (!parsed.success) {
+    return response.status(400).json({
+      error: "A valid email query parameter is required"
+    });
+  }
+
+  try {
+    const client = await getActiveClientByEmail(parsed.data.email);
+    if (!client) {
+      return response.status(404).json({
+        error: "No active client found for that email"
+      });
+    }
+
+    const marketing = await getReferralProgramPublicMarketing();
+    return response.json({
+      code: computeReferralCodeForEmail(parsed.data.email),
+      ...marketing
+    });
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to load referral info"
+    });
+  }
 });
 
 app.get("/auth/resolve-login", async (request, response) => {
@@ -5589,6 +5632,47 @@ app.post("/api/public/register/id-scan", express.raw({ type: "*/*", limit: "10mb
   }
 });
 
+app.get("/api/public/referral-program", async (_request, response) => {
+  try {
+    const marketing = await getReferralProgramPublicMarketing();
+    return response.json(marketing);
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to load referral program"
+    });
+  }
+});
+
+app.get("/api/public/referral/lookup", async (request, response) => {
+  const code = String(request.query.code ?? "").trim();
+  if (!code) {
+    return response.status(400).json({ error: "code is required" });
+  }
+
+  try {
+    const marketing = await getReferralProgramPublicMarketing();
+    if (!marketing.enabled) {
+      return response.json({ ok: false, error: "inactive" });
+    }
+
+    const cache = await readCachedClients();
+    const referrer = resolveReferrerFromCode(code, cache?.rows ?? []);
+    if (!referrer) {
+      return response.json({ ok: false, error: "invalid" });
+    }
+
+    const name = referrer.name.trim();
+    const referrerNameHint =
+      name.length > 2 ? `${name.slice(0, 1)}***${name.slice(-1)}` : "***";
+
+    return response.json({ ok: true, referrerNameHint });
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to look up referral code"
+    });
+  }
+});
+
 app.post("/api/public/register", async (request, response) => {
   const parsed = publicRegistrationSchema.safeParse(request.body);
 
@@ -5597,6 +5681,13 @@ app.post("/api/public/register", async (request, response) => {
   }
 
   try {
+    if (await anyClientRowExistsForEmail(parsed.data.email)) {
+      return response.status(400).json({
+        error:
+          "This email already has a registration record. Contact staff if you are extending a contract or re-applying."
+      });
+    }
+
     // Resolve configurable cleaning opt-out fee for this branch
     const branchSettings = await getBranchPricingSettings(parsed.data.branchId);
     const configuredCleaningFeeVnd = branchSettings.cleaningOptOutFeeVnd;
@@ -5617,15 +5708,53 @@ app.post("/api/public/register", async (request, response) => {
       parkingPlanSummary = `${label} — ${match.feeVnd.toLocaleString("vi-VN")} ₫/month`;
     }
 
+    let depositAfterReferral = parsed.data.deposit;
+    let mergedAdditionalTerms = parsed.data.additionalTerms?.trim() ?? "";
+    let referralNoteLine: string | undefined;
+    let referralRewards: {
+      newUserCoins: number;
+      referrerCoins: number;
+      referrerMaHd: string;
+    } | null = null;
+
+    const referralCodeRaw = parsed.data.referralCode?.trim();
+    if (referralCodeRaw) {
+      const referralResolution = await resolveReferralForNewRegistration({
+        registrantEmail: parsed.data.email,
+        referralCode: referralCodeRaw
+      });
+
+      if (!referralResolution.ok) {
+        return response.status(400).json({ error: referralResolution.error });
+      }
+
+      const appliedDiscount = Math.min(referralResolution.discountVnd, depositAfterReferral);
+      depositAfterReferral -= appliedDiscount;
+      const refLine = `Referral: −${appliedDiscount.toLocaleString("vi-VN")} VND from deposit (referrer contract ${referralResolution.referrer.maHd})`;
+      mergedAdditionalTerms = [mergedAdditionalTerms, refLine].filter(Boolean).join(" | ");
+      referralNoteLine = `Referral: referrer ${referralResolution.referrer.email} (${referralResolution.referrer.maHd}); −${appliedDiscount} VND deposit; new-user coins ${referralResolution.newUserCoins}; referrer coins ${referralResolution.referrerCoins}`;
+      referralRewards = {
+        newUserCoins: referralResolution.newUserCoins,
+        referrerCoins: referralResolution.referrerCoins,
+        referrerMaHd: referralResolution.referrer.maHd
+      };
+    }
+
     const result = await runWithWriteGuard({
       key: createWriteGuardKey("/api/public/register", parsed.data),
       duplicateMessage: "This registration was just submitted. Please wait a few seconds before trying again.",
       cooldownMs: 15000,
       action: async () => {
-        const { parkingOptionId: _parkingOptionIdIgnored, ...registrationFields } = parsed.data;
+        const { parkingOptionId: _parkingOptionIdIgnored, referralCode: _referralIgnored, ...registrationFields } =
+          parsed.data;
         void _parkingOptionIdIgnored;
+        void _referralIgnored;
+
         const registration = await submitPublicRegistration({
           ...registrationFields,
+          deposit: depositAfterReferral,
+          additionalTerms: mergedAdditionalTerms || undefined,
+          referralNoteLine,
           cleaningOptOutFeeVnd: configuredCleaningFeeVnd,
           parkingFeeVnd,
           parkingPlanSummary,
@@ -5647,6 +5776,24 @@ app.post("/api/public/register", async (request, response) => {
         return registration;
       }
     });
+
+    if (referralRewards && (referralRewards.newUserCoins > 0 || referralRewards.referrerCoins > 0)) {
+      try {
+        await applyReferralRegistrationRewards({
+          newUserMaHd: result.contractCode,
+          newUserCoins: referralRewards.newUserCoins,
+          referrerMaHd: referralRewards.referrerMaHd,
+          referrerCoins: referralRewards.referrerCoins
+        });
+      } catch (coinError) {
+        console.error("[api/public/register] Referral coin grants failed", coinError);
+        return response.json({
+          ok: true,
+          contractCode: result.contractCode,
+          referralCoinsWarning: coinError instanceof Error ? coinError.message : "Referral coin grants failed"
+        });
+      }
+    }
 
     return response.json({
       ok: true,
@@ -5689,6 +5836,30 @@ app.get("/manager/pricing", async (request, response) => {
     return response.json({ bedOverrides, discounts, branchSettings, parkingOverrides, parkingTiers });
   } catch (error) {
     return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to load pricing" });
+  }
+});
+
+app.get("/manager/referral-program", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "");
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const settings = await getReferralProgramSettings();
+    return response.json(settings);
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to load referral settings" });
+  }
+});
+
+app.put("/manager/referral-program", async (request, response) => {
+  const body = request.body as { actorEmail?: string; settings?: Partial<ReferralProgramSettings> };
+  try {
+    const settings = await updateReferralProgramSettings({
+      actorEmail: String(body.actorEmail ?? ""),
+      settings: body.settings ?? {}
+    });
+    return response.json({ ok: true, settings });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to save referral settings" });
   }
 });
 
