@@ -23,6 +23,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { InlineHelp } from "./inline-help";
 import { ManagerSettingsTools } from "./manager-settings-tools";
+import { ManagerResidentGuidesEditor } from "./manager-resident-guides-editor";
 
 
 type StaffRole = "manager" | "owner" | "app_admin" | "mechanic";
@@ -1194,7 +1195,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [referralProgramSaving, setReferralProgramSaving] = useState(false);
   const [referralProgramMessage, setReferralProgramMessage] = useState("");
   const [pricingSettingsTab, setPricingSettingsTab] = useState<
-    "long_term" | "short_term" | "referral" | "staff" | "tools"
+    "long_term" | "short_term" | "referral" | "staff" | "resident_guides" | "tools"
   >("long_term");
   const [bedPricingExpanded, setBedPricingExpanded] = useState(false);
   const [pricingSettingsExpanded, setPricingSettingsExpanded] = useState<Record<PricingSettingsSectionKey, boolean>>({
@@ -6981,7 +6982,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       ? language === "vi"
                         ? "Chương trình giới thiệu"
                         : "Referral program"
-                      : t("pricing")}
+                      : pricingSettingsTab === "resident_guides"
+                        ? t("settingsResidentGuidesTitle")
+                        : t("pricing")}
                 </h2>
                 <p className="mt-1 text-sm text-slate-500">
                   {pricingSettingsTab === "tools"
@@ -6990,10 +6993,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       ? language === "vi"
                         ? "Bật/tắt, mức giảm một lần trên thanh toán lần đầu và Cozoro coins cho cư dân mới và người giới thiệu."
                         : "Toggle the program and set one-time first-payment discount and Cozoro coins for new residents and referrers."
-                      : t("pricingDesc")}
+                      : pricingSettingsTab === "resident_guides"
+                        ? t("settingsResidentGuidesDesc")
+                        : t("pricingDesc")}
                 </p>
               </div>
-              {pricingSettingsTab !== "tools" && pricingSettingsTab !== "referral" ? (
+              {pricingSettingsTab !== "tools" && pricingSettingsTab !== "referral" && pricingSettingsTab !== "resident_guides" ? (
                 <button type="button" onClick={() => void loadPricingConfig()} disabled={pricingConfigLoading}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-50">
                   {pricingConfigLoading ? t("refreshing") : t("refreshData")}
@@ -7011,7 +7016,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               ) : null}
             </div>
             <div className="mt-5 flex flex-wrap gap-2">
-              {(["long_term", "short_term", "referral", "staff", "tools"] as const).map((tab) => (
+              {(["long_term", "short_term", "referral", "staff", "resident_guides", "tools"] as const).map((tab) => (
                 <button key={tab} type="button" onClick={() => {
                   setPricingSettingsTab(tab);
                   if (tab === "referral") {
@@ -7019,7 +7024,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   }
                 }}
                   className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${pricingSettingsTab === tab ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-50"}`}>
-                  {tab === "long_term" ? t("longTermTab") : tab === "short_term" ? t("shortTermTab") : tab === "referral" ? (language === "vi" ? "Giới thiệu" : "Referral") : tab === "staff" ? t("staffAccountsTab") : t("settingsToolsTab")}
+                  {tab === "long_term" ? t("longTermTab") : tab === "short_term" ? t("shortTermTab") : tab === "referral" ? (language === "vi" ? "Giới thiệu" : "Referral") : tab === "staff" ? t("staffAccountsTab") : tab === "resident_guides" ? t("settingsResidentGuidesTab") : t("settingsToolsTab")}
                 </button>
               ))}
             </div>
@@ -8151,6 +8156,10 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 </p>
               </div>
             </CollapsibleSettingsSection>
+          ) : null}
+
+          {pricingSettingsTab === "resident_guides" ? (
+            <ManagerResidentGuidesEditor normalizedEmail={normalizedEmail} language={language} t={t} />
           ) : null}
 
           {pricingSettingsTab === "tools" ? (

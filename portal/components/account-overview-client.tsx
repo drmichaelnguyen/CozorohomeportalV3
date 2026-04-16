@@ -20,6 +20,7 @@ import { LaundryController } from "./laundry-controller";
 import { ContractExtension } from "./contract-extension";
 import { NextPaymentSummary } from "./next-payment-summary";
 import { AccountNoonFlappyBee } from "./account-noon-flappy-bee";
+import { ResidentInstructionsPanel } from "./resident-instructions-panel";
 import type { RentPaidStatusPayload } from "../lib/rent-paid-status";
 
 type ClientRecord = Record<string, string>;
@@ -222,7 +223,7 @@ function getCleaningLateDeadline(task: { type: CleaningTask["type"]; scheduledDa
 
 export function AccountOverviewClient() {
   const { t, language, setLanguage } = usePortalLanguage();
-  const { sessionEmail, isLoggedIn, login, logout } = usePortalSession();
+  const { sessionEmail, sessionRole, isLoggedIn, login, logout } = usePortalSession();
   const { theme, toggleTheme } = usePortalTheme();
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
@@ -779,8 +780,15 @@ export function AccountOverviewClient() {
     return `${hours}h ${minutes}m`;
   }
 
+  const hideResidentGuides =
+    sessionRole === "manager" ||
+    sessionRole === "owner" ||
+    sessionRole === "app_admin" ||
+    sessionRole === "mechanic";
+
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      {isLoggedIn && !hideResidentGuides ? <ResidentInstructionsPanel /> : null}
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
         <div className="flex items-start justify-between gap-4">
           <h1 className="text-2xl font-semibold text-slate-900">{t("accountOverviewTitle")}</h1>

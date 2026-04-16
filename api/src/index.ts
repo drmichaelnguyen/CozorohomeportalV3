@@ -47,6 +47,14 @@ import { VAPID_PUBLIC_KEY, savePushSubscription, deletePushSubscription, sendPus
 import { getCleaningRewardSettings, updateCleaningRewardSettings } from "./cleaning-reward-settings.js";
 import { getManagerFridgeDrainSchedule, upsertFridgeDrainCleaningDate } from "./fridge-drain-schedule.js";
 import { getPortalUxSettings, updatePortalUxSettings } from "./portal-ux-settings.js";
+import {
+  createGuideSchema,
+  createResidentGuide,
+  deleteResidentGuide,
+  listResidentGuidesPublic,
+  updateGuideSchema,
+  updateResidentGuide
+} from "./resident-guides.js";
 import { calculateRentBreakdown, computePrepaidNextPaymentEstimate } from "./calculation-engine.js";
 import { calculateRentBreakdownForBillingMonth } from "./monthly-rent-breakdown.js";
 import {
@@ -5377,6 +5385,99 @@ app.put("/manager/cleaning-reward-settings", async (req, res) => {
     return res.json(settings);
   } catch (error) {
     return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+// GET /resident/guides — bilingual how-to sections for residents (public read)
+app.get("/resident/guides", async (_req, res) => {
+  try {
+    const guides = await listResidentGuidesPublic();
+    return res.json({ guides });
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to load guides" });
+  }
+});
+
+// GET /manager/resident-guides — same payload; staff-only
+app.get("/manager/resident-guides", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim();
+  if (!actorEmail) {
+    return res.status(400).json({ error: "actorEmail is required" });
+  }
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const guides = await listResidentGuidesPublic();
+    return res.json({ guides });
+  } catch (error) {
+    return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+// POST /manager/resident-guides — create section (steps with optional image URLs, or video URL)
+app.post("/manager/resident-guides", async (req, res) => {
+  const parsed = createGuideSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid resident guide payload", details: parsed.error.flatten() });
+  }
+  try {
+    const guide = await createResidentGuide(parsed.data);
+    return res.json(guide);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unable to create guide";
+    const code =
+      msg.includes("Only managers") || msg.includes("Forbidden")
+        ? 403
+        : msg.includes("Unique constraint") || msg.includes("unique constraint")
+          ? 409
+          : 400;
+    return res.status(code).json({ error: msg });
+  }
+});
+
+// PATCH /manager/resident-guides/:id
+app.patch("/manager/resident-guides/:id", async (req, res) => {
+  const id = String(req.params.id ?? "").trim();
+  if (!id) {
+    return res.status(400).json({ error: "id is required" });
+  }
+  const parsed = updateGuideSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid resident guide payload", details: parsed.error.flatten() });
+  }
+  try {
+    const guide = await updateResidentGuide(id, parsed.data);
+    return res.json(guide);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unable to update guide";
+    const code =
+      msg === "Guide not found."
+        ? 404
+        : msg.includes("Only managers") || msg.includes("Forbidden")
+          ? 403
+          : 400;
+    return res.status(code).json({ error: msg });
+  }
+});
+
+// DELETE /manager/resident-guides/:id?actorEmail=
+app.delete("/manager/resident-guides/:id", async (req, res) => {
+  const id = String(req.params.id ?? "").trim();
+  const actorEmail = String(req.query.actorEmail ?? "").trim();
+  if (!id || !actorEmail) {
+    return res.status(400).json({ error: "id and actorEmail are required" });
+  }
+  try {
+    await deleteResidentGuide(actorEmail, id);
+    return res.json({ ok: true });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unable to delete guide";
+    const code =
+      msg.includes("Only managers") || msg.includes("Forbidden")
+        ? 403
+        : msg.includes("Record to delete does not exist") || msg.includes("not found")
+          ? 404
+          : 400;
+    return res.status(code).json({ error: msg });
   }
 });
 

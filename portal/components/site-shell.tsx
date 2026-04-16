@@ -16,6 +16,7 @@ import { VersionBadge } from "./version-badge";
 import { PushSubscription } from "./push-subscription";
 import { InlineHelp } from "./inline-help";
 import { RentDueBlockingOverlay } from "./rent-due-blocking-overlay";
+import { AddToHomeScreenPrompt } from "./add-to-home-screen-prompt";
 
 function SiteChrome({ children }: { children: React.ReactNode }) {
   const { language, setLanguage, t } = usePortalLanguage();
@@ -275,6 +276,7 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
       {isLoggedIn ? <ChatNotifier /> : null}
       {isLoggedIn && sessionEmail ? <PushSubscription email={sessionEmail} /> : null}
       <RentDueBlockingOverlay />
+      <AddToHomeScreenPrompt />
       <VersionBadge />
     </div>
   );

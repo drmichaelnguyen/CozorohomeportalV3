@@ -986,6 +986,43 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "Cleaning coin rewards, bulk coin grants, and bulk web push promotions to selected residents.",
     vi: "Thưởng coin vệ sinh, cộng coin hàng loạt, và gửi thông báo web push khuyến mãi tới nhiều cư dân."
   },
+  settingsResidentGuidesTab: { en: "Resident guides", vi: "Hướng dẫn cư dân" },
+  settingsResidentGuidesTitle: { en: "Resident guides", vi: "Hướng dẫn cư dân" },
+  settingsResidentGuidesDesc: {
+    en: "Step-by-step instructions with optional image links or a video URL appear at the top of the Account page for residents (collapsed by default).",
+    vi: "Hướng dẫn từng bước (có thể kèm ảnh qua URL) hoặc một video sẽ hiển thị đầu trang Tài khoản cho cư dân (mặc định thu gọn)."
+  },
+  residentGuidesPanelTitle: { en: "How to use the portal", vi: "Hướng dẫn sử dụng cổng thông tin" },
+  residentGuidesPanelHint: {
+    en: "Tap a topic to expand. Your manager can update these guides in Settings.",
+    vi: "Chạm vào từng mục để mở rộng. Quản lý có thể cập nhật trong phần Cài đặt."
+  },
+  addToHomeSectionTitle: { en: "Add CozoroHome to your phone", vi: "Thêm CozoroHome vào màn hình điện thoại" },
+  addToHomeIos1: { en: "Open this site in Safari (not Chrome).", vi: "Mở trang này bằng Safari (không dùng Chrome)." },
+  addToHomeIos2: { en: "Tap the Share button (square with an arrow).", vi: "Chạm nút Chia sẻ (ô vuông có mũi tên)." },
+  addToHomeIos3: { en: 'Scroll and tap “Add to Home Screen”, then tap “Add”.', vi: 'Kéo xuống và chạm “Thêm vào Màn hình chính”, rồi chạm “Thêm”.' },
+  addToHomeAndroid1: { en: "Open this site in Chrome.", vi: "Mở trang này bằng Chrome." },
+  addToHomeAndroid2: { en: 'Tap the menu (⋮) in the top-right.', vi: "Chạm menu (⋮) góc trên bên phải." },
+  addToHomeAndroid3: {
+    en: 'Tap “Install app” or “Add to Home screen”, then confirm.',
+    vi: 'Chạm “Cài đặt ứng dụng” hoặc “Thêm vào Màn hình chính”, rồi xác nhận.'
+  },
+  addToHomeOtherMobile: {
+    en: "Use your browser menu to bookmark or add this page to your home screen, if your browser supports it.",
+    vi: "Dùng menu trình duyệt để đánh dấu hoặc thêm trang vào màn hình chính nếu trình duyệt hỗ trợ."
+  },
+  addToHomeDesktop: {
+    en: "On a computer, bookmark this site in your browser. For the app-like experience, open the portal on your phone and add it to your home screen.",
+    vi: "Trên máy tính, hãy đánh dấu trang này. Để dùng giống ứng dụng, mở cổng trên điện thoại và thêm vào màn hình chính."
+  },
+  pwaPromptTitle: { en: "Install CozoroHome on your phone", vi: "Cài CozoroHome trên điện thoại" },
+  pwaPromptSubtitle: {
+    en: "Add this website to your home screen for quick access like a normal app.",
+    vi: "Thêm trang web vào màn hình chính để mở nhanh như một ứng dụng."
+  },
+  pwaPromptDismiss: { en: "Got it", vi: "Đã hiểu" },
+  pwaPromptLater: { en: "Remind me later", vi: "Nhắc sau" },
+  pwaPromptOpenGuides: { en: "Show steps again on Account", vi: "Xem lại các bước ở trang Tài khoản" },
   toolsCleaningRewardsTitle: { en: "Cleaning schedule coin rewards", vi: "Thưởng coin lịch vệ sinh" },
   toolsCleaningRewardsDesc: {
     en: "Base coins per task type and the multiplier when a resident self-assigns a slot (e.g. 1.5 = +50%).",

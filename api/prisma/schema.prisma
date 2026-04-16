@@ -472,3 +472,28 @@ model PricingDiscount {
 
   @@index([termType, enabled])
 }
+
+/// Bilingual resident-facing how-to sections (laundry, cleaning, etc.); managers edit in Settings.
+enum ResidentGuideContentType {
+  STEPS
+  VIDEO
+}
+
+model ResidentGuideSection {
+  id          String                   @id @default(cuid())
+  /// Lowercase slug, unique (e.g. laundry, cleaning_schedule, custom_topic)
+  slug        String                   @unique @db.VarChar(80)
+  titleVi     String                   @db.VarChar(200)
+  titleEn     String                   @db.VarChar(200)
+  sortOrder   Int                      @default(0)
+  contentType ResidentGuideContentType
+  /// YouTube / Vimeo watch URL or direct .mp4 link for VIDEO mode
+  videoUrl    String?                  @db.VarChar(2000)
+  /// STEPS: [{ "bodyVi", "bodyEn", "imageUrl"? }]
+  stepsJson   Json?
+  updatedBy   String
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+
+  @@index([sortOrder])
+}
