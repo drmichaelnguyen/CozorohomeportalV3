@@ -221,6 +221,90 @@ function getCleaningLateDeadline(task: { type: CleaningTask["type"]; scheduledDa
   return new Date(windowEnd.getTime() + 10 * 60 * 60 * 1000);
 }
 
+/** Show referral rules reminder at most once every 7 days per signed-in email */
+const REFERRAL_WEEKLY_POPUP_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function referralWeeklyPopupStorageKey(email: string) {
+  return `cozorohome-referral-weekly-popup:${email.trim().toLowerCase()}`;
+}
+
+function shouldShowReferralWeeklyPopup(email: string): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const raw = window.localStorage.getItem(referralWeeklyPopupStorageKey(email));
+  if (!raw) {
+    return true;
+  }
+  const last = Number.parseInt(raw, 10);
+  if (!Number.isFinite(last)) {
+    return true;
+  }
+  return Date.now() - last >= REFERRAL_WEEKLY_POPUP_INTERVAL_MS;
+}
+
+function markReferralWeeklyPopupDismissed(email: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(referralWeeklyPopupStorageKey(email), String(Date.now()));
+}
+
+type ReferralRulesCopy = {
+  fullOfferContractMonths: number;
+  newRegistrantDiscountVnd: number;
+  newRegistrantCoins: number;
+  referrerCoins: number;
+  hostelEnabled: boolean;
+  hostelNewRegistrantDiscountVnd: number;
+  hostelNewRegistrantCoins: number;
+  hostelReferrerCoins: number;
+  hostelHeadlineEn: string;
+  hostelHeadlineVi: string;
+};
+
+type ReferralWeeklyModalPayload = ReferralRulesCopy & {
+  headlineEn: string;
+  headlineVi: string;
+};
+
+function ReferralProgramRulesParagraphs({
+  referralPanel,
+  language
+}: {
+  referralPanel: ReferralRulesCopy;
+  language: "en" | "vi";
+}) {
+  return (
+    <>
+      <p className="text-emerald-900 dark:text-emerald-50">
+        {language === "vi"
+          ? `Long-term (/register): mức đầy đủ khi hợp đồng ≥ ${referralPanel.fullOfferContractMonths} tháng; ngắn hơn được chia theo tỷ lệ. Giảm tối đa ${referralPanel.newRegistrantDiscountVnd.toLocaleString("vi-VN")} VND một lần, ${referralPanel.newRegistrantCoins.toLocaleString("vi-VN")} coins cho họ và ${referralPanel.referrerCoins.toLocaleString("vi-VN")} coins cho bạn.`
+          : `Long-term (/register): full reward when the new contract is at least ${referralPanel.fullOfferContractMonths} months; shorter contracts are pro-rated. Up to ${referralPanel.newRegistrantDiscountVnd.toLocaleString("en-US")} VND one-time off the first payment estimate, ${referralPanel.newRegistrantCoins.toLocaleString("en-US")} coins for them and ${referralPanel.referrerCoins.toLocaleString("en-US")} coins for you.`}
+      </p>
+      {referralPanel.hostelEnabled ? (
+        <p className="text-emerald-900 dark:text-emerald-50">
+          <span className="font-semibold">
+            {language === "vi" ? "Hostel / lưu trú ngắn: " : "Hostel / short stay: "}
+          </span>
+          {language === "vi"
+            ? `${referralPanel.hostelHeadlineVi} Giảm tối đa ${referralPanel.hostelNewRegistrantDiscountVnd.toLocaleString("vi-VN")} VND trên giá lưu trú (theo tỷ lệ đêm), ${referralPanel.hostelNewRegistrantCoins.toLocaleString("vi-VN")} coins khách và ${referralPanel.hostelReferrerCoins.toLocaleString("vi-VN")} coins cho bạn — `
+            : `${referralPanel.hostelHeadlineEn} Up to ${referralPanel.hostelNewRegistrantDiscountVnd.toLocaleString("en-US")} VND off the stay (pro-rated by nights), ${referralPanel.hostelNewRegistrantCoins.toLocaleString("en-US")} guest coins and ${referralPanel.hostelReferrerCoins.toLocaleString("en-US")} coins for you — `}
+          <a
+            href="https://hostel.cozorohome.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-emerald-800 underline dark:text-emerald-200"
+          >
+            hostel.cozorohome.com
+          </a>
+          .
+        </p>
+      ) : null}
+    </>
+  );
+}
+
 export function AccountOverviewClient() {
   const { t, language, setLanguage } = usePortalLanguage();
   const { sessionEmail, sessionRole, isLoggedIn, login, logout } = usePortalSession();
@@ -277,6 +361,8 @@ export function AccountOverviewClient() {
   } | null>(null);
   const [referralCopied, setReferralCopied] = useState(false);
   const [referralHelpOpen, setReferralHelpOpen] = useState(false);
+  const [referralWeeklyModalOpen, setReferralWeeklyModalOpen] = useState(false);
+  const [referralWeeklySnapshot, setReferralWeeklySnapshot] = useState<ReferralWeeklyModalPayload | null>(null);
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -292,6 +378,35 @@ export function AccountOverviewClient() {
       setEmail(sessionEmail);
     }
   }, [sessionEmail]);
+
+  useEffect(() => {
+    setReferralWeeklyModalOpen(false);
+    setReferralWeeklySnapshot(null);
+  }, [activeEmail]);
+
+  useEffect(() => {
+    if (!referralPanel?.enabled || !client || String(client["Hiện còn ở"] ?? "").trim() !== "1" || !activeEmail) {
+      return;
+    }
+    if (!shouldShowReferralWeeklyPopup(activeEmail)) {
+      return;
+    }
+    setReferralWeeklySnapshot({
+      headlineEn: referralPanel.headlineEn,
+      headlineVi: referralPanel.headlineVi,
+      fullOfferContractMonths: referralPanel.fullOfferContractMonths,
+      newRegistrantDiscountVnd: referralPanel.newRegistrantDiscountVnd,
+      newRegistrantCoins: referralPanel.newRegistrantCoins,
+      referrerCoins: referralPanel.referrerCoins,
+      hostelEnabled: referralPanel.hostelEnabled,
+      hostelNewRegistrantDiscountVnd: referralPanel.hostelNewRegistrantDiscountVnd,
+      hostelNewRegistrantCoins: referralPanel.hostelNewRegistrantCoins,
+      hostelReferrerCoins: referralPanel.hostelReferrerCoins,
+      hostelHeadlineEn: referralPanel.hostelHeadlineEn,
+      hostelHeadlineVi: referralPanel.hostelHeadlineVi
+    });
+    setReferralWeeklyModalOpen(true);
+  }, [referralPanel, client, activeEmail]);
 
   useEffect(() => {
     if (sessionEmail && isLoggedIn) {
@@ -877,30 +992,7 @@ export function AccountOverviewClient() {
               aria-labelledby="referral-help-trigger"
               className="mt-3 space-y-2 rounded-xl border border-emerald-200/80 bg-white/70 p-4 text-sm text-emerald-900 shadow-sm dark:border-emerald-700/50 dark:bg-emerald-950/50 dark:text-emerald-100"
             >
-              <p className="text-emerald-900 dark:text-emerald-50">
-                {language === "vi"
-                  ? `Long-term (/register): mức đầy đủ khi hợp đồng ≥ ${referralPanel.fullOfferContractMonths} tháng; ngắn hơn được chia theo tỷ lệ. Giảm tối đa ${referralPanel.newRegistrantDiscountVnd.toLocaleString("vi-VN")} VND một lần, ${referralPanel.newRegistrantCoins.toLocaleString("vi-VN")} coins cho họ và ${referralPanel.referrerCoins.toLocaleString("vi-VN")} coins cho bạn.`
-                  : `Long-term (/register): full reward when the new contract is at least ${referralPanel.fullOfferContractMonths} months; shorter contracts are pro-rated. Up to ${referralPanel.newRegistrantDiscountVnd.toLocaleString("en-US")} VND one-time off the first payment estimate, ${referralPanel.newRegistrantCoins.toLocaleString("en-US")} coins for them and ${referralPanel.referrerCoins.toLocaleString("en-US")} coins for you.`}
-              </p>
-              {referralPanel.hostelEnabled ? (
-                <p className="text-emerald-900 dark:text-emerald-50">
-                  <span className="font-semibold">
-                    {language === "vi" ? "Hostel / lưu trú ngắn: " : "Hostel / short stay: "}
-                  </span>
-                  {language === "vi"
-                    ? `${referralPanel.hostelHeadlineVi} Giảm tối đa ${referralPanel.hostelNewRegistrantDiscountVnd.toLocaleString("vi-VN")} VND trên giá lưu trú (theo tỷ lệ đêm), ${referralPanel.hostelNewRegistrantCoins.toLocaleString("vi-VN")} coins khách và ${referralPanel.hostelReferrerCoins.toLocaleString("vi-VN")} coins cho bạn — `
-                    : `${referralPanel.hostelHeadlineEn} Up to ${referralPanel.hostelNewRegistrantDiscountVnd.toLocaleString("en-US")} VND off the stay (pro-rated by nights), ${referralPanel.hostelNewRegistrantCoins.toLocaleString("en-US")} guest coins and ${referralPanel.hostelReferrerCoins.toLocaleString("en-US")} coins for you — `}
-                  <a
-                    href="https://hostel.cozorohome.com"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-medium text-emerald-800 underline dark:text-emerald-200"
-                  >
-                    hostel.cozorohome.com
-                  </a>
-                  .
-                </p>
-              ) : null}
+              <ReferralProgramRulesParagraphs referralPanel={referralPanel} language={language} />
             </div>
           ) : null}
           <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -1851,6 +1943,47 @@ export function AccountOverviewClient() {
           </div>
         ) : null}
       </section>
+
+      {referralWeeklyModalOpen && referralWeeklySnapshot ? (
+        <div
+          className="fixed inset-0 z-[210] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="referral-weekly-modal-title"
+          onClick={() => {
+            markReferralWeeklyPopupDismissed(activeEmail);
+            setReferralWeeklyModalOpen(false);
+            setReferralWeeklySnapshot(null);
+          }}
+        >
+          <div
+            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-teal-50 p-6 shadow-xl dark:border-emerald-800 dark:from-emerald-950/95 dark:to-teal-950/95"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="referral-weekly-modal-title" className="text-lg font-semibold text-emerald-950 dark:text-emerald-100">
+              {language === "vi" ? "Giới thiệu bạn bè" : "Refer a friend"}
+            </h2>
+            <p className="mt-2 text-sm text-emerald-900/90 dark:text-emerald-200/90">
+              {language === "vi" ? referralWeeklySnapshot.headlineVi : referralWeeklySnapshot.headlineEn}
+            </p>
+            <div className="mt-4 space-y-3 text-sm">
+              <ReferralProgramRulesParagraphs referralPanel={referralWeeklySnapshot} language={language} />
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                markReferralWeeklyPopupDismissed(activeEmail);
+                setReferralWeeklyModalOpen(false);
+                setReferralWeeklySnapshot(null);
+              }}
+              className="mt-6 w-full rounded-xl bg-emerald-700 py-3 text-sm font-semibold text-white shadow-sm hover:bg-emerald-600"
+            >
+              {language === "vi" ? "Đã hiểu" : "Got it"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <AccountNoonFlappyBee />
     </div>
   );
