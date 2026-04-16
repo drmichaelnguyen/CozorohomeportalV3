@@ -18,6 +18,12 @@ import {
   sendAcCommand,
   sendAcCommandToRoom
 } from "./ac-controller.js";
+import {
+  dismissAcComfortAlert,
+  getAcComfortPublicStatus,
+  submitAcComfortVote,
+  type AcComfortPublicStatus
+} from "./ac-comfort-votes.js";
 import { appendControllerHistoryEntry, listControllerHistory } from "./controller-history.js";
 import { getUserAirFryerContext, startAirFryerUse } from "./airfryer-controller.js";
 import { getUserMicrowaveContext, startMicrowaveUse } from "./microwave-controller.js";
@@ -39,6 +45,7 @@ import { getAccountLockOverride, setAccountLockOverride } from "./account-lock-o
 import { getClientGroupContext, getGroupMessages, markGroupRead, postGroupMessage } from "./group-support.js";
 import { VAPID_PUBLIC_KEY, savePushSubscription, deletePushSubscription, sendPushToEmail } from "./push.js";
 import { getCleaningRewardSettings, updateCleaningRewardSettings } from "./cleaning-reward-settings.js";
+import { getManagerFridgeDrainSchedule, upsertFridgeDrainCleaningDate } from "./fridge-drain-schedule.js";
 import { getPortalUxSettings, updatePortalUxSettings } from "./portal-ux-settings.js";
 import { calculateRentBreakdown, computePrepaidNextPaymentEstimate } from "./calculation-engine.js";
 import { calculateRentBreakdownForBillingMonth } from "./monthly-rent-breakdown.js";
@@ -221,6 +228,7 @@ import {
   clearAllResidentNotificationCaches,
   listResidentSupportNotifications,
   listStaffSupportNotifications,
+  invalidateStaffSupportNotificationCache,
   markSupportConversationRead,
   ownerDeleteSupportConversation,
   ownerDeleteSupportMessage,
@@ -546,7 +554,7 @@ app.use((request, response, next) => {
 
   next();
 });
-app.use(express.json({ limit: "15mb" }));
+app.use(express.json({ limit: "50mb" }));
 
 const bookingInputSchema = z
   .object({
@@ -615,6 +623,14 @@ const acCommandSchema = z.object({
   email: z.string().email(),
   action: z.enum(["ON", "OFF"])
 });
+const acComfortVoteSchema = z.object({
+  email: z.string().email(),
+  vote: z.enum(["HOT", "COLD"])
+});
+const acComfortDismissSchema = z.object({
+  actorEmail: z.string().email(),
+  alertId: z.string().min(1)
+});
 const airFryerStartSchema = z.object({
   email: z.string().email(),
   inspection: z.string().min(1)
@@ -658,6 +674,11 @@ const cleaningRewardSettingsPutSchema = z.object({
     })
     .optional(),
   selfAssignBonusMultiplier: z.coerce.number().min(1).max(3).optional()
+});
+const fridgeDrainSchedulePutSchema = z.object({
+  actorEmail: z.string().email(),
+  branchId: z.enum(["D2", "D7"]),
+  cleaningDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 });
 const managerBulkCoinAdjustSchema = z
   .object({
@@ -724,14 +745,22 @@ const managerFineCreateSchema = z.object({
   image: z.string().trim().optional(),
   operator: z.string().trim().min(1)
 });
-const fineImageUploadSchema = z.object({
-  actorEmail: z.string().email(),
-  maHd: z.string().min(1),
-  clientName: z.string().trim().optional(),
-  fileName: z.string().trim().min(1),
-  mimeType: z.string().trim().min(1),
-  dataBase64: z.string().trim().min(1)
-});
+const fineImageUploadSchema = z
+  .object({
+    actorEmail: z.string().email(),
+    maHd: z.string().min(1),
+    clientName: z.string().trim().optional(),
+    fileName: z.string().trim().min(1),
+    mimeType: z.string().trim().min(1),
+    dataBase64: z.string().trim().min(1)
+  })
+  .refine(
+    (data) => {
+      const mt = data.mimeType.toLowerCase().split(";")[0]!.trim();
+      return mt.startsWith("image/") || mt.startsWith("video/");
+    },
+    { message: "Only image or video files are allowed for fine evidence." }
+  );
 const managerFineResolveSchema = z.object({
   email: z.string().email(),
   timestamp: z.string().min(1),
@@ -872,7 +901,9 @@ const publicRegistrationSchema = z.object({
   /** Required when hasMotorbike and more than one parking tier exists; otherwise server picks the only option. */
   parkingOptionId: z.string().trim().optional(),
   idScanUrl: z.string().trim().optional(),
-  referralCode: z.string().trim().optional()
+  referralCode: z.string().trim().optional(),
+  /** Pre-referral first payment total (rent prepay slice + full deposit); required when referralCode is set. */
+  firstPaymentSubtotalBeforeReferral: z.coerce.number().int().nonnegative().optional()
 });
 const cleaningAvailabilitySchema = z.object({
   email: z.string().email(),
@@ -1643,10 +1674,51 @@ app.get("/controller/ac", async (request, response) => {
 
   try {
     const context = await getUserAcControllerContext(parsed.data.email);
-    return response.json(context);
+    let comfort: AcComfortPublicStatus | null = null;
+    try {
+      comfort = await getAcComfortPublicStatus(parsed.data.email);
+    } catch {
+      comfort = null;
+    }
+    return response.json({ ...context, comfort });
   } catch (error) {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to load AC controller context"
+    });
+  }
+});
+
+app.post("/controller/ac/comfort-vote", async (request, response) => {
+  const parsed = acComfortVoteSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "email and vote (HOT or COLD) are required" });
+  }
+  try {
+    const result = await submitAcComfortVote(parsed.data);
+    if (result.didCreateAlert) {
+      invalidateStaffSupportNotificationCache();
+    }
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to save comfort vote"
+    });
+  }
+});
+
+app.post("/manager/ac-comfort/dismiss", async (request, response) => {
+  const parsed = acComfortDismissSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "actorEmail and alertId are required" });
+  }
+  try {
+    await requirePortalRole(parsed.data.actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    await dismissAcComfortAlert({ alertId: parsed.data.alertId });
+    invalidateStaffSupportNotificationCache();
+    return response.json({ ok: true });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to dismiss alert"
     });
   }
 });
@@ -3173,7 +3245,8 @@ app.post("/staff/fines/upload-image", async (request, response) => {
   const parsed = fineImageUploadSchema.safeParse(request.body);
 
   if (!parsed.success) {
-    return response.status(400).json({ error: "Invalid fine image upload payload" });
+    const message = parsed.error.issues[0]?.message ?? "Invalid fine evidence upload payload";
+    return response.status(400).json({ error: message });
   }
 
   try {
@@ -3195,7 +3268,7 @@ app.post("/staff/fines/upload-image", async (request, response) => {
     return response.status(201).json(result);
   } catch (error) {
     return response.status(400).json({
-      error: error instanceof Error ? error.message : "Unable to upload fine image"
+      error: error instanceof Error ? error.message : "Unable to upload fine evidence"
     });
   }
 });
@@ -5307,6 +5380,44 @@ app.put("/manager/cleaning-reward-settings", async (req, res) => {
   }
 });
 
+// GET /manager/fridge-drain-schedule — next fridge drain / clean day (Google Calendar)
+app.get("/manager/fridge-drain-schedule", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim();
+  const branchId = String(req.query.branchId ?? "").trim();
+  if (!actorEmail || (branchId !== "D2" && branchId !== "D7")) {
+    return res.status(400).json({ error: "actorEmail and branchId (D2 or D7) are required." });
+  }
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const schedule = await getManagerFridgeDrainSchedule(branchId);
+    return res.json(schedule);
+  } catch (error) {
+    return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+// PUT /manager/fridge-drain-schedule — set cleaning day; OFF (17:00 day before) + ON events are rewritten
+app.put("/manager/fridge-drain-schedule", async (req, res) => {
+  const parsed = fridgeDrainSchedulePutSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid fridge drain schedule payload" });
+  }
+  try {
+    await requirePortalRole(parsed.data.actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const result = await upsertFridgeDrainCleaningDate({
+      branchId: parsed.data.branchId,
+      cleaningDate: parsed.data.cleaningDate
+    });
+    return res.json(result);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unable to update calendar";
+    const lower = msg.toLowerCase();
+    const status =
+      lower.includes("not configured") || lower.includes("must be yyyy") ? 400 : lower.includes("staff only") ? 403 : 500;
+    return res.status(status).json({ error: msg });
+  }
+});
+
 // POST /manager/coins/bulk-adjust — apply the same coin reason to multiple contracts
 app.post("/manager/coins/bulk-adjust", async (request, response) => {
   const parsed = managerBulkCoinAdjustSchema.safeParse(request.body);
@@ -5708,7 +5819,6 @@ app.post("/api/public/register", async (request, response) => {
       parkingPlanSummary = `${label} — ${match.feeVnd.toLocaleString("vi-VN")} ₫/month`;
     }
 
-    let depositAfterReferral = parsed.data.deposit;
     let mergedAdditionalTerms = parsed.data.additionalTerms?.trim() ?? "";
     let referralNoteLine: string | undefined;
     let referralRewards: {
@@ -5728,11 +5838,25 @@ app.post("/api/public/register", async (request, response) => {
         return response.status(400).json({ error: referralResolution.error });
       }
 
-      const appliedDiscount = Math.min(referralResolution.discountVnd, depositAfterReferral);
-      depositAfterReferral -= appliedDiscount;
-      const refLine = `Referral: −${appliedDiscount.toLocaleString("vi-VN")} VND from deposit (referrer contract ${referralResolution.referrer.maHd})`;
+      const subtotalRaw = parsed.data.firstPaymentSubtotalBeforeReferral;
+      if (subtotalRaw === undefined) {
+        return response.status(400).json({
+          error:
+            "firstPaymentSubtotalBeforeReferral is required when submitting with a referral code (estimated first payment total before referral discount)."
+        });
+      }
+
+      const firstPaymentSubtotal = Math.max(0, Math.trunc(subtotalRaw));
+      if (firstPaymentSubtotal < parsed.data.deposit) {
+        return response.status(400).json({
+          error: "Invalid first payment subtotal (must be at least the deposit amount)."
+        });
+      }
+
+      const appliedDiscount = Math.min(referralResolution.discountVnd, firstPaymentSubtotal);
+      const refLine = `Referral (one-time first payment): −${appliedDiscount.toLocaleString("vi-VN")} VND (referrer contract ${referralResolution.referrer.maHd}; deposit unchanged)`;
       mergedAdditionalTerms = [mergedAdditionalTerms, refLine].filter(Boolean).join(" | ");
-      referralNoteLine = `Referral: referrer ${referralResolution.referrer.email} (${referralResolution.referrer.maHd}); −${appliedDiscount} VND deposit; new-user coins ${referralResolution.newUserCoins}; referrer coins ${referralResolution.referrerCoins}`;
+      referralNoteLine = `Referral: referrer ${referralResolution.referrer.email} (${referralResolution.referrer.maHd}); −${appliedDiscount} VND one-time first payment; deposit ${parsed.data.deposit} VND unchanged; new-user coins ${referralResolution.newUserCoins}; referrer coins ${referralResolution.referrerCoins}`;
       referralRewards = {
         newUserCoins: referralResolution.newUserCoins,
         referrerCoins: referralResolution.referrerCoins,
@@ -5745,14 +5869,18 @@ app.post("/api/public/register", async (request, response) => {
       duplicateMessage: "This registration was just submitted. Please wait a few seconds before trying again.",
       cooldownMs: 15000,
       action: async () => {
-        const { parkingOptionId: _parkingOptionIdIgnored, referralCode: _referralIgnored, ...registrationFields } =
-          parsed.data;
+        const {
+          parkingOptionId: _parkingOptionIdIgnored,
+          referralCode: _referralIgnored,
+          firstPaymentSubtotalBeforeReferral: _fpSubtotalIgnored,
+          ...registrationFields
+        } = parsed.data;
         void _parkingOptionIdIgnored;
         void _referralIgnored;
+        void _fpSubtotalIgnored;
 
         const registration = await submitPublicRegistration({
           ...registrationFields,
-          deposit: depositAfterReferral,
           additionalTerms: mergedAdditionalTerms || undefined,
           referralNoteLine,
           cleaningOptOutFeeVnd: configuredCleaningFeeVnd,

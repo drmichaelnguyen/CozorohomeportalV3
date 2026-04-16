@@ -939,7 +939,7 @@ export function CleaningScheduleClient() {
                   <div className="flex items-center justify-between">
                     <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">{t("taskActionsHeader", "Task Actions")}</div>
                     <div className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 uppercase ring-1 ring-amber-200">
-                      {t("coinsBonusBadge", "+20% Coins Bonus")}
+                      {t("coinsBonusBadge", "+50% Coins Bonus")}
                     </div>
                   </div>
 
@@ -986,7 +986,7 @@ export function CleaningScheduleClient() {
                               <p className="text-sm font-bold text-amber-900">{t("takeOver", "Take Over")}</p>
                               <p className="text-xs text-amber-700">{prettyTaskType(type)} — {t("takeOverDesc", "assigned person hasn't completed it yet")}</p>
                             </div>
-                            <div className="ml-auto text-[10px] font-bold text-amber-600">+20%</div>
+                            <div className="ml-auto text-[10px] font-bold text-amber-600">{t("selfAssignBonusPercent", "+50%")}</div>
                           </button>
                         );
                       }
@@ -1028,7 +1028,7 @@ export function CleaningScheduleClient() {
                           <p className="text-sm font-bold text-emerald-900">Assign Myself</p>
                           <p className="text-xs text-emerald-700">{prettyTaskType(type)}</p>
                         </div>
-                        <div className="ml-auto text-[10px] font-bold text-amber-600">+20%</div>
+                        <div className="ml-auto text-[10px] font-bold text-amber-600">{t("selfAssignBonusPercent", "+50%")}</div>
                       </button>
                     );
                   })}

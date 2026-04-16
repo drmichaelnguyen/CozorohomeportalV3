@@ -301,6 +301,17 @@ const translations: Record<string, { en: string; vi: string }> = {
   controllerResidentDetailsTitle: { en: "Resident details", vi: "Thông tin cư dân" },
   controllerGuestLabel: { en: "Guest", vi: "Khách" },
   controllerContractLabel: { en: "Contract code", vi: "Mã hợp đồng" },
+  controllerComfortTitle: { en: "Room temperature", vi: "Nhiệt độ phòng" },
+  controllerComfortHelp: {
+    en: "Tap if the AC feels too hot or too cold. If more than half of residents in this room choose the same option, managers get a notification to adjust the setpoint.",
+    vi: "Chạm nếu máy lạnh quá nóng hoặc quá lạnh. Nếu hơn một nửa cư dân trong phòng cùng chọn một mục, quản lý sẽ nhận thông báo để chỉnh nhiệt."
+  },
+  controllerComfortCounts: {
+    en: "{n} residents in this room · {hot} reported hot · {cold} reported cold",
+    vi: "{n} cư dân trong phòng · {hot} báo nóng · {cold} báo lạnh"
+  },
+  controllerComfortSending: { en: "Sending…", vi: "Đang gửi…" },
+  notificationAcComfortDismiss: { en: "Dismiss", vi: "Đóng" },
   scheduleDesc: { en: "See cleaning duties and next laundry", vi: "Xem lịch trực vệ sinh và lịch giặt sấy tiếp theo" },
   billingsDesc: { en: "Review laundry fees and fines", vi: "Xem phí giặt sấy và tiền phạt" },
   coinsDesc: { en: "Check your current coins and Cozoronian status", vi: "Xem số lượng coin hiện tại và trạng thái Khách hàng" },
@@ -610,8 +621,18 @@ const translations: Record<string, { en: string; vi: string }> = {
   networkErrorTrigger: { en: "Network error triggering {type}", vi: "Lỗi mạng khi kích hoạt {type}" },
   requestFailed: { en: "Request failed.", vi: "Yêu cầu thất bại." },
   unableToLoadFeedbacks: { en: "Unable to load feedbacks.", vi: "Không thể tải phản hồi." },
-  unableToUploadFineImage: { en: "Unable to upload fine image.", vi: "Không thể tải ảnh vi phạm lên." },
-  fineImageUploaded: { en: "Fine image uploaded.", vi: "Đã tải ảnh vi phạm lên." },
+  unableToUploadFineImage: {
+    en: "Unable to upload fine evidence (photo or video).",
+    vi: "Không thể tải ảnh hoặc video minh chứng lên."
+  },
+  fineImageUploaded: { en: "Evidence uploaded.", vi: "Đã tải minh chứng lên." },
+  fineEvidenceUploadHint: {
+    en: "Upload a photo or short video (max ~50MB). The server compresses it before saving to Drive.",
+    vi: "Tải ảnh hoặc video ngắn (tối đa ~50MB). Máy chủ sẽ nén trước khi lưu lên Drive."
+  },
+  fineEvidenceUploading: { en: "Uploading and compressing…", vi: "Đang tải lên và nén…" },
+  fineEvidenceUploadedDrive: { en: "Evidence saved to Google Drive", vi: "Đã lưu minh chứng lên Google Drive" },
+  removeFineEvidence: { en: "Remove evidence", vi: "Xóa minh chứng" },
   cozoroSide: { en: "Cozoro Side", vi: "Dành cho Cozoro" },
   staffLoginRequired: { en: "Sign in with a Cozoro, manager, or owner account to search clients, send messages, create fine tickets, add coin entries, and review client statistics.", vi: "Đăng nhập bằng tài khoản Cozoro, quản lý hoặc chủ sở hữu để tìm kiếm khách hàng, gửi tin nhắn, tạo phiếu phạt, thêm coin và xem thống kê khách hàng." },
   managementWorkspace: { en: "Management Workspace", vi: "Không gian quản lý" },
@@ -878,7 +899,8 @@ const translations: Record<string, { en: string; vi: string }> = {
   datesSelected: { en: "{n} date{s} selected", vi: "{n} ngày đã chọn" },
   savingAway: { en: "Saving...", vi: "Đang lưu..." },
   taskActionsHeader: { en: "Task Actions", vi: "Thao tác lịch trực" },
-  coinsBonusBadge: { en: "+20% Coins Bonus", vi: "+20% Bonus Coin" },
+  coinsBonusBadge: { en: "+50% Coins Bonus", vi: "+50% Bonus Coin" },
+  selfAssignBonusPercent: { en: "+50%", vi: "+50%" },
   noCleaningProfile: { en: "Your cleaning profile hasn't been set up yet. Contact your manager to be added to the system.", vi: "Hồ sơ vệ sinh của bạn chưa được thiết lập. Liên hệ quản lý để được thêm vào hệ thống." },
   takeOver: { en: "Take Over", vi: "Nhận thay" },
   takeOverDesc: { en: "assigned person hasn't completed it yet", vi: "người được giao chưa hoàn thành" },
@@ -966,14 +988,38 @@ const translations: Record<string, { en: string; vi: string }> = {
   },
   toolsCleaningRewardsTitle: { en: "Cleaning schedule coin rewards", vi: "Thưởng coin lịch vệ sinh" },
   toolsCleaningRewardsDesc: {
-    en: "Base coins per task type and the multiplier when a resident self-assigns a slot (e.g. 1.2 = +20%).",
-    vi: "Coin cơ bản theo loại công việc và hệ số khi cư dân tự đăng ký slot (vd: 1.2 = +20%)."
+    en: "Base coins per task type and the multiplier when a resident self-assigns a slot (e.g. 1.5 = +50%).",
+    vi: "Coin cơ bản theo loại công việc và hệ số khi cư dân tự đăng ký slot (vd: 1.5 = +50%)."
   },
   toolsTaskKitchenD2: { en: "Kitchen D2", vi: "Bếp D2" },
   toolsTaskKitchenD7: { en: "Kitchen D7", vi: "Bếp D7" },
   toolsTaskTrashD7: { en: "Trash D7", vi: "Rác D7" },
   toolsSelfAssignMultiplier: { en: "Self-assign multiplier", vi: "Hệ số tự đăng ký" },
   toolsSaveCleaningRewards: { en: "Save cleaning rewards", vi: "Lưu thưởng vệ sinh" },
+  toolsFridgeDrainTitle: { en: "Fridge drain & clean (shared fridges)", vi: "Xả / vệ sinh tủ lạnh (tủ chung)" },
+  toolsFridgeDrainDesc: {
+    en: "Set the next cleaning day per branch. The portal writes two Google Calendar events with fixed titles for IFTTT: power off the previous day at 17:00, power back on the cleaning morning. Residents get reminders 5, 3, and 1 day before.",
+    vi: "Chọn ngày vệ sinh tiếp theo cho từng chi nhánh. Hệ thống ghi hai sự kiện Google Calendar với tiêu đề cố định cho IFTTT: tắt ngày hôm trước lúc 17:00, bật lại vào sáng ngày vệ sinh. Cư dân nhận nhắc trước 5, 3 và 1 ngày."
+  },
+  toolsFridgeDrainIftttNote: {
+    en: "Do not change event titles in Google Calendar — IFTTT matches the exact Vietnamese keywords.",
+    vi: "Không đổi tiêu đề sự kiện trên Google Calendar — IFTTT khớp đúng từ khóa tiếng Việt."
+  },
+  toolsFridgeDrainBranch: { en: "Branch", vi: "Chi nhánh" },
+  toolsFridgeDrainCleaningDay: { en: "Cleaning day (fridges back ON)", vi: "Ngày vệ sinh (bật tủ lại)" },
+  toolsFridgeDrainOffNote: {
+    en: "Power-off is scheduled automatically the day before at 17:00 (Asia/Ho_Chi_Minh).",
+    vi: "Tắt tủ được đặt tự động vào ngày hôm trước lúc 17:00 (Asia/Ho_Chi_Minh)."
+  },
+  toolsFridgeDrainSave: { en: "Save to calendar", vi: "Lưu vào lịch" },
+  toolsFridgeDrainLoadError: { en: "Could not load fridge schedule.", vi: "Không tải được lịch tủ lạnh." },
+  toolsFridgeDrainNotConfigured: {
+    en: "Calendar ID missing — set GOOGLE_FRIDGE_DRAIN_CALENDAR_D2 / _D7 in the API .env.",
+    vi: "Thiếu ID lịch — đặt GOOGLE_FRIDGE_DRAIN_CALENDAR_D2 / _D7 trong .env của API."
+  },
+  toolsFridgeDrainSaved: { en: "Calendar updated.", vi: "Đã cập nhật lịch." },
+  toolsFridgeDrainNeedDate: { en: "Choose a cleaning date.", vi: "Chọn ngày vệ sinh." },
+  toolsFridgeDrainReload: { en: "Reload", vi: "Tải lại" },
   toolsBulkCoinsTitle: { en: "Bulk coin reward / adjustment", vi: "Cộng / điều chỉnh coin hàng loạt" },
   toolsBulkCoinsDesc: {
     en: "Select residents by contract (Mã HD). Use a positive number to add coins or a negative number to deduct. One shared reason is recorded for all rows.",

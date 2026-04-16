@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { COZORO_TIMEZONE, getActiveClientByEmail } from "./google-sheets.js";
+import { COZORO_TIMEZONE, EMAIL_COLUMN, getActiveClientByEmail, isActiveClient, readCachedClients } from "./google-sheets.js";
 
 const cacheDirPath = path.join(process.cwd(), "data");
 const devicesMapFilePath = path.join(cacheDirPath, "devices-map.json");
@@ -358,6 +358,35 @@ async function saveRoomStateAndReturn(room: AcRoomConfig, action: "ON" | "OFF") 
     action,
     requestedAt: nextEntry.lastRequestedAt
   };
+}
+
+/** Active resident emails mapped to the same AC room id (devices-map + client sheet). */
+export async function listActiveEmailsForAcRoom(roomId: string): Promise<string[]> {
+  const devicesMap = await readDevicesMap();
+  const room = devicesMap.acRooms.find((entry) => entry.id === roomId) ?? null;
+  if (!room) {
+    return [];
+  }
+
+  const cache = await readCachedClients();
+  const rows = cache?.rows ?? [];
+  const emails: string[] = [];
+
+  for (const row of rows) {
+    if (!isActiveClient(row)) {
+      continue;
+    }
+    const email = row[EMAIL_COLUMN]?.trim().toLowerCase();
+    if (!email) {
+      continue;
+    }
+    const mapped = findRoomForClient(devicesMap.acRooms, row);
+    if (mapped?.id === roomId) {
+      emails.push(email);
+    }
+  }
+
+  return [...new Set(emails)];
 }
 
 export async function listPrivilegedAcRooms(): Promise<PrivilegedAcRoom[]> {

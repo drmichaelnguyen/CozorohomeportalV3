@@ -9,7 +9,7 @@ const settingsFilePath = path.join(process.cwd(), "data", "cleaning-reward-setti
 
 export type CleaningRewardSettings = {
   baseRewards: Record<CleaningTaskType, number>;
-  /** Applied when a resident self-assigns a slot (e.g. 1.2 = +20%). */
+  /** Applied when a resident self-assigns a slot (e.g. 1.5 = +50% vs base). */
   selfAssignBonusMultiplier: number;
 };
 
@@ -21,7 +21,7 @@ const DEFAULT_BASE_REWARDS: Record<CleaningTaskType, number> = {
 
 const DEFAULT_SETTINGS: CleaningRewardSettings = {
   baseRewards: { ...DEFAULT_BASE_REWARDS },
-  selfAssignBonusMultiplier: 1.2
+  selfAssignBonusMultiplier: 1.5
 };
 
 function mergeCleaningRewardSettings(partial: Partial<CleaningRewardSettings>): CleaningRewardSettings {

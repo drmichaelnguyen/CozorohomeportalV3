@@ -829,8 +829,8 @@ export function AccountOverviewClient() {
           </p>
           <p className="mt-2 text-sm text-emerald-800">
             {language === "vi"
-              ? `Bạn bè đăng ký lần đầu tại /register nhập mã của bạn: giảm ${referralPanel.newRegistrantDiscountVnd.toLocaleString("vi-VN")} VND tiền cọc, ${referralPanel.newRegistrantCoins.toLocaleString("vi-VN")} coins cho họ và ${referralPanel.referrerCoins.toLocaleString("vi-VN")} coins cho bạn.`
-              : `Friends who register for the first time at /register with your code: ${referralPanel.newRegistrantDiscountVnd.toLocaleString("en-US")} VND off deposit, ${referralPanel.newRegistrantCoins.toLocaleString("en-US")} coins for them and ${referralPanel.referrerCoins.toLocaleString("en-US")} coins for you.`}
+              ? `Bạn bè đăng ký lần đầu tại /register nhập mã của bạn: giảm ${referralPanel.newRegistrantDiscountVnd.toLocaleString("vi-VN")} VND một lần trên tổng thanh toán lần đầu (không trừ vào tiền cọc trong hồ sơ), ${referralPanel.newRegistrantCoins.toLocaleString("vi-VN")} coins cho họ và ${referralPanel.referrerCoins.toLocaleString("vi-VN")} coins cho bạn.`
+              : `Friends who register for the first time at /register with your code: ${referralPanel.newRegistrantDiscountVnd.toLocaleString("en-US")} VND one-time off the estimated first payment total (not taken from the deposit line), ${referralPanel.newRegistrantCoins.toLocaleString("en-US")} coins for them and ${referralPanel.referrerCoins.toLocaleString("en-US")} coins for you.`}
           </p>
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <code className="rounded-xl bg-white/90 px-4 py-2 font-mono text-base font-semibold text-slate-900 ring-1 ring-emerald-200">

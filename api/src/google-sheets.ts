@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 
 import { calendar_v3, google } from "googleapis";
 import { repairMojibake, repairUnknownText } from "./text-encoding.js";
+import { compressFineEvidence } from "./fine-evidence-compress.js";
 
 const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID ?? "";
 const paymentsSpreadsheetId = process.env.GOOGLE_PAYMENT_SPREADSHEET_ID ?? spreadsheetId;
@@ -579,7 +580,7 @@ function mapRow(headers: string[], row: string[]) {
   return repairUnknownText(mapped) as ClientRow;
 }
 
-function isActiveClient(row: Record<string, string>) {
+export function isActiveClient(row: Record<string, string>) {
   const status = String(row[ACTIVE_STAYING_COLUMN] || "").trim();
   // Any status is "Active" except for explicitly removed (-1)
   return status !== "-1";
@@ -627,7 +628,7 @@ function parseSheetTimestamp(value: string) {
   return null;
 }
 
-function normalizeClientBranch(value: string) {
+export function normalizeClientBranch(value: string) {
   const normalized = value.trim().toUpperCase().replace(/\s+/g, "");
 
   if (!normalized) {
@@ -703,7 +704,7 @@ function normalizeSheetLookupKey(value: string) {
     .replace(/[^a-z0-9]+/g, "");
 }
 
-function getClientBranchValue(row: Record<string, string>) {
+export function getClientBranchValue(row: Record<string, string>) {
   for (const key of CLIENT_BRANCH_COLUMN_ALIASES) {
     const value = row[key];
     if (typeof value === "string" && value.trim()) {
@@ -1578,7 +1579,7 @@ export type LaundryCalendarDebug = {
   error?: string;
 };
 
-async function getAuthorizedCalendarClient() {
+export async function getAuthorizedCalendarClient() {
   const tokens = await readSavedTokens();
 
   if (
@@ -4139,6 +4140,12 @@ function getDriveFileExtension(mimeType: string, fileName: string) {
       return "heif";
     case "image/gif":
       return "gif";
+    case "video/mp4":
+      return "mp4";
+    case "video/quicktime":
+      return "mov";
+    case "video/webm":
+      return "webm";
     default:
       return "jpg";
   }
@@ -4153,26 +4160,31 @@ export async function uploadFineImageToDrive(input: {
   base64Data: string;
 }) {
   const drive = await getAuthorizedDriveClient();
-  const buffer = Buffer.from(input.base64Data, "base64");
+  let buffer = Buffer.from(input.base64Data, "base64");
 
   if (!buffer.length) {
-    throw new Error("The uploaded image is empty.");
+    throw new Error("The uploaded file is empty.");
   }
+
+  const compressed = await compressFineEvidence(buffer, input.mimeType, input.fileName);
+  buffer = compressed.buffer;
+  const outputMime = compressed.mimeType;
+  const outputFileName = compressed.fileName;
 
   const safeClientName = sanitizeDriveFileNamePart(input.clientName || input.maHd || "client");
   const safeContract = sanitizeDriveFileNamePart(input.maHd || "unknown-contract");
-  const extension = getDriveFileExtension(input.mimeType, input.fileName);
+  const extension = getDriveFileExtension(outputMime, outputFileName);
   const driveFileName = `fine-${safeContract}-${safeClientName}-${Date.now()}.${extension}`;
 
   const createResponse = await drive.files.create({
     requestBody: {
       name: driveFileName,
-      mimeType: input.mimeType,
+      mimeType: outputMime,
       parents: finesDriveFolderId ? [finesDriveFolderId] : undefined,
       description: `Fine evidence uploaded by ${input.uploadedBy.trim() || "staff"} for ${input.maHd}`
     },
     media: {
-      mimeType: input.mimeType,
+      mimeType: outputMime,
       body: Readable.from(buffer)
     },
     fields: "id,name,webViewLink,webContentLink"

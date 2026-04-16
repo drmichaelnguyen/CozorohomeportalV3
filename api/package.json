@@ -1,6 +1,6 @@
 {
   "name": "cozorohome-api",
-  "version": "3.7.21",
+  "version": "3.8.5",
   "private": true,
   "type": "module",
   "scripts": {
@@ -20,7 +20,9 @@
     "cors": "latest",
     "dotenv": "latest",
     "express": "latest",
+    "ffmpeg-static": "^5.2.0",
     "googleapis": "^144.0.0",
+    "sharp": "^0.34.1",
     "web-push": "^3.6.7",
     "zod": "latest"
   },

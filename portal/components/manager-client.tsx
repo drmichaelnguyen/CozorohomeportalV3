@@ -885,9 +885,9 @@ function fineFieldLabels(language: "en" | "vi") {
       location: "VỊ TRÍ PHÁT HIỆN VI PHẠM",
       content: "NỘI DUNG VI PHẠM",
       description: "MÔ TẢ VI PHẠM",
-      image: "HÌNH ẢNH",
+      image: "ẢNH / VIDEO MINH CHỨNG",
       amount: "CHI PHÍ THANH TOÁN CHO VI PHẠM",
-      imagePlaceholder: "Dán liên kết hình ảnh",
+      imagePlaceholder: "Dán liên kết minh chứng",
       submit: "Tạo phiếu phạt"
     };
   }
@@ -897,9 +897,9 @@ function fineFieldLabels(language: "en" | "vi") {
     location: "Violation Location",
     content: "Violation Content",
     description: "Violation Description",
-    image: "Image",
+    image: "Photo / video evidence",
     amount: "Violation Payment Cost",
-    imagePlaceholder: "Paste image URL",
+    imagePlaceholder: "Paste evidence URL",
     submit: "Create fine ticket"
   };
 }
@@ -1099,6 +1099,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [fineImage, setFineImage] = useState("");
   const [fineImageUploading, setFineImageUploading] = useState(false);
   const [fineImageFileName, setFineImageFileName] = useState("");
+  const [fineEvidenceKind, setFineEvidenceKind] = useState<"" | "image" | "video">("");
   const [paymentAmount, setPaymentAmount] = useState("1000000");
   const [paymentPurpose, setPaymentPurpose] = useState("");
   const [paymentPurposeInput, setPaymentPurposeInput] = useState("");
@@ -1555,10 +1556,10 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const fineLabels = fineFieldLabels(language);
   const fineUiText = {
     suggestionPlaceholder: t("suggestionPlaceholder", "Search previous entries or type a new value"),
-    uploadHint: t("uploadHint", "Take a picture or upload an image from phone or computer"),
-    uploading: t("uploading", "Uploading image..."),
-    uploaded: t("uploaded", "Image uploaded to Google Drive"),
-    removeImage: t("removeImage", "Remove image")
+    uploadHint: t("fineEvidenceUploadHint"),
+    uploading: t("fineEvidenceUploading"),
+    uploaded: t("fineEvidenceUploadedDrive"),
+    removeImage: t("removeFineEvidence")
   };
 
   const quickNav = useMemo(() => {
@@ -2623,6 +2624,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     setActiveAction("");
     setFineImage("");
     setFineImageFileName("");
+    setFineEvidenceKind("");
     setPaymentPurpose("");
     setPaymentPurposeInput("");
     setPaymentPurposeSelections([]);
@@ -3069,11 +3071,38 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       return;
     }
 
+    const maxBytes = 52 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      setStatus(language === "vi" ? "File quá lớn (tối đa ~50MB trước khi nén)." : "File is too large (max ~50MB before compression).");
+      return;
+    }
+
+    let mime = (file.type || "").trim().split(";")[0] ?? "";
+    if (!mime) {
+      const lowerName = file.name.toLowerCase();
+      if (/\.(mp4|m4v|mov|webm|mkv)$/.test(lowerName)) {
+        mime = "video/mp4";
+      } else if (/\.(jpe?g|png|gif|webp|heic|heif)$/.test(lowerName)) {
+        mime = "image/jpeg";
+      }
+    }
+
+    if (!mime.startsWith("image/") && !mime.startsWith("video/")) {
+      setStatus(language === "vi" ? "Chỉ hỗ trợ ảnh hoặc video." : "Only image or video files are supported.");
+      return;
+    }
+
+    const evidenceKind: "image" | "video" = mime.startsWith("video/") ? "video" : "image";
+    setFineEvidenceKind(evidenceKind);
+
     setFineImageUploading(true);
     setStatus("");
     try {
       const dataUrl = await readFileAsDataUrl(file);
       const base64Data = dataUrl.includes(",") ? dataUrl.split(",")[1] ?? "" : dataUrl;
+      const defaultName =
+        file.name?.trim() ||
+        (evidenceKind === "video" ? `fine-${selectedClient.maHd}.mp4` : `fine-${selectedClient.maHd}.jpg`);
       const response = await fetch(`${API_BASE_URL}/staff/fines/upload-image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3081,8 +3110,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           actorEmail: normalizedEmail,
           maHd: selectedClient.maHd,
           clientName: selectedClient.name || selectedClient.email,
-          fileName: file.name || `fine-${selectedClient.maHd}.jpg`,
-          mimeType: file.type || "image/jpeg",
+          fileName: defaultName,
+          mimeType: mime,
           dataBase64: base64Data
         })
       });
@@ -6176,8 +6205,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       </div>
                       <input
                         type="file"
-                        accept="image/*"
-                        capture="environment"
+                        accept="image/*,video/*"
                         disabled={fineImageUploading || loading || !selectedClient}
                         onChange={(event) => {
                           const file = event.target.files?.[0];
@@ -6196,12 +6224,37 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           <a href={fineImage} target="_blank" rel="noreferrer" className="text-sm font-medium text-sky-700 underline">
                             {fineImage}
                           </a>
+                          {(() => {
+                            const driveId = fineImage.match(/\/file\/d\/([^/]+)/)?.[1];
+                            if (driveId) {
+                              return (
+                                <div className="mt-2 aspect-video w-full max-w-lg overflow-hidden rounded-lg border border-slate-200 bg-black">
+                                  <iframe
+                                    title={fineLabels.image}
+                                    src={`https://drive.google.com/file/d/${driveId}/preview`}
+                                    className="h-full w-full"
+                                    allowFullScreen
+                                  />
+                                </div>
+                              );
+                            }
+                            if (fineEvidenceKind === "video") {
+                              return (
+                                <video src={fineImage} controls className="mt-2 max-h-56 w-full rounded-lg bg-black" />
+                              );
+                            }
+                            if (fineEvidenceKind === "image") {
+                              return <img src={fineImage} alt="" className="mt-2 max-h-56 rounded-lg object-contain" />;
+                            }
+                            return null;
+                          })()}
                           <div>
                             <button
                               type="button"
                               onClick={() => {
                                 setFineImage("");
                                 setFineImageFileName("");
+                                setFineEvidenceKind("");
                               }}
                               className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
                             >
@@ -6230,6 +6283,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             setFineDueDate("");
                             setFineImage("");
                             setFineImageFileName("");
+                            setFineEvidenceKind("");
                           }
                         )
                       }
@@ -6934,8 +6988,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     ? t("settingsToolsDesc")
                     : pricingSettingsTab === "referral"
                       ? language === "vi"
-                        ? "Bật/tắt, số tiền giảm cọc và Cozoro coins cho cư dân mới và người giới thiệu."
-                        : "Toggle the program and set deposit discount and Cozoro coins for new residents and referrers."
+                        ? "Bật/tắt, mức giảm một lần trên thanh toán lần đầu và Cozoro coins cho cư dân mới và người giới thiệu."
+                        : "Toggle the program and set one-time first-payment discount and Cozoro coins for new residents and referrers."
                       : t("pricingDesc")}
                 </p>
               </div>
@@ -7969,7 +8023,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   </label>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label className="block text-sm text-slate-700">
-                      {language === "vi" ? "Giảm tiền cọc (VND, lần đầu)" : "Deposit discount (VND, first-time)"}
+                      {language === "vi"
+                        ? "Giảm một lần trên tổng thanh toán lần đầu (VND)"
+                        : "One-time discount on first payment total (VND)"}
                       <input
                         type="number"
                         min={0}

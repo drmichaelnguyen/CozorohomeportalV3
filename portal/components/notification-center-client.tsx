@@ -4,11 +4,20 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
+import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 
 type ResidentNotification = {
   id: string;
-  type: "SUPPORT_REPLY" | "PAYMENT_DUE" | "NEW_FINE" | "LAUNDRY_REMINDER" | "CLEANING_REMINDER" | "PREPAID_PACKAGE";
+  type:
+    | "SUPPORT_REPLY"
+    | "PAYMENT_DUE"
+    | "NEW_FINE"
+    | "LAUNDRY_REMINDER"
+    | "CLEANING_REMINDER"
+    | "CLEANING_AUDIT_RESULT"
+    | "PREPAID_PACKAGE"
+    | "FRIDGE_DRAIN_REMINDER";
   conversationId?: string;
   title: string;
   body: string;
@@ -19,7 +28,7 @@ type ResidentNotification = {
 
 type StaffNotification = {
   id: string;
-  type: "SUPPORT_REQUEST";
+  type: "SUPPORT_REQUEST" | "AC_COMFORT";
   conversationId: string;
   residentEmail: string;
   residentName: string | null;
@@ -35,13 +44,36 @@ function formatDateTime(value: string) {
 }
 
 export function NotificationCenterClient() {
+  const { t } = usePortalLanguage();
   const { sessionEmail, sessionRole } = usePortalSession();
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState("");
   const [residentNotifications, setResidentNotifications] = useState<ResidentNotification[]>([]);
   const [staffNotifications, setStaffNotifications] = useState<StaffNotification[]>([]);
+  const [dismissingId, setDismissingId] = useState<string | null>(null);
   const normalizedEmail = sessionEmail.trim().toLowerCase();
   const isAdminSession = Boolean(sessionRole && sessionRole !== "user");
+
+  async function dismissAcComfortAlert(alertId: string) {
+    setDismissingId(alertId);
+    setStatus("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/manager/ac-comfort/dismiss`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorEmail: normalizedEmail, alertId })
+      });
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(data.error ?? "Dismiss failed");
+      }
+      setStaffNotifications((list) => list.filter((n) => n.id !== alertId));
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Dismiss failed");
+    } finally {
+      setDismissingId(null);
+    }
+  }
 
   useEffect(() => {
     async function loadNotifications() {
@@ -106,7 +138,45 @@ export function NotificationCenterClient() {
         {!loading && notifications.length > 0 ? (
           <div className="space-y-3">
             {notifications.map((notification) => {
-              const href = (notification as any).href || (isAdminSession ? "/manager?view=support_chat" : "/support");
+              const href = (notification as StaffNotification | ResidentNotification).href || (isAdminSession ? "/manager?view=support_chat" : "/support");
+              if (isAdminSession && (notification as StaffNotification).type === "AC_COMFORT") {
+                const n = notification as StaffNotification;
+                return (
+                  <div
+                    key={n.id}
+                    className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">{n.title}</div>
+                        <p className="mt-2 text-sm text-slate-600">{n.body}</p>
+                      </div>
+                      <div className="text-right">
+                        <div className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
+                          {n.unreadCount} unread
+                        </div>
+                        <div className="mt-2 text-xs text-slate-500">{formatDateTime(n.createdAt)}</div>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Link
+                        href={n.href || "/manager?view=controller"}
+                        className="inline-flex rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white"
+                      >
+                        Controller
+                      </Link>
+                      <button
+                        type="button"
+                        disabled={dismissingId === n.id}
+                        onClick={() => void dismissAcComfortAlert(n.id)}
+                        className="inline-flex rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 disabled:opacity-50"
+                      >
+                        {dismissingId === n.id ? "…" : t("notificationAcComfortDismiss")}
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
               return (
                 <Link
                   key={notification.id}

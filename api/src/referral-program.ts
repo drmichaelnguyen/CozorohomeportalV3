@@ -18,7 +18,7 @@ const CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 
 export type ReferralProgramSettings = {
   enabled: boolean;
-  /** One-time discount applied to deposit (VND) for the new resident's first registration. */
+  /** One-time discount (VND) off the estimated first payment total (not the deposit line). */
   newRegistrantDiscountVnd: number;
   newRegistrantCoins: number;
   referrerCoins: number;
@@ -36,9 +36,9 @@ const DEFAULT_SETTINGS: ReferralProgramSettings = {
   headlineEn: "Refer a friend — rewards for both of you",
   headlineVi: "Giới thiệu bạn — ưu đãi cho cả hai",
   detailsEn:
-    "Enter a current resident's referral code on registration. First-time contracts only; residents can refer unlimited friends.",
+    "Enter a current resident's referral code on registration. The discount applies once to your estimated first payment total (like a one-time promo), not as a reduction to the deposit field. First-time contracts only; residents can refer unlimited friends.",
   detailsVi:
-    "Nhập mã giới thiệu của cư dân đang ở khi đăng ký. Chỉ áp dụng hợp đồng lần đầu; cư dân giới thiệu không giới hạn số người."
+    "Nhập mã giới thiệu khi đăng ký. Ưu đãi giảm một lần trên tổng thanh toán lần đầu (giống khuyến mãi một lần), không trừ trực tiếp vào cột tiền cọc trong hồ sơ. Chỉ hợp đồng lần đầu; cư dân giới thiệu không giới hạn số người."
 };
 
 async function ensureJsonFile<T>(filePath: string, fallback: T) {

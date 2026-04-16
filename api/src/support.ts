@@ -6,11 +6,15 @@ import {
 
 import {
   getActiveClientByEmail,
+  getClientBranchValue,
   getFinesForEmail,
   getLaundryBookingsForEmailWithOptions,
+  normalizeClientBranch,
   readCachedClients,
   ClientRow,
 } from "./google-sheets.js";
+import { loadOpenAcComfortAlertsForStaff } from "./ac-comfort-votes.js";
+import { buildFridgeDrainReminderNotifications } from "./fridge-drain-schedule.js";
 import { prisma } from "./prisma.js";
 import { ASSISTANT_SENDER_EMAIL, runResidentSupportAssistantTurn } from "./resident-support-ai.js";
 import { appendSupportAssistantMetaSuffix } from "./support-assistant-message-meta.js";
@@ -31,18 +35,33 @@ const SUPPORT_NOTIFICATION_CACHE_TTL_MS = Number(
   process.env.SUPPORT_NOTIFICATION_CACHE_TTL_MS ?? 30 * 1000
 );
 const residentNotificationCache = new Map<string, CachedNotificationEntry<ResidentNotificationItem>>();
-const staffNotificationCache = new Map<string, CachedNotificationEntry<{
-  id: string;
-  type: "SUPPORT_REQUEST";
-  conversationId: string;
-  residentEmail: string;
-  residentName: string | null;
-  title: string;
-  body: string;
-  createdAt: Date;
-  unreadCount: number;
-  href: string;
-}>>();
+export type StaffSupportInboxItem =
+  | {
+      id: string;
+      type: "SUPPORT_REQUEST";
+      conversationId: string;
+      residentEmail: string;
+      residentName: string | null;
+      title: string;
+      body: string;
+      createdAt: Date;
+      unreadCount: number;
+      href: string;
+    }
+  | {
+      id: string;
+      type: "AC_COMFORT";
+      conversationId: "";
+      residentEmail: string;
+      residentName: string | null;
+      title: string;
+      body: string;
+      createdAt: Date;
+      unreadCount: number;
+      href: string;
+    };
+
+const staffNotificationCache = new Map<string, CachedNotificationEntry<StaffSupportInboxItem>>();
 
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
@@ -362,6 +381,10 @@ export function clearAllResidentNotificationCaches() {
   residentNotificationCache.clear();
 }
 
+export function invalidateStaffSupportNotificationCache() {
+  staffNotificationCache.clear();
+}
+
 export function clearResidentNotificationCacheForEmail(email: string) {
   residentNotificationCache.delete(normalizeEmail(email));
 }
@@ -488,7 +511,8 @@ type ResidentNotificationItem = {
     | "LAUNDRY_REMINDER"
     | "CLEANING_REMINDER"
     | "CLEANING_AUDIT_RESULT"
-    | "PREPAID_PACKAGE";
+    | "PREPAID_PACKAGE"
+    | "FRIDGE_DRAIN_REMINDER";
   title: string;
   body: string;
   createdAt: string | Date;
@@ -730,6 +754,16 @@ async function buildResidentReminderNotifications(email: string) {
     }
   }
 
+  if (client) {
+    const branchId = normalizeClientBranch(getClientBranchValue(client));
+    if (branchId === "D2" || branchId === "D7") {
+      const fridge = await buildFridgeDrainReminderNotifications(branchId);
+      for (const item of fridge) {
+        notifications.push(item);
+      }
+    }
+  }
+
   return notifications.sort(
     (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
   );
@@ -864,20 +898,7 @@ export async function listStaffSupportNotifications(operatorEmail: string) {
     normalizedOperatorEmail,
     "STAFF"
   );
-  type ManagerInboxNotification = {
-    id: string;
-    type: "SUPPORT_REQUEST";
-    conversationId: string;
-    residentEmail: string;
-    residentName: string | null;
-    title: string;
-    body: string;
-    createdAt: Date;
-    unreadCount: number;
-    href: string;
-  };
-
-  const notifications: ManagerInboxNotification[] = [];
+  const notifications: StaffSupportInboxItem[] = [];
 
   for (const conversation of conversations) {
     const summary = buildUnreadSummary({
@@ -951,6 +972,27 @@ export async function listStaffSupportNotifications(operatorEmail: string) {
         href: `/manager?chat=${encodeURIComponent(groupId)}`
       });
     }
+  }
+
+  const comfortAlerts = await loadOpenAcComfortAlertsForStaff();
+  for (const alert of comfortAlerts) {
+    const isHot = alert.complaint === "HOT";
+    notifications.push({
+      id: alert.id,
+      type: "AC_COMFORT",
+      conversationId: "",
+      residentEmail: `ac-comfort-${alert.roomId}@cozorohome.local`,
+      residentName: alert.roomLabel,
+      title: isHot
+        ? `Too hot — ${alert.roomLabel} (${alert.branchId})`
+        : `Too cold — ${alert.roomLabel} (${alert.branchId})`,
+      body: isHot
+        ? `${alert.voteCount} of ${alert.occupantCount} residents in this room reported feeling too hot. Consider lowering the AC setpoint or checking the unit.`
+        : `${alert.voteCount} of ${alert.occupantCount} residents in this room reported feeling too cold. Consider raising the AC setpoint or checking the unit.`,
+      createdAt: new Date(alert.createdAt),
+      unreadCount: 1,
+      href: "/manager?view=controller"
+    });
   }
 
   return writeNotificationCache(staffNotificationCache, normalizedOperatorEmail, {

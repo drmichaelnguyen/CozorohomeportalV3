@@ -27,11 +27,50 @@ type Props = {
   onRefreshClients: () => Promise<void>;
 };
 
+type FridgeBranchUi = {
+  loading: boolean;
+  saving: boolean;
+  error: string;
+  message: string;
+  cleaningDate: string;
+  configured: boolean;
+  configError: string;
+  offAt: string | null;
+  onAt: string | null;
+};
+
+type FridgeApiRow =
+  | { configured: false; branchId: string; error?: string }
+  | {
+      configured: true;
+      branchId: string;
+      cleaningDate: string | null;
+      offAt: string | null;
+      onAt: string | null;
+    };
+
+function emptyFridgeRow(loading: boolean): FridgeBranchUi {
+  return {
+    loading,
+    saving: false,
+    error: "",
+    message: "",
+    cleaningDate: "",
+    configured: false,
+    configError: "",
+    offAt: null,
+    onAt: null
+  };
+}
+
 export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshClients }: Props) {
   const [cleaningLoading, setCleaningLoading] = useState(true);
   const [cleaningSaving, setCleaningSaving] = useState(false);
   const [cleaningError, setCleaningError] = useState("");
   const [cleaningForm, setCleaningForm] = useState<CleaningRewardApi | null>(null);
+
+  const [fridgeD2, setFridgeD2] = useState<FridgeBranchUi>(() => emptyFridgeRow(true));
+  const [fridgeD7, setFridgeD7] = useState<FridgeBranchUi>(() => emptyFridgeRow(true));
 
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<Record<string, boolean>>({});
@@ -72,6 +111,97 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
   useEffect(() => {
     void loadCleaning();
   }, [loadCleaning]);
+
+  const loadFridgeSchedules = useCallback(async () => {
+    setFridgeD2((f) => ({ ...f, loading: true, error: "" }));
+    setFridgeD7((f) => ({ ...f, loading: true, error: "" }));
+    try {
+      const [res2, res7] = await Promise.all([
+        fetch(
+          `${API_BASE_URL}/manager/fridge-drain-schedule?actorEmail=${encodeURIComponent(normalizedEmail)}&branchId=D2`
+        ),
+        fetch(
+          `${API_BASE_URL}/manager/fridge-drain-schedule?actorEmail=${encodeURIComponent(normalizedEmail)}&branchId=D7`
+        )
+      ]);
+      if (!res2.ok || !res7.ok) {
+        const err = t("toolsFridgeDrainLoadError");
+        setFridgeD2({ ...emptyFridgeRow(false), error: err });
+        setFridgeD7({ ...emptyFridgeRow(false), error: err });
+        return;
+      }
+      const data2 = (await res2.json()) as FridgeApiRow & { error?: string };
+      const data7 = (await res7.json()) as FridgeApiRow & { error?: string };
+      const mapOne = (data: FridgeApiRow): FridgeBranchUi => {
+        if ("configured" in data && data.configured === false) {
+          return {
+            ...emptyFridgeRow(false),
+            configured: false,
+            configError: data.error?.trim() || t("toolsFridgeDrainNotConfigured")
+          };
+        }
+        const row = data as Extract<FridgeApiRow, { configured: true }>;
+        return {
+          ...emptyFridgeRow(false),
+          configured: true,
+          cleaningDate: row.cleaningDate ?? "",
+          offAt: row.offAt ?? null,
+          onAt: row.onAt ?? null
+        };
+      };
+      setFridgeD2(mapOne(data2));
+      setFridgeD7(mapOne(data7));
+    } catch {
+      const err = t("toolsFridgeDrainLoadError");
+      setFridgeD2((f) => ({ ...f, loading: false, error: err }));
+      setFridgeD7((f) => ({ ...f, loading: false, error: err }));
+    }
+  }, [normalizedEmail, t]);
+
+  useEffect(() => {
+    void loadFridgeSchedules();
+  }, [loadFridgeSchedules]);
+
+  const saveFridgeBranch = async (branchId: "D2" | "D7") => {
+    const row = branchId === "D2" ? fridgeD2 : fridgeD7;
+    const setRow = branchId === "D2" ? setFridgeD2 : setFridgeD7;
+    const ymd = row.cleaningDate.trim();
+    if (!ymd) {
+      setRow((f) => ({ ...f, message: "", error: t("toolsFridgeDrainNeedDate") }));
+      return;
+    }
+    setRow((f) => ({ ...f, saving: true, error: "", message: "" }));
+    try {
+      const res = await fetch(`${API_BASE_URL}/manager/fridge-drain-schedule`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorEmail: normalizedEmail, branchId, cleaningDate: ymd })
+      });
+      const data = (await res.json()) as FridgeApiRow & { error?: string };
+      if (!res.ok) {
+        throw new Error(data.error ?? t("requestFailed", "Request failed"));
+      }
+      if ("configured" in data && data.configured === false) {
+        throw new Error(data.error ?? t("toolsFridgeDrainNotConfigured"));
+      }
+      const ok = data as Extract<FridgeApiRow, { configured: true }>;
+      setRow({
+        ...emptyFridgeRow(false),
+        configured: true,
+        cleaningDate: ok.cleaningDate ?? ymd,
+        offAt: ok.offAt ?? null,
+        onAt: ok.onAt ?? null,
+        message: t("toolsFridgeDrainSaved")
+      });
+    } catch (e) {
+      setRow((f) => ({
+        ...f,
+        saving: false,
+        message: "",
+        error: e instanceof Error ? e.message : t("requestFailed", "Request failed")
+      }));
+    }
+  };
 
   const filteredClients = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -301,6 +431,71 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
             </button>
           </div>
         ) : null}
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h3 className="text-lg font-semibold text-slate-900">{t("toolsFridgeDrainTitle")}</h3>
+        <p className="mt-1 text-sm text-slate-600">{t("toolsFridgeDrainDesc")}</p>
+        <p className="mt-2 text-xs text-slate-500">{t("toolsFridgeDrainIftttNote")}</p>
+        <div className="mt-4 grid gap-6 sm:grid-cols-2">
+          {(
+            [
+              { id: "D2" as const, row: fridgeD2, setRow: setFridgeD2 },
+              { id: "D7" as const, row: fridgeD7, setRow: setFridgeD7 }
+            ] as const
+          ).map(({ id, row, setRow }) => (
+            <div key={id} className="rounded-xl border border-slate-100 bg-slate-50/80 p-4">
+              <div className="text-sm font-semibold text-slate-900">
+                {t("toolsFridgeDrainBranch")} {id}
+              </div>
+              {row.loading ? (
+                <p className="mt-2 text-sm text-slate-500">{t("refreshing")}</p>
+              ) : row.error && !row.configured ? (
+                <p className="mt-2 text-sm text-rose-600">{row.error}</p>
+              ) : !row.configured ? (
+                <p className="mt-2 text-sm text-amber-800">{row.configError || t("toolsFridgeDrainNotConfigured")}</p>
+              ) : (
+                <>
+                  <label className="mt-3 block text-sm">
+                    <span className="font-medium text-slate-700">{t("toolsFridgeDrainCleaningDay")}</span>
+                    <input
+                      type="date"
+                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                      value={row.cleaningDate}
+                      onChange={(e) => setRow((f) => ({ ...f, cleaningDate: e.target.value, error: "", message: "" }))}
+                    />
+                  </label>
+                  <p className="mt-2 text-xs text-slate-600">{t("toolsFridgeDrainOffNote")}</p>
+                  {row.offAt && row.onAt ? (
+                    <p className="mt-2 text-xs text-slate-500">
+                      OFF: {new Date(row.offAt).toLocaleString(undefined, { timeZone: "Asia/Ho_Chi_Minh" })} · ON:{" "}
+                      {new Date(row.onAt).toLocaleString(undefined, { timeZone: "Asia/Ho_Chi_Minh" })}
+                    </p>
+                  ) : null}
+                  {row.message ? <p className="mt-2 text-sm text-emerald-800">{row.message}</p> : null}
+                  {row.error ? <p className="mt-2 text-sm text-rose-600">{row.error}</p> : null}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={row.saving}
+                      onClick={() => void saveFridgeBranch(id)}
+                      className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                    >
+                      {row.saving ? t("saving") : t("toolsFridgeDrainSave")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void loadFridgeSchedules()}
+                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
+                    >
+                      {t("toolsFridgeDrainReload")}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

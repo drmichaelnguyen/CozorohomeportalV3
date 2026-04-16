@@ -9,6 +9,17 @@ import { usePortalSession } from "./portal-session";
 
 const API_TIMEOUT_MS = 6000;
 
+type AcComfortStatus = {
+  roomId: string | null;
+  roomLabel: string | null;
+  occupantCount: number;
+  hotCount: number;
+  coldCount: number;
+  myVote: "HOT" | "COLD" | null;
+  majorityHot: boolean;
+  majorityCold: boolean;
+};
+
 type ControllerContext = {
   email: string;
   name: string;
@@ -34,6 +45,7 @@ type ControllerContext = {
     roomCode: string;
     contractCode: string;
   };
+  comfort?: AcComfortStatus | null;
 };
 
 type AirFryerContext = {
@@ -203,6 +215,7 @@ export function ControllerClient({
   const [clientRecord, setClientRecord] = useState<Record<string, string> | null>(null);
   const [accountLockOverride, setAccountLockOverride] = useState<AccountLockOverride | null>(null);
   const [message, setMessage] = useState("");
+  const [comfortSubmitting, setComfortSubmitting] = useState(false);
 
   async function loadControllerContext() {
     const resolvedEmail = sessionEmail.trim().toLowerCase();
@@ -344,6 +357,56 @@ export function ControllerClient({
       setMessage(error instanceof Error ? error.message : "Unable to send AC command.");
     } finally {
       setSubmittingAction(null);
+    }
+  }
+
+  async function submitComfortVote(vote: "HOT" | "COLD") {
+    if (!activeEmail || isBlocked) {
+      return;
+    }
+    setComfortSubmitting(true);
+    setMessage("");
+    try {
+      const result = await fetchJson<{
+        roomId: string;
+        roomLabel: string;
+        occupantCount: number;
+        hotCount: number;
+        coldCount: number;
+        myVote: "HOT" | "COLD";
+        majorityHot: boolean;
+        majorityCold: boolean;
+      }>(`${API_BASE_URL}/controller/ac/comfort-vote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: activeEmail, vote })
+      });
+      setContext((current) =>
+        current && current.room
+          ? {
+              ...current,
+              comfort: {
+                roomId: result.roomId,
+                roomLabel: result.roomLabel,
+                occupantCount: result.occupantCount,
+                hotCount: result.hotCount,
+                coldCount: result.coldCount,
+                myVote: result.myVote,
+                majorityHot: result.majorityHot,
+                majorityCold: result.majorityCold
+              }
+            }
+          : current
+      );
+      setMessage(
+        language === "vi"
+          ? "Đã gửi phản hồi nhiệt độ. Nếu đa số cùng phòng đồng ý, quản lý sẽ được thông báo."
+          : "Temperature feedback sent. If a majority of your room agrees, managers will be notified."
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to send comfort vote.");
+    } finally {
+      setComfortSubmitting(false);
     }
   }
 
@@ -525,6 +588,54 @@ export function ControllerClient({
                     >
                       {submittingAction === "OFF" ? (language === "vi" ? "Đang gửi..." : "Sending...") : language === "vi" ? "Tắt máy lạnh" : "Turn AC off"}
                     </button>
+                  </div>
+
+                  <div className="mt-6 border-t border-emerald-200 pt-4">
+                    <p className="text-sm font-semibold text-emerald-900">{t("controllerComfortTitle")}</p>
+                    <p className="mt-1 text-xs text-emerald-800">{t("controllerComfortHelp")}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void submitComfortVote("HOT")}
+                        disabled={isBlocked || comfortSubmitting}
+                        className={`rounded-lg px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
+                          context.comfort?.myVote === "HOT"
+                            ? "bg-orange-600 text-white ring-2 ring-orange-300"
+                            : "bg-orange-100 text-orange-900 hover:bg-orange-200"
+                        }`}
+                      >
+                        {comfortSubmitting
+                          ? t("controllerComfortSending")
+                          : language === "vi"
+                            ? "Quá nóng"
+                            : "Too hot"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void submitComfortVote("COLD")}
+                        disabled={isBlocked || comfortSubmitting}
+                        className={`rounded-lg px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
+                          context.comfort?.myVote === "COLD"
+                            ? "bg-sky-600 text-white ring-2 ring-sky-300"
+                            : "bg-sky-100 text-sky-900 hover:bg-sky-200"
+                        }`}
+                      >
+                        {comfortSubmitting
+                          ? t("controllerComfortSending")
+                          : language === "vi"
+                            ? "Quá lạnh"
+                            : "Too cold"}
+                      </button>
+                    </div>
+                    {context.comfort && context.comfort.occupantCount > 0 ? (
+                      <p className="mt-2 text-xs text-emerald-800">
+                        {t("controllerComfortCounts", undefined, {
+                          n: context.comfort.occupantCount,
+                          hot: context.comfort.hotCount,
+                          cold: context.comfort.coldCount
+                        })}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               ) : (

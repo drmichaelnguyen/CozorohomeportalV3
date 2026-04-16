@@ -235,13 +235,13 @@ const T = {
     alreadyHaveAccount: "Already have an account? Sign in",
     referralProgramBanner: "Referral program",
     referralProgramIntro: (discount: string, cNew: string, cRef: string) =>
-      `First-time registration: ${discount} off deposit, ${cNew} coins for you, ${cRef} coins for your friend who referred you.`,
+      `First-time registration: ${discount} off your first payment (one-time), ${cNew} coins for you, ${cRef} coins for your friend who referred you.`,
     referralCodeLabel: "Referral code (optional)",
     referralCodePlaceholder: "e.g. CZ… or contract code",
     referralChecking: "Checking code…",
     referralValid: "Code accepted",
     referralInvalid: "Invalid code or program inactive",
-    referralDepositOff: (n: string) => `Referral: −${n} from deposit (estimate)`,
+    referralFirstPaymentOff: (n: string) => `Referral (one-time): −${n} from first payment estimate`,
     // Validation errors
     chooseSexBranchBed: "Please choose sex, branch, and an available bed first.",
     invalidContractDate: "Please provide a valid contract start date and contract length.",
@@ -353,13 +353,13 @@ const T = {
     alreadyHaveAccount: "Đã có tài khoản? Đăng nhập",
     referralProgramBanner: "Chương trình giới thiệu",
     referralProgramIntro: (discount: string, cNew: string, cRef: string) =>
-      `Đăng ký lần đầu: giảm ${discount} tiền cọc, ${cNew} coins cho bạn, ${cRef} coins cho bạn giới thiệu.`,
+      `Đăng ký lần đầu: giảm ${discount} trên tổng thanh toán lần đầu (một lần), ${cNew} coins cho bạn, ${cRef} coins cho người giới thiệu.`,
     referralCodeLabel: "Mã giới thiệu (không bắt buộc)",
     referralCodePlaceholder: "VD: CZ… hoặc mã HĐ",
     referralChecking: "Đang kiểm tra mã…",
     referralValid: "Mã hợp lệ",
     referralInvalid: "Mã không hợp lệ hoặc chương trình tắt",
-    referralDepositOff: (n: string) => `Giới thiệu: −${n} tiền cọc (ước tính)`,
+    referralFirstPaymentOff: (n: string) => `Giới thiệu (một lần): −${n} trên thanh toán lần đầu (ước tính)`,
     // Validation errors
     chooseSexBranchBed: "Vui lòng chọn giới tính, chi nhánh và giường trống trước.",
     invalidContractDate: "Vui lòng nhập ngày bắt đầu hợp đồng và thời hạn hợp lệ.",
@@ -768,16 +768,17 @@ export function RegisterFormClient() {
           : form.paymentFrequency.includes("03")
             ? 500000
             : 0;
-        const referralDepositCut =
+        const firstPaymentBeforeReferral =
+          monthlyRecurringTotal * multiplier - oneTimeFlatDiscount - freqDiscount + selectedBed.pricing.deposit;
+        const referralFirstPaymentCut =
           referralLookup === "ok" && referralMarketing?.enabled
-            ? Math.min(referralMarketing.newRegistrantDiscountVnd, selectedBed.pricing.deposit)
+            ? Math.min(referralMarketing.newRegistrantDiscountVnd, firstPaymentBeforeReferral)
             : 0;
-        const depositAfterReferral = Math.max(0, selectedBed.pricing.deposit - referralDepositCut);
         return {
           monthlyPrice: selectedBed.pricing.monthlyPrice,
           deposit: selectedBed.pricing.deposit,
-          referralDepositCut,
-          depositAfterReferral,
+          firstPaymentBeforeReferral,
+          referralFirstPaymentCut,
           discountedMonthlyPrice,
           cleaningFee,
           parkingFee,
@@ -787,7 +788,7 @@ export function RegisterFormClient() {
           oneTimeDiscounts,
           // Average monthly cost = recurring total minus the freq discount spread
           monthlyTotal: monthlyRecurringTotal - paymentFreqMonthlyDiscount,
-          firstPayment: monthlyRecurringTotal * multiplier - oneTimeFlatDiscount - freqDiscount + depositAfterReferral,
+          firstPayment: Math.max(0, firstPaymentBeforeReferral - referralFirstPaymentCut),
         };
       })()
     : null;
@@ -885,7 +886,10 @@ export function RegisterFormClient() {
           contractMonths,
           contractEndDate,
           monthlyPrice: pricingSummary.monthlyPrice,
-          deposit: pricingSummary.depositAfterReferral,
+          deposit: pricingSummary.deposit,
+          firstPaymentSubtotalBeforeReferral: referralTrimmed
+            ? pricingSummary.firstPaymentBeforeReferral
+            : undefined,
           paymentFrequency: form.paymentFrequency || undefined,
           currentStatus: form.currentStatus || undefined,
           schoolOrWorkplace: form.schoolOrWorkplace || undefined,
@@ -1448,32 +1452,30 @@ export function RegisterFormClient() {
                 {pricingSummary.parkingFee > 0 ? (
                   <div className="flex items-center justify-between rounded-2xl bg-amber-50 px-4 py-3 text-amber-900"><span>{t.parkingFeeLabel}</span><span className="font-semibold">{formatCurrency(pricingSummary.parkingFee)}</span></div>
                 ) : null}
-                <div className="flex flex-col gap-1 rounded-2xl bg-slate-50 px-4 py-3">
-                  <div className="flex items-center justify-between">
-                    <span>{t.depositSideLabel}</span>
-                    <div className="text-right">
-                      {pricingSummary.referralDepositCut > 0 ? (
-                        <>
-                          <span className="font-semibold text-slate-400 line-through">{formatCurrency(pricingSummary.deposit)}</span>
-                          <span className="ml-2 font-semibold text-emerald-700">{formatCurrency(pricingSummary.depositAfterReferral)}</span>
-                        </>
-                      ) : (
-                        <span className="font-semibold text-slate-900">{formatCurrency(pricingSummary.deposit)}</span>
-                      )}
-                    </div>
-                  </div>
-                  {pricingSummary.referralDepositCut > 0 ? (
-                    <p className="text-xs text-emerald-700">{t.referralDepositOff(formatCurrency(pricingSummary.referralDepositCut))}</p>
-                  ) : null}
+                <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
+                  <span>{t.depositSideLabel}</span>
+                  <span className="font-semibold text-slate-900">{formatCurrency(pricingSummary.deposit)}</span>
                 </div>
                 <div className="rounded-2xl bg-slate-50 px-4 py-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="text-sm">{t.firstPaymentEstimate}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-slate-900">{formatCurrency(pricingSummary.firstPayment)}</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {pricingSummary.referralFirstPaymentCut > 0 ? (
+                        <>
+                          <span className="font-semibold text-slate-400 line-through">
+                            {formatCurrency(pricingSummary.firstPaymentBeforeReferral)}
+                          </span>
+                          <span className="font-semibold text-emerald-700">{formatCurrency(pricingSummary.firstPayment)}</span>
+                        </>
+                      ) : (
+                        <span className="font-semibold text-slate-900">{formatCurrency(pricingSummary.firstPayment)}</span>
+                      )}
                       <button type="button" onClick={() => setShowFirstPaymentDetail((v) => !v)} className="rounded-lg border border-slate-300 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100">{showFirstPaymentDetail ? (lang === "vi" ? "Ẩn" : "Hide") : (lang === "vi" ? "Chi tiết" : "Detail")}</button>
                     </div>
                   </div>
+                  {pricingSummary.referralFirstPaymentCut > 0 ? (
+                    <p className="mt-2 text-xs text-emerald-700">{t.referralFirstPaymentOff(formatCurrency(pricingSummary.referralFirstPaymentCut))}</p>
+                  ) : null}
                   {showFirstPaymentDetail ? (() => {
                     const multiplier = getFirstPaymentMultiplier(form.paymentFrequency);
                     const is6Month = form.paymentFrequency.includes("06");
@@ -1514,24 +1516,27 @@ export function RegisterFormClient() {
                         {oneTimeFlatDiscount > 0 && <div className="flex justify-between text-emerald-700"><span>{lang === "vi" ? "Giảm giá 1 lần (ưu đãi tháng đầu)" : "One-time discounts (first-month)"}</span><span className="font-medium">−{formatCurrency(oneTimeFlatDiscount)}</span></div>}
                         <div className="flex justify-between">
                           <span>{lang === "vi" ? "Tiền cọc" : "Deposit"}</span>
-                          <span className="font-medium">
-                            {pricingSummary.referralDepositCut > 0 ? (
+                          <span className="font-medium">+{formatCurrency(pricingSummary.deposit)}</span>
+                        </div>
+                        {pricingSummary.referralFirstPaymentCut > 0 ? (
+                          <div className="flex justify-between text-emerald-700">
+                            <span>{lang === "vi" ? "Giảm giới thiệu (một lần, tổng lần đầu)" : "Referral (one-time, first payment total)"}</span>
+                            <span className="font-medium">−{formatCurrency(pricingSummary.referralFirstPaymentCut)}</span>
+                          </div>
+                        ) : null}
+                        <div className="flex justify-between border-t-2 border-slate-300 pt-1.5 font-bold text-slate-900">
+                          <span>{lang === "vi" ? "Tổng lần đầu" : "Total first payment"}</span>
+                          <span>
+                            {pricingSummary.referralFirstPaymentCut > 0 ? (
                               <>
-                                <span className="text-slate-400 line-through">{formatCurrency(pricingSummary.deposit)}</span>
-                                <span className="ml-1 text-emerald-700">+{formatCurrency(pricingSummary.depositAfterReferral)}</span>
+                                <span className="font-normal text-slate-400 line-through mr-2">{formatCurrency(pricingSummary.firstPaymentBeforeReferral)}</span>
+                                <span>{formatCurrency(pricingSummary.firstPayment)}</span>
                               </>
                             ) : (
-                              <>+{formatCurrency(pricingSummary.deposit)}</>
+                              formatCurrency(pricingSummary.firstPayment)
                             )}
                           </span>
                         </div>
-                        {pricingSummary.referralDepositCut > 0 ? (
-                          <div className="flex justify-between text-emerald-700">
-                            <span>{lang === "vi" ? "Giảm giới thiệu (cọc)" : "Referral (deposit)"}</span>
-                            <span className="font-medium">−{formatCurrency(pricingSummary.referralDepositCut)}</span>
-                          </div>
-                        ) : null}
-                        <div className="flex justify-between border-t-2 border-slate-300 pt-1.5 font-bold text-slate-900"><span>{lang === "vi" ? "Tổng lần đầu" : "Total first payment"}</span><span>{formatCurrency(pricingSummary.firstPayment)}</span></div>
                         <p className="mt-2 text-slate-400">{lang === "vi" ? `Thanh toán trung bình mỗi tháng: ${formatCurrency(pricingSummary.monthlyTotal)}` : `Average monthly payment: ${formatCurrency(pricingSummary.monthlyTotal)}`}</p>
                       </div>
                     );

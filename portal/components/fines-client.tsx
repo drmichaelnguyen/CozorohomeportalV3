@@ -13,6 +13,38 @@ const DESCRIPTION_COLUMN = "MÔ TẢ VI PHẠM";
 const DUE_COLUMN = "HẠN THANH TOÁN";
 const CREATOR_COLUMN = "NGƯỜI LẬP PHIẾU";
 const DISPUTE_COLUMN = "Khieu nai tu khach hang";
+const IMAGE_COLUMN = "HÌNH ẢNH";
+
+function FineEvidencePreview({ url }: { url: string }) {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const driveId = trimmed.match(/\/file\/d\/([^/]+)/)?.[1];
+  if (driveId) {
+    return (
+      <div className="mt-2 aspect-video w-full max-w-lg overflow-hidden rounded-lg border border-slate-200 bg-black">
+        <iframe
+          title="Fine evidence"
+          src={`https://drive.google.com/file/d/${driveId}/preview`}
+          className="h-full w-full"
+          allowFullScreen
+        />
+      </div>
+    );
+  }
+
+  const lower = trimmed.toLowerCase();
+  if (/\.(jpg|jpeg|png|webp|gif)(\?|$)/.test(lower)) {
+    return <img src={trimmed} alt="" className="mt-2 max-h-56 rounded-lg object-contain" />;
+  }
+  if (/\.(mp4|webm|mov)(\?|$)/.test(lower)) {
+    return <video src={trimmed} controls className="mt-2 max-h-56 w-full rounded-lg bg-black" />;
+  }
+
+  return null;
+}
 
 type FineEntry = {
   row: Record<string, string>;
@@ -473,6 +505,26 @@ export function FinesClient() {
                       <div>
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Mô tả</div>
                         <div className="mt-1 text-sm text-slate-900">{entry.row[DESCRIPTION_COLUMN] || "-"}</div>
+                      </div>
+                      <div className="md:col-span-2">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          {language === "vi" ? "Ảnh / video minh chứng" : "Photo / video evidence"}
+                        </div>
+                        {entry.row[IMAGE_COLUMN]?.trim() ? (
+                          <div className="mt-1">
+                            <a
+                              href={entry.row[IMAGE_COLUMN].trim()}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-sm font-medium text-sky-700 underline break-all"
+                            >
+                              {entry.row[IMAGE_COLUMN].trim()}
+                            </a>
+                            <FineEvidencePreview url={entry.row[IMAGE_COLUMN].trim()} />
+                          </div>
+                        ) : (
+                          <div className="mt-1 text-sm text-slate-500">—</div>
+                        )}
                       </div>
                       <div>
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Dispute</div>
