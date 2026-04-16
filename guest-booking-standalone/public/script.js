@@ -75,7 +75,10 @@ const els = {
   cancellationPolicy: document.getElementById("cancellationPolicy"),
   cancellationPolicyNote: document.getElementById("cancellationPolicyNote"),
   notes: document.getElementById("notes"),
-  bookBtn: document.getElementById("bookBtn")
+  bookBtn: document.getElementById("bookBtn"),
+  referralCode: document.getElementById("referralCode"),
+  referralHostelBanner: document.getElementById("referralHostelBanner"),
+  referralHostelBody: document.getElementById("referralHostelBody")
 };
 
 function formatDateInput(date) {
@@ -840,6 +843,28 @@ function hasRequiredBookingInputs() {
   );
 }
 
+async function loadReferralProgram() {
+  try {
+    const r = await fetch("/api/referral-program");
+    const data = await r.json();
+    if (!r.ok || !data.enabled || !data.hostelEnabled) {
+      if (els.referralHostelBanner) els.referralHostelBanner.classList.add("hidden");
+      return;
+    }
+    const lang = localStorage.getItem("cozoroGuestLanguage") === "vi" ? "vi" : "en";
+    const headline =
+      lang === "vi" ? data.hostelHeadlineVi || data.hostelHeadlineEn : data.hostelHeadlineEn || data.hostelHeadlineVi;
+    const details =
+      lang === "vi" ? data.hostelDetailsVi || data.hostelDetailsEn : data.hostelDetailsEn || data.hostelDetailsVi;
+    if (els.referralHostelBody) {
+      els.referralHostelBody.textContent = [headline, details].filter(Boolean).join(" ");
+    }
+    if (els.referralHostelBanner) els.referralHostelBanner.classList.remove("hidden");
+  } catch {
+    if (els.referralHostelBanner) els.referralHostelBanner.classList.add("hidden");
+  }
+}
+
 async function loadConfig() {
   const response = await fetch("/api/config");
   const data = await response.json();
@@ -1197,7 +1222,8 @@ async function bookSelectedBed() {
     bioSex: els.bioSex.value,
     guestPhone: els.guestPhone.value,
     notes: els.notes.value,
-    guestAuthToken: state.authToken
+    guestAuthToken: state.authToken,
+    referralCode: els.referralCode ? String(els.referralCode.value || "").trim() : ""
   };
 
   if (state.branchId === "D2") {
@@ -1316,6 +1342,11 @@ els.bookBtn.addEventListener("click", () => void bookSelectedBed());
 
 (async function init() {
   await loadConfig();
+  await loadReferralProgram();
+  const refParam = new URLSearchParams(window.location.search).get("ref");
+  if (refParam && els.referralCode) {
+    els.referralCode.value = refParam.trim();
+  }
   await loadRecentGuestProfile();
   await loadGallery();
   syncAuthUi();

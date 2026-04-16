@@ -554,6 +554,7 @@ export function HomeDashboardClient() {
           residentEmail={activeEmail}
           onRentPaidStatusRefresh={() => void refetchRentStatusOnly()}
           showPaymentsLink
+          hidePrepaidUnlessDue
         />
       )}
 

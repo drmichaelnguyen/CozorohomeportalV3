@@ -693,6 +693,31 @@ async function getShortTermPricingConfig({ refresh = false } = {}) {
   }
 }
 
+/** Pro-rated hostel referral discount from main Cozoro API (requires MAIN_APP_API_URL). */
+async function fetchHostelReferralQuote(code, nights) {
+  const trimmed = String(code || "").trim();
+  if (!trimmed) {
+    return null;
+  }
+  const response = await fetch(`${MAIN_APP_API_URL}/api/public/referral/quote`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      code: trimmed,
+      product: "hostel",
+      nights: Math.max(0, Math.floor(Number(nights) || 0))
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || "Referral quote failed.");
+  }
+  if (!data.ok) {
+    throw new Error(data.error || "Invalid referral code.");
+  }
+  return data;
+}
+
 function calculatePricing(nights, nightlyPrice, pricingConfig, options = {}) {
   const normalizedNights = Number(nights);
   const stayNights = Number.isFinite(normalizedNights) && normalizedNights > 0 ? Math.floor(normalizedNights) : 0;
@@ -910,7 +935,7 @@ async function finalizeStripeCheckoutSession(session) {
   const connectionPool = await getPool();
   const [rows] = await connectionPool.query(
     `
-      SELECT id, branch_id, room_code, bed_number, guest_name, guest_email, guest_phone, is_vietnamese, bio_sex, id_photo_path, id_photo_file_name, face_capture_path, face_capture_file_name, face_capture_completed_at, check_in, check_out, nights, nightly_rate, subtotal_amount, stay_discount_percent, stay_discount_amount, cancellation_policy, cancellation_discount_percent, cancellation_discount_amount, discount_percent, discount_amount, deposit_amount, total_amount, notes, status, payment_status, amount_paid, currency, created_at, stripe_session_id, stripe_payment_intent_id, pending_change_payload, refunded_amount, refund_status, refunded_at, cancelled_at
+      SELECT id, branch_id, room_code, bed_number, guest_name, guest_email, guest_phone, is_vietnamese, bio_sex, id_photo_path, id_photo_file_name, face_capture_path, face_capture_file_name, face_capture_completed_at, check_in, check_out, nights, nightly_rate, subtotal_amount, stay_discount_percent, stay_discount_amount, cancellation_policy, cancellation_discount_percent, cancellation_discount_amount, discount_percent, discount_amount, deposit_amount, total_amount, notes, referral_code, status, payment_status, amount_paid, currency, created_at, stripe_session_id, stripe_payment_intent_id, pending_change_payload, refunded_amount, refund_status, refunded_at, cancelled_at
       FROM \`${BOOKING_TABLE_NAME}\`
       WHERE id = ?
       LIMIT 1
@@ -958,7 +983,7 @@ async function finalizeStripeCheckoutSession(session) {
 
   const [freshRows] = await connectionPool.query(
     `
-      SELECT id, branch_id, room_code, bed_number, guest_name, guest_email, guest_phone, is_vietnamese, bio_sex, id_photo_path, id_photo_file_name, face_capture_path, face_capture_file_name, face_capture_completed_at, check_in, check_out, nights, nightly_rate, subtotal_amount, stay_discount_percent, stay_discount_amount, cancellation_policy, cancellation_discount_percent, cancellation_discount_amount, discount_percent, discount_amount, deposit_amount, total_amount, notes, status, payment_status, amount_paid, currency, created_at, stripe_session_id, stripe_payment_intent_id, pending_change_payload, refunded_amount, refund_status, refunded_at, cancelled_at
+      SELECT id, branch_id, room_code, bed_number, guest_name, guest_email, guest_phone, is_vietnamese, bio_sex, id_photo_path, id_photo_file_name, face_capture_path, face_capture_file_name, face_capture_completed_at, check_in, check_out, nights, nightly_rate, subtotal_amount, stay_discount_percent, stay_discount_amount, cancellation_policy, cancellation_discount_percent, cancellation_discount_amount, discount_percent, discount_amount, deposit_amount, total_amount, notes, referral_code, status, payment_status, amount_paid, currency, created_at, stripe_session_id, stripe_payment_intent_id, pending_change_payload, refunded_amount, refund_status, refunded_at, cancelled_at
       FROM \`${BOOKING_TABLE_NAME}\`
       WHERE id = ?
       LIMIT 1
@@ -984,7 +1009,9 @@ async function finalizeStripeCheckoutSession(session) {
       isVietnamese: Boolean(Number(latestBooking.is_vietnamese)),
       idPhotoFileName: latestBooking.id_photo_path
         ? path.relative(path.resolve(__dirname, "data"), latestBooking.id_photo_path).replace(/\\/g, "/")
-        : latestBooking.id_photo_file_name || ""
+        : latestBooking.id_photo_file_name || "",
+      referralCode: latestBooking.referral_code || "",
+      applyReferralCoins: true
     });
   }
 
@@ -1458,7 +1485,9 @@ async function syncPaidGuestBookingToMainApp(input) {
       checkIn: input.checkIn,
       checkOut: input.checkOut,
       pricingTotal: Number(input.pricing.total) || 0,
-      notes: buildMainAppSyncNotes(input)
+      notes: buildMainAppSyncNotes(input),
+      referralCode: input.referralCode ? String(input.referralCode).trim() : undefined,
+      applyReferralCoins: input.applyReferralCoins !== false
     })
   });
 
@@ -1575,6 +1604,15 @@ async function ensureBookingTable() {
       if (!error || error.code !== "ER_DUP_FIELDNAME") {
         throw error;
       }
+    }
+  }
+  try {
+    await connectionPool.query(
+      `ALTER TABLE \`${BOOKING_TABLE_NAME}\` ADD COLUMN referral_code VARCHAR(64) NULL AFTER notes`
+    );
+  } catch (error) {
+    if (!error || error.code !== "ER_DUP_FIELDNAME") {
+      throw error;
     }
   }
   for (const statement of [
@@ -1741,6 +1779,7 @@ function getGuestBookingSubmission(req) {
   const idPhotoFileName = String(req.body.idPhotoFileName || "").trim();
   const guestAuthToken = String(req.body.guestAuthToken || "").trim();
   const cancellationPolicy = normalizeCancellationPolicy(req.body.cancellationPolicy);
+  const referralCode = String(req.body.referralCode || "").trim();
 
   return {
     isVietnamese,
@@ -1756,7 +1795,8 @@ function getGuestBookingSubmission(req) {
     idPhotoDataUrl,
     idPhotoFileName,
     guestAuthToken,
-    cancellationPolicy
+    cancellationPolicy,
+    referralCode
   };
 }
 
@@ -1765,12 +1805,27 @@ async function createPendingBooking(input, pricingConfig = null) {
   const { start, end } = ensureValidDateRange(input.checkIn, input.checkOut);
   const config = pricingConfig || await getShortTermPricingConfig();
   const bedPricing = getBedPricingEntry(config, input.branchId, input.bedNumber);
-  const pricing = calculatePricing(
+  let pricing = calculatePricing(
     nightsBetween(input.checkIn, input.checkOut),
     bedPricing.nightlyPrice,
     config,
     { cancellationPolicy: input.cancellationPolicy }
   );
+  let referralCodeStored = "";
+  const referralRaw = typeof input.referralCode === "string" ? input.referralCode.trim() : "";
+  if (referralRaw) {
+    const quote = await fetchHostelReferralQuote(referralRaw, pricing.nights);
+    const cut = Math.min(Math.max(0, quote.discountVnd || 0), Math.max(0, pricing.stayTotal));
+    const nextStay = Math.max(0, pricing.stayTotal - cut);
+    pricing = {
+      ...pricing,
+      referralDiscountAmount: cut,
+      stayTotal: nextStay,
+      total: nextStay + pricing.depositAmount,
+      discountAmount: pricing.discountAmount + cut
+    };
+    referralCodeStored = referralRaw;
+  }
   const id = createId();
   const idPhoto = input.isVietnamese
     ? await saveIdentityPhoto({
@@ -1780,11 +1835,15 @@ async function createPendingBooking(input, pricingConfig = null) {
       })
     : null;
 
+  const mergedNotes = [referralCodeStored ? `Referral code: ${referralCodeStored}` : "", input.notes || ""]
+    .filter(Boolean)
+    .join(" | ");
+
   await connectionPool.query(
     `
       INSERT INTO \`${BOOKING_TABLE_NAME}\`
-      (id, branch_id, room_code, bed_number, guest_name, guest_email, guest_phone, is_vietnamese, bio_sex, id_photo_path, id_photo_file_name, check_in, check_out, nights, nightly_rate, subtotal_amount, stay_discount_percent, stay_discount_amount, cancellation_policy, cancellation_discount_percent, cancellation_discount_amount, discount_percent, discount_amount, deposit_amount, total_amount, notes, status, payment_status, currency, source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'STANDALONE_WEB')
+      (id, branch_id, room_code, bed_number, guest_name, guest_email, guest_phone, is_vietnamese, bio_sex, id_photo_path, id_photo_file_name, check_in, check_out, nights, nightly_rate, subtotal_amount, stay_discount_percent, stay_discount_amount, cancellation_policy, cancellation_discount_percent, cancellation_discount_amount, discount_percent, discount_amount, deposit_amount, total_amount, notes, referral_code, status, payment_status, currency, source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'STANDALONE_WEB')
     `,
     [
       id,
@@ -1812,14 +1871,15 @@ async function createPendingBooking(input, pricingConfig = null) {
       pricing.discountAmount,
       pricing.depositAmount,
       pricing.total,
-      input.notes || null,
+      mergedNotes || null,
+      referralCodeStored || null,
       input.status || "PENDING_PAYMENT",
       input.paymentStatus === undefined ? "unpaid" : input.paymentStatus,
       pricing.currency.toLowerCase()
     ]
   );
 
-  return { id, pricing, start, end, idPhoto, nightlyPriceSource: bedPricing.source };
+  return { id, pricing, start, end, idPhoto, nightlyPriceSource: bedPricing.source, referralCode: referralCodeStored };
 }
 
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
@@ -1880,6 +1940,18 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
 
 app.use(express.json({ limit: "15mb" }));
 app.use(express.static(path.join(__dirname, "public")));
+
+app.get("/api/referral-program", async (_req, res) => {
+  try {
+    const r = await fetch(`${MAIN_APP_API_URL}/api/public/referral-program`);
+    const data = await r.json();
+    return res.status(r.status).json(data);
+  } catch (error) {
+    return res.status(502).json({
+      error: error instanceof Error ? error.message : "Unable to load referral program"
+    });
+  }
+});
 
 app.get("/api/config", async (_req, res) => {
   const pricing = await getShortTermPricingConfig();
@@ -2084,7 +2156,8 @@ app.post("/api/bookings", async (req, res) => {
       notes: submission.notes,
       cancellationPolicy: submission.cancellationPolicy,
       status: "CONFIRMED",
-      paymentStatus: null
+      paymentStatus: null,
+      referralCode: submission.referralCode
     }, pricingConfig);
 
     await syncPaidGuestBookingToMainApp({
@@ -2102,7 +2175,9 @@ app.post("/api/bookings", async (req, res) => {
       isVietnamese: submission.isVietnamese,
       idPhotoFileName: booking.idPhoto
         ? path.relative(path.resolve(__dirname, "data"), booking.idPhoto.filePath).replace(/\\/g, "/")
-        : ""
+        : "",
+      referralCode: booking.referralCode || "",
+      applyReferralCoins: true
     });
 
     return res.status(201).json({
@@ -2182,7 +2257,8 @@ app.post("/api/create-checkout-session", async (req, res) => {
       checkIn: submission.checkIn,
       checkOut: submission.checkOut,
       notes: submission.notes,
-      cancellationPolicy: submission.cancellationPolicy
+      cancellationPolicy: submission.cancellationPolicy,
+      referralCode: submission.referralCode
     }, pricingConfig);
 
     const session = await stripe.checkout.sessions.create({
@@ -2569,7 +2645,7 @@ app.patch("/api/guest-bookings/:id", async (req, res) => {
 
     const [updatedRows] = await connectionPool.query(
       `
-        SELECT id, branch_id, room_code, bed_number, guest_name, guest_email, guest_phone, is_vietnamese, bio_sex, check_in, check_out, nights, nightly_rate, subtotal_amount, stay_discount_percent, stay_discount_amount, cancellation_policy, cancellation_discount_percent, cancellation_discount_amount, discount_percent, discount_amount, deposit_amount, total_amount, notes, status, payment_status, amount_paid, currency, face_capture_completed_at, created_at, stripe_session_id, stripe_payment_intent_id, pending_change_payload, refunded_amount, refund_status, refunded_at, cancelled_at
+        SELECT id, branch_id, room_code, bed_number, guest_name, guest_email, guest_phone, is_vietnamese, bio_sex, check_in, check_out, nights, nightly_rate, subtotal_amount, stay_discount_percent, stay_discount_amount, cancellation_policy, cancellation_discount_percent, cancellation_discount_amount, discount_percent, discount_amount, deposit_amount, total_amount, notes, referral_code, status, payment_status, amount_paid, currency, face_capture_completed_at, created_at, stripe_session_id, stripe_payment_intent_id, pending_change_payload, refunded_amount, refund_status, refunded_at, cancelled_at
         FROM \`${BOOKING_TABLE_NAME}\`
         WHERE id = ?
         LIMIT 1
@@ -2595,7 +2671,9 @@ app.patch("/api/guest-bookings/:id", async (req, res) => {
         isVietnamese: Boolean(Number(updatedBooking.is_vietnamese)),
         idPhotoFileName: booking.id_photo_path
           ? path.relative(path.resolve(__dirname, "data"), booking.id_photo_path).replace(/\\/g, "/")
-          : booking.id_photo_file_name || ""
+          : booking.id_photo_file_name || "",
+        referralCode: updatedBooking.referral_code || "",
+        applyReferralCoins: false
       });
     }
 

@@ -181,6 +181,8 @@ const T = {
     referralSource: "How did you hear about CozoroHome?",
     emergencyPhone: "Emergency phone",
     additionalTerms: "Additional terms or notes",
+    additionalTermsHint:
+      "When you submit, every promotion you qualified for above is copied into this block for the contract (you can still add your own notes below).",
     // Pricing sidebar
     pricingSummary: "Pricing summary",
     selectBedPrompt: "Select a bed to see the calculated monthly share, deposit, and first payment estimate.",
@@ -220,11 +222,11 @@ const T = {
     idScanDesc: "Upload a scan or photo of your CCCD or Passport (required).",
     idScanUploading: "Uploading…",
     idScanUploaded: "Uploaded",
-    surcharge12Title: "Short-stay surcharge: +12%",
-    surcharge8Title: "Short-stay surcharge: +8%",
+    surcharge12Title: "Short-term contract surcharge: +12%",
+    surcharge8Title: "Short-term contract surcharge: +8%",
     surcharge12Desc: "Contracts of 1–3 months carry a 12% monthly surcharge over the base rate.",
     surcharge8Desc: "Contracts of 4–5 months carry an 8% monthly surcharge over the base rate.",
-    surchargeLabel: "Short-stay surcharge",
+    surchargeLabel: "Short-term contract surcharge",
     hostelRedirectTitle: "For stays under 1 month",
     hostelRedirectDesc: "Contracts shorter than 1 month are treated as short-term stays. Please book through our hostel portal.",
     hostelRedirectBtn: "Go to hostel booking",
@@ -301,6 +303,8 @@ const T = {
     referralSource: "Bạn biết CozoroHome qua đâu?",
     emergencyPhone: "Số điện thoại khẩn cấp",
     additionalTerms: "Điều khoản hoặc ghi chú thêm",
+    additionalTermsHint:
+      "Khi gửi đơn, toàn bộ khuyến mãi bạn đủ điều kiện ở phần trên sẽ được ghi vào đây cho hợp đồng (bạn vẫn có thể thêm ghi chú của mình bên dưới).",
     // Pricing sidebar
     pricingSummary: "Tóm tắt chi phí",
     selectBedPrompt: "Chọn giường để xem tiền phòng, tiền cọc và ước tính thanh toán đầu tiên.",
@@ -340,11 +344,11 @@ const T = {
     idScanDesc: "Tải lên ảnh chụp CMND hoặc Hộ chiếu của bạn (bắt buộc).",
     idScanUploading: "Đang tải lên…",
     idScanUploaded: "Đã tải lên",
-    surcharge12Title: "Phụ phí ngắn hạn: +12%",
-    surcharge8Title: "Phụ phí ngắn hạn: +8%",
+    surcharge12Title: "Phụ phí hợp đồng ngắn hạn: +12%",
+    surcharge8Title: "Phụ phí hợp đồng ngắn hạn: +8%",
     surcharge12Desc: "Hợp đồng 1–3 tháng có phụ phí 12%/tháng so với giá cơ bản.",
     surcharge8Desc: "Hợp đồng 4–5 tháng có phụ phí 8%/tháng so với giá cơ bản.",
-    surchargeLabel: "Phụ phí ngắn hạn",
+    surchargeLabel: "Phụ phí hợp đồng ngắn hạn",
     hostelRedirectTitle: "Ở dưới 1 tháng",
     hostelRedirectDesc: "Hợp đồng dưới 1 tháng được xử lý như lưu trú ngắn hạn. Vui lòng đặt phòng qua cổng hostel.",
     hostelRedirectBtn: "Đặt phòng hostel",
@@ -409,6 +413,36 @@ function formatCurrency(value: number) {
     currency: "VND",
     maximumFractionDigits: 0
   }).format(value);
+}
+
+/** Lines for sheet columns e.g. "Khoản ưu đãi…" / Điều khoản bổ sung — lists discounts the resident actually qualified for. */
+function buildClaimedDiscountsContractLines(discounts: DiscountRule[]): string {
+  if (discounts.length === 0) {
+    return "";
+  }
+  const lines = discounts.map((d) => {
+    const title = d.labelVi?.trim() ? `${d.labelVi.trim()} (${d.label})` : d.label;
+    if (d.durationMonths == null) {
+      return `• ${title}: ${formatCurrency(d.amountVnd)}/tháng (định kỳ · recurring)`;
+    }
+    return `• ${title}: ${formatCurrency(d.amountVnd)} × ${d.durationMonths} tháng đầu · first ${d.durationMonths} mo`;
+  });
+  return ["Khuyến mãi đã chọn / Selected discounts:", ...lines].join("\n");
+}
+
+function mergeAdditionalTermsForContract(userNotes: string, discounts: DiscountRule[]): string | undefined {
+  const autoBlock = buildClaimedDiscountsContractLines(discounts);
+  const manual = userNotes.trim();
+  if (!autoBlock && !manual) {
+    return undefined;
+  }
+  if (!autoBlock) {
+    return manual || undefined;
+  }
+  if (!manual) {
+    return autoBlock;
+  }
+  return `${autoBlock}\n\n${manual}`;
 }
 
 function addMonthsMinusOneDay(startDate: string, months: number) {
@@ -521,6 +555,7 @@ export function RegisterFormClient() {
   const [showFirstPaymentDetail, setShowFirstPaymentDetail] = useState(false);
   const [referralMarketing, setReferralMarketing] = useState<{
     enabled: boolean;
+    fullOfferContractMonths: number;
     newRegistrantDiscountVnd: number;
     newRegistrantCoins: number;
     referrerCoins: number;
@@ -573,6 +608,7 @@ export function RegisterFormClient() {
       .then(
         (data: {
           enabled?: boolean;
+          fullOfferContractMonths?: number;
           newRegistrantDiscountVnd?: number;
           newRegistrantCoins?: number;
           referrerCoins?: number;
@@ -583,6 +619,7 @@ export function RegisterFormClient() {
         }) => {
           setReferralMarketing({
             enabled: Boolean(data.enabled),
+            fullOfferContractMonths: Math.min(36, Math.max(1, Number(data.fullOfferContractMonths) || 6)),
             newRegistrantDiscountVnd: Number(data.newRegistrantDiscountVnd) || 0,
             newRegistrantCoins: Number(data.newRegistrantCoins) || 0,
             referrerCoins: Number(data.referrerCoins) || 0,
@@ -803,9 +840,18 @@ export function RegisterFormClient() {
             : 0;
         const firstPaymentBeforeReferral =
           monthlyRecurringTotal * multiplier - oneTimeFlatDiscount - freqDiscount + selectedBed.pricing.deposit;
+        const basisMonths = referralMarketing?.fullOfferContractMonths ?? 6;
+        const referralScale =
+          referralLookup === "ok" && referralMarketing?.enabled
+            ? Math.min(1, contractMonths / Math.max(1, basisMonths))
+            : 0;
+        const scaledReferralDiscount =
+          referralLookup === "ok" && referralMarketing?.enabled
+            ? Math.floor(referralMarketing.newRegistrantDiscountVnd * referralScale)
+            : 0;
         const referralFirstPaymentCut =
           referralLookup === "ok" && referralMarketing?.enabled
-            ? Math.min(referralMarketing.newRegistrantDiscountVnd, firstPaymentBeforeReferral)
+            ? Math.min(scaledReferralDiscount, firstPaymentBeforeReferral)
             : 0;
         return {
           monthlyPrice: selectedBed.pricing.monthlyPrice,
@@ -928,7 +974,7 @@ export function RegisterFormClient() {
           schoolOrWorkplace: form.schoolOrWorkplace || undefined,
           referralSource: form.referralSource || undefined,
           emergencyPhone: form.emergencyPhone || undefined,
-          additionalTerms: form.additionalTerms || undefined,
+          additionalTerms: mergeAdditionalTermsForContract(form.additionalTerms, eligibleDiscounts),
           contractCleaningOptOut: form.contractCleaningOptOut,
           hasMotorbike: form.hasMotorbike,
           motorbikePlate: form.hasMotorbike ? form.motorbikePlate : undefined,
@@ -1248,7 +1294,16 @@ export function RegisterFormClient() {
             <label className="space-y-2 md:col-span-2"><span className="text-sm font-medium text-slate-700">{t.schoolOrWorkplace}</span><input value={form.schoolOrWorkplace} onChange={(event) => updateForm("schoolOrWorkplace", event.target.value)} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-teal-500 focus:bg-white" /></label>
             <label className="space-y-2"><span className="text-sm font-medium text-slate-700">{t.referralSource}</span><input value={form.referralSource} onChange={(event) => updateForm("referralSource", event.target.value)} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-teal-500 focus:bg-white" /></label>
             <label className="space-y-2"><span className="text-sm font-medium text-slate-700">{t.emergencyPhone}</span><input value={form.emergencyPhone} onChange={(event) => updateForm("emergencyPhone", event.target.value)} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-teal-500 focus:bg-white" /></label>
-            <label className="space-y-2 md:col-span-2"><span className="text-sm font-medium text-slate-700">{t.additionalTerms}</span><textarea value={form.additionalTerms} onChange={(event) => updateForm("additionalTerms", event.target.value)} rows={4} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-teal-500 focus:bg-white" /></label>
+            <label className="space-y-2 md:col-span-2">
+              <span className="text-sm font-medium text-slate-700">{t.additionalTerms}</span>
+              <p className="text-xs text-slate-500">{t.additionalTermsHint}</p>
+              <textarea
+                value={form.additionalTerms}
+                onChange={(event) => updateForm("additionalTerms", event.target.value)}
+                rows={4}
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-teal-500 focus:bg-white"
+              />
+            </label>
           </section>
 
           {/* Motorbike parking */}
@@ -1540,7 +1595,7 @@ export function RegisterFormClient() {
                           </span>
                           <span className="font-medium">{formatCurrency(pricingSummary.discountedMonthlyPrice)}</span>
                         </div>
-                        {pricingSummary.tenureSurchargeVnd > 0 && <div className="flex justify-between text-amber-700"><span>{lang === "vi" ? "Phụ thu hợp đồng ngắn hạn" : "Short-stay surcharge"}</span><span className="font-medium">+{formatCurrency(pricingSummary.tenureSurchargeVnd)}</span></div>}
+                        {pricingSummary.tenureSurchargeVnd > 0 && <div className="flex justify-between text-amber-700"><span>{lang === "vi" ? "Phụ phí hợp đồng ngắn hạn" : "Short-term contract surcharge"}</span><span className="font-medium">+{formatCurrency(pricingSummary.tenureSurchargeVnd)}</span></div>}
                         {pricingSummary.parkingFee > 0 && <div className="flex justify-between"><span>{lang === "vi" ? "Phí gửi xe" : "Parking fee"}</span><span className="font-medium">+{formatCurrency(pricingSummary.parkingFee)}</span></div>}
                         {pricingSummary.cleaningFee > 0 && <div className="flex justify-between"><span>{lang === "vi" ? "Phí vệ sinh" : "Cleaning fee"}</span><span className="font-medium">+{formatCurrency(pricingSummary.cleaningFee)}</span></div>}
                         <div className="flex justify-between border-t border-slate-200 pt-1.5 font-medium text-slate-700">

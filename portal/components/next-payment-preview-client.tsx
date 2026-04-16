@@ -88,6 +88,7 @@ export function NextPaymentPreviewClient() {
       rentPaidStatus={rentPaidStatus}
       residentEmail={sessionEmail ?? undefined}
       onRentPaidStatusRefresh={() => void refetchRentPaidStatusOnly()}
+      hidePrepaidUnlessDue
       packageExpiryNote={
         packageExpiryRaw
           ? language === "vi"

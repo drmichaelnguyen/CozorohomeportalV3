@@ -255,6 +255,10 @@
 
       <section id="bookingCard" class="card booking-card wide hidden">
         <h2 data-i18n="guestDetailsPayment">Guest details and payment</h2>
+        <div id="referralHostelBanner" class="referral-hostel-banner hidden" role="status">
+          <p class="referral-hostel-title" data-i18n="referralHostelTitle">Resident referral</p>
+          <p id="referralHostelBody" class="referral-hostel-body"></p>
+        </div>
         <div class="form-grid">
           <label>
             <span data-i18n="guestName">Guest name</span>
@@ -272,6 +276,10 @@
           <label>
             <span data-i18n="guestPhone">Guest phone</span>
             <input id="guestPhone" type="text" required />
+          </label>
+          <label>
+            <span data-i18n="referralCodeLabel">Referral code (optional)</span>
+            <input id="referralCode" type="text" maxLength="32" autoComplete="off" placeholder="CZ…" />
           </label>
           <label>
             <span data-i18n="cancellationOption">Cancellation option</span>

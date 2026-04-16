@@ -868,3 +868,24 @@ body {
     align-items: flex-start;
   }
 }
+
+.referral-hostel-banner {
+  margin-bottom: 1rem;
+  padding: 0.85rem 1rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--green-soft);
+  background: linear-gradient(135deg, rgba(18, 97, 84, 0.08), rgba(255, 255, 255, 0.9));
+}
+.referral-hostel-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--green);
+}
+.referral-hostel-body {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--ink);
+}

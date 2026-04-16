@@ -12,6 +12,28 @@ import type {
 import { formatBillingMonthLabel, prepaidAverageMonthlyAfterFeesVnd } from "../lib/rent-paid-status";
 import { usePortalLanguage } from "./portal-language";
 
+/** Show prepaid “next package” info when renewal is this soon, or when mid-cycle payables exist. */
+const PREPAID_INFO_WINDOW_DAYS = 60;
+
+function prepaidRentDueForDisplay(
+  rentPaidStatus: RentPaidStatusPayload,
+  nextPaymentDate: Date | null
+): boolean {
+  const est = rentPaidStatus.prepaidNextPaymentEstimate;
+  if (est && (est.midCyclePayablesVnd ?? 0) > 0) {
+    return true;
+  }
+  if (!nextPaymentDate || Number.isNaN(nextPaymentDate.getTime())) {
+    return false;
+  }
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const due = new Date(nextPaymentDate);
+  due.setHours(0, 0, 0, 0);
+  const diffDays = (due.getTime() - today.getTime()) / 86400000;
+  return diffDays <= PREPAID_INFO_WINDOW_DAYS;
+}
+
 function BreakdownRows({
   breakdown,
   billMonthLabel,
@@ -29,7 +51,7 @@ function BreakdownRows({
   const rows: { label: string; value: number | "skip" }[] = [
     { label: t("rent", "Rent"), value: breakdown.baseRent },
     {
-      label: `${t("tenureSurcharge", "Short-term surcharge")} (${((breakdown.tenureSurchargeRate ?? 0) * 100).toFixed(0)}%)`,
+      label: `${t("tenureSurcharge", "Short-term contract surcharge")} (${((breakdown.tenureSurchargeRate ?? 0) * 100).toFixed(0)}%)`,
       value: breakdown.tenureSurchargeVnd
     },
     {
@@ -274,6 +296,11 @@ type NextPaymentSummaryProps = {
   residentEmail?: string;
   /** Refetch rent-paid-status after saving coin preference (e.g. reload dashboard / account). */
   onRentPaidStatusRefresh?: () => void | Promise<void>;
+  /**
+   * When true, prepaid residents only see this card if package renewal is within ~60 days,
+   * or mid-cycle payables are owed. Monthly (non-prepaid) behavior is unchanged.
+   */
+  hidePrepaidUnlessDue?: boolean;
 };
 
 export function NextPaymentSummary({
@@ -284,7 +311,8 @@ export function NextPaymentSummary({
   variant = "default",
   showPaymentsLink,
   residentEmail,
-  onRentPaidStatusRefresh
+  onRentPaidStatusRefresh,
+  hidePrepaidUnlessDue = false
 }: NextPaymentSummaryProps) {
   const { t, language } = usePortalLanguage();
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -349,6 +377,15 @@ export function NextPaymentSummary({
     } finally {
       setCoinRedeemSaving(false);
     }
+  }
+
+  if (
+    hidePrepaidUnlessDue &&
+    !rentLoading &&
+    rentPaidStatus?.onPrepaidPlan === true &&
+    !prepaidRentDueForDisplay(rentPaidStatus, nextPaymentDate)
+  ) {
+    return null;
   }
 
   const isDashboard = variant === "dashboard";
