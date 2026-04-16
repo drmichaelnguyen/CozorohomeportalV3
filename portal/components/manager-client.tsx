@@ -1153,7 +1153,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     durationMonths: number | null; eligibility: Array<{ type: string; values?: string[]; value?: number }>;
     selectionMode: "manual" | "automatic";
     stackMode: "stackable" | "exclusive";
-    enabled: boolean; updatedBy: string; updatedAt: string;
+    enabled: boolean;
+    firstContractOnly?: boolean;
+    updatedBy: string; updatedAt: string;
   };
   type BranchPricingSettings = {
     branchId: string; cleaningOptOutFeeVnd: number; parkingFeeVnd: number; updatedBy: string; updatedAt: string;
@@ -1235,7 +1237,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     eligibility: Array<{ type: string; values: string; value: string }>;
     selectionMode: "manual" | "automatic";
     stackMode: "stackable" | "exclusive";
-    enabled: boolean; saving: boolean; result: string;
+    enabled: boolean;
+    firstContractOnly: boolean;
+    saving: boolean; result: string;
   } | null>(null);
   const [terminateDialog, setTerminateDialog] = useState(false);
   const [terminateNote, setTerminateNote] = useState("");
@@ -7680,7 +7684,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                     {!d.enabled && <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-500">{t("disabledLabel")}</span>}
                                   </div>
                                   <div className="flex gap-2">
-                                    <button type="button" onClick={() => setDiscountEdit({ id: d.id, termType: "long_term", label: d.label, labelVi: d.labelVi ?? "", description: d.description, descriptionVi: d.descriptionVi ?? "", amountVnd: String(d.amountVnd ?? ""), percentOff: "", minNights: "", durationMonths: d.durationMonths != null ? String(d.durationMonths) : "", eligibility: d.eligibility.map((e) => ({ type: e.type, values: "values" in e ? ((e as { values: string[] }).values ?? []).join(", ") : "", value: "value" in e ? String((e as { value: number }).value) : "" })), selectionMode: d.selectionMode ?? "manual", stackMode: d.stackMode ?? "stackable", enabled: d.enabled, saving: false, result: "" })}
+                                    <button type="button" onClick={() => setDiscountEdit({ id: d.id, termType: "long_term", label: d.label, labelVi: d.labelVi ?? "", description: d.description, descriptionVi: d.descriptionVi ?? "", amountVnd: String(d.amountVnd ?? ""), percentOff: "", minNights: "", durationMonths: d.durationMonths != null ? String(d.durationMonths) : "", eligibility: d.eligibility.map((e) => ({ type: e.type, values: "values" in e ? ((e as { values: string[] }).values ?? []).join(", ") : "", value: "value" in e ? String((e as { value: number }).value) : "" })), selectionMode: d.selectionMode ?? "manual", stackMode: d.stackMode ?? "stackable", enabled: d.enabled, firstContractOnly: Boolean(d.firstContractOnly), saving: false, result: "" })}
                                       className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700">{t("editLabel")}</button>
                                     <button type="button" onClick={async () => {
                                       if (!window.confirm(`Delete "${d.label}"?`)) return;
@@ -7692,6 +7696,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 <p className="text-xs text-slate-500">{language === "vi" && d.descriptionVi ? d.descriptionVi : d.description}</p>
                                 <div className="flex flex-wrap gap-2 text-xs">
                                   {d.amountVnd != null && <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-emerald-700 font-medium">−{d.amountVnd.toLocaleString("vi-VN")} ₫/month</span>}
+                                  {d.firstContractOnly ? (
+                                    <span className="rounded-full bg-amber-100 px-2.5 py-1 text-amber-800 font-medium">{t("firstContractOnlyBadge")}</span>
+                                  ) : null}
                                   <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{d.durationMonths != null ? `${d.durationMonths} ${t("monthsLabel")}` : t("entireContractLabel")}</span>
                                   <span className={`rounded-full px-2.5 py-1 font-medium ${d.stackMode === "exclusive" ? "bg-rose-100 text-rose-700" : "bg-sky-100 text-sky-700"}`}>{d.stackMode === "exclusive" ? t("exclusiveLabel") : t("stackableLabel")}</span>
                                   {d.eligibility.map((e, i) => (
@@ -7793,6 +7800,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 <input type="checkbox" checked={discountEdit.enabled} onChange={(e) => setDiscountEdit({ ...discountEdit, enabled: e.target.checked })} className="h-4 w-4 rounded border-slate-300 text-sky-600" />
                                 <span className="text-sm text-slate-700">{t("enabledVisibleLabel")}</span>
                               </label>
+                              <label className="flex items-start gap-2 sm:col-span-2">
+                                <input type="checkbox" checked={discountEdit.firstContractOnly} onChange={(e) => setDiscountEdit({ ...discountEdit, firstContractOnly: e.target.checked })} className="mt-0.5 h-4 w-4 rounded border-slate-300 text-sky-600" />
+                                <span>
+                                  <span className="text-sm font-medium text-slate-800">{t("firstContractOnlyLabel")}</span>
+                                  <span className="mt-0.5 block text-xs text-slate-500">{t("firstContractOnlyDesc")}</span>
+                                </span>
+                              </label>
                             </div>
                             {discountEdit.result ? <p className={`text-sm font-medium ${discountEdit.result.startsWith("✓") ? "text-emerald-700" : "text-rose-700"}`}>{discountEdit.result}</p> : null}
                             <div className="flex gap-2">
@@ -7810,7 +7824,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                     return { type: r.type };
                                   });
                                   const id = discountEdit.id || `lt_${Date.now()}`;
-                                  const res = await fetch(`${API_BASE_URL}/manager/pricing/discounts`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actorEmail: normalizedEmail, discount: { id, termType: "long_term", label: discountEdit.label, labelVi: discountEdit.labelVi, description: discountEdit.description, descriptionVi: discountEdit.descriptionVi, amountVnd: Number(discountEdit.amountVnd) || 0, percentOff: null, minNights: null, durationMonths: discountEdit.durationMonths ? Number(discountEdit.durationMonths) : null, eligibility, selectionMode: discountEdit.selectionMode, stackMode: discountEdit.stackMode, enabled: discountEdit.enabled } }) });
+                                  const res = await fetch(`${API_BASE_URL}/manager/pricing/discounts`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actorEmail: normalizedEmail, discount: { id, termType: "long_term", label: discountEdit.label, labelVi: discountEdit.labelVi, description: discountEdit.description, descriptionVi: discountEdit.descriptionVi, amountVnd: Number(discountEdit.amountVnd) || 0, percentOff: null, minNights: null, durationMonths: discountEdit.durationMonths ? Number(discountEdit.durationMonths) : null, eligibility, selectionMode: discountEdit.selectionMode, stackMode: discountEdit.stackMode, enabled: discountEdit.enabled, firstContractOnly: discountEdit.firstContractOnly } }) });
                                   const data = (await res.json()) as { ok?: boolean; row?: PricingDiscount; error?: string };
                                   if (!res.ok) throw new Error(data.error ?? "Failed");
                                   if (data.row) setPricingData((prev) => prev ? { ...prev, discounts: [...prev.discounts.filter((x) => x.id !== data.row!.id), data.row!] } : prev);
@@ -7820,7 +7834,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             </div>
                           </div>
                         ) : (
-                          <button type="button" onClick={() => setDiscountEdit({ id: "", termType: "long_term", label: "", labelVi: "", description: "", descriptionVi: "", amountVnd: "0", percentOff: "", minNights: "", durationMonths: "", eligibility: [], selectionMode: "manual", stackMode: "stackable", enabled: true, saving: false, result: "" })}
+                          <button type="button" onClick={() => setDiscountEdit({ id: "", termType: "long_term", label: "", labelVi: "", description: "", descriptionVi: "", amountVnd: "0", percentOff: "", minNights: "", durationMonths: "", eligibility: [], selectionMode: "manual", stackMode: "stackable", enabled: true, firstContractOnly: false, saving: false, result: "" })}
                             className="rounded-xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 hover:border-sky-400 hover:text-sky-700">{t("addDiscount")}</button>
                         )}
                       </>
@@ -7929,7 +7943,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                     {!d.enabled && <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-500">{t("disabledLabel")}</span>}
                                   </div>
                                   <div className="flex gap-2">
-                                    <button type="button" onClick={() => setDiscountEdit({ id: d.id, termType: "short_term", label: d.label, labelVi: d.labelVi ?? "", description: d.description, descriptionVi: d.descriptionVi ?? "", amountVnd: "", percentOff: String(d.percentOff ?? ""), minNights: String(d.minNights ?? ""), durationMonths: "", eligibility: [], selectionMode: d.selectionMode ?? "automatic", stackMode: d.stackMode ?? "stackable", enabled: d.enabled, saving: false, result: "" })}
+                                    <button type="button" onClick={() => setDiscountEdit({ id: d.id, termType: "short_term", label: d.label, labelVi: d.labelVi ?? "", description: d.description, descriptionVi: d.descriptionVi ?? "", amountVnd: "", percentOff: String(d.percentOff ?? ""), minNights: String(d.minNights ?? ""), durationMonths: "", eligibility: [], selectionMode: d.selectionMode ?? "automatic", stackMode: d.stackMode ?? "stackable", enabled: d.enabled, firstContractOnly: false, saving: false, result: "" })}
                                       className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700">{t("editLabel")}</button>
                                     <button type="button" onClick={async () => {
                                       if (!window.confirm(`Delete "${d.label}"?`)) return;
@@ -7988,7 +8002,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 setDiscountEdit({ ...discountEdit, saving: true, result: "" });
                                 try {
                                   const id = discountEdit.id || `st_${Date.now()}`;
-                                  const res = await fetch(`${API_BASE_URL}/manager/pricing/discounts`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actorEmail: normalizedEmail, discount: { id, termType: "short_term", label: discountEdit.label, labelVi: discountEdit.labelVi, description: discountEdit.description, descriptionVi: discountEdit.descriptionVi, amountVnd: null, percentOff: Number(discountEdit.percentOff) || 0, minNights: Number(discountEdit.minNights) || 1, durationMonths: null, eligibility: [], stackMode: discountEdit.stackMode, enabled: discountEdit.enabled } }) });
+                                  const res = await fetch(`${API_BASE_URL}/manager/pricing/discounts`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actorEmail: normalizedEmail, discount: { id, termType: "short_term", label: discountEdit.label, labelVi: discountEdit.labelVi, description: discountEdit.description, descriptionVi: discountEdit.descriptionVi, amountVnd: null, percentOff: Number(discountEdit.percentOff) || 0, minNights: Number(discountEdit.minNights) || 1, durationMonths: null, eligibility: [], selectionMode: discountEdit.selectionMode, stackMode: discountEdit.stackMode, enabled: discountEdit.enabled, firstContractOnly: false } }) });
                                   const data = (await res.json()) as { ok?: boolean; row?: PricingDiscount; error?: string };
                                   if (!res.ok) throw new Error(data.error ?? "Failed");
                                   if (data.row) setPricingData((prev) => prev ? { ...prev, discounts: [...prev.discounts.filter((x) => x.id !== data.row!.id), data.row!] } : prev);
@@ -7998,7 +8012,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             </div>
                           </div>
                         ) : (
-                          <button type="button" onClick={() => setDiscountEdit({ id: "", termType: "short_term", label: "", labelVi: "", description: "", descriptionVi: "", amountVnd: "", percentOff: "10", minNights: "7", durationMonths: "", eligibility: [], selectionMode: "automatic", stackMode: "stackable", enabled: true, saving: false, result: "" })}
+                          <button type="button" onClick={() => setDiscountEdit({ id: "", termType: "short_term", label: "", labelVi: "", description: "", descriptionVi: "", amountVnd: "", percentOff: "10", minNights: "7", durationMonths: "", eligibility: [], selectionMode: "automatic", stackMode: "stackable", enabled: true, firstContractOnly: false, saving: false, result: "" })}
                             className="rounded-xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 hover:border-violet-400 hover:text-violet-700">{t("addStayDiscount")}</button>
                         )}
                       </>

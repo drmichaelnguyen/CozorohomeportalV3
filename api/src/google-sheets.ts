@@ -5078,7 +5078,16 @@ export async function getActiveLaundryBooking(email: string) {
   };
 }
 
-export async function extendClientContract(email: string, extensionMonths: number) {
+export type ContractExtensionListPricing = {
+  /** Current list monthly rent for the bed (overrides + sheet), excluding first-contract-only registration promos. */
+  listMonthlyPriceVnd: number;
+};
+
+export async function extendClientContract(
+  email: string,
+  extensionMonths: number,
+  listPricing?: ContractExtensionListPricing | null
+) {
   const normalizedEmail = email.trim().toLowerCase();
   
   const sheets = await getAuthorizedSheetsClient();
@@ -5217,6 +5226,33 @@ export async function extendClientContract(email: string, extensionMonths: numbe
     payload[norm] = value;
   });
 
+  // Reset recurring rent to current list price so first-contract-only promos do not carry into the new row.
+  if (listPricing?.listMonthlyPriceVnd != null && listPricing.listMonthlyPriceVnd > 0) {
+    const listMonthly = Math.trunc(listPricing.listMonthlyPriceVnd);
+    const shareCol = normalizeHeader("Số tiền chia sẻ mỗi tháng");
+    const feeCol = normalizeHeader("Phí ở đóng mỗi tháng");
+    const totalCol = normalizeHeader("Tổng tiền thanh toán tháng");
+    const cleaningIdx = headers.indexOf(normalizeHeader(CLIENT_CLEANING_FEE_COLUMN));
+    const parkingIdx = headers.indexOf(normalizeHeader("Phí gởi xe"));
+    const parseMoneyCell = (idx: number) => {
+      if (idx < 0) return 0;
+      const raw = String(targetRowData[idx] ?? "").replace(/[^0-9-]/g, "");
+      const n = Number.parseInt(raw, 10);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    const newTotal = listMonthly + parseMoneyCell(cleaningIdx) + parseMoneyCell(parkingIdx);
+    headers.forEach((header, index) => {
+      const norm = header.toString().toLowerCase().trim().replace(/ /g, "");
+      if (header === shareCol || header === feeCol) {
+        payload[norm] = String(listMonthly);
+        targetRowData[index] = String(listMonthly);
+      } else if (header === totalCol) {
+        payload[norm] = String(newTotal);
+        targetRowData[index] = String(newTotal);
+      }
+    });
+  }
+
   console.log(`[ContractExtension] Sending data to Bridge Script for ${email}...`);
   
   let rowIndex: number | null = null;
@@ -5338,7 +5374,7 @@ export async function logMicrowaveUse(email: string, name: string, inspection = 
 // ── Discounts Sheet ───────────────────────────────────────────────────────────
 // Columns: ID | Label | Label_VI | Description | Description_VI | Amount_VND |
 //          Percent_Off | Duration_Months | Min_Nights | Term_Type |
-//          Eligibility_JSON | Enabled | Updated_By | Updated_At
+//          Eligibility_JSON | Selection_Mode | Stack_Mode | Enabled | Updated_By | Updated_At | First_Contract_Only
 
 export type SheetDiscount = {
   id: string;
@@ -5355,6 +5391,8 @@ export type SheetDiscount = {
   selectionMode: "manual" | "automatic";
   stackMode: "stackable" | "exclusive";
   enabled: boolean;
+  /** When true, discount is hidden for emails that already have any client sheet row (renewal / return). */
+  firstContractOnly: boolean;
   updatedBy: string;
   updatedAt: string;
 };
@@ -5362,7 +5400,7 @@ export type SheetDiscount = {
 const DISCOUNT_HEADERS = [
   "ID", "Label", "Label_VI", "Description", "Description_VI",
   "Amount_VND", "Percent_Off", "Duration_Months", "Min_Nights",
-  "Term_Type", "Eligibility_JSON", "Selection_Mode", "Stack_Mode", "Enabled", "Updated_By", "Updated_At"
+  "Term_Type", "Eligibility_JSON", "Selection_Mode", "Stack_Mode", "Enabled", "Updated_By", "Updated_At", "First_Contract_Only"
 ] as const;
 
 function parseSheetDiscountRow(row: Record<string, string>): SheetDiscount | null {
@@ -5385,6 +5423,7 @@ function parseSheetDiscountRow(row: Record<string, string>): SheetDiscount | nul
     selectionMode: (row["Selection_Mode"] === "automatic" ? "automatic" : row["Term_Type"] === "short_term" ? "automatic" : "manual") as SheetDiscount["selectionMode"],
     stackMode: (row["Stack_Mode"] === "exclusive" ? "exclusive" : "stackable") as SheetDiscount["stackMode"],
     enabled: (row["Enabled"] ?? row["enabled"] ?? "1").trim() !== "0",
+    firstContractOnly: (row["First_Contract_Only"] ?? row["first_contract_only"] ?? "").trim() === "1",
     updatedBy: (row["Updated_By"] ?? row["updated_by"] ?? "").trim(),
     updatedAt: (row["Updated_At"] ?? row["updated_at"] ?? "").trim(),
   };
@@ -5395,7 +5434,7 @@ export async function readDiscountsFromSheet(): Promise<SheetDiscount[]> {
   const sheets = await getAuthorizedSheetsClient();
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${discountsSheetName}!A:P`
+    range: `${discountsSheetName}!A:Q`
   });
   const values = response.data.values ?? [];
   if (values.length < 2) return [];
@@ -5433,7 +5472,7 @@ async function flushDiscountQueue(): Promise<void> {
   // Read current sheet state once
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${discountsSheetName}!A:P`
+    range: `${discountsSheetName}!A:Q`
   });
   const values = response.data.values ?? [];
 
@@ -5441,7 +5480,7 @@ async function flushDiscountQueue(): Promise<void> {
   if (values.length === 0) {
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `${discountsSheetName}!A1:P1`,
+      range: `${discountsSheetName}!A1:Q1`,
       valueInputOption: "RAW",
       requestBody: { values: [DISCOUNT_HEADERS as unknown as string[]] }
     });
@@ -5455,7 +5494,7 @@ async function flushDiscountQueue(): Promise<void> {
     if (needsHeaderUpgrade) {
       await sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `${discountsSheetName}!A1:P1`,
+        range: `${discountsSheetName}!A1:Q1`,
         valueInputOption: "RAW",
         requestBody: { values: [DISCOUNT_HEADERS as unknown as string[]] }
       });
@@ -5492,7 +5531,8 @@ async function flushDiscountQueue(): Promise<void> {
         discount.stackMode,
         discount.enabled ? "1" : "0",
         actorEmail.trim().toLowerCase(),
-        now
+        now,
+        discount.firstContractOnly ? "1" : "0"
       ];
       const existingIdx = dataRows.findIndex((r) => (r[0] ?? "").trim() === discount.id);
       if (existingIdx >= 0) {
@@ -5515,7 +5555,7 @@ async function flushDiscountQueue(): Promise<void> {
   for (const { sheetRow, row } of toUpdate) {
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `${discountsSheetName}!A${sheetRow}:P${sheetRow}`,
+      range: `${discountsSheetName}!A${sheetRow}:Q${sheetRow}`,
       valueInputOption: "USER_ENTERED",
       requestBody: { values: [row] }
     });
@@ -5525,7 +5565,7 @@ async function flushDiscountQueue(): Promise<void> {
   if (toAppend.length > 0) {
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: `${discountsSheetName}!A:P`,
+      range: `${discountsSheetName}!A:Q`,
       valueInputOption: "USER_ENTERED",
       insertDataOption: "INSERT_ROWS",
       requestBody: { values: toAppend }

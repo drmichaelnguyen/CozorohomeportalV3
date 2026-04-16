@@ -45,6 +45,8 @@ export type PricingDiscount = {
   selectionMode: "manual" | "automatic";
   stackMode: "stackable" | "exclusive";
   enabled: boolean;
+  /** When true, discount is not offered if the email already has any client sheet row (renewal / return). */
+  firstContractOnly: boolean;
   updatedBy: string;
   updatedAt: string;
 };
@@ -75,6 +77,7 @@ function sheetDiscountToPricingDiscount(d: SheetDiscount): PricingDiscount {
     selectionMode: d.selectionMode ?? (d.termType === "short_term" ? "automatic" : "manual"),
     stackMode: d.stackMode ?? "stackable",
     enabled: d.enabled,
+    firstContractOnly: Boolean(d.firstContractOnly),
     updatedBy: d.updatedBy,
     updatedAt: d.updatedAt,
   };
@@ -165,7 +168,7 @@ export async function upsertDiscount(
   actorEmail: string,
   input: Omit<PricingDiscount, "updatedAt" | "updatedBy">
 ): Promise<PricingDiscount> {
-  await requirePortalRole(actorEmail, ["owner", "app_admin"], "Only owners can manage discounts.");
+  await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Only staff can manage discounts.");
   const sheetRow: SheetDiscount = {
     id: input.id,
     termType: input.termType,
@@ -181,6 +184,7 @@ export async function upsertDiscount(
     selectionMode: input.selectionMode ?? (input.termType === "short_term" ? "automatic" : "manual"),
     stackMode: input.stackMode ?? "stackable",
     enabled: input.enabled,
+    firstContractOnly: Boolean(input.firstContractOnly),
     updatedBy: actorEmail.trim().toLowerCase(),
     updatedAt: new Date().toISOString(),
   };
@@ -453,6 +457,6 @@ export async function deleteDiscount(
   actorEmail: string,
   discountId: string
 ): Promise<void> {
-  await requirePortalRole(actorEmail, ["owner", "app_admin"], "Only owners can delete discounts.");
+  await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Only staff can delete discounts.");
   queueDiscountDelete(discountId);
 }

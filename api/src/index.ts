@@ -124,6 +124,9 @@ import {
   syncMaintenanceFromSheet,
   updateMaintenanceTicket,
   extendClientContract,
+  CLIENT_BED_COLUMN,
+  CLIENT_BRANCH_COLUMN,
+  normalizeClientBranch,
   MAINTENANCE_STATUS_COLUMN,
   MAINTENANCE_MECHANIC_EMAIL_COLUMN,
   MAINTENANCE_SOLVED_AT_COLUMN,
@@ -139,6 +142,7 @@ import {
   checkProspectReferralEligibility,
   getProspectAssistantPublicSettings,
   getProspectBedAvailability,
+  resolveLongTermListPriceForBed,
   updateProspectAssistantSettings
 } from "./prospect-assistant.js";
 import type { ReferralProgramSettings } from "./referral-program.js";
@@ -1159,11 +1163,25 @@ app.post("/clients/contracts/extend", async (request, response) => {
   }
 
   try {
+    const active = await getActiveClientByEmail(parsed.data.email);
+    if (!active) {
+      return response.status(400).json({ error: "Could not find an active client record to extend." });
+    }
+    const branchId = normalizeClientBranch(String(active[CLIENT_BRANCH_COLUMN] ?? ""));
+    const bedNumber = Number.parseInt(String(active[CLIENT_BED_COLUMN] ?? "").replace(/[^0-9]/g, ""), 10);
+    let listPricing: { listMonthlyPriceVnd: number } | undefined;
+    if (bedNumber > 0) {
+      const { monthlyPrice } = await resolveLongTermListPriceForBed(branchId, bedNumber);
+      if (monthlyPrice > 0) {
+        listPricing = { listMonthlyPriceVnd: monthlyPrice };
+      }
+    }
+
     await runWithWriteGuard({
       key: createWriteGuardKey("/clients/contracts/extend", parsed.data),
       duplicateMessage: "This contract extension request was just submitted. Please wait a few seconds.",
       cooldownMs: 15000,
-      action: () => extendClientContract(parsed.data.email, parsed.data.extensionMonths)
+      action: () => extendClientContract(parsed.data.email, parsed.data.extensionMonths, listPricing)
     });
     return response.json({ ok: true });
   } catch (error) {
@@ -6038,13 +6056,24 @@ app.post("/api/public/register", async (request, response) => {
 // ─── Unified Pricing (long-term + short-term beds & discounts) ───────────────
 
 // Public: enabled long-term discounts + branch pricing settings for the registration form
-app.get("/api/public/pricing-discounts", async (_request, response) => {
+app.get("/api/public/pricing-discounts", async (request, response) => {
   try {
-    const [discounts, branchSettings] = await Promise.all([
+    const emailRaw = String(request.query.email ?? "").trim().toLowerCase();
+    let priorResidentContract = false;
+    if (emailRaw) {
+      const emailCheck = z.string().email().safeParse(emailRaw);
+      if (emailCheck.success) {
+        priorResidentContract = await anyClientRowExistsForEmail(emailRaw);
+      }
+    }
+    const [discountsAll, branchSettings] = await Promise.all([
       getDiscounts("long_term", true),
       getAllBranchPricingSettings()
     ]);
-    return response.json({ discounts, branchSettings });
+    const discounts = priorResidentContract
+      ? discountsAll.filter((d) => !d.firstContractOnly)
+      : discountsAll;
+    return response.json({ discounts, branchSettings, priorResidentContract });
   } catch (error) {
     return response.status(500).json({ error: error instanceof Error ? error.message : "Unable to load discounts" });
   }

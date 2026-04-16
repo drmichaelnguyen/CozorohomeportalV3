@@ -28,6 +28,8 @@ type DiscountRule = {
   selectionMode: "manual" | "automatic";
   stackMode: "stackable" | "exclusive";
   enabled: boolean;
+  /** Server: omit or false for everyone; hidden for returning emails when true. */
+  firstContractOnly?: boolean;
 };
 
 type BranchPricingSettings = {
@@ -187,6 +189,8 @@ const T = {
     firstPaymentEstimate: "First payment estimate",
     availability: "Availability",
     availableDiscountsTitle: "Available discounts — tick to claim",
+    priorResidentDiscountsNote:
+      "This email already has a CozoroHome record. First-contract-only promotions are not shown. Renewals use the in-portal extension flow; if you are re-applying, contact staff.",
     proofNotice: "Proof will be requested before your contract is signed.",
     perMonth: "/month",
     appliedForFirst: "Applied for first",
@@ -305,6 +309,8 @@ const T = {
     firstPaymentEstimate: "Ước tính thanh toán lần đầu",
     availability: "Tình trạng",
     availableDiscountsTitle: "Ưu đãi có thể nhận — tick để xác nhận",
+    priorResidentDiscountsNote:
+      "Email này đã có hồ sơ tại CozoroHome. Các ưu đãi chỉ dành cho hợp đồng đầu tiên sẽ không hiển thị. Gia hạn vui lòng dùng chức năng trong cổng thông tin; nếu đăng ký lại, vui lòng liên hệ quản lý.",
     proofNotice: "Bằng chứng sẽ được yêu cầu trước khi ký hợp đồng.",
     perMonth: "/tháng",
     appliedForFirst: "Áp dụng trong",
@@ -504,6 +510,7 @@ export function RegisterFormClient() {
   const [submitting, setSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [allDiscounts, setAllDiscounts] = useState<DiscountRule[]>([]);
+  const [priorResidentContract, setPriorResidentContract] = useState(false);
   const [claimedDiscountIds, setClaimedDiscountIds] = useState<Set<string>>(new Set());
   const [branchPricingSettings, setBranchPricingSettings] = useState<BranchPricingSettings[]>([]);
   const [idScanUploading, setIdScanUploading] = useState(false);
@@ -525,14 +532,40 @@ export function RegisterFormClient() {
   const [referralLookup, setReferralLookup] = useState<"idle" | "checking" | "ok" | "bad">("idle");
 
   useEffect(() => {
-    fetch(`${API_BASE_URL}/api/public/pricing-discounts`)
-      .then((r) => r.json())
-      .then((data: { discounts?: DiscountRule[]; branchSettings?: BranchPricingSettings[] }) => {
-        if (data.discounts) setAllDiscounts(data.discounts);
-        if (data.branchSettings) setBranchPricingSettings(data.branchSettings);
-      })
-      .catch(() => {});
-  }, []);
+    const email = form.email.trim();
+    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    const controller = new AbortController();
+    const delayMs = emailOk ? 400 : 0;
+    const timer = window.setTimeout(() => {
+      const qs = emailOk ? `?email=${encodeURIComponent(email.toLowerCase())}` : "";
+      void fetch(`${API_BASE_URL}/api/public/pricing-discounts${qs}`, { signal: controller.signal })
+        .then((r) => r.json())
+        .then(
+          (data: {
+            discounts?: DiscountRule[];
+            branchSettings?: BranchPricingSettings[];
+            priorResidentContract?: boolean;
+          }) => {
+            if (data.discounts) setAllDiscounts(data.discounts);
+            if (data.branchSettings) setBranchPricingSettings(data.branchSettings);
+            setPriorResidentContract(Boolean(data.priorResidentContract));
+          }
+        )
+        .catch(() => {});
+    }, delayMs);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [form.email]);
+
+  useEffect(() => {
+    const allowed = new Set(allDiscounts.map((d) => d.id));
+    setClaimedDiscountIds((prev) => {
+      const next = new Set([...prev].filter((id) => allowed.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [allDiscounts]);
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/public/referral-program`)
@@ -1321,6 +1354,9 @@ export function RegisterFormClient() {
             <p className="text-sm font-semibold text-slate-900">{t.pricingSummary}</p>
             {selectedBed && pricingSummary ? (
               <div className="mt-4 space-y-3 text-sm text-slate-600">
+                {priorResidentContract ? (
+                  <p className="rounded-2xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-950">{t.priorResidentDiscountsNote}</p>
+                ) : null}
                 <div className="rounded-[1.5rem] bg-slate-950 px-5 py-4 text-white">
                   <p className="text-xs uppercase tracking-[0.25em] text-slate-300">{selectedBranch?.label ?? selectedBed.floor} / {t.roomLabel} {selectedBed.room} / Bed {selectedBed.bedNumber}</p>
                   {(eligibleDiscounts.length > 0 || pricingSummary.cleaningFee > 0 || pricingSummary.parkingFee > 0 || pricingSummary.paymentFreqMonthlyDiscount > 0 || pricingSummary.tenureSurchargeVnd > 0) ? (

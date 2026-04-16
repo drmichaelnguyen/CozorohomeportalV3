@@ -1139,6 +1139,11 @@ const translations: Record<string, { en: string; vi: string }> = {
   usingBranchDefault: { en: "Using branch default. Set an override to give this bed a different parking rate.", vi: "Đang dùng mặc định của chi nhánh. Thiết lập ghi đè để có mức phí gửi xe khác cho giường này." },
   parkingFeeVndMonth: { en: "Parking fee VND/month", vi: "Phí gửi xe VND/tháng" },
   registrationDiscounts: { en: "Registration Discounts", vi: "Giảm giá khi đăng ký" },
+  longTermDiscountsHeader: { en: "Long-term registration discounts", vi: "Giảm giá đăng ký dài hạn" },
+  longTermDiscountsDesc: {
+    en: "Rules shown on the public registration form and saved in the DISCOUNTS sheet.",
+    vi: "Các quy tắc hiển thị trên form đăng ký công khai và lưu trong sheet DISCOUNTS."
+  },
   registrationDiscountsDesc: { en: "Registration discount rules stay collapsed until you open them to review or edit.", vi: "Các quy tắc giảm giá khi đăng ký sẽ được thu gọn cho đến khi bạn mở ra để xem hoặc chỉnh sửa." },
   noLongTermDiscounts: { en: "No long-term discounts configured.", vi: "Chưa cấu hình giảm giá dài hạn nào." },
   noShortTermDiscounts: { en: "No short-term discounts configured.", vi: "Chưa cấu hình giảm giá ngắn hạn nào." },
@@ -1188,6 +1193,12 @@ const translations: Record<string, { en: string; vi: string }> = {
   deleteLabel: { en: "Delete", vi: "Xóa" },
   addDiscount: { en: "+ Add discount", vi: "+ Thêm giảm giá" },
   enabledVisibleLabel: { en: "Enabled (visible on registration form)", vi: "Kích hoạt (hiển thị trên form)" },
+  firstContractOnlyLabel: { en: "First contract only", vi: "Chỉ hợp đồng đầu tiên" },
+  firstContractOnlyDesc: {
+    en: "Hide this discount for any email that already has a client record (renewal or return). Contract extension also resets monthly rent to the current list price for the bed.",
+    vi: "Ẩn giảm giá này đối với email đã từng có bản ghi cư dân (gia hạn hoặc quay lại). Khi gia hạn hợp đồng, hệ thống cũng đặt lại tiền phòng theo giá niêm yết hiện tại của giường."
+  },
+  firstContractOnlyBadge: { en: "First contract only", vi: "Chỉ hợp đồng đầu" },
   addRule: { en: "+ Add rule", vi: "+ Thêm quy tắc" },
   maleLabel: { en: "Male", vi: "Nam" },
   femaleLabel: { en: "Female", vi: "Nữ" },

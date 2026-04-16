@@ -8,7 +8,8 @@ import {
   getBedOverrides,
   getBedParkingFeeOverrides,
   getBranchPricingSettings,
-  listActiveParkingTiersForBranch
+  listActiveParkingTiersForBranch,
+  resolveLongTermBedPricing
 } from "./pricing-config.js";
 
 const cacheDirPath = path.join(process.cwd(), "data");
@@ -451,6 +452,14 @@ export async function checkProspectReferralEligibility(input: {
     referralDiscountVnd: settings.referralDiscountVnd,
     message: eligible ? "Eligible for referral discount." : "Not eligible for referral discount."
   };
+}
+
+/** List long-term rent for a bed (sheet reference pricing merged with manager overrides). */
+export async function resolveLongTermListPriceForBed(branchId: BranchId, bedNumber: number) {
+  const [cache, overrideRows] = await Promise.all([getClientCache(), getBedOverrides("long_term")]);
+  const pricing = buildPriceStats(cache.rows);
+  const sheetPrice = pricing.perBed[branchId].get(bedNumber) ?? pricing.perBranch[branchId];
+  return resolveLongTermBedPricing(branchId, bedNumber, sheetPrice);
 }
 
 export async function getProspectBedAvailability(input: {
