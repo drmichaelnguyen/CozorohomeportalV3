@@ -692,7 +692,11 @@ const cleaningRewardSettingsPutSchema = z.object({
 const fridgeDrainSchedulePutSchema = z.object({
   actorEmail: z.string().email(),
   branchId: z.enum(["D2", "D7"]),
-  cleaningDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+  cleaningDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  /** HH:mm in Asia/Ho_Chi_Minh — day before cleaning (power off). Default 17:00. */
+  offTime: z.string().trim().max(8).optional(),
+  /** HH:mm in Asia/Ho_Chi_Minh — cleaning day (power on). Default 17:00. */
+  onTime: z.string().trim().max(8).optional()
 });
 const managerBulkCoinAdjustSchema = z
   .object({
@@ -5581,7 +5585,7 @@ app.get("/manager/fridge-drain-schedule", async (req, res) => {
   }
 });
 
-// PUT /manager/fridge-drain-schedule — set cleaning day; OFF (17:00 day before) + ON events are rewritten
+// PUT /manager/fridge-drain-schedule — set cleaning day; OFF (day before) + ON times configurable (default 17:00 VN)
 app.put("/manager/fridge-drain-schedule", async (req, res) => {
   const parsed = fridgeDrainSchedulePutSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -5591,14 +5595,23 @@ app.put("/manager/fridge-drain-schedule", async (req, res) => {
     await requirePortalRole(parsed.data.actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
     const result = await upsertFridgeDrainCleaningDate({
       branchId: parsed.data.branchId,
-      cleaningDate: parsed.data.cleaningDate
+      cleaningDate: parsed.data.cleaningDate,
+      offTime: parsed.data.offTime,
+      onTime: parsed.data.onTime
     });
     return res.json(result);
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unable to update calendar";
     const lower = msg.toLowerCase();
     const status =
-      lower.includes("not configured") || lower.includes("must be yyyy") ? 400 : lower.includes("staff only") ? 403 : 500;
+      lower.includes("not configured") ||
+      lower.includes("must be yyyy") ||
+      lower.includes("must be hh:mm") ||
+      lower.includes("invalid fridge schedule time")
+        ? 400
+        : lower.includes("staff only")
+          ? 403
+          : 500;
     return res.status(status).json({ error: msg });
   }
 });
