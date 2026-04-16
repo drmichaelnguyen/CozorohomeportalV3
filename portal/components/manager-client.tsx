@@ -167,6 +167,9 @@ type PricingSettingsSectionKey =
   | "stay_discounts"
   | "staff_accounts";
 
+type ManagerSettingsMainSection = "pricing" | "resident_guides" | "tools";
+type PricingSettingsSubTab = "long_term" | "short_term" | "referral" | "staff";
+
 function CollapsibleSettingsSection({
   title,
   description,
@@ -1196,9 +1199,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [referralProgramLoading, setReferralProgramLoading] = useState(false);
   const [referralProgramSaving, setReferralProgramSaving] = useState(false);
   const [referralProgramMessage, setReferralProgramMessage] = useState("");
-  const [pricingSettingsTab, setPricingSettingsTab] = useState<
-    "long_term" | "short_term" | "referral" | "staff" | "resident_guides" | "tools"
-  >("long_term");
+  const [managerSettingsMainSection, setManagerSettingsMainSection] = useState<ManagerSettingsMainSection>("pricing");
+  const [pricingSettingsTab, setPricingSettingsTab] = useState<PricingSettingsSubTab>("long_term");
   const [bedPricingExpanded, setBedPricingExpanded] = useState(false);
   const [pricingSettingsExpanded, setPricingSettingsExpanded] = useState<Record<PricingSettingsSectionKey, boolean>>({
     parking_tiers: false,
@@ -6980,35 +6982,35 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-xl font-bold text-slate-900">
-                  {pricingSettingsTab === "tools"
+                  {managerSettingsMainSection === "tools"
                     ? t("settingsToolsTitle")
-                    : pricingSettingsTab === "referral"
-                      ? language === "vi"
-                        ? "Chương trình giới thiệu"
-                        : "Referral program"
-                      : pricingSettingsTab === "resident_guides"
-                        ? t("settingsResidentGuidesTitle")
+                    : managerSettingsMainSection === "resident_guides"
+                      ? t("settingsResidentGuidesTitle")
+                      : pricingSettingsTab === "referral"
+                        ? language === "vi"
+                          ? "Chương trình giới thiệu"
+                          : "Referral program"
                         : t("pricing")}
                 </h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  {pricingSettingsTab === "tools"
+                  {managerSettingsMainSection === "tools"
                     ? t("settingsToolsDesc")
-                    : pricingSettingsTab === "referral"
-                      ? language === "vi"
-                        ? "Bật/tắt, mức giảm một lần trên thanh toán lần đầu và Cozoro coins cho cư dân mới và người giới thiệu."
-                        : "Toggle the program and set one-time first-payment discount and Cozoro coins for new residents and referrers."
-                      : pricingSettingsTab === "resident_guides"
-                        ? t("settingsResidentGuidesDesc")
+                    : managerSettingsMainSection === "resident_guides"
+                      ? t("settingsResidentGuidesDesc")
+                      : pricingSettingsTab === "referral"
+                        ? language === "vi"
+                          ? "Bật/tắt, mức giảm một lần trên thanh toán lần đầu và Cozoro coins cho cư dân mới và người giới thiệu."
+                          : "Toggle the program and set one-time first-payment discount and Cozoro coins for new residents and referrers."
                         : t("pricingDesc")}
                 </p>
               </div>
-              {pricingSettingsTab !== "tools" && pricingSettingsTab !== "referral" && pricingSettingsTab !== "resident_guides" ? (
+              {managerSettingsMainSection === "pricing" && pricingSettingsTab !== "referral" ? (
                 <button type="button" onClick={() => void loadPricingConfig()} disabled={pricingConfigLoading}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-50">
                   {pricingConfigLoading ? t("refreshing") : t("refreshData")}
                 </button>
               ) : null}
-              {pricingSettingsTab === "referral" ? (
+              {managerSettingsMainSection === "pricing" && pricingSettingsTab === "referral" ? (
                 <button
                   type="button"
                   onClick={() => void loadReferralProgramSettings()}
@@ -7020,22 +7022,56 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               ) : null}
             </div>
             <div className="mt-5 flex flex-wrap gap-2">
-              {(["long_term", "short_term", "referral", "staff", "resident_guides", "tools"] as const).map((tab) => (
-                <button key={tab} type="button" onClick={() => {
-                  setPricingSettingsTab(tab);
-                  if (tab === "referral") {
-                    void loadReferralProgramSettings();
-                  }
-                }}
-                  className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${pricingSettingsTab === tab ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-50"}`}>
-                  {tab === "long_term" ? t("longTermTab") : tab === "short_term" ? t("shortTermTab") : tab === "referral" ? (language === "vi" ? "Giới thiệu" : "Referral") : tab === "staff" ? t("staffAccountsTab") : tab === "resident_guides" ? t("settingsResidentGuidesTab") : t("settingsToolsTab")}
+              {(["pricing", "resident_guides", "tools"] as const).map((sec) => (
+                <button
+                  key={sec}
+                  type="button"
+                  onClick={() => setManagerSettingsMainSection(sec)}
+                  className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
+                    managerSettingsMainSection === sec ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  {sec === "pricing"
+                    ? t("pricing")
+                    : sec === "resident_guides"
+                      ? t("settingsResidentGuidesTab")
+                      : t("settingsToolsTab")}
                 </button>
               ))}
             </div>
+            {managerSettingsMainSection === "pricing" ? (
+              <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-4 dark:border-slate-600/60">
+                {(["long_term", "short_term", "referral", "staff"] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => {
+                      setPricingSettingsTab(tab);
+                      if (tab === "referral") {
+                        void loadReferralProgramSettings();
+                      }
+                    }}
+                    className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
+                      pricingSettingsTab === tab ? "bg-teal-700 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    {tab === "long_term"
+                      ? t("longTermTab")
+                      : tab === "short_term"
+                        ? t("shortTermTab")
+                        : tab === "referral"
+                          ? language === "vi"
+                            ? "Giới thiệu"
+                            : "Referral"
+                          : t("staffAccountsTab")}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
 
           {/* ── Long-term tab: bed price diagram + discounts ── */}
-          {(pricingSettingsTab === "long_term") ? (
+          {managerSettingsMainSection === "pricing" && pricingSettingsTab === "long_term" ? (
             <section className="space-y-5">
               {isStaffSession ? (
                 <CollapsibleSettingsSection
@@ -7846,7 +7882,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           ) : null}
 
           {/* ── Short-term tab: nightly bed prices + stay discounts ── */}
-          {(pricingSettingsTab === "short_term") ? (
+          {managerSettingsMainSection === "pricing" && pricingSettingsTab === "short_term" ? (
             <section className="space-y-5">
               {!canManageOwnersEmployees ? (
                 <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -8023,7 +8059,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             </section>
           ) : null}
 
-          {pricingSettingsTab === "referral" ? (
+          {managerSettingsMainSection === "pricing" && pricingSettingsTab === "referral" ? (
             <section className="rounded-3xl border border-emerald-200 bg-emerald-50/40 p-6 shadow-sm">
               {referralProgramLoading ? (
                 <p className="text-sm text-slate-600">{t("refreshing")}</p>
@@ -8153,7 +8189,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           ) : null}
 
           {/* ── Staff tab ── */}
-          {pricingSettingsTab === "staff" ? (
+          {managerSettingsMainSection === "pricing" && pricingSettingsTab === "staff" ? (
             <CollapsibleSettingsSection
               title={t("ownersEmployees")}
               description={t("ownersEmployeesDesc")}
@@ -8172,11 +8208,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             </CollapsibleSettingsSection>
           ) : null}
 
-          {pricingSettingsTab === "resident_guides" ? (
+          {managerSettingsMainSection === "resident_guides" ? (
             <ManagerResidentGuidesEditor normalizedEmail={normalizedEmail} language={language} t={t} />
           ) : null}
 
-          {pricingSettingsTab === "tools" ? (
+          {managerSettingsMainSection === "tools" ? (
             <ManagerSettingsTools
               normalizedEmail={normalizedEmail}
               clients={clients}

@@ -986,6 +986,7 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "Cleaning coin rewards, bulk coin grants, and bulk web push promotions to selected residents.",
     vi: "Thưởng coin vệ sinh, cộng coin hàng loạt, và gửi thông báo web push khuyến mãi tới nhiều cư dân."
   },
+  toolsSectionHelpLabel: { en: "About this tool", vi: "Giải thích công cụ" },
   settingsResidentGuidesTab: { en: "Resident guides", vi: "Hướng dẫn cư dân" },
   settingsResidentGuidesTitle: { en: "Resident guides", vi: "Hướng dẫn cư dân" },
   settingsResidentGuidesDesc: {

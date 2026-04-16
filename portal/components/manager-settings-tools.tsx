@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
+import { InlineHelp } from "./inline-help";
 
 export type ManagerSettingsToolsClient = {
   maHd: string;
@@ -49,6 +50,44 @@ type FridgeApiRow =
       onAt: string | null;
     };
 
+type ToolPanelKey = "cleaning" | "fridge" | "bulk_coins" | "bulk_push";
+
+function ToolCollapsiblePanel({
+  title,
+  helpBody,
+  helpLabel,
+  expanded,
+  onToggle,
+  children
+}: {
+  title: string;
+  helpBody: string;
+  helpLabel: string;
+  expanded: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-600/80">
+      <div className="flex items-center gap-2 px-4 py-3 sm:px-5">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={expanded}
+          className="flex min-w-0 flex-1 items-center justify-between gap-3 rounded-xl py-1 text-left text-slate-900 hover:bg-slate-50 dark:text-slate-100 dark:hover:bg-slate-800/60"
+        >
+          <h3 className="text-lg font-semibold">{title}</h3>
+          <span className="shrink-0 text-slate-400 dark:text-slate-500" aria-hidden>
+            {expanded ? "▲" : "▼"}
+          </span>
+        </button>
+        <InlineHelp label={helpLabel} body={helpBody} className="shrink-0" />
+      </div>
+      {expanded ? <div className="border-t border-slate-100 px-5 pb-5 pt-2 dark:border-slate-600/80">{children}</div> : null}
+    </div>
+  );
+}
+
 function emptyFridgeRow(loading: boolean): FridgeBranchUi {
   return {
     loading,
@@ -64,6 +103,16 @@ function emptyFridgeRow(loading: boolean): FridgeBranchUi {
 }
 
 export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshClients }: Props) {
+  const [openToolPanels, setOpenToolPanels] = useState<Record<ToolPanelKey, boolean>>({
+    cleaning: false,
+    fridge: false,
+    bulk_coins: false,
+    bulk_push: false
+  });
+  const toggleToolPanel = (key: ToolPanelKey) => {
+    setOpenToolPanels((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
   const [cleaningLoading, setCleaningLoading] = useState(true);
   const [cleaningSaving, setCleaningSaving] = useState(false);
   const [cleaningError, setCleaningError] = useState("");
@@ -366,25 +415,35 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
     }
   };
 
+  const cleaningHelpBody = t("toolsCleaningRewardsDesc");
+  const fridgeHelpBody = `${t("toolsFridgeDrainDesc")}\n\n${t("toolsFridgeDrainIftttNote")}`;
+  const bulkCoinsHelpBody = t("toolsBulkCoinsDesc");
+  const bulkPushHelpBody = t("toolsBulkPushDesc");
+  const helpAria = t("toolsSectionHelpLabel");
+
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="text-lg font-semibold text-slate-900">{t("toolsCleaningRewardsTitle")}</h3>
-        <p className="mt-1 text-sm text-slate-600">{t("toolsCleaningRewardsDesc")}</p>
-        {cleaningError ? <p className="mt-2 text-sm text-rose-600">{cleaningError}</p> : null}
+      <ToolCollapsiblePanel
+        title={t("toolsCleaningRewardsTitle")}
+        helpBody={cleaningHelpBody}
+        helpLabel={helpAria}
+        expanded={openToolPanels.cleaning}
+        onToggle={() => toggleToolPanel("cleaning")}
+      >
+        {cleaningError ? <p className="mb-2 text-sm text-rose-600">{cleaningError}</p> : null}
         {cleaningLoading ? (
-          <p className="mt-3 text-sm text-slate-500">{t("refreshing")}</p>
+          <p className="text-sm text-slate-500">{t("refreshing")}</p>
         ) : cleaningForm ? (
-          <div className="mt-4 space-y-4">
+          <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-3">
               {TASK_KEYS.map((key) => (
                 <label key={key} className="block text-sm">
-                  <span className="font-medium text-slate-700">{taskLabel(key)}</span>
+                  <span className="font-medium text-slate-700 dark:text-slate-300">{taskLabel(key)}</span>
                   <input
                     type="number"
                     min={0}
                     max={500000}
-                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
                     value={cleaningForm.baseRewards[key]}
                     onChange={(e) =>
                       setCleaningForm((prev) =>
@@ -401,13 +460,13 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
               ))}
             </div>
             <label className="block max-w-xs text-sm">
-              <span className="font-medium text-slate-700">{t("toolsSelfAssignMultiplier")}</span>
+              <span className="font-medium text-slate-700 dark:text-slate-300">{t("toolsSelfAssignMultiplier")}</span>
               <input
                 type="number"
                 min={1}
                 max={3}
                 step={0.05}
-                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
                 value={cleaningForm.selfAssignBonusMultiplier}
                 onChange={(e) =>
                   setCleaningForm((prev) =>
@@ -425,27 +484,30 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
               type="button"
               disabled={cleaningSaving}
               onClick={() => void saveCleaningRewards()}
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
             >
               {cleaningSaving ? t("saving") : t("toolsSaveCleaningRewards")}
             </button>
           </div>
         ) : null}
-      </div>
+      </ToolCollapsiblePanel>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="text-lg font-semibold text-slate-900">{t("toolsFridgeDrainTitle")}</h3>
-        <p className="mt-1 text-sm text-slate-600">{t("toolsFridgeDrainDesc")}</p>
-        <p className="mt-2 text-xs text-slate-500">{t("toolsFridgeDrainIftttNote")}</p>
-        <div className="mt-4 grid gap-6 sm:grid-cols-2">
+      <ToolCollapsiblePanel
+        title={t("toolsFridgeDrainTitle")}
+        helpBody={fridgeHelpBody}
+        helpLabel={helpAria}
+        expanded={openToolPanels.fridge}
+        onToggle={() => toggleToolPanel("fridge")}
+      >
+        <div className="grid gap-6 sm:grid-cols-2">
           {(
             [
               { id: "D2" as const, row: fridgeD2, setRow: setFridgeD2 },
               { id: "D7" as const, row: fridgeD7, setRow: setFridgeD7 }
             ] as const
           ).map(({ id, row, setRow }) => (
-            <div key={id} className="rounded-xl border border-slate-100 bg-slate-50/80 p-4">
-              <div className="text-sm font-semibold text-slate-900">
+            <div key={id} className="rounded-xl border border-slate-100 bg-slate-50/80 p-4 dark:border-slate-600/60 dark:bg-slate-800/40">
+              <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                 {t("toolsFridgeDrainBranch")} {id}
               </div>
               {row.loading ? (
@@ -457,15 +519,15 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
               ) : (
                 <>
                   <label className="mt-3 block text-sm">
-                    <span className="font-medium text-slate-700">{t("toolsFridgeDrainCleaningDay")}</span>
+                    <span className="font-medium text-slate-700 dark:text-slate-300">{t("toolsFridgeDrainCleaningDay")}</span>
                     <input
                       type="date"
-                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
                       value={row.cleaningDate}
                       onChange={(e) => setRow((f) => ({ ...f, cleaningDate: e.target.value, error: "", message: "" }))}
                     />
                   </label>
-                  <p className="mt-2 text-xs text-slate-600">{t("toolsFridgeDrainOffNote")}</p>
+                  <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">{t("toolsFridgeDrainOffNote")}</p>
                   {row.offAt && row.onAt ? (
                     <p className="mt-2 text-xs text-slate-500">
                       OFF: {new Date(row.offAt).toLocaleString(undefined, { timeZone: "Asia/Ho_Chi_Minh" })} · ON:{" "}
@@ -479,14 +541,14 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
                       type="button"
                       disabled={row.saving}
                       onClick={() => void saveFridgeBranch(id)}
-                      className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                      className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
                     >
                       {row.saving ? t("saving") : t("toolsFridgeDrainSave")}
                     </button>
                     <button
                       type="button"
                       onClick={() => void loadFridgeSchedules()}
-                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
+                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 dark:border-slate-600 dark:text-slate-200"
                     >
                       {t("toolsFridgeDrainReload")}
                     </button>
@@ -496,13 +558,16 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
             </div>
           ))}
         </div>
-      </div>
+      </ToolCollapsiblePanel>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="text-lg font-semibold text-slate-900">{t("toolsBulkCoinsTitle")}</h3>
-        <p className="mt-1 text-sm text-slate-600">{t("toolsBulkCoinsDesc")}</p>
-
-        <div className="mt-3 flex flex-wrap gap-2">
+      <ToolCollapsiblePanel
+        title={t("toolsBulkCoinsTitle")}
+        helpBody={bulkCoinsHelpBody}
+        helpLabel={helpAria}
+        expanded={openToolPanels.bulk_coins}
+        onToggle={() => toggleToolPanel("bulk_coins")}
+      >
+        <div className="flex flex-wrap gap-2">
           <input
             type="search"
             value={filter}
@@ -565,42 +630,46 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
             />
           </label>
         </div>
-        {bulkMessage ? <p className="mt-2 text-sm text-slate-700">{bulkMessage}</p> : null}
+        {bulkMessage ? <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">{bulkMessage}</p> : null}
         <button
           type="button"
           disabled={bulkWorking}
           onClick={() => void runBulkCoins()}
-          className="mt-3 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          className="mt-3 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
         >
           {bulkWorking ? t("saving") : t("toolsApplyBulkCoins")}
         </button>
-      </div>
+      </ToolCollapsiblePanel>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="text-lg font-semibold text-slate-900">{t("toolsBulkPushTitle")}</h3>
-        <p className="mt-1 text-sm text-slate-600">{t("toolsBulkPushDesc")}</p>
-        <p className="mt-2 text-xs text-slate-500">{t("toolsSelectedCount", undefined, { n: selectedMaHds.length })}</p>
-        <div className="mt-3 space-y-3">
+      <ToolCollapsiblePanel
+        title={t("toolsBulkPushTitle")}
+        helpBody={bulkPushHelpBody}
+        helpLabel={helpAria}
+        expanded={openToolPanels.bulk_push}
+        onToggle={() => toggleToolPanel("bulk_push")}
+      >
+        <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">{t("toolsSelectedCount", undefined, { n: selectedMaHds.length })}</p>
+        <div className="space-y-3">
           <label className="block text-sm">
-            <span className="font-medium text-slate-700">{t("toolsPushTitle")}</span>
+            <span className="font-medium text-slate-700 dark:text-slate-300">{t("toolsPushTitle")}</span>
             <input
               type="text"
-              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
               value={pushTitle}
               onChange={(e) => setPushTitle(e.target.value)}
             />
           </label>
           <label className="block text-sm">
-            <span className="font-medium text-slate-700">{t("toolsPushBody")}</span>
+            <span className="font-medium text-slate-700 dark:text-slate-300">{t("toolsPushBody")}</span>
             <textarea
               rows={3}
-              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
               value={pushBody}
               onChange={(e) => setPushBody(e.target.value)}
             />
           </label>
         </div>
-        {pushMessage ? <p className="mt-2 text-sm text-slate-700">{pushMessage}</p> : null}
+        {pushMessage ? <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">{pushMessage}</p> : null}
         <button
           type="button"
           disabled={pushWorking}
@@ -609,7 +678,7 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
         >
           {pushWorking ? t("saving") : t("toolsSendBulkPush")}
         </button>
-      </div>
+      </ToolCollapsiblePanel>
     </div>
   );
 }

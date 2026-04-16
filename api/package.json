@@ -1,6 +1,6 @@
 {
   "name": "cozorohome-api",
-  "version": "3.8.7",
+  "version": "3.8.8",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,6 +10,7 @@
     "start": "node dist/src/index.js",
     "prisma:generate": "node ../scripts/verify-package-json.mjs && prisma generate",
     "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "tsx prisma/seed.ts"
   },
   "prisma": {
