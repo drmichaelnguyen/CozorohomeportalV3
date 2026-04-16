@@ -1188,6 +1188,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [pricingConfigLoading, setPricingConfigLoading] = useState(false);
   const [referralProgramDraft, setReferralProgramDraft] = useState<{
     enabled: boolean;
+    fullOfferContractMonths: string;
     newRegistrantDiscountVnd: string;
     newRegistrantCoins: string;
     referrerCoins: string;
@@ -1195,6 +1196,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     headlineVi: string;
     detailsEn: string;
     detailsVi: string;
+    hostelEnabled: boolean;
+    hostelNewRegistrantDiscountVnd: string;
+    hostelNewRegistrantCoins: string;
+    hostelReferrerCoins: string;
+    hostelHeadlineEn: string;
+    hostelHeadlineVi: string;
+    hostelDetailsEn: string;
+    hostelDetailsVi: string;
   } | null>(null);
   const [referralProgramLoading, setReferralProgramLoading] = useState(false);
   const [referralProgramSaving, setReferralProgramSaving] = useState(false);
@@ -2484,6 +2493,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       );
       const data = (await res.json()) as {
         enabled?: boolean;
+        fullOfferContractMonths?: number;
         newRegistrantDiscountVnd?: number;
         newRegistrantCoins?: number;
         referrerCoins?: number;
@@ -2491,17 +2501,34 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         headlineVi?: string;
         detailsEn?: string;
         detailsVi?: string;
+        hostelEnabled?: boolean;
+        hostelNewRegistrantDiscountVnd?: number;
+        hostelNewRegistrantCoins?: number;
+        hostelReferrerCoins?: number;
+        hostelHeadlineEn?: string;
+        hostelHeadlineVi?: string;
+        hostelDetailsEn?: string;
+        hostelDetailsVi?: string;
       };
       if (res.ok) {
         setReferralProgramDraft({
           enabled: Boolean(data.enabled),
+          fullOfferContractMonths: String(data.fullOfferContractMonths ?? 6),
           newRegistrantDiscountVnd: String(data.newRegistrantDiscountVnd ?? 0),
           newRegistrantCoins: String(data.newRegistrantCoins ?? 0),
           referrerCoins: String(data.referrerCoins ?? 0),
           headlineEn: data.headlineEn ?? "",
           headlineVi: data.headlineVi ?? "",
           detailsEn: data.detailsEn ?? "",
-          detailsVi: data.detailsVi ?? ""
+          detailsVi: data.detailsVi ?? "",
+          hostelEnabled: Boolean(data.hostelEnabled),
+          hostelNewRegistrantDiscountVnd: String(data.hostelNewRegistrantDiscountVnd ?? 0),
+          hostelNewRegistrantCoins: String(data.hostelNewRegistrantCoins ?? 0),
+          hostelReferrerCoins: String(data.hostelReferrerCoins ?? 0),
+          hostelHeadlineEn: data.hostelHeadlineEn ?? "",
+          hostelHeadlineVi: data.hostelHeadlineVi ?? "",
+          hostelDetailsEn: data.hostelDetailsEn ?? "",
+          hostelDetailsVi: data.hostelDetailsVi ?? ""
         });
       } else {
         setReferralProgramMessage("Unable to load referral settings.");
@@ -2525,13 +2552,22 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           actorEmail: normalizedEmail,
           settings: {
             enabled: referralProgramDraft.enabled,
+            fullOfferContractMonths: Number(referralProgramDraft.fullOfferContractMonths) || 6,
             newRegistrantDiscountVnd: Number(referralProgramDraft.newRegistrantDiscountVnd) || 0,
             newRegistrantCoins: Number(referralProgramDraft.newRegistrantCoins) || 0,
             referrerCoins: Number(referralProgramDraft.referrerCoins) || 0,
             headlineEn: referralProgramDraft.headlineEn,
             headlineVi: referralProgramDraft.headlineVi,
             detailsEn: referralProgramDraft.detailsEn,
-            detailsVi: referralProgramDraft.detailsVi
+            detailsVi: referralProgramDraft.detailsVi,
+            hostelEnabled: referralProgramDraft.hostelEnabled,
+            hostelNewRegistrantDiscountVnd: Number(referralProgramDraft.hostelNewRegistrantDiscountVnd) || 0,
+            hostelNewRegistrantCoins: Number(referralProgramDraft.hostelNewRegistrantCoins) || 0,
+            hostelReferrerCoins: Number(referralProgramDraft.hostelReferrerCoins) || 0,
+            hostelHeadlineEn: referralProgramDraft.hostelHeadlineEn,
+            hostelHeadlineVi: referralProgramDraft.hostelHeadlineVi,
+            hostelDetailsEn: referralProgramDraft.hostelDetailsEn,
+            hostelDetailsVi: referralProgramDraft.hostelDetailsVi
           }
         })
       });
@@ -8076,6 +8112,26 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     />
                     {language === "vi" ? "Bật chương trình giới thiệu" : "Enable referral program"}
                   </label>
+                  <label className="block text-sm text-slate-700">
+                    {language === "vi"
+                      ? "Số tháng hợp đồng cho mức thưởng đầy đủ (tỷ lệ cho hợp đồng ngắn hơn)"
+                      : "Contract months for full reward (shorter contracts are pro-rated)"}
+                    <input
+                      type="number"
+                      min={1}
+                      max={36}
+                      value={referralProgramDraft.fullOfferContractMonths}
+                      onChange={(e) =>
+                        setReferralProgramDraft((d) =>
+                          d ? { ...d, fullOfferContractMonths: e.target.value } : d
+                        )
+                      }
+                      className="mt-1 w-full max-w-xs rounded-lg border border-slate-200 bg-white px-3 py-2"
+                    />
+                  </label>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    {language === "vi" ? "Hợp đồng dài hạn (/register)" : "Long-term dorm (/register)"}
+                  </p>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label className="block text-sm text-slate-700">
                       {language === "vi"
@@ -8122,6 +8178,118 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       />
                     </label>
                   </div>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-800">
+                    <input
+                      type="checkbox"
+                      checked={referralProgramDraft.hostelEnabled}
+                      onChange={(e) =>
+                        setReferralProgramDraft((d) => (d ? { ...d, hostelEnabled: e.target.checked } : d))
+                      }
+                      className="h-4 w-4 rounded border-slate-300"
+                    />
+                    {language === "vi" ? "Bật giới thiệu cho hostel / lưu trú ngắn" : "Enable hostel / short-stay referral"}
+                  </label>
+                  <p className="text-xs text-slate-600">
+                    {language === "vi"
+                      ? "Mức riêng cho đặt phòng tại hostel; tỷ lệ theo đêm ÷ 30 so với số tháng cơ sở ở trên."
+                      : "Separate amounts for hostel bookings; scale uses nights ÷ 30 versus the baseline months above."}
+                  </p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block text-sm text-slate-700">
+                      {language === "vi"
+                        ? "Hostel — giảm một lần trên giá lưu trú (VND)"
+                        : "Hostel — one-time stay discount (VND)"}
+                      <input
+                        type="number"
+                        min={0}
+                        value={referralProgramDraft.hostelNewRegistrantDiscountVnd}
+                        onChange={(e) =>
+                          setReferralProgramDraft((d) =>
+                            d ? { ...d, hostelNewRegistrantDiscountVnd: e.target.value } : d
+                          )
+                        }
+                        className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2"
+                      />
+                    </label>
+                    <label className="block text-sm text-slate-700">
+                      {language === "vi" ? "Hostel — coins khách" : "Hostel — guest coins"}
+                      <input
+                        type="number"
+                        min={0}
+                        value={referralProgramDraft.hostelNewRegistrantCoins}
+                        onChange={(e) =>
+                          setReferralProgramDraft((d) =>
+                            d ? { ...d, hostelNewRegistrantCoins: e.target.value } : d
+                          )
+                        }
+                        className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2"
+                      />
+                    </label>
+                    <label className="block text-sm text-slate-700 sm:col-span-2">
+                      {language === "vi" ? "Hostel — coins người giới thiệu" : "Hostel — referrer coins"}
+                      <input
+                        type="number"
+                        min={0}
+                        value={referralProgramDraft.hostelReferrerCoins}
+                        onChange={(e) =>
+                          setReferralProgramDraft((d) =>
+                            d ? { ...d, hostelReferrerCoins: e.target.value } : d
+                          )
+                        }
+                        className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2"
+                      />
+                    </label>
+                  </div>
+                  <label className="block text-sm text-slate-700">
+                    Hostel headline (EN)
+                    <input
+                      value={referralProgramDraft.hostelHeadlineEn}
+                      onChange={(e) =>
+                        setReferralProgramDraft((d) =>
+                          d ? { ...d, hostelHeadlineEn: e.target.value } : d
+                        )
+                      }
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2"
+                    />
+                  </label>
+                  <label className="block text-sm text-slate-700">
+                    Hostel headline (VI)
+                    <input
+                      value={referralProgramDraft.hostelHeadlineVi}
+                      onChange={(e) =>
+                        setReferralProgramDraft((d) =>
+                          d ? { ...d, hostelHeadlineVi: e.target.value } : d
+                        )
+                      }
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2"
+                    />
+                  </label>
+                  <label className="block text-sm text-slate-700">
+                    Hostel details (EN)
+                    <textarea
+                      rows={2}
+                      value={referralProgramDraft.hostelDetailsEn}
+                      onChange={(e) =>
+                        setReferralProgramDraft((d) =>
+                          d ? { ...d, hostelDetailsEn: e.target.value } : d
+                        )
+                      }
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2"
+                    />
+                  </label>
+                  <label className="block text-sm text-slate-700">
+                    Hostel details (VI)
+                    <textarea
+                      rows={2}
+                      value={referralProgramDraft.hostelDetailsVi}
+                      onChange={(e) =>
+                        setReferralProgramDraft((d) =>
+                          d ? { ...d, hostelDetailsVi: e.target.value } : d
+                        )
+                      }
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2"
+                    />
+                  </label>
                   <label className="block text-sm text-slate-700">
                     Headline (EN)
                     <input

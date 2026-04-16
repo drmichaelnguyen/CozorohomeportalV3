@@ -6,6 +6,8 @@ import { parseContractEndDate } from "../lib/contract-utils";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 const API_TIMEOUT_MS = 6000;
+/** Default rows shown under "My bookings" before "Show all" expands the list. */
+const MY_BOOKINGS_VISIBLE_COUNT = 3;
 
 type LaundryMachine = {
   id: string;
@@ -453,7 +455,8 @@ export function BookingsClient() {
     bookings
   ]);
   const visibleBookings = useMemo(
-    () => (showAllBookings ? filteredBookings : filteredBookings.slice(0, 10)),
+    () =>
+      showAllBookings ? filteredBookings : filteredBookings.slice(0, MY_BOOKINGS_VISIBLE_COUNT),
     [filteredBookings, showAllBookings]
   );
   const { isBlocked, blockReason, warnings } = useMemo(
@@ -1352,15 +1355,15 @@ export function BookingsClient() {
                 </div>
               ))}
 
-              {filteredBookings.length > 10 ? (
+              {filteredBookings.length > MY_BOOKINGS_VISIBLE_COUNT ? (
                 <button
                   type="button"
                   onClick={() => setShowAllBookings((current) => !current)}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
                 >
                   {showAllBookings
-                    ? "Show fewer bookings"
-                    : `Show all bookings (${filteredBookings.length})`}
+                    ? t("laundryBookingsShowFewer")
+                    : t("laundryBookingsShowAllWithCount", { count: filteredBookings.length })}
                 </button>
               ) : null}
             </div>

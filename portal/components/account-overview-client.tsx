@@ -262,11 +262,18 @@ export function AccountOverviewClient() {
   const [referralPanel, setReferralPanel] = useState<{
     code: string;
     enabled: boolean;
+    fullOfferContractMonths: number;
     newRegistrantDiscountVnd: number;
     newRegistrantCoins: number;
     referrerCoins: number;
     headlineEn: string;
     headlineVi: string;
+    hostelEnabled: boolean;
+    hostelNewRegistrantDiscountVnd: number;
+    hostelNewRegistrantCoins: number;
+    hostelReferrerCoins: number;
+    hostelHeadlineEn: string;
+    hostelHeadlineVi: string;
   } | null>(null);
   const [referralCopied, setReferralCopied] = useState(false);
 
@@ -402,21 +409,35 @@ export function AccountOverviewClient() {
         const refData = (await referralResponse.json()) as {
           code?: string;
           enabled?: boolean;
+          fullOfferContractMonths?: number;
           newRegistrantDiscountVnd?: number;
           newRegistrantCoins?: number;
           referrerCoins?: number;
           headlineEn?: string;
           headlineVi?: string;
+          hostelEnabled?: boolean;
+          hostelNewRegistrantDiscountVnd?: number;
+          hostelNewRegistrantCoins?: number;
+          hostelReferrerCoins?: number;
+          hostelHeadlineEn?: string;
+          hostelHeadlineVi?: string;
         };
         if (refData.code) {
           setReferralPanel({
             code: refData.code,
             enabled: Boolean(refData.enabled),
+            fullOfferContractMonths: Math.min(36, Math.max(1, Number(refData.fullOfferContractMonths) || 6)),
             newRegistrantDiscountVnd: Number(refData.newRegistrantDiscountVnd) || 0,
             newRegistrantCoins: Number(refData.newRegistrantCoins) || 0,
             referrerCoins: Number(refData.referrerCoins) || 0,
             headlineEn: refData.headlineEn ?? "",
-            headlineVi: refData.headlineVi ?? ""
+            headlineVi: refData.headlineVi ?? "",
+            hostelEnabled: Boolean(refData.hostelEnabled),
+            hostelNewRegistrantDiscountVnd: Number(refData.hostelNewRegistrantDiscountVnd) || 0,
+            hostelNewRegistrantCoins: Number(refData.hostelNewRegistrantCoins) || 0,
+            hostelReferrerCoins: Number(refData.hostelReferrerCoins) || 0,
+            hostelHeadlineEn: refData.hostelHeadlineEn ?? "",
+            hostelHeadlineVi: refData.hostelHeadlineVi ?? ""
           });
         }
       }
@@ -837,11 +858,30 @@ export function AccountOverviewClient() {
           </p>
           <p className="mt-2 text-sm text-emerald-800">
             {language === "vi"
-              ? `Bạn bè đăng ký lần đầu tại /register nhập mã của bạn: giảm ${referralPanel.newRegistrantDiscountVnd.toLocaleString("vi-VN")} VND một lần trên tổng thanh toán lần đầu (không trừ vào tiền cọc trong hồ sơ), ${referralPanel.newRegistrantCoins.toLocaleString("vi-VN")} coins cho họ và ${referralPanel.referrerCoins.toLocaleString("vi-VN")} coins cho bạn.`
-              : `Friends who register for the first time at /register with your code: ${referralPanel.newRegistrantDiscountVnd.toLocaleString("en-US")} VND one-time off the estimated first payment total (not taken from the deposit line), ${referralPanel.newRegistrantCoins.toLocaleString("en-US")} coins for them and ${referralPanel.referrerCoins.toLocaleString("en-US")} coins for you.`}
+              ? `Long-term (/register): mức đầy đủ khi hợp đồng ≥ ${referralPanel.fullOfferContractMonths} tháng; ngắn hơn được chia theo tỷ lệ. Giảm tối đa ${referralPanel.newRegistrantDiscountVnd.toLocaleString("vi-VN")} VND một lần, ${referralPanel.newRegistrantCoins.toLocaleString("vi-VN")} coins cho họ và ${referralPanel.referrerCoins.toLocaleString("vi-VN")} coins cho bạn.`
+              : `Long-term (/register): full reward when the new contract is at least ${referralPanel.fullOfferContractMonths} months; shorter contracts are pro-rated. Up to ${referralPanel.newRegistrantDiscountVnd.toLocaleString("en-US")} VND one-time off the first payment estimate, ${referralPanel.newRegistrantCoins.toLocaleString("en-US")} coins for them and ${referralPanel.referrerCoins.toLocaleString("en-US")} coins for you.`}
           </p>
+          {referralPanel.hostelEnabled ? (
+            <p className="mt-2 text-sm text-emerald-900/90">
+              <span className="font-semibold">
+                {language === "vi" ? "Hostel / lưu trú ngắn: " : "Hostel / short stay: "}
+              </span>
+              {language === "vi"
+                ? `${referralPanel.hostelHeadlineVi} Giảm tối đa ${referralPanel.hostelNewRegistrantDiscountVnd.toLocaleString("vi-VN")} VND trên giá lưu trú (theo tỷ lệ đêm), ${referralPanel.hostelNewRegistrantCoins.toLocaleString("vi-VN")} coins khách và ${referralPanel.hostelReferrerCoins.toLocaleString("vi-VN")} coins cho bạn — `
+                : `${referralPanel.hostelHeadlineEn} Up to ${referralPanel.hostelNewRegistrantDiscountVnd.toLocaleString("en-US")} VND off the stay (pro-rated by nights), ${referralPanel.hostelNewRegistrantCoins.toLocaleString("en-US")} guest coins and ${referralPanel.hostelReferrerCoins.toLocaleString("en-US")} coins for you — `}
+              <a
+                href="https://hostel.cozorohome.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-emerald-950 underline"
+              >
+                hostel.cozorohome.com
+              </a>
+              .
+            </p>
+          ) : null}
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <code className="rounded-xl bg-white/90 px-4 py-2 font-mono text-base font-semibold text-slate-900 ring-1 ring-emerald-200">
+            <code className="rounded-xl bg-white/90 px-4 py-2 font-mono text-base font-semibold text-emerald-950 ring-1 ring-emerald-200 dark:bg-emerald-950/90 dark:text-emerald-50 dark:ring-emerald-600/60">
               {referralPanel.code}
             </code>
             <button
@@ -965,6 +1005,7 @@ export function AccountOverviewClient() {
           rentLoading={loading}
           residentEmail={activeEmail}
           onRentPaidStatusRefresh={() => void refetchRentPaidStatusOnly()}
+          hidePrepaidUnlessDue
           packageExpiryNote={
             client["Ngày hết hạn gói đã thanh toán"]
               ? language === "vi"

@@ -202,6 +202,11 @@ const translations: Record<string, { en: string; vi: string }> = {
   laundryBookingsTitle: { en: "Laundry Bookings", vi: "Đặt lịch giặt sấy" },
   laundryBookingFiltersShow: { en: "Show filters", vi: "Hiện bộ lọc" },
   laundryBookingFiltersHide: { en: "Hide filters", vi: "Ẩn bộ lọc" },
+  laundryBookingsShowAllWithCount: {
+    en: "Show all bookings ({count})",
+    vi: "Xem tất cả lịch đặt ({count})"
+  },
+  laundryBookingsShowFewer: { en: "Show fewer bookings", vi: "Thu gọn danh sách" },
   laundryAutoPaymentTitle: { en: "Automatic Payment Type", vi: "Loại thanh toán tự động" },
   laundryPaymentPriorityOrder: {
     en: "Order: free laundry first, then coins if available, then cash.",
@@ -739,7 +744,7 @@ const translations: Record<string, { en: string; vi: string }> = {
   calculateRentBreakdown: { en: "Calculate Rent Breakdown", vi: "Tính chi tiết tiền phòng" },
   breakdownFor: { en: "Breakdown for {month}", vi: "Chi tiết cho {month}" },
   baseRent: { en: "Base Rent", vi: "Tiền phòng cơ bản" },
-  tenureSurcharge: { en: "Tenure Surcharge", vi: "Phụ phí thâm niên" },
+  tenureSurcharge: { en: "Short-term contract surcharge", vi: "Phụ phí hợp đồng ngắn hạn" },
   professionalDiscount: { en: "Professional Discount", vi: "Ưu đãi chuyên gia" },
   planDiscount: { en: "Plan Discount", vi: "Ưu đãi theo gói" },
   managerDiscount: { en: "Manager Discount", vi: "Giảm trừ quản lý" },

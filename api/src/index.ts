@@ -150,6 +150,8 @@ import {
   computeReferralCodeForEmail,
   getReferralProgramPublicMarketing,
   getReferralProgramSettings,
+  quoteReferralOffer,
+  resolveReferralForHostelImport,
   resolveReferralForNewRegistration,
   resolveReferrerFromCode,
   updateReferralProgramSettings
@@ -878,7 +880,16 @@ const paidGuestBookingSyncSchema = z.object({
   checkIn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   checkOut: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   pricingTotal: z.coerce.number().int().nonnegative(),
-  notes: z.string().optional()
+  notes: z.string().optional(),
+  referralCode: z.string().trim().optional(),
+  /** Set false when re-syncing an existing paid booking (e.g. date change) to avoid duplicate coin grants. */
+  applyReferralCoins: z.boolean().optional().default(true)
+});
+const referralQuoteSchema = z.object({
+  code: z.string().trim().min(1),
+  product: z.enum(["long_term", "hostel"]),
+  contractMonths: z.coerce.number().min(0).max(48).optional(),
+  nights: z.coerce.number().min(0).max(800).optional()
 });
 const prospectAvailabilityQuerySchema = z.object({
   branchId: z.enum(["D2", "D7"]),
@@ -1202,6 +1213,36 @@ app.post("/internal/guest-bookings/import-paid", async (request, response) => {
   }
 
   try {
+    const checkInMs = new Date(`${parsed.data.checkIn}T12:00:00`).getTime();
+    const checkOutMs = new Date(`${parsed.data.checkOut}T12:00:00`).getTime();
+    const stayNights = Math.max(0, Math.round((checkOutMs - checkInMs) / 86400000));
+
+    let mergedNotes = parsed.data.notes;
+    let referralRewards: {
+      newUserCoins: number;
+      referrerCoins: number;
+      referrerMaHd: string;
+    } | null = null;
+
+    const referralCodeRaw = parsed.data.referralCode?.trim();
+    if (referralCodeRaw) {
+      const referralResolution = await resolveReferralForHostelImport({
+        guestEmail: parsed.data.guestEmail,
+        referralCode: referralCodeRaw,
+        nights: stayNights
+      });
+      if (!referralResolution.ok) {
+        return response.status(400).json({ error: referralResolution.error });
+      }
+      const refNote = `Referral (hostel, ${stayNights}n ≈ ${referralResolution.effectiveMonths.toFixed(2)} mo eff.; scale ${referralResolution.scale.toFixed(2)} vs ${referralResolution.basisMonths} mo baseline; referrer ${referralResolution.referrer.email} ${referralResolution.referrer.maHd})`;
+      mergedNotes = [mergedNotes, refNote].filter(Boolean).join(" | ");
+      referralRewards = {
+        newUserCoins: referralResolution.newUserCoins,
+        referrerCoins: referralResolution.referrerCoins,
+        referrerMaHd: referralResolution.referrer.maHd
+      };
+    }
+
     const cache = await upsertPaidGuestBookingClient({
       bookingId: parsed.data.bookingId,
       guestEmail: parsed.data.guestEmail,
@@ -1213,8 +1254,31 @@ app.post("/internal/guest-bookings/import-paid", async (request, response) => {
       checkIn: parsed.data.checkIn,
       checkOut: parsed.data.checkOut,
       pricingTotal: parsed.data.pricingTotal,
-      notes: parsed.data.notes
+      notes: mergedNotes
     });
+
+    if (
+      parsed.data.applyReferralCoins !== false &&
+      referralRewards &&
+      (referralRewards.newUserCoins > 0 || referralRewards.referrerCoins > 0)
+    ) {
+      try {
+        const newUserMaHd = `SHORTTERM-${parsed.data.bookingId.trim()}`;
+        await applyReferralRegistrationRewards({
+          newUserMaHd,
+          newUserCoins: referralRewards.newUserCoins,
+          referrerMaHd: referralRewards.referrerMaHd,
+          referrerCoins: referralRewards.referrerCoins
+        });
+      } catch (coinError) {
+        console.error("[internal/guest-bookings/import-paid] Referral coin grants failed", coinError);
+        return response.json({
+          ...cache,
+          referralCoinsWarning: coinError instanceof Error ? coinError.message : "Referral coin grants failed"
+        });
+      }
+    }
+
     return response.json(cache);
   } catch (error) {
     return response.status(500).json({
@@ -5903,6 +5967,36 @@ app.get("/api/public/referral/lookup", async (request, response) => {
   }
 });
 
+app.post("/api/public/referral/quote", async (request, response) => {
+  const parsed = referralQuoteSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid referral quote payload" });
+  }
+  try {
+    const { code, product, contractMonths, nights } = parsed.data;
+    if (product === "long_term" && contractMonths === undefined) {
+      return response.status(400).json({ error: "contractMonths is required for long_term" });
+    }
+    if (product === "hostel" && nights === undefined) {
+      return response.status(400).json({ error: "nights is required for hostel" });
+    }
+    const result = await quoteReferralOffer({
+      code,
+      product,
+      contractMonths,
+      nights
+    });
+    if (!result.ok) {
+      return response.status(400).json({ error: result.error });
+    }
+    return response.json(result);
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to quote referral"
+    });
+  }
+});
+
 app.post("/api/public/register", async (request, response) => {
   const parsed = publicRegistrationSchema.safeParse(request.body);
 
@@ -5950,7 +6044,8 @@ app.post("/api/public/register", async (request, response) => {
     if (referralCodeRaw) {
       const referralResolution = await resolveReferralForNewRegistration({
         registrantEmail: parsed.data.email,
-        referralCode: referralCodeRaw
+        referralCode: referralCodeRaw,
+        contractMonths: parsed.data.contractMonths
       });
 
       if (!referralResolution.ok) {
@@ -5973,9 +6068,10 @@ app.post("/api/public/register", async (request, response) => {
       }
 
       const appliedDiscount = Math.min(referralResolution.discountVnd, firstPaymentSubtotal);
-      const refLine = `Referral (one-time first payment): −${appliedDiscount.toLocaleString("vi-VN")} VND (referrer contract ${referralResolution.referrer.maHd}; deposit unchanged)`;
+      const scaleNote = `contract ${parsed.data.contractMonths} mo; scale ${referralResolution.scale.toFixed(2)} vs ${referralResolution.basisMonths} mo baseline`;
+      const refLine = `Referral (one-time first payment): −${appliedDiscount.toLocaleString("vi-VN")} VND (${scaleNote}; referrer contract ${referralResolution.referrer.maHd}; deposit unchanged)`;
       mergedAdditionalTerms = [mergedAdditionalTerms, refLine].filter(Boolean).join(" | ");
-      referralNoteLine = `Referral: referrer ${referralResolution.referrer.email} (${referralResolution.referrer.maHd}); −${appliedDiscount} VND one-time first payment; deposit ${parsed.data.deposit} VND unchanged; new-user coins ${referralResolution.newUserCoins}; referrer coins ${referralResolution.referrerCoins}`;
+      referralNoteLine = `Referral: referrer ${referralResolution.referrer.email} (${referralResolution.referrer.maHd}); −${appliedDiscount} VND one-time first payment (${scaleNote}); deposit ${parsed.data.deposit} VND unchanged; new-user coins ${referralResolution.newUserCoins}; referrer coins ${referralResolution.referrerCoins}`;
       referralRewards = {
         newUserCoins: referralResolution.newUserCoins,
         referrerCoins: referralResolution.referrerCoins,
