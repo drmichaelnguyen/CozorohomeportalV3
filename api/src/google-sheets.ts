@@ -4013,6 +4013,8 @@ export async function managerCreateFine(input: {
   description?: string;
   location?: string;
   dueDate?: string;
+  /** ISO or datetime-local string for when the violation occurred; maps to sheet "DẤU THỜI GIAN". Defaults to now. */
+  eventAt?: string;
   image?: string;
   operator: string;
 }) {
@@ -4046,10 +4048,18 @@ export async function managerCreateFine(input: {
   const headers = (values[0] ?? []).map((value) => normalizeHeader(String(value)));
   const now = new Date();
   const dueDate = input.dueDate ? new Date(input.dueDate) : new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const incidentAt = (() => {
+    const raw = input.eventAt?.trim();
+    if (!raw) {
+      return now;
+    }
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? now : parsed;
+  })();
   const row = headers.map((header) => {
     switch (header) {
       case FINE_TIMESTAMP_COLUMN:
-        return formatCoinsSheetTimestamp(now);
+        return formatCoinsSheetTimestamp(incidentAt);
       case FINE_CREATED_AT_COLUMN:
         return formatCoinsSheetTimestamp(now);
       case FINE_CREATED_YEAR_COLUMN:

@@ -756,6 +756,8 @@ const managerFineCreateSchema = z.object({
   description: z.string().trim().optional(),
   location: z.string().trim().optional(),
   dueDate: z.string().optional(),
+  /** When the violation occurred (ISO or datetime-local); stored in fine sheet timestamp column */
+  eventAt: z.string().optional(),
   image: z.string().trim().optional(),
   operator: z.string().trim().min(1)
 });

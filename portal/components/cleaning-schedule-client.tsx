@@ -1535,7 +1535,7 @@ export function CleaningScheduleClient() {
                   id="mark-unavailable-help-panel"
                   role="region"
                   aria-labelledby="mark-unavailable-help-trigger"
-                  className="mt-3 rounded-xl border border-rose-200/90 bg-rose-50/90 px-4 py-3 text-sm text-slate-800 dark:border-rose-800/50 dark:bg-rose-950/35 dark:text-rose-50"
+                  className="mt-3 rounded-xl border border-rose-200/90 bg-rose-50/90 px-4 py-3 text-sm font-medium leading-relaxed text-slate-950 dark:border-rose-800/50 dark:bg-rose-950/40 dark:text-rose-100"
                 >
                   {t(
                     "markUnavailableHelp",
