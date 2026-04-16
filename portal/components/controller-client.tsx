@@ -216,6 +216,7 @@ export function ControllerClient({
   const [accountLockOverride, setAccountLockOverride] = useState<AccountLockOverride | null>(null);
   const [message, setMessage] = useState("");
   const [comfortSubmitting, setComfortSubmitting] = useState(false);
+  const [comfortHelpOpen, setComfortHelpOpen] = useState(false);
 
   async function loadControllerContext() {
     const resolvedEmail = sessionEmail.trim().toLowerCase();
@@ -591,8 +592,33 @@ export function ControllerClient({
                   </div>
 
                   <div className="mt-6 border-t border-emerald-200 pt-4">
-                    <p className="text-sm font-semibold text-emerald-900">{t("controllerComfortTitle")}</p>
-                    <p className="mt-1 text-xs text-emerald-800">{t("controllerComfortHelp")}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-semibold text-emerald-900">{t("controllerComfortTitle")}</p>
+                      <button
+                        type="button"
+                        id="controller-comfort-help-trigger"
+                        aria-expanded={comfortHelpOpen}
+                        aria-controls="controller-comfort-help-panel"
+                        onClick={() => setComfortHelpOpen((v) => !v)}
+                        className="inline-flex h-8 min-w-8 shrink-0 items-center justify-center rounded-full border border-emerald-600/40 bg-white text-sm font-bold text-emerald-900 shadow-sm hover:bg-emerald-100/80 dark:border-emerald-500/50 dark:bg-emerald-950/60 dark:text-emerald-50 dark:hover:bg-emerald-900/50"
+                        title={t("controllerComfortHelpTitle", "How room temperature feedback works")}
+                      >
+                        ?
+                      </button>
+                    </div>
+                    {comfortHelpOpen ? (
+                      <p
+                        id="controller-comfort-help-panel"
+                        role="region"
+                        aria-labelledby="controller-comfort-help-trigger"
+                        className="mt-2 rounded-lg border border-emerald-200/90 bg-white/80 px-3 py-2 text-xs text-emerald-900 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-50"
+                      >
+                        {t(
+                          "controllerComfortHelp",
+                          "Tap if the AC feels too hot or too cold. If more than half of residents in this room choose the same option, managers get a notification to adjust the setpoint."
+                        )}
+                      </p>
+                    ) : null}
                     <div className="mt-3 flex flex-wrap gap-2">
                       <button
                         type="button"
