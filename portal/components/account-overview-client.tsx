@@ -276,6 +276,7 @@ export function AccountOverviewClient() {
     hostelHeadlineVi: string;
   } | null>(null);
   const [referralCopied, setReferralCopied] = useState(false);
+  const [referralHelpOpen, setReferralHelpOpen] = useState(false);
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -850,35 +851,57 @@ export function AccountOverviewClient() {
 
       {referralPanel?.enabled && client && String(client["Hiện còn ở"] ?? "").trim() === "1" ? (
         <section className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-teal-50 p-6 shadow-sm ring-1 ring-emerald-100">
-          <h2 className="text-lg font-semibold text-emerald-950">
-            {language === "vi" ? "Giới thiệu bạn bè" : "Refer a friend"}
-          </h2>
-          <p className="mt-2 text-sm text-emerald-900/90">
+          <div className="flex items-start justify-between gap-3">
+            <h2 className="text-lg font-semibold text-emerald-950 dark:text-emerald-100">
+              {language === "vi" ? "Giới thiệu bạn bè" : "Refer a friend"}
+            </h2>
+            <button
+              type="button"
+              id="referral-help-trigger"
+              aria-expanded={referralHelpOpen}
+              aria-controls="referral-program-details"
+              onClick={() => setReferralHelpOpen((v) => !v)}
+              className="inline-flex h-8 min-w-8 shrink-0 items-center justify-center rounded-full border border-emerald-600/50 bg-white/90 text-sm font-bold text-emerald-800 shadow-sm hover:bg-emerald-50 dark:border-emerald-500/60 dark:bg-emerald-950/80 dark:text-emerald-100 dark:hover:bg-emerald-900/80"
+              title={language === "vi" ? "Chi tiết chương trình giới thiệu" : "Referral program details"}
+            >
+              ?
+            </button>
+          </div>
+          <p className="mt-2 text-sm text-emerald-900/90 dark:text-emerald-200/90">
             {language === "vi" ? referralPanel.headlineVi : referralPanel.headlineEn}
           </p>
-          <p className="mt-2 text-sm text-emerald-800">
-            {language === "vi"
-              ? `Long-term (/register): mức đầy đủ khi hợp đồng ≥ ${referralPanel.fullOfferContractMonths} tháng; ngắn hơn được chia theo tỷ lệ. Giảm tối đa ${referralPanel.newRegistrantDiscountVnd.toLocaleString("vi-VN")} VND một lần, ${referralPanel.newRegistrantCoins.toLocaleString("vi-VN")} coins cho họ và ${referralPanel.referrerCoins.toLocaleString("vi-VN")} coins cho bạn.`
-              : `Long-term (/register): full reward when the new contract is at least ${referralPanel.fullOfferContractMonths} months; shorter contracts are pro-rated. Up to ${referralPanel.newRegistrantDiscountVnd.toLocaleString("en-US")} VND one-time off the first payment estimate, ${referralPanel.newRegistrantCoins.toLocaleString("en-US")} coins for them and ${referralPanel.referrerCoins.toLocaleString("en-US")} coins for you.`}
-          </p>
-          {referralPanel.hostelEnabled ? (
-            <p className="mt-2 text-sm text-emerald-900/90">
-              <span className="font-semibold">
-                {language === "vi" ? "Hostel / lưu trú ngắn: " : "Hostel / short stay: "}
-              </span>
-              {language === "vi"
-                ? `${referralPanel.hostelHeadlineVi} Giảm tối đa ${referralPanel.hostelNewRegistrantDiscountVnd.toLocaleString("vi-VN")} VND trên giá lưu trú (theo tỷ lệ đêm), ${referralPanel.hostelNewRegistrantCoins.toLocaleString("vi-VN")} coins khách và ${referralPanel.hostelReferrerCoins.toLocaleString("vi-VN")} coins cho bạn — `
-                : `${referralPanel.hostelHeadlineEn} Up to ${referralPanel.hostelNewRegistrantDiscountVnd.toLocaleString("en-US")} VND off the stay (pro-rated by nights), ${referralPanel.hostelNewRegistrantCoins.toLocaleString("en-US")} guest coins and ${referralPanel.hostelReferrerCoins.toLocaleString("en-US")} coins for you — `}
-              <a
-                href="https://hostel.cozorohome.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-medium text-emerald-950 underline"
-              >
-                hostel.cozorohome.com
-              </a>
-              .
-            </p>
+          {referralHelpOpen ? (
+            <div
+              id="referral-program-details"
+              role="region"
+              aria-labelledby="referral-help-trigger"
+              className="mt-3 space-y-2 rounded-xl border border-emerald-200/80 bg-white/70 p-4 text-sm text-emerald-900 shadow-sm dark:border-emerald-700/50 dark:bg-emerald-950/50 dark:text-emerald-100"
+            >
+              <p className="text-emerald-900 dark:text-emerald-50">
+                {language === "vi"
+                  ? `Long-term (/register): mức đầy đủ khi hợp đồng ≥ ${referralPanel.fullOfferContractMonths} tháng; ngắn hơn được chia theo tỷ lệ. Giảm tối đa ${referralPanel.newRegistrantDiscountVnd.toLocaleString("vi-VN")} VND một lần, ${referralPanel.newRegistrantCoins.toLocaleString("vi-VN")} coins cho họ và ${referralPanel.referrerCoins.toLocaleString("vi-VN")} coins cho bạn.`
+                  : `Long-term (/register): full reward when the new contract is at least ${referralPanel.fullOfferContractMonths} months; shorter contracts are pro-rated. Up to ${referralPanel.newRegistrantDiscountVnd.toLocaleString("en-US")} VND one-time off the first payment estimate, ${referralPanel.newRegistrantCoins.toLocaleString("en-US")} coins for them and ${referralPanel.referrerCoins.toLocaleString("en-US")} coins for you.`}
+              </p>
+              {referralPanel.hostelEnabled ? (
+                <p className="text-emerald-900 dark:text-emerald-50">
+                  <span className="font-semibold">
+                    {language === "vi" ? "Hostel / lưu trú ngắn: " : "Hostel / short stay: "}
+                  </span>
+                  {language === "vi"
+                    ? `${referralPanel.hostelHeadlineVi} Giảm tối đa ${referralPanel.hostelNewRegistrantDiscountVnd.toLocaleString("vi-VN")} VND trên giá lưu trú (theo tỷ lệ đêm), ${referralPanel.hostelNewRegistrantCoins.toLocaleString("vi-VN")} coins khách và ${referralPanel.hostelReferrerCoins.toLocaleString("vi-VN")} coins cho bạn — `
+                    : `${referralPanel.hostelHeadlineEn} Up to ${referralPanel.hostelNewRegistrantDiscountVnd.toLocaleString("en-US")} VND off the stay (pro-rated by nights), ${referralPanel.hostelNewRegistrantCoins.toLocaleString("en-US")} guest coins and ${referralPanel.hostelReferrerCoins.toLocaleString("en-US")} coins for you — `}
+                  <a
+                    href="https://hostel.cozorohome.com"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-emerald-800 underline dark:text-emerald-200"
+                  >
+                    hostel.cozorohome.com
+                  </a>
+                  .
+                </p>
+              ) : null}
+            </div>
           ) : null}
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <code className="rounded-xl bg-white/90 px-4 py-2 font-mono text-base font-semibold text-emerald-950 ring-1 ring-emerald-200 dark:bg-emerald-950/90 dark:text-emerald-50 dark:ring-emerald-600/60">

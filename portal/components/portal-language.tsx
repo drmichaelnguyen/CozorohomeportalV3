@@ -307,6 +307,10 @@ const translations: Record<string, { en: string; vi: string }> = {
   controllerGuestLabel: { en: "Guest", vi: "Khách" },
   controllerContractLabel: { en: "Contract code", vi: "Mã hợp đồng" },
   controllerComfortTitle: { en: "Room temperature", vi: "Nhiệt độ phòng" },
+  controllerComfortHelpTitle: {
+    en: "How room temperature feedback works",
+    vi: "Phản hồi nhiệt độ phòng hoạt động thế nào"
+  },
   controllerComfortHelp: {
     en: "Tap if the AC feels too hot or too cold. If more than half of residents in this room choose the same option, managers get a notification to adjust the setpoint.",
     vi: "Chạm nếu máy lạnh quá nóng hoặc quá lạnh. Nếu hơn một nửa cư dân trong phòng cùng chọn một mục, quản lý sẽ nhận thông báo để chỉnh nhiệt."
@@ -870,7 +874,6 @@ const translations: Record<string, { en: string; vi: string }> = {
 
   // Cleaning schedule
   cleaningScheduleTitle: { en: "Cleaning Schedule", vi: "Lịch vệ sinh" },
-  cleaningScheduleDesc: { en: "Click a date to mark yourself unavailable or assign yourself to a cleaning task that fits your branch and floor.", vi: "Nhấn vào ngày để đánh dấu không rảnh hoặc đăng ký nhận lịch trực vệ sinh phù hợp với chi nhánh và tầng của bạn." },
   loadCleaningSchedule: { en: "Load cleaning schedule", vi: "Tải lịch vệ sinh" },
   refreshSchedule: { en: "Refresh schedule", vi: "Làm mới lịch" },
   refreshingSchedule: { en: "Refreshing...", vi: "Đang làm mới..." },
@@ -892,7 +895,11 @@ const translations: Record<string, { en: string; vi: string }> = {
   processingOptOut: { en: "Processing...", vi: "Đang xử lý..." },
   upcomingOpenSlots: { en: "Upcoming open slots — available to self-assign", vi: "Lịch trống sắp tới — có thể tự đăng ký" },
   upcomingOpenSlotsHelp: { en: "These are unclaimed slots that match your branch and floor. Click a date to open it on the calendar and assign yourself.", vi: "Đây là các lịch chưa có người nhận phù hợp với chi nhánh và tầng của bạn. Nhấn vào ngày để mở trên lịch và tự đăng ký." },
-  markAwayHelp: { en: "Mark Away lets you block multiple days at once as unavailable — useful if you are traveling or on leave.", vi: "Mark Away cho phép bạn đánh dấu nhiều ngày liên tiếp là không rảnh — hữu ích khi bạn đi xa hoặc nghỉ phép." },
+  markAwayHelpTitle: { en: "What is Mark Away?", vi: "Mark Away là gì?" },
+  markAwayHelp: {
+    en: "Mark Away lets you block multiple days at once as unavailable — useful if you are traveling or on leave. Turn it on, tap the dates you will be away, then confirm.",
+    vi: "Mark Away cho phép bạn đánh dấu nhiều ngày là không rảnh cùng lúc — hữu ích khi đi xa hoặc nghỉ phép. Bật chế độ, chạm các ngày bạn vắng, rồi xác nhận."
+  },
   optOutHelp: { en: "Opt Out pays a one-time fee (100,000 VND or 150,000 coins) to skip ALL cleaning assignments for this month entirely.", vi: "Opt Out trả một lần (100.000 VND hoặc 150.000 coin) để bỏ qua toàn bộ lịch trực vệ sinh trong tháng này." },
   cleaningCalendarTitle: { en: "Cleaning Calendar", vi: "Lịch vệ sinh" },
   cleaningCalendarDesc: { en: "Select a date to set availability or claim a task yourself.", vi: "Chọn ngày để đặt trạng thái rảnh/bận hoặc tự nhận lịch trực." },
@@ -927,6 +934,14 @@ const translations: Record<string, { en: string; vi: string }> = {
   noteLabel: { en: "Note", vi: "Ghi chú" },
   optionalNotePlaceholder: { en: "Optional note for this date", vi: "Ghi chú tùy chọn cho ngày này" },
   markUnavailableBtn: { en: "Mark unavailable", vi: "Đánh dấu không rảnh" },
+  markUnavailableHelpTitle: {
+    en: "What does Mark unavailable do?",
+    vi: "Đánh dấu không rảnh dùng để làm gì?"
+  },
+  markUnavailableHelp: {
+    en: "This saves your choice for the selected date only: scheduling will treat you as not available for cleaning duty that day. Use Mark available to clear it. Add an optional note above if needed. To block several days at once, use Mark Away on the calendar.",
+    vi: "Chỉ áp dụng cho ngày đang chọn trên lịch: hệ thống hiểu bạn không rảnh để nhận lịch trực vệ sinh vào ngày đó. Dùng Đánh dấu rảnh để gỡ. Có thể thêm ghi chú ở trên. Để đánh dấu nhiều ngày cùng lúc, hãy dùng Mark Away trên lịch."
+  },
   markAvailableBtn: { en: "Mark available", vi: "Đánh dấu rảnh" },
   assignMyselfOnDate: { en: "Assign myself on this date", vi: "Tự đăng ký ngày này" },
   onlyTodayOrFuture: { en: "You can only assign yourself to today or future dates.", vi: "Bạn chỉ có thể tự đăng ký cho hôm nay hoặc các ngày trong tương lai." },

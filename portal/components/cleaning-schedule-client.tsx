@@ -243,7 +243,7 @@ function getReleasePenalty(task: { scheduledDate: string; isSelfAssigned?: boole
 }
 
 export function CleaningScheduleClient() {
-  const { sessionEmail, isLoggedIn, login } = usePortalSession();
+  const { sessionEmail, isLoggedIn, isSessionLoaded, login } = usePortalSession();
   const { t, language } = usePortalLanguage();
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
@@ -268,6 +268,8 @@ export function CleaningScheduleClient() {
   const [optOutPayment, setOptOutPayment] = useState<"VND" | "COINS">("VND");
   const [optOutLoading, setOptOutLoading] = useState(false);
   const [showPolicyHelp, setShowPolicyHelp] = useState(false);
+  const [markAwayHelpOpen, setMarkAwayHelpOpen] = useState(false);
+  const [markUnavailableHelpOpen, setMarkUnavailableHelpOpen] = useState(false);
   const canSelfAssignSelectedDate = isTodayOrFuture(selectedDate);
   const activeEmail = sessionEmail.trim().toLowerCase();
 
@@ -283,16 +285,18 @@ export function CleaningScheduleClient() {
     }
   }, [sessionEmail]);
 
-  // Auto-load when the user is already logged in
+  // Auto-load once session is known and the user is logged in
   useEffect(() => {
-    if (isLoggedIn && activeEmail && !overview) {
-      setLoading(true);
-      loadOverview(activeEmail)
-        .catch(() => {})
-        .finally(() => setLoading(false));
+    if (!isSessionLoaded || !isLoggedIn || !activeEmail || overview) {
+      return;
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoggedIn, activeEmail]);
+    setLoading(true);
+    loadOverview(activeEmail)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+    // overview omitted from deps on purpose: we only auto-fetch when session/email gates change, not when overview updates (avoids loops on failed fetch)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSessionLoaded, isLoggedIn, activeEmail]);
 
   async function readJsonSafely<T>(response: Response) {
     const contentType = response.headers.get("content-type") ?? "";
@@ -788,12 +792,10 @@ export function CleaningScheduleClient() {
     <div className="mx-auto max-w-6xl space-y-6">
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
         <h1 className="text-2xl font-semibold text-slate-900">{t("cleaningScheduleTitle", "Cleaning Schedule")}</h1>
-        <p className="mt-2 text-sm text-slate-600">
-          {t("cleaningScheduleDesc", "Click a date to mark yourself unavailable or assign yourself to a cleaning task that fits your branch and floor.")}
-        </p>
 
         <form onSubmit={handleLogin} className="mt-6 grid gap-4 md:grid-cols-2">
           <div className="md:col-span-2 flex flex-wrap gap-3">
+            {!(isLoggedIn && activeEmail && (loading || overview)) ? (
             <button
               type="submit"
               disabled={loading || !activeEmail}
@@ -801,6 +803,7 @@ export function CleaningScheduleClient() {
             >
               {loading ? t("refreshing", "Loading...") : t("loadCleaningSchedule", "Load cleaning schedule")}
             </button>
+            ) : null}
             <button
               type="button"
               onClick={() => void refreshOverviewNow()}
@@ -1302,10 +1305,32 @@ export function CleaningScheduleClient() {
                     onClick={() => { setAwayMode((m) => !m); setAwayDates(new Set()); }}
                     className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${awayMode ? "border-orange-400 bg-orange-50 text-orange-700" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}
                   >
-                    {awayMode ? "Cancel Away" : "Mark Away"}
+                    {awayMode ? t("cancelAwayBtn", "Cancel Away") : t("markAwayBtn", "Mark Away")}
+                  </button>
+                  <button
+                    type="button"
+                    id="mark-away-help-trigger"
+                    aria-expanded={markAwayHelpOpen}
+                    aria-controls="mark-away-help-panel"
+                    onClick={() => setMarkAwayHelpOpen((v) => !v)}
+                    className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-full border border-slate-400/80 bg-white text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+                    title={t("markAwayHelpTitle", "What is Mark Away?")}
+                  >
+                    ?
                   </button>
                 </div>
               </div>
+
+              {markAwayHelpOpen ? (
+                <p
+                  id="mark-away-help-panel"
+                  role="region"
+                  aria-labelledby="mark-away-help-trigger"
+                  className="mt-3 rounded-xl border border-orange-200/90 bg-orange-50/90 px-4 py-3 text-sm text-slate-800 dark:border-orange-800/60 dark:bg-orange-950/40 dark:text-orange-50"
+                >
+                  {t("markAwayHelp")}
+                </p>
+              ) : null}
 
               <div className="mt-4 flex items-center justify-between gap-3">
                 <div className="text-sm text-slate-600">
@@ -1322,7 +1347,7 @@ export function CleaningScheduleClient() {
                       disabled={awaySubmitting || awayDates.size === 0}
                       className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50 hover:bg-orange-600 transition-colors"
                     >
-                      {awaySubmitting ? "Saving..." : "Mark Away"}
+                      {awaySubmitting ? t("savingAway", "Saving...") : t("markAwayBtn", "Mark Away")}
                     </button>
                   </div>
                 )}
@@ -1473,24 +1498,51 @@ export function CleaningScheduleClient() {
                 />
               </label>
 
-              <div className="mt-4 flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  onClick={() => void saveAvailability("UNAVAILABLE")}
-                  disabled={loading}
-                  className="rounded-lg border border-rose-300 bg-rose-50 px-4 py-2 text-sm text-rose-700 disabled:opacity-60"
-                >
-                  Mark unavailable
-                </button>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void saveAvailability("UNAVAILABLE")}
+                    disabled={loading}
+                    className="rounded-lg border border-rose-300 bg-rose-50 px-4 py-2 text-sm text-rose-700 disabled:opacity-60"
+                  >
+                    {t("markUnavailableBtn", "Mark unavailable")}
+                  </button>
+                  <button
+                    type="button"
+                    id="mark-unavailable-help-trigger"
+                    aria-expanded={markUnavailableHelpOpen}
+                    aria-controls="mark-unavailable-help-panel"
+                    onClick={() => setMarkUnavailableHelpOpen((v) => !v)}
+                    className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-full border border-rose-300/90 bg-white text-sm font-bold text-rose-800 shadow-sm hover:bg-rose-50 dark:border-rose-600 dark:bg-rose-950/50 dark:text-rose-100 dark:hover:bg-rose-900/40"
+                    title={t("markUnavailableHelpTitle", "What does Mark unavailable do?")}
+                  >
+                    ?
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={() => void saveAvailability("AVAILABLE")}
                   disabled={loading}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60"
                 >
-                  Mark available
+                  {t("markAvailableBtn", "Mark available")}
                 </button>
               </div>
+
+              {markUnavailableHelpOpen ? (
+                <p
+                  id="mark-unavailable-help-panel"
+                  role="region"
+                  aria-labelledby="mark-unavailable-help-trigger"
+                  className="mt-3 rounded-xl border border-rose-200/90 bg-rose-50/90 px-4 py-3 text-sm text-slate-800 dark:border-rose-800/50 dark:bg-rose-950/35 dark:text-rose-50"
+                >
+                  {t(
+                    "markUnavailableHelp",
+                    "This saves your choice for the selected date only: scheduling will treat you as not available for cleaning duty that day. Use Mark available to clear it. Add an optional note above if needed. To block several days at once, use Mark Away on the calendar."
+                  )}
+                </p>
+              ) : null}
 
               <div className="mt-6">
                 <div className="text-sm font-medium text-slate-900">Assign myself on this date</div>
