@@ -1,6 +1,6 @@
 {
   "name": "cozorohome-api",
-  "version": "3.8.11",
+  "version": "3.8.19",
   "private": true,
   "type": "module",
   "scripts": {

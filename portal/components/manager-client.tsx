@@ -886,6 +886,8 @@ function fineFieldLabels(language: "en" | "vi") {
   if (language === "vi") {
     return {
       dueDate: "HẠN THANH TOÁN",
+      eventDateTime: "Thời điểm vi phạm",
+      eventDateTimeHint: "Ngày giờ sự việc xảy ra. Để trống để dùng thời điểm tạo phiếu.",
       location: "VỊ TRÍ PHÁT HIỆN VI PHẠM",
       content: "NỘI DUNG VI PHẠM",
       description: "MÔ TẢ VI PHẠM",
@@ -898,6 +900,8 @@ function fineFieldLabels(language: "en" | "vi") {
 
   return {
     dueDate: "Payment Due Date",
+    eventDateTime: "Date & time of violation",
+    eventDateTimeHint: "When the incident occurred. Leave blank to use the time you submit the ticket.",
     location: "Violation Location",
     content: "Violation Content",
     description: "Violation Description",
@@ -1100,6 +1104,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [fineDescription, setFineDescription] = useState("");
   const [fineLocation, setFineLocation] = useState("");
   const [fineDueDate, setFineDueDate] = useState("");
+  const [fineEventAt, setFineEventAt] = useState("");
   const [fineImage, setFineImage] = useState("");
   const [fineImageUploading, setFineImageUploading] = useState(false);
   const [fineImageFileName, setFineImageFileName] = useState("");
@@ -6178,6 +6183,16 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       <input type="date" value={fineDueDate} onChange={(event) => setFineDueDate(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2" />
                     </label>
                     <label className="block text-sm font-medium text-slate-700">
+                      {fineLabels.eventDateTime}
+                      <input
+                        type="datetime-local"
+                        value={fineEventAt}
+                        onChange={(event) => setFineEventAt(event.target.value)}
+                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+                      />
+                      <span className="mt-1 block text-xs font-normal text-slate-500">{fineLabels.eventDateTimeHint}</span>
+                    </label>
+                    <label className="block text-sm font-medium text-slate-700">
                       {fineLabels.location}
                       <input
                         type="text"
@@ -6316,7 +6331,17 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       onClick={() =>
                         void postJson(
                           `${API_BASE_URL}/manager/fines`,
-                          { maHd: selectedClient?.maHd ?? "", amount: Number(fineAmount), content: fineContent, description: fineDescription, location: fineLocation, dueDate: fineDueDate || undefined, image: fineImage, operator: normalizedEmail },
+                          {
+                            maHd: selectedClient?.maHd ?? "",
+                            amount: Number(fineAmount),
+                            content: fineContent,
+                            description: fineDescription,
+                            location: fineLocation,
+                            dueDate: fineDueDate || undefined,
+                            eventAt: fineEventAt.trim() || undefined,
+                            image: fineImage,
+                            operator: normalizedEmail
+                          },
                           t("fineTicketCreated"),
                           async () => {
                             if (selectedClient) await loadWorkspace("fines", selectedClient.maHd);
@@ -6324,6 +6349,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             setFineDescription("");
                             setFineLocation("");
                             setFineDueDate("");
+                            setFineEventAt("");
                             setFineImage("");
                             setFineImageFileName("");
                             setFineEvidenceKind("");
