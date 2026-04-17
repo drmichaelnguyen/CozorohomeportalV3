@@ -1693,6 +1693,68 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "Admin and manager share this cleaning scheduler. View each cleaning calendar, inspect existing assignments, and assign future cleaning dates.",
     vi: "Quản trị và quản lý dùng chung bộ lập lịch vệ sinh này. Xem từng lịch, kiểm tra phân công hiện có và giao các ngày dọn dẹp trong tương lai."
   },
+  adminCleaningReviewQueueTitle: {
+    en: "Audit & missed cleaning",
+    vi: "Chờ duyệt & lịch quá hạn"
+  },
+  adminCleaningReviewQueueBlurb: {
+    en: "Tasks waiting for your audit, and assigned tasks past the completion deadline (ready for a missed-task fine). Refresh after calendar changes.",
+    vi: "Công việc chờ duyệt và phân công đã quá hạn hoàn thành (có thể phạt). Làm mới sau khi đổi lịch."
+  },
+  adminCleaningReviewQueueRefresh: { en: "Refresh list", vi: "Làm mới danh sách" },
+  adminCleaningRunOverdueSweep: {
+    en: "Run full overdue sweep",
+    vi: "Chạy quét quá hạn (tất cả)"
+  },
+  adminCleaningReviewQueueLoaded: { en: "Review list updated.", vi: "Đã cập nhật danh sách." },
+  adminCleaningReviewQueuePrompt: {
+    en: "Click “Refresh list” to load pending audits and overdue assignments.",
+    vi: "Bấm “Làm mới danh sách” để tải việc chờ duyệt và phân công quá hạn."
+  },
+  adminCleaningErrReviewQueue: { en: "Unable to load review list.", vi: "Không tải được danh sách." },
+  adminCleaningPendingAuditTitle: { en: "Pending audit", vi: "Chờ duyệt" },
+  adminCleaningPendingAuditHint: {
+    en: "Residents marked done — approve or reject in the day panel below.",
+    vi: "Cư dân đã báo xong — duyệt hoặc từ chối ở khung ngày bên dưới."
+  },
+  adminCleaningOverdueAssignedTitle: { en: "Past deadline, not done", vi: "Quá hạn, chưa hoàn thành" },
+  adminCleaningOverdueAssignedHint: {
+    en: "Assigned tasks after the completion window plus grace. Issue fine to create the ticket and mark missed.",
+    vi: "Phân công đã quá khung giờ và thời gian chờ. Phát phiếu phạt để ghi nhận và đánh dấu bỏ lỡ."
+  },
+  adminCleaningQueueEmpty: { en: "None right now.", vi: "Hiện không có." },
+  adminCleaningSuggestedFine: { en: "Suggested fine: {amount} VND", vi: "Mức phạt gợi ý: {amount} VND" },
+  adminCleaningFineMayExist: {
+    en: "fine may already exist in sheet",
+    vi: "có thể đã có phiếu trên sheet"
+  },
+  adminCleaningIssueMissedFine: { en: "Issue fine & mark missed", vi: "Phạt & đánh dấu bỏ lỡ" },
+  adminCleaningErrMissedFine: { en: "Could not issue missed-task fine.", vi: "Không phát phiếu phạt được." },
+  adminCleaningMissedFineIssued: {
+    en: "Missed-task fine issued ({amount} VND).",
+    vi: "Đã phát phiếu phạt ({amount} VND)."
+  },
+  adminCleaningErrOverdueRun: { en: "Overdue sweep failed.", vi: "Quét quá hạn thất bại." },
+  adminCleaningOverdueRunResult: {
+    en: "Sweep: {marked} task(s) marked missed; {evasion} monthly evasion charge(s).",
+    vi: "Quét: {marked} công việc đánh dấu bỏ lỡ; {evasion} phạt trốn tháng."
+  },
+  adminCleaningOverdueRunSkippedMissed: {
+    en: "Automatic missed-task fines are off — turn them on in Background auto-scheduler to include them in timed sweeps.",
+    vi: "Đã tắt phạt tự động — bật trong “Lịch tự động nền” để lần quét theo giờ áp dụng."
+  },
+  adminCleaningRemovePastBlocked: {
+    en: "Remove (future only)",
+    vi: "Chỉ xóa lịch tương lai"
+  },
+  autoMissedCleaningFinesLabel: {
+    en: "Automatic missed-task fines (background sweep)",
+    vi: "Phạt tự động khi quá hạn (quét nền)"
+  },
+  autoMissedCleaningFinesDesc: {
+    en: "When enabled, the API’s scheduled overdue sweep creates fine tickets and marks tasks missed after the deadline. Manual “Run full overdue sweep” always applies missed-task rules. Monthly evasion penalties still run separately.",
+    vi: "Khi bật, lần quét quá hạn theo lịch API sẽ tạo phiếu phạt và đánh dấu bỏ lỡ. Nút “Chạy quét quá hạn” luôn áp dụng quy tắc quá hạn. Phạt trốn tháng vẫn chạy riêng."
+  },
   adminCleaningErrPreviewUsersForDate: {
     en: "Unable to preview users for {date}.",
     vi: "Không thể xem trước người dùng cho ngày {date}."

@@ -162,6 +162,7 @@ import {
   adminAssignCleaningTask,
   adminAutoAssignCleaningSlots,
   adminRemoveCleaningTask,
+  adminMarkMissedCleaningTaskFine,
   auditCleaningTask,
   completeCleaningTask,
   checkSelfAssignCleaningTask,
@@ -169,6 +170,7 @@ import {
   generateCleaningSchedule,
   getAvailableUsersForAdminSlot,
   getAdminCleaningTasks,
+  getCleaningManagerReviewQueue,
   getCleaningOverviewForUser,
   getUserCleaningContext,
   releaseCleaningTask,
@@ -514,9 +516,21 @@ async function runOverdueCleaningSweep(trigger: "startup" | "interval" | "manual
   overdueCleaningSweepRunning = true;
 
   try {
-    const result = await sweepOverdueCleaningTasks();
+    const schedulerConfig = await getCleaningAutoSchedulerConfig();
+    const runMissedTaskSweep = trigger === "manual" || schedulerConfig.autoMissedCleaningFines !== false;
+
+    const missedResult = runMissedTaskSweep
+      ? await sweepOverdueCleaningTasks()
+      : { scanned: 0, markedMissed: 0, tasks: [] as Array<{ taskId: string; userEmail: string; fineAmount: number }> };
+
+    if (!runMissedTaskSweep) {
+      console.log(
+        `[cleaning-overdue-sweep] trigger=${trigger} missed-task sweep skipped (autoMissedCleaningFines disabled in settings)`
+      );
+    }
+
     console.log(
-      `[cleaning-overdue-sweep] trigger=${trigger} scanned=${result.scanned} markedMissed=${result.markedMissed}`
+      `[cleaning-overdue-sweep] trigger=${trigger} scanned=${missedResult.scanned} markedMissed=${missedResult.markedMissed}`
     );
 
     const evasionResult = await sweepMonthlyEvasionPenalties();
@@ -528,7 +542,8 @@ async function runOverdueCleaningSweep(trigger: "startup" | "interval" | "manual
 
     return {
       skipped: false,
-      ...result,
+      missedTaskSweepSkipped: !runMissedTaskSweep,
+      ...missedResult,
       evasion: evasionResult
     };
   } finally {
@@ -1002,6 +1017,7 @@ const cleaningAutoSchedulerConfigQuerySchema = z.object({
 const cleaningAutoSchedulerConfigUpdateSchema = z.object({
   actorEmail: z.string().email(),
   enabled: z.boolean(),
+  autoMissedCleaningFines: z.boolean().optional(),
   jobs: z.array(
     z.object({
       key: z.string().min(1),
@@ -1010,6 +1026,18 @@ const cleaningAutoSchedulerConfigUpdateSchema = z.object({
       horizonDays: z.number().int().min(1).max(60)
     })
   )
+});
+
+const adminCleaningReviewQueueQuerySchema = z.object({
+  actorEmail: z.string().email()
+});
+
+const adminCleaningMissedFineBodySchema = z.object({
+  actorEmail: z.string().email()
+});
+
+const adminCleaningOverdueRunBodySchema = z.object({
+  actorEmail: z.string().email()
 });
 const supportResidentQuerySchema = z.object({
   email: z.string().email()
@@ -3781,12 +3809,37 @@ app.put("/admin/cleaning/auto-scheduler-config", async (request, response) => {
   try {
     const config = await updateCleaningAutoSchedulerConfig(parsed.data.actorEmail, {
       enabled: parsed.data.enabled,
+      autoMissedCleaningFines: parsed.data.autoMissedCleaningFines,
       jobs: parsed.data.jobs
     });
     return response.json(config);
   } catch (error) {
     return response.status(403).json({
       error: error instanceof Error ? error.message : "Unable to save cleaning auto-scheduler settings"
+    });
+  }
+});
+
+app.get("/admin/cleaning/review-queue", async (request, response) => {
+  const parsed = adminCleaningReviewQueueQuerySchema.safeParse({
+    actorEmail: request.query.actorEmail
+  });
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "A valid actor email is required" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only managers can view the cleaning review queue."
+    );
+    const queue = await getCleaningManagerReviewQueue();
+    return response.json(queue);
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to load cleaning review queue"
     });
   }
 });
@@ -4041,14 +4094,57 @@ app.post("/admin/cleaning/tasks/:id/audit", async (request, response) => {
   }
 });
 
-app.post("/admin/cleaning/overdue/run", async (_request, response) => {
+app.post("/admin/cleaning/overdue/run", async (request, response) => {
+  const parsed = adminCleaningOverdueRunBodySchema.safeParse(request.body ?? {});
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid payload (actorEmail required)" });
+  }
+
   try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only managers can run the overdue cleaning sweep."
+    );
     const result = await runOverdueCleaningSweep("manual");
     return response.json(result);
   } catch (error) {
-    return response.status(500).json({
-      error: error instanceof Error ? error.message : "Unable to run overdue cleaning sweep"
-    });
+    const msg = error instanceof Error ? error.message : "Unable to run overdue cleaning sweep";
+    if (msg.includes("Only managers")) {
+      return response.status(403).json({ error: msg });
+    }
+    console.error("[admin/cleaning/overdue/run]", error);
+    return response.status(500).json({ error: msg });
+  }
+});
+
+app.post("/admin/cleaning/tasks/:id/missed-fine", async (request, response) => {
+  const parsed = adminCleaningMissedFineBodySchema.safeParse(request.body ?? {});
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid payload (actorEmail required)" });
+  }
+
+  const { id } = request.params;
+  if (!id) {
+    return response.status(400).json({ error: "Task ID is required" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only managers can issue missed cleaning fines."
+    );
+    const result = await adminMarkMissedCleaningTaskFine(id, parsed.data.actorEmail);
+    return response.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to issue missed cleaning fine";
+    if (message.includes("Only managers")) {
+      return response.status(403).json({ error: message });
+    }
+    return response.status(400).json({ error: message });
   }
 });
 

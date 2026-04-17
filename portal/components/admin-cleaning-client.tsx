@@ -67,8 +67,42 @@ type AutoAssignPreview = {
   user: AdminAvailableUser | null;
 };
 
+type CleaningReviewQueuePayload = {
+  pendingAudit: Array<{
+    id: string;
+    userEmail: string;
+    userName: string | null;
+    bedDisplay: string | null;
+    branchId: string;
+    floor: number | null;
+    type: AdminTask["type"];
+    scheduledDate: string;
+    status: string;
+    rewardCoins: number;
+    completedAt: string | null;
+    completionNote: string | null;
+    completionPhoto: string | null;
+  }>;
+  overdueAssigned: Array<{
+    id: string;
+    userEmail: string;
+    userName: string | null;
+    bedDisplay: string | null;
+    branchId: string;
+    floor: number | null;
+    type: AdminTask["type"];
+    scheduledDate: string;
+    status: string;
+    rewardCoins: number;
+    hasAutomaticFine: boolean;
+    suggestedFineAmount: number;
+    missedFineDeadlineAt: string;
+  }>;
+};
+
 type AutoSchedulerConfig = {
   enabled: boolean;
+  autoMissedCleaningFines: boolean;
   updatedAt: string;
   updatedBy: string;
   jobs: Array<{
@@ -228,6 +262,8 @@ export function AdminCleaningClient() {
   const [autoSchedulerConfig, setAutoSchedulerConfig] = useState<AutoSchedulerConfig | null>(null);
   const [autoSchedulerSaving, setAutoSchedulerSaving] = useState(false);
   const [showAutoScheduler, setShowAutoScheduler] = useState(false);
+  const [reviewQueue, setReviewQueue] = useState<CleaningReviewQueuePayload | null>(null);
+  const [reviewQueueLoading, setReviewQueueLoading] = useState(false);
   const selectedCalendar =
     calendars.find((entry) => calendarKey(entry) === selectedCalendarKey) ?? calendars[0] ?? null;
   const selectedSchedulerJob =
@@ -274,13 +310,104 @@ export function AdminCleaningClient() {
     await loadCalendars();
   }
 
+  async function loadReviewQueue() {
+    setReviewQueueLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/admin/cleaning/review-queue?actorEmail=${encodeURIComponent(activeEmail)}`
+      );
+      const data = await readJsonSafely<{
+        pendingAudit?: CleaningReviewQueuePayload["pendingAudit"];
+        overdueAssigned?: CleaningReviewQueuePayload["overdueAssigned"];
+        error?: string;
+      }>(response);
+      if (!response.ok) {
+        setMessage(data.error ?? t("adminCleaningErrReviewQueue"));
+        return;
+      }
+      setReviewQueue({
+        pendingAudit: data.pendingAudit ?? [],
+        overdueAssigned: data.overdueAssigned ?? []
+      });
+      setMessage(t("adminCleaningReviewQueueLoaded"));
+    } catch {
+      setMessage(t("adminCleaningErrReviewQueue"));
+    } finally {
+      setReviewQueueLoading(false);
+    }
+  }
+
+  async function issueMissedCleaningFine(taskId: string) {
+    setLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/cleaning/tasks/${encodeURIComponent(taskId)}/missed-fine`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorEmail: activeEmail })
+      });
+      const data = await readJsonSafely<{ error?: string; fineAmount?: number }>(response);
+      if (!response.ok) {
+        setMessage(data.error ?? t("adminCleaningErrMissedFine"));
+        return;
+      }
+      await Promise.all([reloadAll(), loadReviewQueue()]);
+      setMessage(t("adminCleaningMissedFineIssued", undefined, { amount: String(data.fineAmount ?? "") }));
+    } catch {
+      setMessage(t("adminCleaningErrMissedFine"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function runOverdueSweepManual() {
+    setLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/cleaning/overdue/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorEmail: activeEmail })
+      });
+      const data = await readJsonSafely<{
+        error?: string;
+        markedMissed?: number;
+        missedTaskSweepSkipped?: boolean;
+        evasion?: { charged?: number };
+      }>(response);
+      if (!response.ok) {
+        setMessage(data.error ?? t("adminCleaningErrOverdueRun"));
+        return;
+      }
+      await Promise.all([reloadAll(), loadReviewQueue()]);
+      const parts = [
+        t("adminCleaningOverdueRunResult", undefined, {
+          marked: String(data.markedMissed ?? 0),
+          evasion: String(data.evasion?.charged ?? 0)
+        })
+      ];
+      if (data.missedTaskSweepSkipped) {
+        parts.push(t("adminCleaningOverdueRunSkippedMissed"));
+      }
+      setMessage(parts.join(" "));
+    } catch {
+      setMessage(t("adminCleaningErrOverdueRun"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function loadAutoSchedulerConfig() {
     const response = await fetch(`${API_BASE_URL}/admin/cleaning/auto-scheduler-config?actorEmail=${encodeURIComponent(activeEmail)}`);
     const data = await readJsonSafely<AutoSchedulerConfig & { error?: string }>(response);
     if (!response.ok) {
       throw new Error(data.error ?? t("adminCleaningErrLoadAutoScheduler"));
     }
-    setAutoSchedulerConfig(data);
+    setAutoSchedulerConfig({
+      ...data,
+      autoMissedCleaningFines: data.autoMissedCleaningFines ?? true
+    });
   }
 
   async function saveAutoSchedulerConfig() {
@@ -294,6 +421,7 @@ export function AdminCleaningClient() {
         body: JSON.stringify({
           actorEmail: activeEmail,
           enabled: autoSchedulerConfig.enabled,
+          autoMissedCleaningFines: autoSchedulerConfig.autoMissedCleaningFines,
           jobs: autoSchedulerConfig.jobs.map((job) => ({
             key: job.key,
             enabled: job.enabled,
@@ -738,6 +866,104 @@ export function AdminCleaningClient() {
       </section>
 
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">{t("adminCleaningReviewQueueTitle")}</h2>
+            <p className="mt-1 text-sm text-slate-600">{t("adminCleaningReviewQueueBlurb")}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void loadReviewQueue()}
+              disabled={reviewQueueLoading || loading}
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 disabled:opacity-60"
+            >
+              {reviewQueueLoading ? t("refreshing") : t("adminCleaningReviewQueueRefresh")}
+            </button>
+            <button
+              type="button"
+              onClick={() => void runOverdueSweepManual()}
+              disabled={loading || reviewQueueLoading}
+              className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-60"
+            >
+              {t("adminCleaningRunOverdueSweep")}
+            </button>
+          </div>
+        </div>
+
+        {reviewQueue ? (
+          <div className="mt-6 grid gap-6 lg:grid-cols-2">
+            <div>
+              <h3 className="text-sm font-semibold text-amber-900">{t("adminCleaningPendingAuditTitle")}</h3>
+              <p className="mt-1 text-xs text-slate-500">{t("adminCleaningPendingAuditHint")}</p>
+              <ul className="mt-3 space-y-2">
+                {reviewQueue.pendingAudit.length === 0 ? (
+                  <li className="text-sm text-slate-600">{t("adminCleaningQueueEmpty")}</li>
+                ) : (
+                  reviewQueue.pendingAudit.map((task) => (
+                    <li
+                      key={task.id}
+                      className="rounded-xl border border-amber-200 bg-amber-50/40 px-3 py-2 text-sm text-slate-800"
+                    >
+                      <div className="font-medium text-slate-900">{task.userName?.trim() || task.userEmail}</div>
+                      <div className="text-xs text-slate-500">
+                        {prettyTaskType(task.type, t)} · {task.bedDisplay ?? task.branchId} ·{" "}
+                        {new Date(task.scheduledDate).toLocaleDateString(dateLocale)}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-600">{task.userEmail}</div>
+                    </li>
+                  ))
+                )}
+              </ul>
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-rose-900">{t("adminCleaningOverdueAssignedTitle")}</h3>
+              <p className="mt-1 text-xs text-slate-500">{t("adminCleaningOverdueAssignedHint")}</p>
+              <ul className="mt-3 space-y-2">
+                {reviewQueue.overdueAssigned.length === 0 ? (
+                  <li className="text-sm text-slate-600">{t("adminCleaningQueueEmpty")}</li>
+                ) : (
+                  reviewQueue.overdueAssigned.map((task) => (
+                    <li
+                      key={task.id}
+                      className="rounded-xl border border-rose-200 bg-rose-50/40 px-3 py-2 text-sm text-slate-800"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div className="font-medium text-slate-900">{task.userName?.trim() || task.userEmail}</div>
+                          <div className="text-xs text-slate-500">
+                            {prettyTaskType(task.type, t)} · {task.bedDisplay ?? task.branchId} ·{" "}
+                            {new Date(task.scheduledDate).toLocaleDateString(dateLocale)}
+                          </div>
+                          <div className="mt-1 text-xs text-slate-600">{task.userEmail}</div>
+                          <div className="mt-1 text-xs text-rose-800">
+                            {t("adminCleaningSuggestedFine", undefined, {
+                              amount: task.suggestedFineAmount.toLocaleString(dateLocale)
+                            })}
+                            {task.hasAutomaticFine ? ` · ${t("adminCleaningFineMayExist")}` : null}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void issueMissedCleaningFine(task.id)}
+                          disabled={loading}
+                          className="shrink-0 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+                        >
+                          {t("adminCleaningIssueMissedFine")}
+                        </button>
+                      </div>
+                    </li>
+                  ))
+                )}
+              </ul>
+            </div>
+          </div>
+        ) : (
+          <p className="mt-4 text-sm text-slate-600">{t("adminCleaningReviewQueuePrompt")}</p>
+        )}
+      </section>
+
+      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
         <div className="flex flex-wrap gap-2">
           {calendars.map((calendar) => {
             const key = calendarKey(calendar);
@@ -823,6 +1049,21 @@ export function AdminCleaningClient() {
                       {autoSchedulerSaving ? t("saving") : t("saveLabel")}
                     </button>
                   </div>
+
+                  <label className="mt-4 block rounded-xl border border-amber-200 bg-amber-50/60 p-4 text-sm text-slate-800">
+                    <div className="font-medium text-slate-900">{t("autoMissedCleaningFinesLabel")}</div>
+                    <div className="mt-1 text-xs text-slate-600">{t("autoMissedCleaningFinesDesc")}</div>
+                    <input
+                      type="checkbox"
+                      checked={autoSchedulerConfig.autoMissedCleaningFines ?? true}
+                      onChange={(event) =>
+                        setAutoSchedulerConfig((current) =>
+                          current ? { ...current, autoMissedCleaningFines: event.target.checked } : current
+                        )
+                      }
+                      className="mt-3 h-4 w-4 rounded border-slate-300"
+                    />
+                  </label>
 
                   <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
                     <div className="font-medium text-slate-900">{getSchedulerJobLabel(selectedSchedulerJob, t)}</div>
@@ -1025,6 +1266,7 @@ export function AdminCleaningClient() {
                     selectedDayTasks.map((task) => {
                       const isAuditing = auditingTaskId === task.id;
                       const isPast = !isFutureDate(new Date(task.scheduledDate));
+                      const canRemoveAssigned = task.status === "ASSIGNED" && isFutureDate(new Date(task.scheduledDate));
                       const canAudit = task.status === "DONE_PENDING_AUDIT" || (isPast && (task.status === "APPROVED" || task.status === "REJECTED"));
                       const statusColors: Record<string, string> = {
                         ASSIGNED: "bg-sky-100 text-sky-700",
@@ -1089,7 +1331,7 @@ export function AdminCleaningClient() {
                               )}
                             </div>
                             <div className="flex flex-col gap-1 shrink-0">
-                              {task.status === "ASSIGNED" && (
+                              {task.status === "ASSIGNED" && canRemoveAssigned ? (
                                 <button
                                   type="button"
                                   onClick={() => void removeTask(task.id)}
@@ -1098,7 +1340,11 @@ export function AdminCleaningClient() {
                                 >
                                   {t("removeLabel")}
                                 </button>
-                              )}
+                              ) : task.status === "ASSIGNED" && !canRemoveAssigned ? (
+                                <span className="rounded-lg border border-slate-200 bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-500">
+                                  {t("adminCleaningRemovePastBlocked")}
+                                </span>
+                              ) : null}
                               {canAudit && (
                                 <button
                                   type="button"
