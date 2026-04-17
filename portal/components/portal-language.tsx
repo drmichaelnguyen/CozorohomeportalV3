@@ -1693,6 +1693,10 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "Admin and manager share this cleaning scheduler. View each cleaning calendar, inspect existing assignments, and assign future cleaning dates.",
     vi: "Quản trị và quản lý dùng chung bộ lập lịch vệ sinh này. Xem từng lịch, kiểm tra phân công hiện có và giao các ngày dọn dẹp trong tương lai."
   },
+  adminCleaningDateRangeSection: {
+    en: "Date range (from / to)",
+    vi: "Khoảng ngày (từ / đến)"
+  },
   adminCleaningReviewQueueTitle: {
     en: "Audit & missed cleaning",
     vi: "Chờ duyệt & lịch quá hạn"
@@ -1714,14 +1718,23 @@ const translations: Record<string, { en: string; vi: string }> = {
   adminCleaningErrReviewQueue: { en: "Unable to load review list.", vi: "Không tải được danh sách." },
   adminCleaningPendingAuditTitle: { en: "Pending audit", vi: "Chờ duyệt" },
   adminCleaningPendingAuditHint: {
-    en: "Residents marked done — approve or reject in the day panel below.",
-    vi: "Cư dân đã báo xong — duyệt hoặc từ chối ở khung ngày bên dưới."
+    en: "Use Approve / Reject on each row, or open the task on the calendar below for notes.",
+    vi: "Duyệt / Từ chối ngay từng dòng, hoặc mở ngày trên lịch bên dưới để ghi chú."
   },
   adminCleaningOverdueAssignedTitle: { en: "Past deadline, not done", vi: "Quá hạn, chưa hoàn thành" },
   adminCleaningOverdueAssignedHint: {
     en: "Assigned tasks after the completion window plus grace. Issue fine to create the ticket and mark missed.",
     vi: "Phân công đã quá khung giờ và thời gian chờ. Phát phiếu phạt để ghi nhận và đánh dấu bỏ lỡ."
   },
+  adminCleaningOverdueShowingCount: {
+    en: "Showing {visible} of {total} (newest dates first).",
+    vi: "Hiển thị {visible} / {total} (mới nhất trước)."
+  },
+  adminCleaningOverdueLoadMore: {
+    en: "Load {n} more",
+    vi: "Xem thêm {n}"
+  },
+  adminCleaningOverdueShowAll: { en: "Show all", vi: "Xem tất cả" },
   adminCleaningQueueEmpty: { en: "None right now.", vi: "Hiện không có." },
   adminCleaningSuggestedFine: { en: "Suggested fine: {amount} VND", vi: "Mức phạt gợi ý: {amount} VND" },
   adminCleaningFineMayExist: {

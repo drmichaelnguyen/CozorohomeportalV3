@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 const PRIVILEGED_EMAILS = new Set(["cozorohome@gmail.com", "dr.trongto@gmail.com"]);
 const DEFAULT_PRIVILEGED_EMAIL = "cozorohome@gmail.com";
+const OVERDUE_ASSIGNED_PAGE_SIZE = 5;
 
 type AdminTask = {
   id: string;
@@ -262,8 +263,10 @@ export function AdminCleaningClient() {
   const [autoSchedulerConfig, setAutoSchedulerConfig] = useState<AutoSchedulerConfig | null>(null);
   const [autoSchedulerSaving, setAutoSchedulerSaving] = useState(false);
   const [showAutoScheduler, setShowAutoScheduler] = useState(false);
+  const [showDateRange, setShowDateRange] = useState(false);
   const [reviewQueue, setReviewQueue] = useState<CleaningReviewQueuePayload | null>(null);
   const [reviewQueueLoading, setReviewQueueLoading] = useState(false);
+  const [overdueAssignedVisibleCount, setOverdueAssignedVisibleCount] = useState(OVERDUE_ASSIGNED_PAGE_SIZE);
   const selectedCalendar =
     calendars.find((entry) => calendarKey(entry) === selectedCalendarKey) ?? calendars[0] ?? null;
   const selectedSchedulerJob =
@@ -284,6 +287,19 @@ export function AdminCleaningClient() {
     const start = startOfMonthGrid(calendarFocusDate);
     return Array.from({ length: 42 }, (_, index) => addDays(start, index));
   }, [calendarFocusDate]);
+
+  const overdueAssignedSortedNewestFirst = useMemo(() => {
+    if (!reviewQueue?.overdueAssigned.length) {
+      return [];
+    }
+    return [...reviewQueue.overdueAssigned].sort(
+      (a, b) => new Date(b.scheduledDate).getTime() - new Date(a.scheduledDate).getTime()
+    );
+  }, [reviewQueue]);
+
+  useEffect(() => {
+    setOverdueAssignedVisibleCount(OVERDUE_ASSIGNED_PAGE_SIZE);
+  }, [reviewQueue]);
 
   async function readJsonSafely<T>(response: Response) {
     const bodyText = await response.text();
@@ -702,9 +718,15 @@ export function AdminCleaningClient() {
     }
   }
 
-  async function auditTask(taskId: string, decision: "APPROVE" | "REJECT", opts?: { createFine?: boolean; fineAmount?: number }) {
+  async function auditTask(
+    taskId: string,
+    decision: "APPROVE" | "REJECT",
+    opts?: { createFine?: boolean; fineAmount?: number; useEmptyNote?: boolean }
+  ) {
     setLoading(true);
     setMessage("");
+    const notePayload =
+      opts?.useEmptyNote === true ? undefined : auditNote.trim() || undefined;
     try {
       const response = await fetch(`${API_BASE_URL}/admin/cleaning/tasks/${taskId}/audit`, {
         method: "POST",
@@ -712,7 +734,7 @@ export function AdminCleaningClient() {
         body: JSON.stringify({
           reviewer: activeEmail,
           decision,
-          note: auditNote.trim() || undefined,
+          note: notePayload,
           createFine: opts?.createFine ?? false,
           fineAmount: opts?.fineAmount
         })
@@ -727,6 +749,9 @@ export function AdminCleaningClient() {
       setRejectFineDialog(null);
       setRejectFineCreate(false);
       await reloadAll();
+      if (reviewQueue) {
+        await loadReviewQueue();
+      }
       if (decision === "APPROVE") {
         setMessage(t("adminCleaningTaskApprovedCoins"));
       } else {
@@ -823,25 +848,56 @@ export function AdminCleaningClient() {
             Authenticated as <span className="font-medium">{activeEmail}</span>
           </div>
 
-          <label className="block text-sm font-medium text-slate-700">
-            {t("fromLabel")}
-            <input
-              type="date"
-              value={from}
-              onChange={(event) => setFrom(event.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-            />
-          </label>
+          <div className="md:col-span-2">
+            <button
+              type="button"
+              onClick={() => setShowDateRange((v) => !v)}
+              className="flex w-full items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm font-medium text-slate-800 hover:bg-slate-100"
+              aria-expanded={showDateRange}
+            >
+              <span>
+                {t("adminCleaningDateRangeSection")}
+                {from.trim() && to.trim() ? (
+                  <span className="ml-2 font-normal text-slate-500">
+                    ({from} → {to})
+                  </span>
+                ) : null}
+              </span>
+              <svg
+                className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${showDateRange ? "rotate-180" : ""}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+          </div>
 
-          <label className="block text-sm font-medium text-slate-700">
-            {t("toLabel")}
-            <input
-              type="date"
-              value={to}
-              onChange={(event) => setTo(event.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-            />
-          </label>
+          {showDateRange ? (
+            <>
+              <label className="block text-sm font-medium text-slate-700">
+                {t("fromLabel")}
+                <input
+                  type="date"
+                  value={from}
+                  onChange={(event) => setFrom(event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+                />
+              </label>
+
+              <label className="block text-sm font-medium text-slate-700">
+                {t("toLabel")}
+                <input
+                  type="date"
+                  value={to}
+                  onChange={(event) => setTo(event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+                />
+              </label>
+            </>
+          ) : null}
 
           <div className="md:col-span-2 flex flex-wrap gap-3">
             <button
@@ -905,12 +961,41 @@ export function AdminCleaningClient() {
                       key={task.id}
                       className="rounded-xl border border-amber-200 bg-amber-50/40 px-3 py-2 text-sm text-slate-800"
                     >
-                      <div className="font-medium text-slate-900">{task.userName?.trim() || task.userEmail}</div>
-                      <div className="text-xs text-slate-500">
-                        {prettyTaskType(task.type, t)} · {task.bedDisplay ?? task.branchId} ·{" "}
-                        {new Date(task.scheduledDate).toLocaleDateString(dateLocale)}
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="font-medium text-slate-900">{task.userName?.trim() || task.userEmail}</div>
+                          <div className="text-xs text-slate-500">
+                            {prettyTaskType(task.type, t)} · {task.bedDisplay ?? task.branchId} ·{" "}
+                            {new Date(task.scheduledDate).toLocaleDateString(dateLocale)}
+                          </div>
+                          <div className="mt-1 text-xs text-slate-600">{task.userEmail}</div>
+                        </div>
+                        <div className="flex shrink-0 flex-wrap gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => void auditTask(task.id, "APPROVE", { useEmptyNote: true })}
+                            disabled={loading}
+                            className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                          >
+                            {t("approveLabel")}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAuditNote("");
+                              setRejectFineDialog({
+                                taskId: task.id,
+                                userEmail: task.userEmail,
+                                scheduledDate: task.scheduledDate
+                              });
+                            }}
+                            disabled={loading}
+                            className="rounded-lg bg-rose-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+                          >
+                            {t("rejectLabel")}
+                          </button>
+                        </div>
                       </div>
-                      <div className="mt-1 text-xs text-slate-600">{task.userEmail}</div>
                     </li>
                   ))
                 )}
@@ -919,11 +1004,23 @@ export function AdminCleaningClient() {
             <div>
               <h3 className="text-sm font-semibold text-rose-900">{t("adminCleaningOverdueAssignedTitle")}</h3>
               <p className="mt-1 text-xs text-slate-500">{t("adminCleaningOverdueAssignedHint")}</p>
+              {overdueAssignedSortedNewestFirst.length > 0 ? (
+                <p className="mt-2 text-xs text-slate-500">
+                  {t("adminCleaningOverdueShowingCount", undefined, {
+                    visible: String(
+                      Math.min(overdueAssignedVisibleCount, overdueAssignedSortedNewestFirst.length)
+                    ),
+                    total: String(overdueAssignedSortedNewestFirst.length)
+                  })}
+                </p>
+              ) : null}
               <ul className="mt-3 space-y-2">
-                {reviewQueue.overdueAssigned.length === 0 ? (
+                {overdueAssignedSortedNewestFirst.length === 0 ? (
                   <li className="text-sm text-slate-600">{t("adminCleaningQueueEmpty")}</li>
                 ) : (
-                  reviewQueue.overdueAssigned.map((task) => (
+                  overdueAssignedSortedNewestFirst
+                    .slice(0, overdueAssignedVisibleCount)
+                    .map((task) => (
                     <li
                       key={task.id}
                       className="rounded-xl border border-rose-200 bg-rose-50/40 px-3 py-2 text-sm text-slate-800"
@@ -954,8 +1051,33 @@ export function AdminCleaningClient() {
                       </div>
                     </li>
                   ))
+                )
                 )}
               </ul>
+              {overdueAssignedSortedNewestFirst.length > overdueAssignedVisibleCount ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setOverdueAssignedVisibleCount((c) => c + OVERDUE_ASSIGNED_PAGE_SIZE)
+                    }
+                    disabled={loading}
+                    className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-900 hover:bg-rose-100 disabled:opacity-50"
+                  >
+                    {t("adminCleaningOverdueLoadMore", undefined, {
+                      n: String(OVERDUE_ASSIGNED_PAGE_SIZE)
+                    })}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOverdueAssignedVisibleCount(overdueAssignedSortedNewestFirst.length)}
+                    disabled={loading}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {t("adminCleaningOverdueShowAll")}
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
         ) : (
