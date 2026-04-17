@@ -1018,40 +1018,39 @@ export function AdminCleaningClient() {
                 {overdueAssignedSortedNewestFirst.length === 0 ? (
                   <li className="text-sm text-slate-600">{t("adminCleaningQueueEmpty")}</li>
                 ) : (
-                  overdueAssignedSortedNewestFirst
-                    .slice(0, overdueAssignedVisibleCount)
-                    .map((task) => (
-                    <li
-                      key={task.id}
-                      className="rounded-xl border border-rose-200 bg-rose-50/40 px-3 py-2 text-sm text-slate-800"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div>
-                          <div className="font-medium text-slate-900">{task.userName?.trim() || task.userEmail}</div>
-                          <div className="text-xs text-slate-500">
-                            {prettyTaskType(task.type, t)} · {task.bedDisplay ?? task.branchId} ·{" "}
-                            {new Date(task.scheduledDate).toLocaleDateString(dateLocale)}
+                  <>
+                    {overdueAssignedSortedNewestFirst.slice(0, overdueAssignedVisibleCount).map((task) => (
+                      <li
+                        key={task.id}
+                        className="rounded-xl border border-rose-200 bg-rose-50/40 px-3 py-2 text-sm text-slate-800"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <div className="font-medium text-slate-900">{task.userName?.trim() || task.userEmail}</div>
+                            <div className="text-xs text-slate-500">
+                              {prettyTaskType(task.type, t)} · {task.bedDisplay ?? task.branchId} ·{" "}
+                              {new Date(task.scheduledDate).toLocaleDateString(dateLocale)}
+                            </div>
+                            <div className="mt-1 text-xs text-slate-600">{task.userEmail}</div>
+                            <div className="mt-1 text-xs text-rose-800">
+                              {t("adminCleaningSuggestedFine", undefined, {
+                                amount: task.suggestedFineAmount.toLocaleString(dateLocale)
+                              })}
+                              {task.hasAutomaticFine ? ` · ${t("adminCleaningFineMayExist")}` : null}
+                            </div>
                           </div>
-                          <div className="mt-1 text-xs text-slate-600">{task.userEmail}</div>
-                          <div className="mt-1 text-xs text-rose-800">
-                            {t("adminCleaningSuggestedFine", undefined, {
-                              amount: task.suggestedFineAmount.toLocaleString(dateLocale)
-                            })}
-                            {task.hasAutomaticFine ? ` · ${t("adminCleaningFineMayExist")}` : null}
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void issueMissedCleaningFine(task.id)}
+                            disabled={loading}
+                            className="shrink-0 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+                          >
+                            {t("adminCleaningIssueMissedFine")}
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => void issueMissedCleaningFine(task.id)}
-                          disabled={loading}
-                          className="shrink-0 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
-                        >
-                          {t("adminCleaningIssueMissedFine")}
-                        </button>
-                      </div>
-                    </li>
-                  ))
-                )
+                      </li>
+                    ))}
+                  </>
                 )}
               </ul>
               {overdueAssignedSortedNewestFirst.length > overdueAssignedVisibleCount ? (
