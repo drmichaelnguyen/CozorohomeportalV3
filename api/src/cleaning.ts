@@ -2358,6 +2358,10 @@ export async function adminRemoveCleaningTask(taskId: string) {
     throw new Error("Cleaning task not found");
   }
 
+  if (!canReleaseCalendarDate(task.scheduledDate)) {
+    throw new Error("Cleaning tasks cannot be removed after the scheduled date has passed.");
+  }
+
   if (task.calendarId && task.calendarEventId) {
     try {
       await deleteCleaningCalendarEvent({
@@ -2555,6 +2559,204 @@ export async function auditCleaningTask(input: {
   return updatedTask;
 }
 
+function getMissedCleaningFineThresholdDate(task: CleaningTaskRecord) {
+  const completionWindow = getCompletionWindow(task);
+  return new Date(completionWindow.windowEnd.getTime() + 12 * 60 * 60 * 1000);
+}
+
+function isAssignedTaskPastMissedFineDeadline(task: CleaningTaskRecord, now: Date) {
+  if (task.status !== CleaningTaskStatus.ASSIGNED) {
+    return false;
+  }
+  return getMissedCleaningFineThresholdDate(task).getTime() <= now.getTime();
+}
+
+async function markAssignedTaskMissedWithFine(
+  currentTask: CleaningTaskRecord,
+  knownFines: Awaited<ReturnType<typeof getManagerFines>>,
+  now: Date,
+  operatorLabel: string
+) {
+  const existingFine = knownFines.find((entry) => isAutomaticCleaningFineForTask(entry.row, currentTask.id));
+  const fineAmount = existingFine
+    ? parseFineAmount(existingFine.row[FINE_AMOUNT_COLUMN])
+    : await getMissedCleaningFineAmount(currentTask, knownFines);
+  const fineContent = getAutomaticCleaningFineContent(currentTask.type);
+  const fineDescription = getAutomaticCleaningFineDescription(currentTask, now);
+
+  if (!existingFine) {
+    await createAutomaticFineForEmail({
+      email: currentTask.userEmail,
+      amount: fineAmount,
+      content: fineContent,
+      description: fineDescription,
+      location:
+        currentTask.type === CleaningTaskType.TRASH_D7 && currentTask.floor
+          ? `${currentTask.branchId} floor ${currentTask.floor}`
+          : currentTask.branchId,
+      operator: operatorLabel
+    });
+
+    knownFines.push({
+      row: {
+        EMAIL: currentTask.userEmail,
+        [FINE_TIMESTAMP_COLUMN]: now.toISOString(),
+        [FINE_CONTENT_COLUMN]: fineContent,
+        [FINE_DESCRIPTION_COLUMN]: fineDescription,
+        [FINE_AMOUNT_COLUMN]: String(fineAmount)
+      },
+      parsedTimestamp: now.toISOString(),
+      parsedDueDate: null,
+      coinPayment: {
+        coinCost: 0,
+        currentCoins: 0,
+        canPay: false,
+        recordedMember: "",
+        multiplier: 1,
+        isPaid: false
+      }
+    });
+  }
+
+  const missedTask = await updateCleaningTask({
+    where: { id: currentTask.id },
+    data: {
+      status: CleaningTaskStatus.MISSED,
+      auditorNote: `${operatorLabel === AUTO_CLEANING_FINE_OPERATOR ? "Auto-marked" : "Marked"} as missed on ${now.toISOString()}. Fine amount: ${fineAmount} VND.`
+    }
+  });
+
+  if (missedTask.calendarId && missedTask.calendarEventId) {
+    const target = getCleaningCalendarTarget(missedTask.type, { floor: missedTask.floor });
+    if (target) {
+      await updateCleaningCalendarEvent({
+        calendarId: missedTask.calendarId,
+        eventId: missedTask.calendarEventId,
+        title: target.title,
+        scheduledDate: missedTask.scheduledDate,
+        userEmail: missedTask.userEmail,
+        userName: missedTask.userName,
+        branchId: missedTask.branchId,
+        floor: missedTask.floor,
+        rewardCoins: missedTask.rewardCoins,
+        type: missedTask.type,
+        status: missedTask.status,
+        completedAt: missedTask.completedAt,
+        completionNote: missedTask.completionNote,
+        completionPhoto: missedTask.completionPhoto,
+        auditorNote: missedTask.auditorNote
+      });
+    }
+  }
+
+  await invalidateCleaningOverviewCache(missedTask.userEmail);
+  return { missedTask, fineAmount };
+}
+
+export async function adminMarkMissedCleaningTaskFine(taskId: string, operatorEmail: string) {
+  const now = new Date();
+  const task = await findUniqueCleaningTask({ where: { id: taskId } });
+  if (!task) {
+    throw new Error("Cleaning task not found");
+  }
+  if (task.status !== CleaningTaskStatus.ASSIGNED) {
+    throw new Error("Only assigned tasks can be marked missed with a fine.");
+  }
+  if (!isAssignedTaskPastMissedFineDeadline(task, now)) {
+    throw new Error("This task is not past the completion deadline yet.");
+  }
+
+  const knownFines = await getManagerFines();
+  const operator = operatorEmail.trim() || AUTO_CLEANING_FINE_OPERATOR;
+  const { missedTask, fineAmount } = await markAssignedTaskMissedWithFine(task, knownFines, now, operator);
+
+  return {
+    taskId: missedTask.id,
+    userEmail: missedTask.userEmail,
+    fineAmount,
+    task: missedTask
+  };
+}
+
+export async function getCleaningManagerReviewQueue(now = new Date()) {
+  const activeUsers = await getActiveCleaningUsers();
+  const bedLineByEmail = new Map(
+    activeUsers.map((user) => [user.email.trim().toLowerCase(), formatCleaningUserBedLine(user)])
+  );
+
+  const knownFines = await getManagerFines();
+
+  const [pendingAuditTasks, assignedTasks] = await Promise.all([
+    findManyCleaningTasks({
+      where: { status: CleaningTaskStatus.DONE_PENDING_AUDIT },
+      orderBy: { scheduledDate: "asc" }
+    }),
+    findManyCleaningTasks({
+      where: { status: CleaningTaskStatus.ASSIGNED },
+      orderBy: { scheduledDate: "asc" }
+    })
+  ]);
+
+  const pendingAudit = pendingAuditTasks.map((task) => ({
+    id: task.id,
+    userEmail: task.userEmail,
+    userName: task.userName,
+    bedDisplay: bedLineByEmail.get(task.userEmail.trim().toLowerCase()) ?? null,
+    branchId: task.branchId,
+    floor: task.floor,
+    type: task.type,
+    scheduledDate: task.scheduledDate,
+    status: task.status,
+    rewardCoins: task.rewardCoins,
+    completedAt: task.completedAt,
+    completionNote: task.completionNote,
+    completionPhoto: task.completionPhoto
+  }));
+
+  const overdueAssigned: Array<{
+    id: string;
+    userEmail: string;
+    userName: string | null;
+    bedDisplay: string | null;
+    branchId: string;
+    floor: number | null;
+    type: CleaningTaskType;
+    scheduledDate: Date;
+    status: CleaningTaskStatus;
+    rewardCoins: number;
+    hasAutomaticFine: boolean;
+    suggestedFineAmount: number;
+    missedFineDeadlineAt: string;
+  }> = [];
+
+  for (const task of assignedTasks) {
+    if (!isAssignedTaskPastMissedFineDeadline(task, now)) {
+      continue;
+    }
+    const existingFine = knownFines.find((entry) => isAutomaticCleaningFineForTask(entry.row, task.id));
+    const suggestedFineAmount = existingFine
+      ? parseFineAmount(existingFine.row[FINE_AMOUNT_COLUMN])
+      : await getMissedCleaningFineAmount(task, knownFines);
+    overdueAssigned.push({
+      id: task.id,
+      userEmail: task.userEmail,
+      userName: task.userName,
+      bedDisplay: bedLineByEmail.get(task.userEmail.trim().toLowerCase()) ?? null,
+      branchId: task.branchId,
+      floor: task.floor,
+      type: task.type,
+      scheduledDate: task.scheduledDate,
+      status: task.status,
+      rewardCoins: task.rewardCoins,
+      hasAutomaticFine: Boolean(existingFine),
+      suggestedFineAmount,
+      missedFineDeadlineAt: getMissedCleaningFineThresholdDate(task).toISOString()
+    });
+  }
+
+  return { pendingAudit, overdueAssigned };
+}
+
 export async function sweepOverdueCleaningTasks(now = new Date()) {
   const overdueTasks = await findManyCleaningTasks({
     where: {
@@ -2573,8 +2775,7 @@ export async function sweepOverdueCleaningTasks(now = new Date()) {
   const knownFines = await getManagerFines();
 
   for (const task of overdueTasks) {
-    const completionWindow = getCompletionWindow(task);
-    const fineThreshold = new Date(completionWindow.windowEnd.getTime() + 12 * 60 * 60 * 1000);
+    const fineThreshold = getMissedCleaningFineThresholdDate(task);
     if (fineThreshold > now) {
       continue;
     }
@@ -2587,79 +2788,13 @@ export async function sweepOverdueCleaningTasks(now = new Date()) {
       continue;
     }
 
-    const existingFine = knownFines.find((entry) => isAutomaticCleaningFineForTask(entry.row, currentTask.id));
-    const fineAmount = existingFine
-      ? parseFineAmount(existingFine.row[FINE_AMOUNT_COLUMN])
-      : await getMissedCleaningFineAmount(currentTask, knownFines);
-    const fineContent = getAutomaticCleaningFineContent(currentTask.type);
-    const fineDescription = getAutomaticCleaningFineDescription(currentTask, now);
+    const { missedTask, fineAmount } = await markAssignedTaskMissedWithFine(
+      currentTask,
+      knownFines,
+      now,
+      AUTO_CLEANING_FINE_OPERATOR
+    );
 
-    if (!existingFine) {
-      await createAutomaticFineForEmail({
-        email: currentTask.userEmail,
-        amount: fineAmount,
-        content: fineContent,
-        description: fineDescription,
-        location:
-          currentTask.type === CleaningTaskType.TRASH_D7 && currentTask.floor
-            ? `${currentTask.branchId} floor ${currentTask.floor}`
-            : currentTask.branchId,
-        operator: AUTO_CLEANING_FINE_OPERATOR
-      });
-
-      knownFines.push({
-        row: {
-          EMAIL: currentTask.userEmail,
-          [FINE_TIMESTAMP_COLUMN]: now.toISOString(),
-          [FINE_CONTENT_COLUMN]: fineContent,
-          [FINE_DESCRIPTION_COLUMN]: fineDescription,
-          [FINE_AMOUNT_COLUMN]: String(fineAmount)
-        },
-        parsedTimestamp: now.toISOString(),
-        parsedDueDate: null,
-        coinPayment: {
-          coinCost: 0,
-          currentCoins: 0,
-          canPay: false,
-          recordedMember: "",
-          multiplier: 1,
-          isPaid: false
-        }
-      });
-    }
-
-    const missedTask = await updateCleaningTask({
-      where: { id: currentTask.id },
-      data: {
-        status: CleaningTaskStatus.MISSED,
-        auditorNote: `Auto-marked as missed on ${now.toISOString()}. Fine amount: ${fineAmount} VND.`
-      }
-    });
-
-    if (missedTask.calendarId && missedTask.calendarEventId) {
-      const target = getCleaningCalendarTarget(missedTask.type, { floor: missedTask.floor });
-      if (target) {
-        await updateCleaningCalendarEvent({
-          calendarId: missedTask.calendarId,
-          eventId: missedTask.calendarEventId,
-          title: target.title,
-          scheduledDate: missedTask.scheduledDate,
-          userEmail: missedTask.userEmail,
-          userName: missedTask.userName,
-          branchId: missedTask.branchId,
-          floor: missedTask.floor,
-          rewardCoins: missedTask.rewardCoins,
-          type: missedTask.type,
-          status: missedTask.status,
-          completedAt: missedTask.completedAt,
-          completionNote: missedTask.completionNote,
-          completionPhoto: missedTask.completionPhoto,
-          auditorNote: missedTask.auditorNote
-        });
-      }
-    }
-
-    await invalidateCleaningOverviewCache(missedTask.userEmail);
     results.push({
       taskId: missedTask.id,
       userEmail: missedTask.userEmail,

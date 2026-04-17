@@ -22,6 +22,8 @@ export type CleaningAutoSchedulerJobConfig = {
 
 export type CleaningAutoSchedulerConfig = {
   enabled: boolean;
+  /** When true (default), background API sweeps create missed-task fines after the deadline. Manual sweep always applies. */
+  autoMissedCleaningFines: boolean;
   updatedAt: string;
   updatedBy: string;
   jobs: CleaningAutoSchedulerJobConfig[];
@@ -29,6 +31,7 @@ export type CleaningAutoSchedulerConfig = {
 
 type StoredCleaningAutoSchedulerConfig = {
   enabled?: boolean;
+  autoMissedCleaningFines?: boolean;
   updatedAt?: string;
   updatedBy?: string;
   // Legacy flat format (pre-jobs-array): top-level fillUnassignedDates and horizonDays
@@ -78,6 +81,7 @@ async function readConfig(): Promise<CleaningAutoSchedulerConfig> {
 
     return {
       enabled: typeof parsed.enabled === "boolean" ? parsed.enabled : DEFAULT_ENABLED,
+      autoMissedCleaningFines: typeof parsed.autoMissedCleaningFines === "boolean" ? parsed.autoMissedCleaningFines : true,
       updatedAt: parsed.updatedAt ?? new Date(0).toISOString(),
       updatedBy: parsed.updatedBy ?? "system",
       jobs: defaultJobs.map((job) => {
@@ -98,6 +102,7 @@ async function readConfig(): Promise<CleaningAutoSchedulerConfig> {
   } catch {
     return {
       enabled: DEFAULT_ENABLED,
+      autoMissedCleaningFines: true,
       updatedAt: new Date(0).toISOString(),
       updatedBy: "system",
       jobs: defaultJobs
@@ -118,6 +123,7 @@ export async function updateCleaningAutoSchedulerConfig(
   actorEmail: string,
   patch: {
     enabled: boolean;
+    autoMissedCleaningFines?: boolean;
     jobs: Array<Pick<CleaningAutoSchedulerJobConfig, "key" | "enabled" | "fillUnassignedDates" | "horizonDays">>;
   }
 ) {
@@ -133,7 +139,10 @@ export async function updateCleaningAutoSchedulerConfig(
   const normalizedActorEmail = actorEmail.trim().toLowerCase();
 
   const next: CleaningAutoSchedulerConfig = {
+    ...current,
     enabled: patch.enabled,
+    autoMissedCleaningFines:
+      typeof patch.autoMissedCleaningFines === "boolean" ? patch.autoMissedCleaningFines : current.autoMissedCleaningFines,
     updatedAt: now,
     updatedBy: normalizedActorEmail,
     jobs: current.jobs.map((job) => {
