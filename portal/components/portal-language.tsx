@@ -294,7 +294,7 @@ const translations: Record<string, { en: string; vi: string }> = {
   userView: { en: "User view", vi: "Giao diện người dùng" },
   managerView: { en: "Manager view", vi: "Giao diện quản lý" },
   signedInAs: { en: "Signed in as", vi: "Đăng nhập với" },
-  logout: { en: "Log out", vi: "Đăng xuất" },
+  logout: { en: "Log out", vi: "Xuất ra ngoài" },
   loginRequired: { en: "Login Required", vi: "Yêu cầu đăng nhập" },
   loginRequiredSub: { en: "Please sign in with an active Cozoronian email or a pre-approved Cozoro team email before using the portal.", vi: "Vui lòng đăng nhập bằng email Khách hàng đang hoạt động hoặc email được nhóm Cozoro phê duyệt trước khi sử dụng cổng thông tin." },
   goToLogin: { en: "Go to login", vi: "Đi đến trang đăng nhập" },
