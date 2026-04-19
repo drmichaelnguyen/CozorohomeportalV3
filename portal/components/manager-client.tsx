@@ -157,6 +157,14 @@ type FeedbackEntry = {
   createdAt: string;
 };
 
+type FineAttachment = {
+  url: string;
+  downloadUrl: string;
+  fileName: string;
+  mimeType: string;
+  evidenceKind: "image" | "video";
+};
+
 type PricingSettingsSectionKey =
   | "parking_tiers"
   | "branch_fees"
@@ -921,6 +929,14 @@ function readFileAsDataUrl(file: File) {
   });
 }
 
+function getDriveFileIdFromUrl(url: string) {
+  return (
+    url.match(/\/file\/d\/([^/]+)/)?.[1] ??
+    url.match(/[?&]id=([^&]+)/)?.[1] ??
+    null
+  );
+}
+
 function chatRoleLabel(role: ClientChatMessage["senderRole"]) {
   if (role === "OWNER") {
     return "Owner";
@@ -1105,10 +1121,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [fineLocation, setFineLocation] = useState("");
   const [fineDueDate, setFineDueDate] = useState("");
   const [fineEventAt, setFineEventAt] = useState("");
-  const [fineImage, setFineImage] = useState("");
-  const [fineImageUploading, setFineImageUploading] = useState(false);
-  const [fineImageFileName, setFineImageFileName] = useState("");
-  const [fineEvidenceKind, setFineEvidenceKind] = useState<"" | "image" | "video">("");
+  const [fineAttachments, setFineAttachments] = useState<FineAttachment[]>([]);
+  const [fineAttachmentUploading, setFineAttachmentUploading] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState("1000000");
   const [paymentPurpose, setPaymentPurpose] = useState("");
   const [paymentPurposeInput, setPaymentPurposeInput] = useState("");
@@ -2670,9 +2684,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
   useEffect(() => {
     setActiveAction("");
-    setFineImage("");
-    setFineImageFileName("");
-    setFineEvidenceKind("");
+    setFineAttachments([]);
     setPaymentPurpose("");
     setPaymentPurposeInput("");
     setPaymentPurposeSelections([]);
@@ -3114,7 +3126,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     return () => clearInterval(interval);
   }, [fetchUnreadCounts, loadMaintenanceTickets]);
 
-  async function uploadFineImage(file: File) {
+  async function uploadFineAttachment(file: File) {
     if (!selectedClient || !normalizedEmail) {
       return;
     }
@@ -3141,9 +3153,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }
 
     const evidenceKind: "image" | "video" = mime.startsWith("video/") ? "video" : "image";
-    setFineEvidenceKind(evidenceKind);
 
-    setFineImageUploading(true);
+    setFineAttachmentUploading(true);
     setStatus("");
     try {
       const dataUrl = await readFileAsDataUrl(file);
@@ -3163,19 +3174,29 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           dataBase64: base64Data
         })
       });
-      const data = (await response.json()) as { url?: string; fileName?: string; error?: string };
-      if (!response.ok || !data.url) {
+      const data = (await response.json()) as { url?: string; downloadUrl?: string; fileName?: string; mimeType?: string; fileId?: string; error?: string };
+      const uploadedUrl = data.url?.trim();
+      if (!response.ok || !uploadedUrl) {
         setStatus(data.error ?? t("unableToUploadFineImage"));
         return;
       }
+      const uploadedDownloadUrl = data.downloadUrl?.trim() || uploadedUrl;
 
-      setFineImage(data.url);
-      setFineImageFileName(data.fileName ?? file.name);
+      setFineAttachments((current) => [
+        ...current,
+        {
+          url: uploadedUrl,
+          downloadUrl: uploadedDownloadUrl,
+          fileName: data.fileName ?? file.name,
+          mimeType: data.mimeType ?? mime,
+          evidenceKind
+        }
+      ]);
       setStatus(t("fineImageUploaded"));
     } catch {
       setStatus(t("unableToUploadFineImage"));
     } finally {
-      setFineImageUploading(false);
+      setFineAttachmentUploading(false);
     }
   }
 
@@ -6264,63 +6285,94 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       <input
                         type="file"
                         accept="image/*,video/*"
-                        disabled={fineImageUploading || loading || !selectedClient}
-                        onChange={(event) => {
-                          const file = event.target.files?.[0];
-                          if (file) {
-                            void uploadFineImage(file);
-                          }
+                        multiple
+                        disabled={fineAttachmentUploading || loading || !selectedClient}
+                        onChange={async (event) => {
+                          const files = Array.from(event.target.files ?? []);
                           event.currentTarget.value = "";
+                          if (!files.length) {
+                            return;
+                          }
+
+                          setFineAttachmentUploading(true);
+                          setStatus("");
+                          try {
+                            for (const file of files) {
+                              await uploadFineAttachment(file);
+                            }
+                            setStatus(t("fineImageUploaded"));
+                          } catch {
+                            setStatus(t("unableToUploadFineImage"));
+                          } finally {
+                            setFineAttachmentUploading(false);
+                          }
                         }}
                         className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-900 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white"
                       />
-                      {fineImageUploading ? <p className="text-sm text-slate-600">{fineUiText.uploading}</p> : null}
-                      {fineImage ? (
-                        <div className="space-y-2 rounded-2xl border border-emerald-200 bg-white p-3">
+                      {fineAttachmentUploading ? <p className="text-sm text-slate-600">{fineUiText.uploading}</p> : null}
+                      {fineAttachments.length > 0 ? (
+                        <div className="space-y-3 rounded-2xl border border-emerald-200 bg-white p-3">
                           <p className="text-sm text-emerald-700">{fineUiText.uploaded}</p>
-                          {fineImageFileName ? <p className="text-xs text-slate-500">{fineImageFileName}</p> : null}
-                          <a href={fineImage} target="_blank" rel="noreferrer" className="text-sm font-medium text-sky-700 underline">
-                            {fineImage}
-                          </a>
-                          {(() => {
-                            const driveId = fineImage.match(/\/file\/d\/([^/]+)/)?.[1];
-                            if (driveId) {
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            {fineAttachments.map((attachment, index) => {
+                              const driveId = getDriveFileIdFromUrl(attachment.downloadUrl || attachment.url);
                               return (
-                                <div className="mt-2 aspect-video w-full max-w-lg overflow-hidden rounded-lg border border-slate-200 bg-black">
-                                  <iframe
-                                    title={fineLabels.image}
-                                    src={`https://drive.google.com/file/d/${driveId}/preview`}
-                                    className="h-full w-full"
-                                    allowFullScreen
-                                  />
+                                <div key={`${attachment.url}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <p className="truncate text-xs font-semibold text-slate-800">{attachment.fileName}</p>
+                                      <p className="text-[11px] text-slate-500">{attachment.evidenceKind.toUpperCase()}</p>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setFineAttachments((current) => current.filter((item) => item.url !== attachment.url || item.fileName !== attachment.fileName))
+                                      }
+                                      className="rounded-full border border-slate-300 px-2 py-0.5 text-[10px] font-medium text-slate-700"
+                                    >
+                                      {t("removeLabel")}
+                                    </button>
+                                  </div>
+                                  <a href={attachment.url} target="_blank" rel="noreferrer" className="mt-2 block truncate text-xs font-medium text-sky-700 underline">
+                                    {attachment.url}
+                                  </a>
+                                  {driveId ? (
+                                    <div className="mt-2 aspect-video w-full overflow-hidden rounded-lg border border-slate-200 bg-black">
+                                      <iframe
+                                        title={attachment.fileName}
+                                        src={`https://drive.google.com/file/d/${driveId}/preview`}
+                                        className="h-full w-full"
+                                        allowFullScreen
+                                      />
+                                    </div>
+                                  ) : attachment.evidenceKind === "video" ? (
+                                    <video src={attachment.url} controls className="mt-2 max-h-56 w-full rounded-lg bg-black" />
+                                  ) : (
+                                    <img src={attachment.url} alt="" className="mt-2 max-h-56 w-full rounded-lg object-contain" />
+                                  )}
                                 </div>
                               );
-                            }
-                            if (fineEvidenceKind === "video") {
-                              return (
-                                <video src={fineImage} controls className="mt-2 max-h-56 w-full rounded-lg bg-black" />
-                              );
-                            }
-                            if (fineEvidenceKind === "image") {
-                              return <img src={fineImage} alt="" className="mt-2 max-h-56 rounded-lg object-contain" />;
-                            }
-                            return null;
-                          })()}
-                          <div>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setFineImage("");
-                                setFineImageFileName("");
-                                setFineEvidenceKind("");
-                              }}
-                              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
-                            >
-                              {fineUiText.removeImage}
-                            </button>
+                            })}
                           </div>
                         </div>
                       ) : null}
+                    </div>
+                    <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-sky-900">Fine ticket preview</p>
+                        <span className="text-xs font-medium text-sky-700">{fineAttachments.length} attachment(s)</span>
+                      </div>
+                      <div className="grid gap-2 text-sm text-slate-700 sm:grid-cols-2">
+                        <div><span className="font-medium">Content:</span> {fineContent || "-"}</div>
+                        <div><span className="font-medium">Amount:</span> {Number(fineAmount || 0).toLocaleString()} VND</div>
+                        <div><span className="font-medium">Location:</span> {fineLocation || "-"}</div>
+                        <div><span className="font-medium">Due date:</span> {fineDueDate || "-"}</div>
+                      </div>
+                      <div className="rounded-xl border border-sky-200 bg-white p-3 text-sm text-slate-700">
+                        <p className="font-medium text-slate-900">{selectedClient?.name || selectedClient?.email || "-"}</p>
+                        <p className="mt-1 text-xs text-slate-500">{selectedClient?.email || "-"}</p>
+                        {fineDescription ? <p className="mt-2 text-sm text-slate-600 whitespace-pre-wrap">{fineDescription}</p> : null}
+                      </div>
                     </div>
                     <label className="block text-sm font-medium text-slate-700">
                       {fineLabels.amount}
@@ -6339,7 +6391,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             location: fineLocation,
                             dueDate: fineDueDate || undefined,
                             eventAt: fineEventAt.trim() || undefined,
-                            image: fineImage,
+                            image: fineAttachments[0]?.url,
+                            attachments: fineAttachments.map((attachment) => ({
+                              url: attachment.url,
+                              downloadUrl: attachment.downloadUrl,
+                              fileName: attachment.fileName,
+                              mimeType: attachment.mimeType
+                            })),
                             operator: normalizedEmail
                           },
                           t("fineTicketCreated"),
@@ -6350,13 +6408,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             setFineLocation("");
                             setFineDueDate("");
                             setFineEventAt("");
-                            setFineImage("");
-                            setFineImageFileName("");
-                            setFineEvidenceKind("");
+                            setFineAttachments([]);
                           }
                         )
                       }
-                      disabled={loading || fineImageUploading || !selectedClient || !fineContent.trim()}
+                      disabled={loading || fineAttachmentUploading || !selectedClient || !fineContent.trim()}
                       className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
                     >
                       {fineLabels.submit}

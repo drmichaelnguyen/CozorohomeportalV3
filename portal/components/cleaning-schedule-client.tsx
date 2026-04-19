@@ -67,6 +67,24 @@ function prettyTaskType(type: CleaningTask["type"]) {
   return "Trash D7";
 }
 
+const DISMISSED_OVERDUE_TASK_NOTE_PREFIX = "[Dismissed overdue task]";
+
+function isDismissedOverdueTask(note?: string | null) {
+  return Boolean(note?.startsWith(DISMISSED_OVERDUE_TASK_NOTE_PREFIX));
+}
+
+function formatDismissedOverdueTaskNote(note?: string | null) {
+  if (!note) {
+    return "";
+  }
+
+  if (!note.startsWith(DISMISSED_OVERDUE_TASK_NOTE_PREFIX)) {
+    return note;
+  }
+
+  return note.slice(DISMISSED_OVERDUE_TASK_NOTE_PREFIX.length).trimStart();
+}
+
 function startOfDay(date: Date) {
   const next = new Date(date);
   next.setHours(0, 0, 0, 0);
@@ -1042,6 +1060,8 @@ export function CleaningScheduleClient() {
                     const releaseLimit = overview.monthlyReleaseLimit ?? 3;
                     const atMonthlyLimit = !releasePenalty.isSelfAssignedFree && releasesUsed >= releaseLimit;
                     const canRelease = releasePenalty.canRelease && !atMonthlyLimit;
+                    const isDismissed = task.status === "REJECTED" && isDismissedOverdueTask(task.auditorNote);
+                    const auditorNote = formatDismissedOverdueTaskNote(task.auditorNote);
                     return (
                       <div key={task.id} className="space-y-2">
                         <div className="flex items-center justify-between px-1 flex-wrap gap-1">
@@ -1067,7 +1087,7 @@ export function CleaningScheduleClient() {
                             )}
                           </div>
                           {task.status === "REJECTED" ? (
-                            <span className="text-xs font-semibold text-rose-500 line-through">+{task.rewardCoins.toLocaleString()} coins</span>
+                            <span className={`text-xs font-semibold ${isDismissed ? "text-slate-500 line-through" : "text-rose-500 line-through"}`}>+{task.rewardCoins.toLocaleString()} coins</span>
                           ) : task.status === "APPROVED" ? (
                             <span className="text-xs font-semibold text-emerald-600">+{task.rewardCoins.toLocaleString()} coins ✓</span>
                           ) : task.status === "DONE_PENDING_AUDIT" ? (
@@ -1078,10 +1098,12 @@ export function CleaningScheduleClient() {
                             <span className="text-xs text-slate-500">+{task.rewardCoins.toLocaleString()} coins</span>
                           )}
                         </div>
-                        {task.status === "REJECTED" && task.auditorNote && (
-                          <div className="rounded-lg bg-rose-50 border border-rose-100 px-3 py-2">
-                            <p className="text-xs font-semibold text-rose-700">Not approved</p>
-                            <p className="text-xs text-rose-600 mt-0.5">{task.auditorNote}</p>
+                        {task.status === "REJECTED" && auditorNote && (
+                          <div className={`rounded-lg border px-3 py-2 ${isDismissed ? "bg-slate-50 border-slate-200" : "bg-rose-50 border-rose-100"}`}>
+                            <p className={`text-xs font-semibold ${isDismissed ? "text-slate-700" : "text-rose-700"}`}>
+                              {isDismissed ? t("taskDismissed") : t("notApproved")}
+                            </p>
+                            <p className={`text-xs mt-0.5 ${isDismissed ? "text-slate-600" : "text-rose-600"}`}>{auditorNote}</p>
                           </div>
                         )}
                         {task.status === "APPROVED" && (

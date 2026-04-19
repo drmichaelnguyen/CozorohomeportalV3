@@ -69,6 +69,7 @@ import type { PrepaidBreakdownOverrides } from "./prepaid-breakdown-overrides.js
 import { 
   createAutomaticFineForEmail,
   sendGmailReceipt,
+  sendFineTicketEmail,
   syncClientsFromSheet,
   submitPublicRegistration,
   anyClientRowExistsForEmail,
@@ -161,6 +162,7 @@ import {
 import {
   adminAssignCleaningTask,
   adminAutoAssignCleaningSlots,
+  adminDismissMissedCleaningTask,
   adminRemoveCleaningTask,
   adminMarkMissedCleaningTaskFine,
   auditCleaningTask,
@@ -778,6 +780,14 @@ const managerFineCreateSchema = z.object({
   /** When the violation occurred (ISO or datetime-local); stored in fine sheet timestamp column */
   eventAt: z.string().optional(),
   image: z.string().trim().optional(),
+  attachments: z.array(
+    z.object({
+      url: z.string().trim().min(1),
+      fileName: z.string().trim().min(1),
+      mimeType: z.string().trim().min(1),
+      downloadUrl: z.string().trim().optional()
+    })
+  ).optional(),
   operator: z.string().trim().min(1)
 });
 const fineImageUploadSchema = z
@@ -1033,6 +1043,10 @@ const adminCleaningReviewQueueQuerySchema = z.object({
 });
 
 const adminCleaningMissedFineBodySchema = z.object({
+  actorEmail: z.string().email()
+});
+
+const adminCleaningDismissBodySchema = z.object({
   actorEmail: z.string().email()
 });
 
@@ -3357,7 +3371,31 @@ app.post("/manager/fines", async (request, response) => {
       duplicateMessage: "This fine creation request was just submitted. Please wait a few seconds.",
       action: () => managerCreateFine(parsed.data)
     });
-    return response.status(201).json(result);
+    let emailSent = false;
+    let emailError: string | undefined;
+    try {
+      await sendFineTicketEmail({
+        to: result.clientEmail,
+        clientName: result.clientName,
+        amountVnd: result.amount,
+        content: result.content,
+        description: result.description,
+        location: result.location,
+        dueDate: result.dueDate,
+        eventAt: result.eventAt,
+        operator: parsed.data.operator,
+        attachments: result.attachments
+      });
+      emailSent = true;
+    } catch (emailErr) {
+      emailError = emailErr instanceof Error ? emailErr.message : "Unable to send fine email";
+      console.error("[manager/fines] email send failed", emailErr);
+    }
+    return response.status(201).json({
+      ...result,
+      emailSent,
+      emailError
+    });
   } catch (error) {
     return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
       error: error instanceof Error ? error.message : "Unable to create manager fine"
@@ -4141,6 +4179,35 @@ app.post("/admin/cleaning/tasks/:id/missed-fine", async (request, response) => {
     return response.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to issue missed cleaning fine";
+    if (message.includes("Only managers")) {
+      return response.status(403).json({ error: message });
+    }
+    return response.status(400).json({ error: message });
+  }
+});
+
+app.post("/admin/cleaning/tasks/:id/dismiss", async (request, response) => {
+  const parsed = adminCleaningDismissBodySchema.safeParse(request.body ?? {});
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid payload (actorEmail required)" });
+  }
+
+  const { id } = request.params;
+  if (!id) {
+    return response.status(400).json({ error: "Task ID is required" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only managers can dismiss overdue cleaning tasks."
+    );
+    const result = await adminDismissMissedCleaningTask(id, parsed.data.actorEmail);
+    return response.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to dismiss overdue cleaning task";
     if (message.includes("Only managers")) {
       return response.status(403).json({ error: message });
     }
