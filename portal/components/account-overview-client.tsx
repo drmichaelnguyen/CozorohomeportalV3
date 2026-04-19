@@ -336,6 +336,7 @@ export function AccountOverviewClient() {
   const [rangeEnd, setRangeEnd] = useState("");
   const [showAllInformation, setShowAllInformation] = useState(false);
   const [showMemberRuleHelp, setShowMemberRuleHelp] = useState(false);
+  const [showMarkDoneHelp, setShowMarkDoneHelp] = useState(false);
   const [selectedUpgradeMember, setSelectedUpgradeMember] = useState("");
   const [upgradingMember, setUpgradingMember] = useState(false);
   const [completingCleaningTaskId, setCompletingCleaningTaskId] = useState("");
@@ -1191,6 +1192,15 @@ export function AccountOverviewClient() {
                       <span className="font-semibold text-amber-800">
                         +{new Intl.NumberFormat().format(canCompleteCleaningTaskLate(nextCleaningTask) ? Math.round(nextCleaningTask.rewardCoins * 0.5) : nextCleaningTask.rewardCoins)} Coins
                       </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowMarkDoneHelp((v) => !v)}
+                        className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-300 text-[11px] font-bold text-slate-700"
+                        aria-label="Show mark done instructions"
+                        title="Mark done instructions"
+                      >
+                        ?
+                      </button>
                     </div>
                     <div className="mt-2 text-xs text-slate-600">
                       {canCompleteCleaningTaskLate(nextCleaningTask)
@@ -1199,6 +1209,17 @@ export function AccountOverviewClient() {
                           ? `Mark done is open during ${getCleaningCompletionWindow(nextCleaningTask).label}.`
                           : `Mark done opens during ${getCleaningCompletionWindow(nextCleaningTask).label}.`}
                     </div>
+                    {showMarkDoneHelp ? (
+                      <div className="mt-2 rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs text-slate-700">
+                        <div className="font-semibold text-slate-900">How mark done works</div>
+                        <div className="mt-1">
+                          You can mark the task done during the assigned date window. D7 kitchen tasks are only open from 17:00 to 23:00 on that date.
+                        </div>
+                        <div className="mt-1">
+                          Late submission stays open for 10 hours after the deadline and still gives 50% of the normal coins. After that, the task becomes missed automatically.
+                        </div>
+                      </div>
+                    ) : null}
                     <button
                       type="button"
                       onClick={() => void markCleaningTaskDone(nextCleaningTask.id)}

@@ -1678,16 +1678,16 @@ export function CleaningScheduleClient() {
                   type="button"
                   onClick={() => setShowPolicyHelp((v) => !v)}
                   className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-300 text-sm font-semibold text-slate-700"
-                  aria-label="Show reschedule and completion policy"
-                  title="Reschedule & completion policy"
+                  aria-label="Show mark done instructions"
+                  title="Mark done instructions"
                 >
                   ?
                 </button>
               </div>
               {showPolicyHelp && (
                 <div className="mt-2 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-slate-700 space-y-2">
-                  <p><span className="font-semibold">Reschedule policy:</span> 5+ days notice has no fine, 1–4 days notice has a 50% fine, same-day notice has a 75% fine, and missing the work is a full fine.</p>
-                  <p><span className="font-semibold">Late completion:</span> You may mark a task done up to 10 hours after the deadline and still earn 50% of the normal coin reward. After 10 hours the task is marked missed and a fine is issued automatically.</p>
+                  <p><span className="font-semibold">Mark done window:</span> You can submit on the assigned date. D7 kitchen tasks are only open from 17:00 to 23:00 on that date.</p>
+                  <p><span className="font-semibold">Late submission:</span> You may still mark the task done up to 10 hours after the deadline and earn 50% of the normal coin reward. After 10 hours the task is marked missed automatically.</p>
                 </div>
               )}
               <div className="mt-4 space-y-3">
