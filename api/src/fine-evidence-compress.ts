@@ -1,13 +1,29 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import ffmpegStatic from "ffmpeg-static";
 import sharp from "sharp";
 
+const require = createRequire(import.meta.url);
+
+let cachedFfmpegPath: string | null | undefined;
+
 function getFfmpegPath(): string | null {
-  return typeof ffmpegStatic === "string" && ffmpegStatic.length > 0 ? ffmpegStatic : null;
+  if (cachedFfmpegPath !== undefined) {
+    return cachedFfmpegPath;
+  }
+
+  try {
+    const ffmpegStatic = require("ffmpeg-static") as unknown;
+    cachedFfmpegPath = typeof ffmpegStatic === "string" && ffmpegStatic.length > 0 ? ffmpegStatic : null;
+  } catch (error) {
+    console.warn("[fine-evidence] ffmpeg-static unavailable; uploading original videos (no transcode)", error);
+    cachedFfmpegPath = null;
+  }
+
+  return cachedFfmpegPath;
 }
 
 const MAX_IMAGE_EDGE = 1920;

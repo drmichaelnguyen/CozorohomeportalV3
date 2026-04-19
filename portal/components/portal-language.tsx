@@ -1296,6 +1296,7 @@ const translations: Record<string, { en: string; vi: string }> = {
   taskDonePendingAudit: { en: "Done (Pending Audit)", vi: "Xong (Chờ kiểm tra)" },
   taskApproved: { en: "Approved", vi: "Đã duyệt" },
   taskRejected: { en: "Rejected", vi: "Đã từ chối" },
+  taskDismissed: { en: "Dismissed", vi: "Đã bỏ qua" },
   taskMissed: { en: "Missed", vi: "Đã lỡ" },
   systemAssigned: { en: "System", vi: "Hệ thống" },
   selfAssigned: { en: "Self assign", vi: "Tự nhận" },
@@ -1723,8 +1724,8 @@ const translations: Record<string, { en: string; vi: string }> = {
   },
   adminCleaningOverdueAssignedTitle: { en: "Past deadline, not done", vi: "Quá hạn, chưa hoàn thành" },
   adminCleaningOverdueAssignedHint: {
-    en: "Assigned tasks after the completion window plus grace. Issue fine to create the ticket and mark missed.",
-    vi: "Phân công đã quá khung giờ và thời gian chờ. Phát phiếu phạt để ghi nhận và đánh dấu bỏ lỡ."
+    en: "Assigned tasks after the completion window plus grace. Issue fine to create the ticket and mark missed, or dismiss to skip the ticket.",
+    vi: "Phân công đã quá khung giờ và thời gian chờ. Phát phiếu phạt để ghi nhận và đánh dấu bỏ lỡ, hoặc bỏ qua để không tạo phiếu."
   },
   adminCleaningOverdueShowingCount: {
     en: "Showing {visible} of {total} (newest dates first).",
@@ -1737,6 +1738,9 @@ const translations: Record<string, { en: string; vi: string }> = {
   adminCleaningOverdueShowAll: { en: "Show all", vi: "Xem tất cả" },
   adminCleaningQueueEmpty: { en: "None right now.", vi: "Hiện không có." },
   adminCleaningSuggestedFine: { en: "Suggested fine: {amount} VND", vi: "Mức phạt gợi ý: {amount} VND" },
+  adminCleaningDismissTask: { en: "Dismiss / Bỏ qua", vi: "Bỏ qua / Dismiss" },
+  adminCleaningTaskDismissed: { en: "Overdue task dismissed.", vi: "Đã bỏ qua công việc quá hạn." },
+  adminCleaningErrDismissTask: { en: "Could not dismiss overdue task.", vi: "Không thể bỏ qua công việc quá hạn." },
   adminCleaningFineMayExist: {
     en: "fine may already exist in sheet",
     vi: "có thể đã có phiếu trên sheet"
@@ -1805,6 +1809,51 @@ const translations: Record<string, { en: string; vi: string }> = {
   }
 };
 
+const playfulVietnameseSwaps: Array<{ find: string; replacement: string }> = [
+  { find: "Thông tin", replacement: "Tinh túy" },
+  { find: "Tin nhắn", replacement: "Bắn tin" },
+  { find: "Lịch trình", replacement: "Chịch lình" },
+  { find: "Điều khiển", replacement: "Bóp bóp" },
+  { find: "Đặt lịch", replacement: "Địch lặt" },
+  { find: "Máy giặt", replacement: "Con sen giặt đồ" },
+  { find: "Bảo mật", replacement: "Vùng kín" },
+  { find: "Giao diện tối", replacement: "Đèn mờ" },
+  { find: "Không tham gia tháng này", replacement: "Nay tới tháng rồi không muốn trực" },
+  { find: "Đánh dấu không rảnh", replacement: "Bổn cung mắc đi chơi" }
+];
+
+const playfulVietnameseTranslationCache = new Map<string, string>();
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function maybeApplyPlayfulVietnameseTranslation(key: string, value: string, language: PortalLanguage) {
+  if (language !== "vi") {
+    return value;
+  }
+
+  const cacheKey = `${key}::${value}`;
+  const cached = playfulVietnameseTranslationCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const hasPlayablePhrase = playfulVietnameseSwaps.some(({ find }) => value.toLowerCase().includes(find.toLowerCase()));
+  if (!hasPlayablePhrase || Math.random() >= 0.18) {
+    playfulVietnameseTranslationCache.set(cacheKey, value);
+    return value;
+  }
+
+  const transformed = playfulVietnameseSwaps.reduce(
+    (current, { find, replacement }) => current.replace(new RegExp(escapeRegExp(find), "gi"), replacement),
+    value
+  );
+
+  playfulVietnameseTranslationCache.set(cacheKey, transformed);
+  return transformed;
+}
+
 const PortalLanguageContext = createContext<PortalLanguageContextValue | null>(null);
 
 export function PortalLanguageProvider({ children }: { children: React.ReactNode }) {
@@ -1845,7 +1894,7 @@ export function PortalLanguageProvider({ children }: { children: React.ReactNode
             val = val.replace(new RegExp(`\\{${k}\\}`, "g"), String(v));
           });
         }
-        return val;
+        return maybeApplyPlayfulVietnameseTranslation(key, val, language);
       }
     }),
     [language]

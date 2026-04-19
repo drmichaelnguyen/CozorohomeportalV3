@@ -1408,19 +1408,64 @@ export async function sendGmailReceipt(data: {
   to: string;
   subject: string;
   body: string;
+  attachments?: Array<{
+    fileName: string;
+    mimeType: string;
+    content: Buffer;
+  }>;
 }) {
   const auth = await getAuthorizedOAuthClient();
   const gmail = google.gmail({ version: "v1", auth });
 
   const utf8Subject = `=?utf-8?B?${Buffer.from(data.subject).toString("base64")}?=`;
-  const messageParts = [
-    `To: ${data.to}`,
-    "Content-Type: text/plain; charset=utf-8",
-    "MIME-Version: 1.0",
-    `Subject: ${utf8Subject}`,
-    "",
-    data.body
-  ];
+  const attachments = data.attachments ?? [];
+  const boundary = `cozoro-boundary-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  const chunkBase64 = (value: Buffer) =>
+    value
+      .toString("base64")
+      .match(/.{1,76}/g)
+      ?.join("\n") ?? "";
+
+  const encodeHeaderValue = (value: string) =>
+    value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+  const messageParts = attachments.length
+    ? [
+        `To: ${data.to}`,
+        `Subject: ${utf8Subject}`,
+        "MIME-Version: 1.0",
+        `Content-Type: multipart/mixed; boundary="${boundary}"`,
+        "",
+        `--${boundary}`,
+        "Content-Type: text/plain; charset=utf-8",
+        "Content-Transfer-Encoding: 7bit",
+        "",
+        data.body
+      ]
+    : [
+        `To: ${data.to}`,
+        "Content-Type: text/plain; charset=utf-8",
+        "MIME-Version: 1.0",
+        `Subject: ${utf8Subject}`,
+        "",
+        data.body
+      ];
+
+  if (attachments.length) {
+    for (const attachment of attachments) {
+      messageParts.push(
+        `--${boundary}`,
+        `Content-Type: ${attachment.mimeType}; name="${encodeHeaderValue(attachment.fileName)}"`,
+        "Content-Transfer-Encoding: base64",
+        `Content-Disposition: attachment; filename="${encodeHeaderValue(attachment.fileName)}"`,
+        "",
+        chunkBase64(attachment.content)
+      );
+    }
+    messageParts.push(`--${boundary}--`, "");
+  }
+
   const message = messageParts.join("\n");
 
   const encodedMessage = Buffer.from(message)
@@ -1434,6 +1479,82 @@ export async function sendGmailReceipt(data: {
     requestBody: {
       raw: encodedMessage
     }
+  });
+}
+
+export async function sendFineTicketEmail(data: {
+  to: string;
+  clientName: string;
+  amountVnd: number;
+  content: string;
+  description?: string;
+  location?: string;
+  dueDate?: string;
+  eventAt?: string;
+  operator?: string;
+  attachments?: Array<{
+    url: string;
+    downloadUrl?: string;
+    fileName: string;
+    mimeType: string;
+  }>;
+}) {
+  const amountVi = `${Math.round(data.amountVnd).toLocaleString("vi-VN")} VND`;
+  const amountEn = `${Math.round(data.amountVnd).toLocaleString("en-US")} VND`;
+  const subject = `[Cozoro Home] Fine notice / Thông báo phiếu phạt: ${data.content}`;
+  const createdBy = data.operator?.trim() || "Cozoro";
+  const dueDateLine = data.dueDate ? `Due date: ${data.dueDate}` : "Due date: not set";
+  const eventLine = data.eventAt ? `Event time: ${data.eventAt}` : "Event time: not set";
+
+  const body = [
+    `Dear ${data.clientName},`,
+    "",
+    "A new fine ticket has been created for your account.",
+    `Amount: ${amountEn}`,
+    `Content: ${data.content}`,
+    data.location ? `Location: ${data.location}` : "",
+    data.description ? `Description: ${data.description}` : "",
+    dueDateLine,
+    eventLine,
+    `Created by: ${createdBy}`,
+    "",
+    "Quý khách thân mến,",
+    "",
+    "Cozoro vừa tạo một phiếu phạt mới cho tài khoản của quý khách.",
+    `Số tiền: ${amountVi}`,
+    `Nội dung: ${data.content}`,
+    data.location ? `Vị trí: ${data.location}` : "",
+    data.description ? `Ghi chú: ${data.description}` : "",
+    dueDateLine,
+    eventLine,
+    `Người tạo: ${createdBy}`,
+    "",
+    "Attachments are included in this email.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const attachmentPayloads = await Promise.all(
+    (data.attachments ?? []).map(async (attachment) => {
+      const sourceUrl = attachment.downloadUrl?.trim() || attachment.url;
+      const response = await fetch(sourceUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to download attachment: ${attachment.fileName}`);
+      }
+      const bytes = Buffer.from(await response.arrayBuffer());
+      return {
+        fileName: attachment.fileName,
+        mimeType: attachment.mimeType,
+        content: bytes
+      };
+    })
+  );
+
+  await sendGmailReceipt({
+    to: data.to,
+    subject,
+    body,
+    attachments: attachmentPayloads
   });
 }
 
@@ -4016,8 +4137,32 @@ export async function managerCreateFine(input: {
   /** ISO or datetime-local string for when the violation occurred; maps to sheet "DẤU THỜI GIAN". Defaults to now. */
   eventAt?: string;
   image?: string;
+  attachments?: Array<{
+    url: string;
+    fileName: string;
+    mimeType: string;
+    downloadUrl?: string;
+  }>;
   operator: string;
-}) {
+}): Promise<{
+  ok: true;
+  maHd: string;
+  clientEmail: string;
+  clientName: string;
+  amount: number;
+  content: string;
+  description: string;
+  location: string;
+  dueDate: string;
+  eventAt: string;
+  image: string;
+  attachments: Array<{
+    url: string;
+    fileName: string;
+    mimeType: string;
+    downloadUrl: string;
+  }>;
+}> {
   if (!spreadsheetId) {
     throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
   }
@@ -4048,6 +4193,17 @@ export async function managerCreateFine(input: {
   const headers = (values[0] ?? []).map((value) => normalizeHeader(String(value)));
   const now = new Date();
   const dueDate = input.dueDate ? new Date(input.dueDate) : new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const normalizedAttachments = (input.attachments ?? [])
+    .map((attachment) => ({
+      url: attachment.url.trim(),
+      fileName: attachment.fileName.trim(),
+      mimeType: attachment.mimeType.trim(),
+      downloadUrl: (attachment.downloadUrl ?? attachment.url).trim()
+    }))
+    .filter((attachment) => attachment.url && attachment.fileName && attachment.mimeType);
+  const imageValue =
+    input.image?.trim() ||
+    normalizedAttachments.map((attachment) => attachment.url).join("\n");
   const incidentAt = (() => {
     const raw = input.eventAt?.trim();
     if (!raw) {
@@ -4085,7 +4241,7 @@ export async function managerCreateFine(input: {
         case FINE_DESCRIPTION_COLUMN:
           return input.description?.trim() ?? "";
         case FINE_IMAGE_COLUMN:
-          return input.image?.trim() ?? "";
+          return imageValue;
       case FINE_AMOUNT_COLUMN:
         return String(amount);
       case FINE_STATUS_COLUMN:
@@ -4119,7 +4275,18 @@ export async function managerCreateFine(input: {
 
   await syncFinesFromSheet();
   return {
-    ok: true
+    ok: true,
+    maHd: client.maHd,
+    clientEmail: client.email,
+    clientName: client.name,
+    amount,
+    content: input.content.trim(),
+    description: input.description?.trim() ?? "",
+    location: input.location?.trim() ?? "",
+    dueDate: Number.isNaN(dueDate.getTime()) ? "" : dueDate.toISOString(),
+    eventAt: incidentAt.toISOString(),
+    image: imageValue,
+    attachments: normalizedAttachments
   };
 }
 
@@ -4215,13 +4382,15 @@ export async function uploadFineImageToDrive(input: {
 
   const metadata = await drive.files.get({
     fileId,
-    fields: "id,name,webViewLink,webContentLink"
+    fields: "id,name,mimeType,webViewLink,webContentLink"
   });
 
   return {
     ok: true,
     fileId,
     fileName: metadata.data.name ?? driveFileName,
+    mimeType: metadata.data.mimeType ?? outputMime,
+    downloadUrl: `https://drive.google.com/uc?export=download&id=${fileId}`,
     url:
       metadata.data.webViewLink ??
       metadata.data.webContentLink ??

@@ -2678,6 +2678,38 @@ export async function adminMarkMissedCleaningTaskFine(taskId: string, operatorEm
   };
 }
 
+const DISMISSED_OVERDUE_TASK_NOTE_PREFIX = "[Dismissed overdue task]";
+
+export async function adminDismissMissedCleaningTask(taskId: string, operatorEmail: string) {
+  const now = new Date();
+  const task = await findUniqueCleaningTask({ where: { id: taskId } });
+  if (!task) {
+    throw new Error("Cleaning task not found");
+  }
+  if (task.status !== CleaningTaskStatus.ASSIGNED) {
+    throw new Error("Only assigned tasks can be dismissed.");
+  }
+  if (!isAssignedTaskPastMissedFineDeadline(task, now)) {
+    throw new Error("This task is not past the completion deadline yet.");
+  }
+
+  const reviewer = operatorEmail.trim() || AUTO_CLEANING_FINE_OPERATOR;
+  const note = `${DISMISSED_OVERDUE_TASK_NOTE_PREFIX} by ${reviewer} on ${now.toISOString()}`;
+  const dismissedTask = await auditCleaningTask({
+    taskId,
+    reviewer,
+    decision: CleaningAuditDecision.REJECT,
+    note
+  });
+
+  await invalidateCleaningOverviewCache(dismissedTask.userEmail);
+  return {
+    taskId: dismissedTask.id,
+    userEmail: dismissedTask.userEmail,
+    task: dismissedTask
+  };
+}
+
 export async function getCleaningManagerReviewQueue(now = new Date()) {
   const activeUsers = await getActiveCleaningUsers();
   const bedLineByEmail = new Map(

@@ -7,6 +7,7 @@ import { usePortalSession } from "./portal-session";
 const PRIVILEGED_EMAILS = new Set(["cozorohome@gmail.com", "dr.trongto@gmail.com"]);
 const DEFAULT_PRIVILEGED_EMAIL = "cozorohome@gmail.com";
 const OVERDUE_ASSIGNED_PAGE_SIZE = 5;
+const DISMISSED_OVERDUE_TASK_NOTE_PREFIX = "[Dismissed overdue task]";
 
 type AdminTask = {
   id: string;
@@ -124,6 +125,22 @@ function prettyTaskType(type: AdminTask["type"], t: (key: any, ...args: any[]) =
   if (type === "KITCHEN_D2") return t("kitchenD2");
   if (type === "KITCHEN_D7") return t("kitchenD7");
   return t("trashD7");
+}
+
+function isDismissedOverdueTask(note?: string | null) {
+  return Boolean(note?.startsWith(DISMISSED_OVERDUE_TASK_NOTE_PREFIX));
+}
+
+function formatDismissedOverdueTaskNote(note?: string | null) {
+  if (!note) {
+    return "";
+  }
+
+  if (!note.startsWith(DISMISSED_OVERDUE_TASK_NOTE_PREFIX)) {
+    return note;
+  }
+
+  return note.slice(DISMISSED_OVERDUE_TASK_NOTE_PREFIX.length).trimStart();
 }
 
 function startOfDay(date: Date) {
@@ -372,6 +389,29 @@ export function AdminCleaningClient() {
       setMessage(t("adminCleaningMissedFineIssued", undefined, { amount: String(data.fineAmount ?? "") }));
     } catch {
       setMessage(t("adminCleaningErrMissedFine"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function dismissOverdueCleaningTask(taskId: string) {
+    setLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/cleaning/tasks/${encodeURIComponent(taskId)}/dismiss`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorEmail: activeEmail })
+      });
+      const data = await readJsonSafely<{ error?: string }>(response);
+      if (!response.ok) {
+        setMessage(data.error ?? t("adminCleaningErrDismissTask"));
+        return;
+      }
+      await Promise.all([reloadAll(), loadReviewQueue()]);
+      setMessage(t("adminCleaningTaskDismissed"));
+    } catch {
+      setMessage(t("adminCleaningErrDismissTask"));
     } finally {
       setLoading(false);
     }
@@ -1039,14 +1079,24 @@ export function AdminCleaningClient() {
                               {task.hasAutomaticFine ? ` · ${t("adminCleaningFineMayExist")}` : null}
                             </div>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => void issueMissedCleaningFine(task.id)}
-                            disabled={loading}
-                            className="shrink-0 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
-                          >
-                            {t("adminCleaningIssueMissedFine")}
-                          </button>
+                          <div className="flex shrink-0 flex-col gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => void issueMissedCleaningFine(task.id)}
+                              disabled={loading}
+                              className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+                            >
+                              {t("adminCleaningIssueMissedFine")}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void dismissOverdueCleaningTask(task.id)}
+                              disabled={loading}
+                              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                            >
+                              {t("adminCleaningDismissTask")}
+                            </button>
+                          </div>
                         </div>
                       </li>
                     ))}
@@ -1388,7 +1438,14 @@ export function AdminCleaningClient() {
                       const isAuditing = auditingTaskId === task.id;
                       const isPast = !isFutureDate(new Date(task.scheduledDate));
                       const canRemoveAssigned = task.status === "ASSIGNED" && isFutureDate(new Date(task.scheduledDate));
-                      const canAudit = task.status === "DONE_PENDING_AUDIT" || (isPast && (task.status === "APPROVED" || task.status === "REJECTED"));
+                      const canAudit =
+                        task.status === "DONE_PENDING_AUDIT" ||
+                        (isPast && (task.status === "APPROVED" || (task.status === "REJECTED" && !isDismissedOverdueTask(task.auditorNote))));
+                      const isDismissed = task.status === "REJECTED" && isDismissedOverdueTask(task.auditorNote);
+                      const statusLabel = isDismissed
+                        ? t("taskDismissed")
+                        : t(`task${task.status.split("_").map(x => x.charAt(0) + x.slice(1).toLowerCase()).join("")}`);
+                      const auditorNote = formatDismissedOverdueTaskNote(task.auditorNote);
                       const statusColors: Record<string, string> = {
                         ASSIGNED: "bg-sky-100 text-sky-700",
                         DONE_PENDING_AUDIT: "bg-amber-100 text-amber-700",
@@ -1403,8 +1460,8 @@ export function AdminCleaningClient() {
                               <div className="font-medium text-slate-900 truncate">{task.userName || task.userEmail}</div>
                               <div className="text-xs text-slate-500 truncate">{task.userEmail}</div>
                               <div className="flex items-center gap-1.5 flex-wrap mt-1">
-                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusColors[task.status] ?? "bg-slate-100 text-slate-600"}`}>
-                                  {t(`task${task.status.split("_").map(x => x.charAt(0) + x.slice(1).toLowerCase()).join("")}`)}
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${isDismissed ? "bg-slate-200 text-slate-700" : statusColors[task.status] ?? "bg-slate-100 text-slate-600"}`}>
+                                  {statusLabel}
                                 </span>
                                 {(task.assignmentSource === "SELF" || task.isSelfAssigned) ? (
                                   <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
@@ -1428,7 +1485,7 @@ export function AdminCleaningClient() {
                                     {t("coinsRewardPlus", { n: task.rewardCoins.toLocaleString(dateLocale) })}
                                   </span>
                                 ) : (
-                                  <span className="text-[11px] text-slate-500">
+                                  <span className={`text-[11px] ${isDismissed ? "text-slate-500 line-through" : "text-slate-500"}`}>
                                     {t("coinsRewardPlus", { n: task.rewardCoins.toLocaleString(dateLocale) })}
                                   </span>
                                 )}
@@ -1447,8 +1504,10 @@ export function AdminCleaningClient() {
                                 </a>
                               )}
                               <p className="mt-1 text-xs text-slate-500">{t("assignerLabel")}: {getAssignerLabel(task, t)}</p>
-                              {task.auditorNote && (
-                                <p className="mt-1 text-xs text-rose-700 font-medium">{t("auditorNoteLabel")}: {task.auditorNote}</p>
+                              {auditorNote && (
+                                <p className={`mt-1 text-xs font-medium ${isDismissed ? "text-slate-600" : "text-rose-700"}`}>
+                                  {isDismissed ? t("taskDismissed") : t("auditorNoteLabel")}: {auditorNote}
+                                </p>
                               )}
                             </div>
                             <div className="flex flex-col gap-1 shrink-0">
@@ -1479,6 +1538,16 @@ export function AdminCleaningClient() {
                                   {isAuditing ? t("cancelLabel") : task.status === "DONE_PENDING_AUDIT" ? t("auditLabel") : t("reAuditLabel")}
                                 </button>
                               )}
+                              {task.status === "ASSIGNED" && isPast ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void dismissOverdueCleaningTask(task.id)}
+                                  disabled={loading}
+                                  className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                                >
+                                  {t("adminCleaningDismissTask")}
+                                </button>
+                              ) : null}
                             </div>
                           </div>
 
