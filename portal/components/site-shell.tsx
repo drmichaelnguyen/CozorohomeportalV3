@@ -15,6 +15,7 @@ import { ChatNotifier } from "./chat-notifier";
 import { VersionBadge } from "./version-badge";
 import { PushSubscription } from "./push-subscription";
 import { InlineHelp } from "./inline-help";
+import { CleaningReminderPopup } from "./cleaning-reminder-popup";
 import { RentDueBlockingOverlay } from "./rent-due-blocking-overlay";
 import { AddToHomeScreenPrompt } from "./add-to-home-screen-prompt";
 
@@ -275,6 +276,7 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
       ) : null}
       {isLoggedIn ? <ChatNotifier /> : null}
       {isLoggedIn && sessionEmail ? <PushSubscription email={sessionEmail} /> : null}
+      <CleaningReminderPopup />
       <RentDueBlockingOverlay />
       <AddToHomeScreenPrompt />
       <VersionBadge />

@@ -252,6 +252,8 @@ import {
   ownerDeleteSupportMessage,
   postOperatorSupportMessage,
   postOperatorSupportMessageToResident,
+  dispatchCleaningReminderPushes,
+  dispatchLaundryReminderPushes,
   postResidentSupportMessage,
   tryAppendAssistantAfterResidentMessage,
   updateSupportConversationStatus
@@ -270,6 +272,8 @@ const cleaningSweepIntervalMs = Number(process.env.CLEANING_SWEEP_INTERVAL_MS ??
 const backgroundCleaningSweepEnabled = process.env.ENABLE_CLEANING_SWEEP === "true";
 const cleaningSweepOnStartup = process.env.CLEANING_SWEEP_ON_STARTUP === "true";
 let overdueCleaningSweepRunning = false;
+const cleaningReminderPushIntervalMs = Number(process.env.CLEANING_REMINDER_PUSH_INTERVAL_MS ?? 60 * 60 * 1000);
+const laundryReminderPushIntervalMs = Number(process.env.LAUNDRY_REMINDER_PUSH_INTERVAL_MS ?? 5 * 60 * 1000);
 
 const autoScheduleIntervalMs = Number(process.env.AUTO_SCHEDULE_INTERVAL_MS ?? 60 * 60 * 1000); // default 1 hour
 let autoScheduleRunning = false;
@@ -6916,6 +6920,30 @@ app.listen(port, "127.0.0.1", () => {
 
   startMaintenanceSyncInterval();
 
+  void dispatchCleaningReminderPushes("startup").catch((error) => {
+    console.error("[cleaning-reminder-push] startup failed", error);
+  });
+
+  const cleaningReminderTimer = setInterval(() => {
+    void dispatchCleaningReminderPushes("interval").catch((error) => {
+      console.error("[cleaning-reminder-push] interval failed", error);
+    });
+  }, cleaningReminderPushIntervalMs);
+
+  cleaningReminderTimer.unref();
+
+  void dispatchLaundryReminderPushes("startup").catch((error) => {
+    console.error("[laundry-reminder-push] startup failed", error);
+  });
+
+  const laundryReminderTimer = setInterval(() => {
+    void dispatchLaundryReminderPushes("interval").catch((error) => {
+      console.error("[laundry-reminder-push] interval failed", error);
+    });
+  }, laundryReminderPushIntervalMs);
+
+  laundryReminderTimer.unref();
+
   if (backgroundCleaningSweepEnabled) {
     if (cleaningSweepOnStartup) {
       void runOverdueCleaningSweep("startup").catch((error) => {
@@ -6932,15 +6960,15 @@ app.listen(port, "127.0.0.1", () => {
     timer.unref();
   }
 
-    void runAutoSchedule("startup").catch((error) => {
-      console.error("[cleaning-auto-schedule] startup failed", error);
-    });
-
-    const scheduleTimer = setInterval(() => {
-      void runAutoSchedule("interval").catch((error) => {
-        console.error("[cleaning-auto-schedule] interval failed", error);
-      });
-    }, autoScheduleIntervalMs);
-
-    scheduleTimer.unref();
+  void runAutoSchedule("startup").catch((error) => {
+    console.error("[cleaning-auto-schedule] startup failed", error);
   });
+
+  const scheduleTimer = setInterval(() => {
+    void runAutoSchedule("interval").catch((error) => {
+      console.error("[cleaning-auto-schedule] interval failed", error);
+    });
+  }, autoScheduleIntervalMs);
+
+  scheduleTimer.unref();
+});
