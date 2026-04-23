@@ -124,7 +124,7 @@ type FineEntry = {
   parsedDueDate: string | null;
   coinPayment?: { isPaid: boolean };
 };
-type DuplicateEntry = { email: string; name: string; rows: Array<{ maHd: string; submissionTimestamp: string; contractStart: string; contractEnd: string; activeStay: string; bed: string; branch: string }> };
+type DuplicateEntry = { email: string; name: string; rows: Array<{ maHd: string; rowNumber?: number; submissionTimestamp: string; contractStart: string; contractEnd: string; activeStay: string; bed: string; branch: string }> };
 type LaundryEntry = {
   id: string;
   calendarId: string;
@@ -1965,25 +1965,25 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }
   }
 
-  async function markContractInactive(maHd: string) {
-    setSettingInactive((prev) => ({ ...prev, [maHd]: true }));
+  async function markContractInactive(args: { maHd: string; rowNumber?: number; email?: string; key: string }) {
+    const { maHd, rowNumber, email, key } = args;
+    setSettingInactive((prev) => ({ ...prev, [key]: true }));
     try {
       const res = await fetch(`${API_BASE_URL}/staff/clients/set-inactive`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actorEmail: normalizedEmail, maHd })
+        body: JSON.stringify({ actorEmail: normalizedEmail, maHd, rowNumber, email })
       });
       if (!res.ok) {
         const err = await res.json();
         alert(err.error ?? "Failed to mark contract as inactive");
         return;
       }
-      // Reload clients and duplicates
       await loadClients(true);
     } catch {
       alert("Failed to mark contract as inactive");
     } finally {
-      setSettingInactive((prev) => ({ ...prev, [maHd]: false }));
+      setSettingInactive((prev) => ({ ...prev, [key]: false }));
     }
   }
 
@@ -4339,10 +4339,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       </div>
                       <p className="text-xs text-amber-800">This client has <strong>{selectedClientDuplicate.rows.length} active rows</strong> in the sheet. The app uses the one with the latest <em>DẤU THỜI GIAN</em> (submission timestamp) automatically. Mark old rows inactive to fix this.</p>
                       <div className="space-y-2">
-                        {sortedRows.map((row) => {
+                        {sortedRows.map((row, idx) => {
                           const isLatest = row.submissionTimestamp === latestTs;
+                          const stableKey = row.rowNumber != null
+                            ? `r${row.rowNumber}`
+                            : `${row.maHd || "nomahd"}-${row.submissionTimestamp || idx}`;
+                          const canMarkInactive = !isLatest && (row.rowNumber != null || !!row.maHd);
                           return (
-                            <div key={row.maHd || row.submissionTimestamp} className={`flex items-center justify-between rounded-xl border px-3 py-2 text-xs ${isLatest ? "border-amber-400 bg-amber-100" : "border-amber-200 bg-white"}`}>
+                            <div key={stableKey} className={`flex items-center justify-between rounded-xl border px-3 py-2 text-xs ${isLatest ? "border-amber-400 bg-amber-100" : "border-amber-200 bg-white"}`}>
                               <div className="space-y-0.5">
                                 <div className="font-semibold text-slate-800">
                                   {row.maHd || <span className="italic text-slate-400">no contract code</span>}
@@ -4352,18 +4356,18 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 <div className="text-slate-500">{row.branch} · Bed {row.bed} · {row.contractStart} → {row.contractEnd}</div>
                                 <div className="text-slate-500">Status: <span className={row.activeStay === "1" ? "text-emerald-700 font-semibold" : "text-slate-500"}>{row.activeStay || "not set"}</span></div>
                               </div>
-                              {!isLatest && row.maHd && (
+                              {canMarkInactive && (
                                 <button
                                   type="button"
-                                  disabled={!!settingInactive[row.maHd]}
-                                  onClick={() => markContractInactive(row.maHd)}
+                                  disabled={!!settingInactive[stableKey]}
+                                  onClick={() => markContractInactive({ maHd: row.maHd, rowNumber: row.rowNumber, email: selectedClientDuplicate.email, key: stableKey })}
                                   className="ml-3 flex-shrink-0 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
                                 >
-                                  {settingInactive[row.maHd] ? "Saving…" : "Mark Inactive (−1)"}
+                                  {settingInactive[stableKey] ? "Saving…" : "Mark Inactive (−1)"}
                                 </button>
                               )}
-                              {!isLatest && !row.maHd && (
-                                <span className="ml-3 text-[10px] text-slate-400 italic">No MÃ HD — fix manually in sheet</span>
+                              {!isLatest && !canMarkInactive && (
+                                <span className="ml-3 text-[10px] text-slate-400 italic">Missing identifier — fix manually in sheet</span>
                               )}
                             </div>
                           );

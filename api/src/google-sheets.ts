@@ -3604,7 +3604,7 @@ function parseSubmissionTimestamp(value: string): Date | null {
 export async function getDuplicateActiveClients(): Promise<Array<{
   email: string;
   name: string;
-  rows: Array<{ maHd: string; submissionTimestamp: string; contractStart: string; contractEnd: string; activeStay: string; bed: string; branch: string }>;
+  rows: Array<{ maHd: string; rowNumber: number; submissionTimestamp: string; contractStart: string; contractEnd: string; activeStay: string; bed: string; branch: string }>;
 }>> {
   if (!spreadsheetId) throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
   const sheets = await getAuthorizedSheetsClient();
@@ -3615,16 +3615,21 @@ export async function getDuplicateActiveClients(): Promise<Array<{
   const values = response.data.values ?? [];
   if (values.length === 0) return [];
   const headers = (values[0] ?? []).map((value) => normalizeHeader(String(value)));
-  const allRows = values.slice(1).map((row) => mapRow(headers, row.map((v) => String(v))));
+  // Track the 1-based sheet row number alongside each mapped row so the UI can
+  // target a specific row by position (works around Google Sheets collapsing
+  // large numeric maHd values into scientific notation like "2,03E+15").
+  const allRows = values.slice(1).map((row, index) => ({
+    row: mapRow(headers, row.map((v) => String(v))),
+    rowNumber: index + 2
+  }));
 
-  // Group by email, only active rows
-  const byEmail = new Map<string, ClientRow[]>();
-  for (const row of allRows) {
-    const email = row[EMAIL_COLUMN]?.trim().toLowerCase();
+  const byEmail = new Map<string, Array<{ row: ClientRow; rowNumber: number }>>();
+  for (const entry of allRows) {
+    const email = entry.row[EMAIL_COLUMN]?.trim().toLowerCase();
     if (!email) continue;
-    if (!isActiveClient(row)) continue;
+    if (!isActiveClient(entry.row)) continue;
     const existing = byEmail.get(email) ?? [];
-    existing.push(row);
+    existing.push(entry);
     byEmail.set(email, existing);
   }
 
@@ -3633,6 +3638,7 @@ export async function getDuplicateActiveClients(): Promise<Array<{
     name: string;
     rows: Array<{
       maHd: string;
+      rowNumber: number;
       submissionTimestamp: string;
       contractStart: string;
       contractEnd: string;
@@ -3641,18 +3647,11 @@ export async function getDuplicateActiveClients(): Promise<Array<{
       branch: string;
     }>;
   }> = [];
-  for (const [email, rows] of byEmail.entries()) {
-    if (rows.length < 2) continue;
-    const duplicateRows: Array<{
-      maHd: string;
-      submissionTimestamp: string;
-      contractStart: string;
-      contractEnd: string;
-      activeStay: string;
-      bed: string;
-      branch: string;
-    }> = rows.map((row) => ({
+  for (const [email, entries] of byEmail.entries()) {
+    if (entries.length < 2) continue;
+    const duplicateRows = entries.map(({ row, rowNumber }) => ({
       maHd: row[CONTRACT_CODE_COLUMN] ?? "",
+      rowNumber,
       submissionTimestamp: row[COINS_TIMESTAMP_COLUMN] ?? "",
       contractStart: row[CLIENT_CONTRACT_START_COLUMN] ?? "",
       contractEnd: row[CLIENT_CONTRACT_END_COLUMN] ?? "",
@@ -3663,7 +3662,7 @@ export async function getDuplicateActiveClients(): Promise<Array<{
 
     duplicates.push({
       email,
-      name: rows[0]![CLIENT_NAME_COLUMN] ?? "",
+      name: entries[0]!.row[CLIENT_NAME_COLUMN] ?? "",
       rows: duplicateRows
     });
   }
@@ -5045,6 +5044,84 @@ async function updateFineSheetCell(input: {
   });
 
   await syncFinesFromSheet();
+}
+
+/**
+ * Write columns to a specific sheet row by 1-based row number. Use this when
+ * the caller can identify the row positionally (e.g. from
+ * getDuplicateActiveClients). Necessary because Google Sheets renders large
+ * numeric maHd values as scientific notation ("2,03E+15"), which can cause
+ * updateClientColumns to hit the wrong row when two contracts format
+ * identically. `expectedEmail` is a safety check — if provided, the write is
+ * aborted when the row's email does not match.
+ */
+export async function updateClientColumnsByRowNumber(
+  rowNumber: number,
+  values: Record<string, string>,
+  expectedEmail?: string
+) {
+  if (!spreadsheetId) {
+    throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
+  }
+  if (!Number.isInteger(rowNumber) || rowNumber < 2) {
+    throw new Error("A valid sheet row number is required");
+  }
+
+  const updates = Object.entries(values).filter(([column]) => !blockedClientUpdateColumns.has(column));
+  if (updates.length === 0) {
+    throw new Error("No allowed columns were provided for update");
+  }
+
+  const sheets = await getAuthorizedSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetName}!A:AMJ`
+  });
+
+  const sheetValues = response.data.values ?? [];
+  if (sheetValues.length === 0) {
+    throw new Error("The Google Sheet is empty");
+  }
+
+  const headers = (sheetValues[0] ?? []).map((value) => normalizeHeader(String(value)));
+  const targetRow = sheetValues[rowNumber - 1];
+  if (!targetRow) {
+    throw new Error(`Sheet row ${rowNumber} does not exist`);
+  }
+
+  if (expectedEmail) {
+    const mappedTarget = mapRow(headers, targetRow.map((value) => String(value)));
+    const actualEmail = String(mappedTarget[EMAIL_COLUMN] ?? "").trim().toLowerCase();
+    if (actualEmail !== expectedEmail.trim().toLowerCase()) {
+      throw new Error(
+        `Sheet row ${rowNumber} email mismatch (expected "${expectedEmail}", found "${actualEmail}")`
+      );
+    }
+  }
+
+  const updateData: Array<{ range: string; values: string[][] }> = [];
+  for (const [column, value] of updates) {
+    const columnIndex = headers.findIndex((header) => header === column);
+    if (columnIndex === -1) {
+      throw new Error(`Column "${column}" was not found in the Google Sheet`);
+    }
+    updateData.push({
+      range: `${sheetName}!${toSheetColumn(columnIndex + 1)}${rowNumber}`,
+      values: [[value]]
+    });
+  }
+
+  if (updateData.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        valueInputOption: "USER_ENTERED",
+        data: updateData
+      }
+    });
+  }
+
+  return syncClientsFromSheet();
 }
 
 export async function updateClientColumns(maHd: string, values: Record<string, string>) {
