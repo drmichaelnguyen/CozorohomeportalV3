@@ -186,7 +186,9 @@ import {
   setCleaningOptOut,
   cancelCleaningOptOut,
   upsertContractCleaningOptOut,
-  recoverDeferredCleaningCalendarCreates
+  recoverDeferredCleaningCalendarCreates,
+  flushDeferredCleaningCalendarCreates,
+  getDeferredCleaningCalendarFlushChain
 } from "./cleaning.js";
 import {
   getCleaningAutoSchedulerConfig,
@@ -991,7 +993,8 @@ const auditCleaningSchema = z.object({
   decision: z.nativeEnum(CleaningAuditDecision),
   note: z.string().optional(),
   createFine: z.boolean().optional(),
-  fineAmount: z.coerce.number().int().positive().optional()
+  fineAmount: z.coerce.number().int().positive().optional(),
+  sendEmail: z.boolean().optional()
 });
 const adminCleaningAvailabilitySchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -1047,7 +1050,9 @@ const adminCleaningReviewQueueQuerySchema = z.object({
 });
 
 const adminCleaningMissedFineBodySchema = z.object({
-  actorEmail: z.string().email()
+  actorEmail: z.string().email(),
+  customAmount: z.number().int().positive().optional(),
+  sendEmail: z.boolean().optional()
 });
 
 const adminCleaningDismissBodySchema = z.object({
@@ -4117,18 +4122,38 @@ app.post("/admin/cleaning/tasks/:id/audit", async (request, response) => {
       note: parsed.data.note
     });
 
+    let emailSent = false;
     if (parsed.data.decision === CleaningAuditDecision.REJECT && parsed.data.createFine && parsed.data.fineAmount) {
+      const fineContent = "Công việc vệ sinh không đạt tiêu chuẩn";
+      const fineDescription = `Audit rejected by ${parsed.data.reviewer}. Task ID: ${task.id}. Scheduled: ${task.scheduledDate.toISOString().slice(0, 10)}.${parsed.data.note ? ` Note: ${parsed.data.note}` : ""}`;
       await createAutomaticFineForEmail({
         email: task.userEmail,
         amount: parsed.data.fineAmount,
-        content: "Công việc vệ sinh không đạt tiêu chuẩn",
-        description: `Audit rejected by ${parsed.data.reviewer}. Task ID: ${task.id}. Scheduled: ${task.scheduledDate.toISOString().slice(0, 10)}.${parsed.data.note ? ` Note: ${parsed.data.note}` : ""}`,
+        content: fineContent,
+        description: fineDescription,
         location: task.branchId,
         operator: parsed.data.reviewer
       });
+      if (parsed.data.sendEmail) {
+        try {
+          const client = await getActiveClientByEmail(task.userEmail);
+          await sendFineTicketEmail({
+            to: task.userEmail,
+            clientName: client ? String(client["Họ và Tên"] ?? task.userEmail) : task.userEmail,
+            amountVnd: parsed.data.fineAmount,
+            content: fineContent,
+            description: fineDescription,
+            location: task.branchId,
+            operator: parsed.data.reviewer
+          });
+          emailSent = true;
+        } catch (emailErr) {
+          console.error("[audit-fine] email send failed", emailErr);
+        }
+      }
     }
 
-    return response.json(task);
+    return response.json({ ...task, emailSent });
   } catch (error) {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to audit cleaning task"
@@ -4179,8 +4204,25 @@ app.post("/admin/cleaning/tasks/:id/missed-fine", async (request, response) => {
       ["manager", "owner", "app_admin"],
       "Only managers can issue missed cleaning fines."
     );
-    const result = await adminMarkMissedCleaningTaskFine(id, parsed.data.actorEmail);
-    return response.json(result);
+    const result = await adminMarkMissedCleaningTaskFine(id, parsed.data.actorEmail, parsed.data.customAmount);
+    let emailSent = false;
+    if (parsed.data.sendEmail && result.fineAmount > 0) {
+      try {
+        const client = await getActiveClientByEmail(result.userEmail);
+        await sendFineTicketEmail({
+          to: result.userEmail,
+          clientName: client ? String(client["Họ và Tên"] ?? result.userEmail) : result.userEmail,
+          amountVnd: result.fineAmount,
+          content: "Bỏ lỡ công việc vệ sinh / Missed cleaning task",
+          description: `Bỏ lỡ: ${result.task.type} ngày ${new Date(result.task.scheduledDate).toLocaleDateString("vi-VN")}`,
+          operator: parsed.data.actorEmail
+        });
+        emailSent = true;
+      } catch (emailErr) {
+        console.error("[missed-fine] email send failed", emailErr);
+      }
+    }
+    return response.json({ ...result, emailSent });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to issue missed cleaning fine";
     if (message.includes("Only managers")) {
@@ -4216,6 +4258,57 @@ app.post("/admin/cleaning/tasks/:id/dismiss", async (request, response) => {
       return response.status(403).json({ error: message });
     }
     return response.status(400).json({ error: message });
+  }
+});
+
+const adminCleaningBulkOverdueBodySchema = z.object({
+  actorEmail: z.string().email(),
+  taskIds: z.array(z.string()).min(1),
+  action: z.enum(["fine", "dismiss"]),
+  sendEmail: z.boolean().optional()
+});
+
+app.post("/admin/cleaning/overdue/bulk", async (request, response) => {
+  const parsed = adminCleaningBulkOverdueBodySchema.safeParse(request.body ?? {});
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid payload" });
+  }
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only managers can bulk-process overdue cleaning tasks."
+    );
+    const results: Array<{ taskId: string; ok: boolean; error?: string }> = [];
+    for (const taskId of parsed.data.taskIds) {
+      try {
+        if (parsed.data.action === "fine") {
+          const result = await adminMarkMissedCleaningTaskFine(taskId, parsed.data.actorEmail);
+          if (parsed.data.sendEmail && result.fineAmount > 0) {
+            try {
+              const client = await getActiveClientByEmail(result.userEmail);
+              await sendFineTicketEmail({
+                to: result.userEmail,
+                clientName: client ? String(client["Họ và Tên"] ?? result.userEmail) : result.userEmail,
+                amountVnd: result.fineAmount,
+                content: "Bỏ lỡ công việc vệ sinh / Missed cleaning task",
+                description: `Bỏ lỡ: ${result.task.type} ngày ${new Date(result.task.scheduledDate).toLocaleDateString("vi-VN")}`,
+                operator: parsed.data.actorEmail
+              });
+            } catch { /* email failure is non-fatal */ }
+          }
+        } else {
+          await adminDismissMissedCleaningTask(taskId, parsed.data.actorEmail);
+        }
+        results.push({ taskId, ok: true });
+      } catch (err) {
+        results.push({ taskId, ok: false, error: err instanceof Error ? err.message : "Unknown error" });
+      }
+    }
+    return response.json({ results, processed: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to process bulk overdue tasks";
+    return response.status(message.includes("Only managers") ? 403 : 400).json({ error: message });
   }
 });
 
@@ -6910,6 +7003,25 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
     stack: process.env.NODE_ENV === "development" ? err.stack : undefined
   });
 });
+
+// Graceful shutdown: flush any pending calendar creates before the process exits.
+// tsx watch sends SIGTERM on file-save restarts; without this the flush is killed mid-write,
+// leaving calendarEventId = null in the DB and causing duplicate Google Calendar events on
+// every subsequent restart.
+async function gracefulShutdown(signal: string) {
+  console.log(`[shutdown] received ${signal} — flushing deferred cleaning calendar creates…`);
+  try {
+    flushDeferredCleaningCalendarCreates("shutdown");
+    await getDeferredCleaningCalendarFlushChain();
+    console.log("[shutdown] deferred calendar flush complete");
+  } catch (err) {
+    console.error("[shutdown] deferred calendar flush error:", err instanceof Error ? err.message : err);
+  }
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => void gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => void gracefulShutdown("SIGINT"));
 
 app.listen(port, "127.0.0.1", () => {
   console.log(`[AntiGravity v2] cozorohome-api listening on http://127.0.0.1:${port}`);
