@@ -126,6 +126,17 @@ const FINE_DESCRIPTION_COLUMN = "M\u00d4 T\u1ea2 VI PH\u1ea0M";
 const FINE_AMOUNT_COLUMN = "CHI PH\u00cd THANH TO\u00c1N CHO VI PH\u1ea0M";
 const FINE_TIMESTAMP_COLUMN = "D\u1ea4U TH\u1edcI GIAN";
 
+/**
+ * In-process guard that prevents two concurrent calls from creating a task
+ * for the same (type, date, floor) slot. Key format: `type|YYYY-MM-DD|floor`.
+ */
+const slotCreationInFlight = new Set<string>();
+
+function getSlotCreationKey(type: CleaningTaskType, date: Date, floor?: number | null) {
+  const d = normalizeCalendarDate(date);
+  return `${type}|${d.toISOString().slice(0, 10)}|${floor ?? ""}`;
+}
+
 const dailyTaskConfigs: Array<{
   type: CleaningTaskType;
   branchId: "D2" | "D7";
@@ -287,6 +298,14 @@ async function createCleaningTask<T extends Prisma.CleaningTaskCreateArgs>(
   try {
     return (await delegate.create(args)) as Prisma.CleaningTaskGetPayload<T>;
   } catch (error) {
+    // DB unique constraint on slotKey: another process already created this slot.
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002" &&
+      String(error.meta?.target ?? "").includes("slotKey")
+    ) {
+      throw new Error("That cleaning slot was already assigned by another process. Please refresh.");
+    }
     if (isCleaningTaskAssignerColumnMissingError(error)) {
       cleaningTaskAssignerColumnsMissing = true;
     } else if (isCleaningTaskAssignerUnsupportedError(error)) {
@@ -1163,20 +1182,68 @@ async function assignTaskToUser(input: {
     throw new Error("Cleaning task config not found");
   }
 
-  const created = await createCleaningTaskRecord({
-    user: input.user,
-    type: input.type,
-    title: config.title,
-    scheduledDate: normalizedTaskDate,
-    floor: slotFloor,
-    isSelfAssigned: input.isSelfAssigned,
-    assignmentSource: input.assignmentSource ?? (input.isSelfAssigned ? CleaningAssignmentSource.SELF : undefined),
-    assignedByEmail: input.assignedByEmail ?? undefined,
-    assignedByName: input.assignedByName ?? undefined
-  });
+  // Guard against concurrent slot creation (e.g. auto-scheduler + admin assign race).
+  // Only one call per (type, date, floor) slot is allowed to proceed to INSERT at a time.
+  const slotKey = getSlotCreationKey(input.type, normalizedTaskDate, slotFloor);
+  if (slotCreationInFlight.has(slotKey)) {
+    throw new Error("Another assignment for this slot is already in progress. Please try again.");
+  }
+  slotCreationInFlight.add(slotKey);
+  try {
+    // Final re-check inside the guarded section to close the check-then-act window.
+    const raceSlot = await findFirstCleaningTask({
+      where: {
+        type: input.type,
+        scheduledDate: {
+          gte: calendarRangeStart(normalizedTaskDate),
+          lte: calendarRangeEnd(normalizedTaskDate)
+        },
+        ...(input.type === CleaningTaskType.TRASH_D7 ? { floor: slotFloor } : {})
+      }
+    });
+    if (raceSlot) {
+      // Another concurrent call already created the slot; treat like an existing slot.
+      if (raceSlot.status !== CleaningTaskStatus.ASSIGNED) {
+        throw new Error("That cleaning slot can no longer be reassigned");
+      }
+      if (raceSlot.userEmail.toLowerCase() === normalizedEmail || input.allowExistingSlotReassign === false) {
+        return raceSlot;
+      }
+      const raceReassigned = await updateCleaningTask({
+        where: { id: raceSlot.id },
+        data: {
+          userEmail: normalizedEmail,
+          userName: input.user.name,
+          branchId: input.user.branchId,
+          floor: slotFloor,
+          isSelfAssigned: input.isSelfAssigned ?? false,
+          assignmentSource: input.assignmentSource ?? (input.isSelfAssigned ? CleaningAssignmentSource.SELF : undefined),
+          assignedByEmail: input.assignedByEmail ?? undefined,
+          assignedByName: input.assignedByName ?? undefined
+        }
+      });
+      await invalidateCleaningOverviewCache(raceSlot.userEmail);
+      await invalidateCleaningOverviewCache(normalizedEmail);
+      return raceReassigned;
+    }
 
-  await invalidateCleaningOverviewCache(normalizedEmail);
-  return created;
+    const created = await createCleaningTaskRecord({
+      user: input.user,
+      type: input.type,
+      title: config.title,
+      scheduledDate: normalizedTaskDate,
+      floor: slotFloor,
+      isSelfAssigned: input.isSelfAssigned,
+      assignmentSource: input.assignmentSource ?? (input.isSelfAssigned ? CleaningAssignmentSource.SELF : undefined),
+      assignedByEmail: input.assignedByEmail ?? undefined,
+      assignedByName: input.assignedByName ?? undefined
+    });
+
+    await invalidateCleaningOverviewCache(normalizedEmail);
+    return created;
+  } finally {
+    slotCreationInFlight.delete(slotKey);
+  }
 }
 
 /** Batch Google Calendar inserts for new assignments to reduce latency and API bursts. */
@@ -1186,6 +1253,9 @@ const CLEANING_CALENDAR_DEFER_BATCH_MAX = 8;
 const deferredCleaningCalendarCreateIds = new Set<string>();
 let deferredCleaningCalendarTimer: ReturnType<typeof setTimeout> | null = null;
 let deferredCleaningCalendarFlushChain: Promise<void> = Promise.resolve();
+export function getDeferredCleaningCalendarFlushChain() {
+  return deferredCleaningCalendarFlushChain;
+}
 
 function scheduleDeferredCleaningCalendarFlush() {
   if (deferredCleaningCalendarTimer) {
@@ -1206,7 +1276,7 @@ function enqueueDeferredCleaningCalendarCreate(taskId: string) {
   scheduleDeferredCleaningCalendarFlush();
 }
 
-function flushDeferredCleaningCalendarCreates(reason: string) {
+export function flushDeferredCleaningCalendarCreates(reason: string) {
   if (deferredCleaningCalendarTimer) {
     clearTimeout(deferredCleaningCalendarTimer);
     deferredCleaningCalendarTimer = null;
@@ -1243,6 +1313,37 @@ async function syncDeferredCleaningCalendarCreate(taskId: string) {
   }
 
   const normalizedScheduledDate = normalizeCalendarDate(task.scheduledDate);
+
+  // Before creating a new event, check if one already exists in the calendar for this
+  // task's slot. This prevents duplicate events when the API restarts mid-flush (after the
+  // Google Calendar insert succeeded but before the calendarEventId was saved back to DB).
+  try {
+    const existingEvents = await listCleaningCalendarEvents(
+      calendarRangeStart(normalizedScheduledDate),
+      calendarRangeEnd(normalizedScheduledDate),
+      { forceRefresh: true }
+    );
+    const alreadyExists = existingEvents.find(
+      (event: CleaningCalendarEvent) =>
+        event.calendarId === task.calendarId && event.taskType === task.type
+    );
+    if (alreadyExists) {
+      console.log(
+        `[cleaning-calendar] calendar event already exists for task ${taskId} on ${normalizedScheduledDate.toISOString().slice(0, 10)} — linking DB record to event ${alreadyExists.id}`
+      );
+      await prisma.cleaningTask.update({
+        where: { id: taskId },
+        data: { calendarEventId: alreadyExists.id }
+      });
+      return;
+    }
+  } catch (lookupError) {
+    console.warn(
+      `[cleaning-calendar] pre-create calendar lookup failed for task ${taskId}, proceeding with insert:`,
+      lookupError instanceof Error ? lookupError.message : lookupError
+    );
+  }
+
   try {
     const eventId = await createCleaningCalendarEvent({
       calendarId: task.calendarId,
@@ -1311,6 +1412,8 @@ async function createCleaningTaskRecord(input: {
   const target = getCleaningCalendarTarget(input.type, { floor: input.floor ?? input.user.floor });
   const calendarId: string | null = target?.calendarId ?? null;
   const calendarEventId: string | null = null;
+  const slotFloorForKey = input.type === CleaningTaskType.TRASH_D7 ? (input.floor ?? input.user.floor ?? null) : null;
+  const slotKey = getSlotCreationKey(input.type, normalizedScheduledDate, slotFloorForKey);
 
   const created = await createCleaningTask({
     data: {
@@ -1320,6 +1423,7 @@ async function createCleaningTaskRecord(input: {
       floor: input.floor ?? input.user.floor,
       type: input.type,
       scheduledDate: normalizedScheduledDate,
+        slotKey,
         rewardCoins,
         isSelfAssigned: input.isSelfAssigned ?? false,
         assignmentSource: input.assignmentSource ?? undefined,
@@ -1448,6 +1552,7 @@ async function syncCalendarTasksIntoDatabase(
         floor,
         type: event.taskType as CleaningTaskType,
         scheduledDate,
+          slotKey: getSlotCreationKey(event.taskType as CleaningTaskType, scheduledDate, event.taskType === CleaningTaskType.TRASH_D7 ? floor : null),
           calendarId: event.calendarId,
           calendarEventId: event.id,
           rewardCoins: rewardSettings.baseRewards[event.taskType as CleaningTaskType],
@@ -2575,12 +2680,15 @@ async function markAssignedTaskMissedWithFine(
   currentTask: CleaningTaskRecord,
   knownFines: Awaited<ReturnType<typeof getManagerFines>>,
   now: Date,
-  operatorLabel: string
+  operatorLabel: string,
+  customAmount?: number
 ) {
   const existingFine = knownFines.find((entry) => isAutomaticCleaningFineForTask(entry.row, currentTask.id));
-  const fineAmount = existingFine
-    ? parseFineAmount(existingFine.row[FINE_AMOUNT_COLUMN])
-    : await getMissedCleaningFineAmount(currentTask, knownFines);
+  const fineAmount = customAmount != null
+    ? customAmount
+    : existingFine
+      ? parseFineAmount(existingFine.row[FINE_AMOUNT_COLUMN])
+      : await getMissedCleaningFineAmount(currentTask, knownFines);
   const fineContent = getAutomaticCleaningFineContent(currentTask.type);
   const fineDescription = getAutomaticCleaningFineDescription(currentTask, now);
 
@@ -2653,7 +2761,7 @@ async function markAssignedTaskMissedWithFine(
   return { missedTask, fineAmount };
 }
 
-export async function adminMarkMissedCleaningTaskFine(taskId: string, operatorEmail: string) {
+export async function adminMarkMissedCleaningTaskFine(taskId: string, operatorEmail: string, customAmount?: number) {
   const now = new Date();
   const task = await findUniqueCleaningTask({ where: { id: taskId } });
   if (!task) {
@@ -2668,7 +2776,7 @@ export async function adminMarkMissedCleaningTaskFine(taskId: string, operatorEm
 
   const knownFines = await getManagerFines();
   const operator = operatorEmail.trim() || AUTO_CLEANING_FINE_OPERATOR;
-  const { missedTask, fineAmount } = await markAssignedTaskMissedWithFine(task, knownFines, now, operator);
+  const { missedTask, fineAmount } = await markAssignedTaskMissedWithFine(task, knownFines, now, operator, customAmount);
 
   return {
     taskId: missedTask.id,
@@ -3115,14 +3223,24 @@ export async function autoScheduleCleaningTasks(horizonDays = 15) {
       }
 
       const user = candidates[0];
-      await assignTaskToUser({
+      const assignedTask = await assignTaskToUser({
         user,
         date,
         type: def.type,
         floor: def.floor,
         assignmentSource: CleaningAssignmentSource.SYSTEM,
         assignedByName: "System"
+      }).catch((err: unknown) => {
+        console.warn(
+          `[auto-schedule] skipped ${def.type} floor=${def.floor ?? "n/a"} on ${date.toISOString().slice(0, 10)} for ${user.email}:`,
+          err instanceof Error ? err.message : err
+        );
+        return null;
       });
+      if (!assignedTask) continue;
+
+      // Keep dayTasks fresh so subsequent slots for this day see up-to-date occupiedTasks.
+      dayTasks.push(assignedTask);
 
       // Update in-memory counts so the same user isn't over-assigned within this run
       const key = user.email.toLowerCase();
@@ -3212,14 +3330,24 @@ export async function autoScheduleCleaningTasksByJob(
       }
 
       const user = candidates[0];
-      await assignTaskToUser({
+      const assignedTask = await assignTaskToUser({
         user,
         date,
         type: job.type,
         floor: job.floor,
         assignmentSource: CleaningAssignmentSource.SYSTEM,
         assignedByName: "System"
+      }).catch((err: unknown) => {
+        console.warn(
+          `[auto-schedule] skipped ${job.type} floor=${job.floor ?? "n/a"} on ${date.toISOString().slice(0, 10)} for ${user.email}:`,
+          err instanceof Error ? err.message : err
+        );
+        return null;
       });
+      if (!assignedTask) continue;
+
+      // Keep dayTasks fresh so subsequent jobs for this day use up-to-date occupiedTasks.
+      dayTasks.push(assignedTask);
 
       const key = user.email.toLowerCase();
       recentTaskCounts.set(key, (recentTaskCounts.get(key) ?? 0) + 1);

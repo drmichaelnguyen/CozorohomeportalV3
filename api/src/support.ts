@@ -1,16 +1,24 @@
+import path from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+
 import {
   SupportConversationStatus,
   SupportMessageSenderRole,
-  CleaningTaskStatus
+  CleaningTaskStatus,
+  CleaningTaskType
 } from "@prisma/client";
 
 import {
+  COZORO_TIMEZONE,
+  EMAIL_COLUMN,
   getActiveClientByEmail,
   getClientBranchValue,
   getFinesForEmail,
   getLaundryBookingsForEmailWithOptions,
+  isActiveClient,
   normalizeClientBranch,
   readCachedClients,
+  syncClientsFromSheet,
   ClientRow,
 } from "./google-sheets.js";
 import { loadOpenAcComfortAlertsForStaff } from "./ac-comfort-votes.js";
@@ -35,6 +43,9 @@ const SUPPORT_NOTIFICATION_CACHE_TTL_MS = Number(
   process.env.SUPPORT_NOTIFICATION_CACHE_TTL_MS ?? 30 * 1000
 );
 const residentNotificationCache = new Map<string, CachedNotificationEntry<ResidentNotificationItem>>();
+const cacheDirPath = path.join(process.cwd(), "data");
+const cleaningReminderDispatchFilePath = path.join(cacheDirPath, "cleaning-reminder-dispatch.json");
+const laundryReminderDispatchFilePath = path.join(cacheDirPath, "laundry-reminder-dispatch.json");
 export type StaffSupportInboxItem =
   | {
       id: string;
@@ -62,6 +73,12 @@ export type StaffSupportInboxItem =
     };
 
 const staffNotificationCache = new Map<string, CachedNotificationEntry<StaffSupportInboxItem>>();
+const cleaningReminderPushState = {
+  running: false
+};
+const laundryReminderPushState = {
+  running: false
+};
 
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
@@ -574,6 +591,107 @@ function minutesUntil(target: Date, now = new Date()) {
   return (target.getTime() - now.getTime()) / (1000 * 60);
 }
 
+function getDateKeyInTimeZone(date: Date, timeZone = COZORO_TIMEZONE) {
+  return date.toLocaleDateString("en-CA", { timeZone });
+}
+
+function formatTimeLabelInTimeZone(date: Date, timeZone = COZORO_TIMEZONE) {
+  return date.toLocaleTimeString("en-GB", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function addDaysToDateKey(dateKey: string, days: number) {
+  const parts = dateKey.split("-").map((part) => Number.parseInt(part, 10));
+  if (parts.length !== 3 || parts.some((part) => !Number.isFinite(part))) {
+    return dateKey;
+  }
+
+  const [year, month, day] = parts;
+  return getDateKeyInTimeZone(new Date(Date.UTC(year, month - 1, day + days, 12, 0, 0, 0)));
+}
+
+function getCleaningTaskLabel(type: CleaningTaskType, floor?: number | null) {
+  if (type === CleaningTaskType.KITCHEN_D2) {
+    return "Kitchen D2";
+  }
+  if (type === CleaningTaskType.KITCHEN_D7) {
+    return "Kitchen D7";
+  }
+  if (type === CleaningTaskType.TRASH_D7) {
+    return floor ? `Trash D7 floor ${floor}` : "Trash D7";
+  }
+  return "Cleaning";
+}
+
+type CleaningReminderKind = "DAY_BEFORE" | "DAY_OF";
+
+type CleaningReminderDispatchLedger = {
+  sent: Record<string, string>;
+};
+
+type LaundryReminderKind = "TEN_MIN_BEFORE" | "START_NOW";
+
+type LaundryReminderDispatchLedger = {
+  sent: Record<string, string>;
+};
+
+async function readCleaningReminderDispatchLedger(): Promise<CleaningReminderDispatchLedger> {
+  try {
+    const raw = await readFile(cleaningReminderDispatchFilePath, "utf8");
+    const parsed = JSON.parse(raw) as Partial<CleaningReminderDispatchLedger> | null;
+    return {
+      sent: parsed?.sent && typeof parsed.sent === "object" ? parsed.sent : {}
+    };
+  } catch {
+    return { sent: {} };
+  }
+}
+
+async function writeCleaningReminderDispatchLedger(ledger: CleaningReminderDispatchLedger) {
+  await mkdir(cacheDirPath, { recursive: true });
+  await writeFile(cleaningReminderDispatchFilePath, JSON.stringify(ledger, null, 2), "utf8");
+}
+
+function cleanupCleaningReminderLedger(ledger: CleaningReminderDispatchLedger, now = new Date()) {
+  const cutoff = now.getTime() - 45 * 24 * 60 * 60 * 1000;
+  for (const [key, sentAt] of Object.entries(ledger.sent)) {
+    const sentMs = new Date(sentAt).getTime();
+    if (Number.isNaN(sentMs) || sentMs < cutoff) {
+      delete ledger.sent[key];
+    }
+  }
+}
+
+async function readLaundryReminderDispatchLedger(): Promise<LaundryReminderDispatchLedger> {
+  try {
+    const raw = await readFile(laundryReminderDispatchFilePath, "utf8");
+    const parsed = JSON.parse(raw) as Partial<LaundryReminderDispatchLedger> | null;
+    return {
+      sent: parsed?.sent && typeof parsed.sent === "object" ? parsed.sent : {}
+    };
+  } catch {
+    return { sent: {} };
+  }
+}
+
+async function writeLaundryReminderDispatchLedger(ledger: LaundryReminderDispatchLedger) {
+  await mkdir(cacheDirPath, { recursive: true });
+  await writeFile(laundryReminderDispatchFilePath, JSON.stringify(ledger, null, 2), "utf8");
+}
+
+function cleanupLaundryReminderLedger(ledger: LaundryReminderDispatchLedger, now = new Date()) {
+  const cutoff = now.getTime() - 45 * 24 * 60 * 60 * 1000;
+  for (const [key, sentAt] of Object.entries(ledger.sent)) {
+    const sentMs = new Date(sentAt).getTime();
+    if (Number.isNaN(sentMs) || sentMs < cutoff) {
+      delete ledger.sent[key];
+    }
+  }
+}
+
 async function buildResidentReminderNotifications(email: string) {
   const normalizedEmail = normalizeEmail(email);
   const now = new Date();
@@ -681,22 +799,23 @@ async function buildResidentReminderNotifications(email: string) {
       continue;
     }
     const minutes = minutesUntil(start, now);
+    const startTimeLabel = formatTimeLabelInTimeZone(start);
     if (minutes > 0 && minutes <= 10) {
       notifications.push({
         id: `laundry-10-${booking.id}`,
         type: "LAUNDRY_REMINDER",
         title: "Laundry starts in 10 minutes",
-        body: `${booking.summary} starts at ${start.toLocaleTimeString()}.`,
+        body: `${booking.summary} starts at ${startTimeLabel}.`,
         createdAt: booking.start,
         unreadCount: 1,
         href: "/bookings"
       });
-    } else if (minutes > 10 && minutes <= 60) {
+    } else if (minutes <= 0 && minutes > -15) {
       notifications.push({
-        id: `laundry-60-${booking.id}`,
+        id: `laundry-now-${booking.id}`,
         type: "LAUNDRY_REMINDER",
-        title: "Laundry starts in 1 hour",
-        body: `${booking.summary} starts at ${start.toLocaleTimeString()}.`,
+        title: "Laundry starts now",
+        body: `${booking.summary} is starting now (${startTimeLabel}).`,
         createdAt: booking.start,
         unreadCount: 1,
         href: "/bookings"
@@ -704,29 +823,32 @@ async function buildResidentReminderNotifications(email: string) {
     }
   }
 
+  const todayKey = getDateKeyInTimeZone(now);
+  const tomorrowKey = addDaysToDateKey(todayKey, 1);
+
   for (const task of cleaningTasks) {
-    const hours = hoursUntil(task.scheduledDate, now);
-    if (hours > 0 && hours <= 1) {
-      notifications.push({
-        id: `cleaning-1h-${task.id}`,
-        type: "CLEANING_REMINDER",
-        title: "Cleaning task in 1 hour",
-        body: `Your cleaning task is scheduled for ${task.scheduledDate.toLocaleString()}. Please prepare to start.`,
-        createdAt: task.scheduledDate.toISOString(),
-        unreadCount: 1,
-        href: "/schedule"
-      });
-    } else if (hours > 1 && hours <= 12) {
-      notifications.push({
-        id: `cleaning-12h-${task.id}`,
-        type: "CLEANING_REMINDER",
-        title: "Cleaning task is coming up",
-        body: `Your cleaning task is scheduled for ${task.scheduledDate.toLocaleString()}.`,
-        createdAt: task.scheduledDate.toISOString(),
-        unreadCount: 1,
-        href: "/schedule"
-      });
+    const taskDayKey = getDateKeyInTimeZone(task.scheduledDate);
+    const reminderKind: CleaningReminderKind | null =
+      taskDayKey === todayKey ? "DAY_OF" : taskDayKey === tomorrowKey ? "DAY_BEFORE" : null;
+
+    if (!reminderKind) {
+      continue;
     }
+
+    const taskDateLabel = task.scheduledDate.toLocaleDateString("en-GB", { timeZone: COZORO_TIMEZONE });
+    const taskLabel = getCleaningTaskLabel(task.type, task.floor);
+    notifications.push({
+      id: `cleaning-${reminderKind.toLowerCase()}-${task.id}-${taskDayKey}`,
+      type: "CLEANING_REMINDER",
+      title: reminderKind === "DAY_OF" ? "Cleaning is today" : "Cleaning is tomorrow",
+      body:
+        reminderKind === "DAY_OF"
+          ? `Your ${taskLabel} cleaning is today (${taskDateLabel}). Mark done on the assigned date; late submission stays open for 10 hours after the deadline.`
+          : `Your ${taskLabel} cleaning is tomorrow (${taskDateLabel}). Mark done on the assigned date; late submission stays open for 10 hours after the deadline.`,
+      createdAt: now.toISOString(),
+      unreadCount: 1,
+      href: "/cleaning-schedule"
+    });
   }
 
   for (const task of recentlyAuditedTasks) {
@@ -999,6 +1121,196 @@ export async function listStaffSupportNotifications(operatorEmail: string) {
     notifications: notifications.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
     unreadCount: notifications.reduce((sum, item) => sum + item.unreadCount, 0)
   });
+}
+
+
+export async function dispatchCleaningReminderPushes(trigger: "startup" | "interval" | "manual") {
+  if (cleaningReminderPushState.running) {
+    return {
+      skipped: true,
+      reason: "A previous cleaning reminder push run is still in progress."
+    };
+  }
+
+  cleaningReminderPushState.running = true;
+
+  try {
+    const now = new Date();
+    const todayKey = getDateKeyInTimeZone(now);
+    const tomorrowKey = addDaysToDateKey(todayKey, 1);
+
+    const assignedTasks = await prisma.cleaningTask.findMany({
+      where: { status: CleaningTaskStatus.ASSIGNED },
+      select: {
+        id: true,
+        userEmail: true,
+        type: true,
+        floor: true,
+        scheduledDate: true
+      },
+      orderBy: { scheduledDate: "asc" }
+    });
+
+    const grouped = new Map<
+      string,
+      {
+        email: string;
+        kind: CleaningReminderKind;
+        taskDayKey: string;
+        tasks: Array<{ id: string; type: CleaningTaskType; floor: number | null; scheduledDate: Date }>;
+      }
+    >();
+
+    for (const task of assignedTasks) {
+      const taskDayKey = getDateKeyInTimeZone(task.scheduledDate);
+      const kind: CleaningReminderKind | null =
+        taskDayKey === todayKey ? "DAY_OF" : taskDayKey === tomorrowKey ? "DAY_BEFORE" : null;
+
+      if (!kind) {
+        continue;
+      }
+
+      const email = normalizeEmail(task.userEmail);
+      const key = `${email}|${kind}|${taskDayKey}`;
+      const entry = grouped.get(key) ?? {
+        email,
+        kind,
+        taskDayKey,
+        tasks: []
+      };
+      entry.tasks.push(task);
+      grouped.set(key, entry);
+    }
+
+    const ledger = await readCleaningReminderDispatchLedger();
+    cleanupCleaningReminderLedger(ledger, now);
+
+    let sent = 0;
+
+    for (const entry of grouped.values()) {
+      const reminderKey = `cleaning:${entry.email}:${entry.kind}:${entry.taskDayKey}`;
+      if (ledger.sent[reminderKey]) {
+        continue;
+      }
+
+      const taskDateLabel = entry.tasks[0]?.scheduledDate.toLocaleDateString("en-GB", { timeZone: COZORO_TIMEZONE });
+      const taskLabels = entry.tasks.map((task) => getCleaningTaskLabel(task.type, task.floor));
+      const firstLabels = taskLabels.slice(0, 3).join(", ");
+      const moreSuffix = taskLabels.length > 3 ? ` and ${taskLabels.length - 3} more` : "";
+      const title = entry.kind === "DAY_OF" ? "Cleaning is today" : "Cleaning is tomorrow";
+      const body =
+        entry.kind === "DAY_OF"
+          ? `You have ${entry.tasks.length} cleaning task${entry.tasks.length === 1 ? "" : "s"} today (${taskDateLabel}). ${firstLabels}${moreSuffix}. Open Cleaning Schedule to mark done.`
+          : `You have ${entry.tasks.length} cleaning task${entry.tasks.length === 1 ? "" : "s"} tomorrow (${taskDateLabel}). ${firstLabels}${moreSuffix}. Open Cleaning Schedule to prepare.`;
+
+      await sendPushToEmail(entry.email, title, body, "/cleaning-schedule");
+      ledger.sent[reminderKey] = now.toISOString();
+      sent += 1;
+    }
+
+    cleanupCleaningReminderLedger(ledger, now);
+    await writeCleaningReminderDispatchLedger(ledger);
+
+    if (sent > 0) {
+      console.log(`[cleaning-reminder-push] trigger=${trigger} sent=${sent} groups=${grouped.size}`);
+    }
+
+    return {
+      skipped: false,
+      sent,
+      groups: grouped.size
+    };
+  } finally {
+    cleaningReminderPushState.running = false;
+  }
+}
+
+export async function dispatchLaundryReminderPushes(trigger: "startup" | "interval" | "manual") {
+  if (laundryReminderPushState.running) {
+    return {
+      skipped: true,
+      reason: "A previous laundry reminder push run is still in progress."
+    };
+  }
+
+  laundryReminderPushState.running = true;
+
+  try {
+    const now = new Date();
+    const clientCache = (await readCachedClients()) ?? (await syncClientsFromSheet());
+    const activeEmails = Array.from(
+      new Set(
+        (clientCache?.rows ?? [])
+          .filter((row: ClientRow) => isActiveClient(row))
+          .map((row: ClientRow) => normalizeEmail(row[EMAIL_COLUMN] ?? ""))
+          .filter((email) => email.length > 0)
+      )
+    );
+
+    const ledger = await readLaundryReminderDispatchLedger();
+    cleanupLaundryReminderLedger(ledger, now);
+
+    let sent = 0;
+    let residentsChecked = 0;
+
+    for (const email of activeEmails) {
+      residentsChecked += 1;
+      const bookings = await getLaundryBookingsForEmailWithOptions(email, { forceRefresh: false });
+      if (bookings.length === 0) {
+        continue;
+      }
+
+      for (const booking of bookings) {
+        const start = new Date(booking.start);
+        if (Number.isNaN(start.getTime())) {
+          continue;
+        }
+
+        const minutes = minutesUntil(start, now);
+        let reminderKind: LaundryReminderKind | null = null;
+        if (minutes > 0 && minutes <= 10) {
+          reminderKind = "TEN_MIN_BEFORE";
+        } else if (minutes <= 0 && minutes > -15) {
+          reminderKind = "START_NOW";
+        }
+
+        if (!reminderKind) {
+          continue;
+        }
+
+        const reminderKey = `laundry:${email}:${reminderKind}:${booking.id}:${start.toISOString()}`;
+        if (ledger.sent[reminderKey]) {
+          continue;
+        }
+
+        const startTimeLabel = formatTimeLabelInTimeZone(start);
+        const title = reminderKind === "TEN_MIN_BEFORE" ? "Laundry starts in 10 minutes" : "Laundry starts now";
+        const body =
+          reminderKind === "TEN_MIN_BEFORE"
+            ? `${booking.summary} starts at ${startTimeLabel}. Open Bookings to get ready.`
+            : `${booking.summary} is starting now (${startTimeLabel}). Open Bookings to view it.`;
+
+        await sendPushToEmail(email, title, body, "/bookings");
+        ledger.sent[reminderKey] = now.toISOString();
+        sent += 1;
+      }
+    }
+
+    cleanupLaundryReminderLedger(ledger, now);
+    await writeLaundryReminderDispatchLedger(ledger);
+
+    if (sent > 0) {
+      console.log(`[laundry-reminder-push] trigger=${trigger} sent=${sent} residents=${residentsChecked}`);
+    }
+
+    return {
+      skipped: false,
+      sent,
+      residentsChecked
+    };
+  } finally {
+    laundryReminderPushState.running = false;
+  }
 }
 
 
