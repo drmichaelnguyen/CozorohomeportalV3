@@ -1767,7 +1767,7 @@ export function AccountOverviewClient() {
                             {entry.row["Sự kiện"] || "—"}
                           </div>
                           <div className="mt-0.5 text-xs text-slate-500">
-                            {entry.parsedTimestamp ? new Date(entry.parsedTimestamp).toLocaleDateString() : ""}
+                            {entry.parsedTimestamp ? new Date(entry.parsedTimestamp).toLocaleString() : ""}
                             {` · ${formatResidentCoinsOperatorLabel(entry.row["Người thao tác"], activeEmail, language)}`}
                           </div>
                         </div>
