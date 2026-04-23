@@ -150,65 +150,77 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
                   />
                 </div>
                 <p className="text-xs font-semibold uppercase tracking-widest text-sky-300">
-                  {language === "vi" ? "Cổng thông tin cư dân" : "Resident portal"}
+                  {language === "vi" ? "Hostel tự động giá rẻ tại TP.HCM" : "Automated budget hostel in Ho Chi Minh City"}
                 </p>
-                <h1 className="sr-only">CozoroHome</h1>
+                <h1 className="mt-3 text-3xl font-semibold leading-tight text-white sm:text-5xl">
+                  {language === "vi"
+                    ? "Thuê giường tầng hostel giá rẻ từ 70.000 VND/ngày"
+                    : "Cheap hostel bunk bed rental from 70,000 VND/day"}
+                </h1>
                 <p className="mt-3 text-base leading-relaxed text-sky-100">
                   {language === "vi"
-                    ? "Không gian sống cộng đồng hiện đại — giá cả phải chăng, tiện nghi đầy đủ, môi trường bình yên và văn minh, được vận hành bởi hệ thống tự động hóa và công nghệ quản lý tiên tiến."
-                    : "A modern co-living space — affordable for everyone, fully equipped with quality amenities, peaceful and respectful environment, powered by a highly automated and high-tech management system."}
+                    ? "CozoroHome quảng bá là một trong những hostel giường tầng tự động hóa cao và giá rẻ tại Thành phố Hồ Chí Minh, phù hợp cho người cần chỗ ở tiết kiệm, đặt chỗ nhanh và quản lý tiện nghi bằng hệ thống số."
+                    : "CozoroHome is built to be one of the most automated and cheap hostel bunk bed rentals in Ho Chi Minh City, ideal for budget stays with fast booking and streamlined digital operations."}
                 </p>
-                <Link
-                  href="/client-login"
-                  className="mt-6 inline-flex items-center gap-2 rounded-full bg-[#ffffff] px-6 py-3 text-sm font-semibold !text-[#0f172a] shadow-md shadow-slate-900/10 ring-1 ring-slate-200/90 transition-colors hover:bg-slate-100 hover:!text-[#020617] dark:bg-[#f8fafc] dark:shadow-black/25 dark:ring-white/25 dark:hover:bg-slate-200 dark:hover:!text-[#020617]"
-                >
-                  {language === "vi" ? "Đăng nhập tài khoản" : "Sign in to your account"}
-                  <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                  </svg>
-                </Link>
+                <div className="mt-6 flex flex-wrap gap-3">
+                  <Link
+                    href="/register"
+                    className="inline-flex items-center gap-2 rounded-full bg-[#ffffff] px-6 py-3 text-sm font-semibold !text-[#0f172a] shadow-md shadow-slate-900/10 ring-1 ring-slate-200/90 transition-colors hover:bg-slate-100 hover:!text-[#020617] dark:bg-[#f8fafc] dark:shadow-black/25 dark:ring-white/25 dark:hover:bg-slate-200 dark:hover:!text-[#020617]"
+                  >
+                    {language === "vi" ? "Đặt giường ngay" : "Book a bunk bed"}
+                    <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                  </Link>
+                  <Link
+                    href="/client-login"
+                    className="inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/10 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-white/15"
+                  >
+                    {language === "vi" ? "Đăng nhập cư dân" : "Resident login"}
+                  </Link>
+                </div>
               </div>
             </section>
 
             {/* Vision */}
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
               <h2 className="text-lg font-semibold text-slate-900">
-                {language === "vi" ? "Tầm nhìn của chúng tôi" : "Our Vision"}
+                {language === "vi" ? "Vì sao CozoroHome nổi bật" : "Why CozoroHome stands out"}
               </h2>
               <p className="mt-3 text-sm leading-relaxed text-slate-600">
                 {language === "vi"
-                  ? "CozoroHome được xây dựng từ ước mơ tạo ra một không gian sống cộng đồng thực sự tiên tiến — nơi mà bất kỳ ai cũng có thể tiếp cận với mức giá thấp và hợp lý, trong khi vẫn được hưởng đầy đủ tiện nghi chất lượng cao."
-                  : "CozoroHome was built from a dream — to create a truly futuristic co-living space that is genuinely low-cost and affordable for everyone, while still offering high-quality, sufficient amenities that make daily life comfortable and dignified."}
+                  ? "Trang này được viết để khách tìm trên Google có thể hiểu nhanh: CozoroHome cung cấp chỗ ngủ giường tầng hostel giá rẻ tại TP.HCM, nhấn mạnh vận hành tự động, đặt chỗ thuận tiện và mức giá khởi điểm từ 70.000 VND/ngày."
+                  : "This page is written so Google visitors can quickly understand the offer: CozoroHome provides cheap hostel bunk bed stays in Ho Chi Minh City with heavy automation, convenient booking, and rates starting from 70,000 VND/day."}
               </p>
               <div className="mt-5 grid gap-4 sm:grid-cols-2">
                 {[
                   {
                     icon: "✦",
-                    en: "Affordable for Everyone",
-                    vi: "Giá cả phải chăng cho tất cả",
-                    descEn: "Low and transparent pricing so quality co-living is accessible to anyone, not just the privileged few.",
-                    descVi: "Giá minh bạch, thấp nhất có thể để bất kỳ ai cũng có thể tiếp cận không gian sống chất lượng."
+                    en: "Starting From 70,000 VND/Day",
+                    vi: "Từ 70.000 VND/ngày",
+                    descEn: "Entry-level daily pricing designed for travelers, workers, and residents who need a cheap bed in Ho Chi Minh City.",
+                    descVi: "Mức giá mở đầu hướng tới khách ở ngắn ngày, người lao động và người cần một chỗ ngủ tiết kiệm tại TP.HCM."
                   },
                   {
                     icon: "◈",
-                    en: "High-Quality Amenities",
-                    vi: "Tiện nghi đầy đủ & chất lượng",
-                    descEn: "Fully equipped shared spaces — laundry, kitchen, and more — maintained to a high standard for everyone.",
-                    descVi: "Không gian chung được trang bị đầy đủ — giặt sấy, bếp và nhiều tiện ích khác — duy trì theo tiêu chuẩn cao."
+                    en: "Automated Operations",
+                    vi: "Vận hành tự động hóa",
+                    descEn: "Digital systems support booking, billing, maintenance, and resident communication to reduce friction and cost.",
+                    descVi: "Hệ thống số hỗ trợ đặt chỗ, thu tiền, bảo trì và giao tiếp với cư dân để giảm thao tác thủ công và giảm chi phí."
                   },
                   {
                     icon: "❋",
-                    en: "Peaceful & Respectful Community",
-                    vi: "Cộng đồng bình yên & văn minh",
-                    descEn: "A culture of mutual respect — for each other, for shared spaces, and for the living environment.",
-                    descVi: "Văn hóa tôn trọng lẫn nhau — tôn trọng con người, không gian chung và môi trường sống."
+                    en: "Cheap Hostel Beds In Ho Chi Minh City",
+                    vi: "Giường hostel giá rẻ tại TP.HCM",
+                    descEn: "The landing copy now clearly targets the search phrases people actually use when looking for cheap hostel bunk beds in the city.",
+                    descVi: "Nội dung trang đã nhắm rõ các cụm từ khách thật dùng khi tìm hostel giường tầng giá rẻ tại Thành phố Hồ Chí Minh."
                   },
                   {
                     icon: "⬡",
-                    en: "High-Tech Automation",
-                    vi: "Tự động hóa & công nghệ cao",
-                    descEn: "Smart systems handle scheduling, billing, maintenance, and communications — so residents can focus on living.",
-                    descVi: "Hệ thống thông minh xử lý lịch trình, thanh toán, bảo trì và liên lạc — để cư dân tập trung vào cuộc sống."
+                    en: "Fast Self-Service Journey",
+                    vi: "Hành trình tự phục vụ nhanh",
+                    descEn: "Visitors can move from discovery to registration without a long manual back-and-forth process.",
+                    descVi: "Khách có thể đi từ bước tìm hiểu đến đăng ký mà không cần quy trình trao đổi thủ công quá dài."
                   }
                 ].map((item) => (
                   <div key={item.en} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
