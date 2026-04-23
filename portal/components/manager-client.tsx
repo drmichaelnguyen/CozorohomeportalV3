@@ -3320,7 +3320,15 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => setSelectedBranch("D2")}
+                onClick={() => {
+                  // Clear the focused client/room so the branch-sync effect does
+                  // not snap the user back to the client's branch.
+                  if (selectedClient && normalizeBranchLabel(selectedClient.branch) !== "D2") {
+                    setSelectedMaHd("");
+                    setSelectedRoom("");
+                  }
+                  setSelectedBranch("D2");
+                }}
                 className={`rounded-full px-4 py-2 text-sm font-medium ${
                   selectedBranch === "D2" ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700"
                 }`}
@@ -3329,7 +3337,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               </button>
               <button
                 type="button"
-                onClick={() => setSelectedBranch("D7")}
+                onClick={() => {
+                  if (selectedClient && normalizeBranchLabel(selectedClient.branch) !== "D7") {
+                    setSelectedMaHd("");
+                    setSelectedRoom("");
+                  }
+                  setSelectedBranch("D7");
+                }}
                 className={`rounded-full px-4 py-2 text-sm font-medium ${
                   selectedBranch === "D7" ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700"
                 }`}
