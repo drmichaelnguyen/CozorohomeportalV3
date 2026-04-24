@@ -136,12 +136,15 @@ export function ContractExtension({
     setError("");
 
     try {
+      const signatureTimestamp = new Date().toISOString();
       const response = await fetch(`${API_BASE_URL}/clients/contracts/extend`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email,
-          extensionMonths: duration
+          extensionMonths: duration,
+          clientSignatureDataUrl: canvasRef.current?.toDataURL("image/png"),
+          clientSignatureTimestamp: signatureTimestamp
         })
       });
 
@@ -178,7 +181,7 @@ export function ContractExtension({
               {t("processingWait")}
             </p>
             <p className="text-emerald-700 text-sm mt-3 leading-relaxed">
-              {t("checkEmailFifteenSeconds")}
+              {t("contractExtensionPendingApproval", "Your signed extension is waiting for owner review. Email will be sent after approval.")}
             </p>
           </div>
           <button 

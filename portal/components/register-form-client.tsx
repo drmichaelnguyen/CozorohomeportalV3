@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
 
@@ -549,6 +549,9 @@ export function RegisterFormClient() {
   const [branchPricingSettings, setBranchPricingSettings] = useState<BranchPricingSettings[]>([]);
   const [idScanUploading, setIdScanUploading] = useState(false);
   const [idScanFileName, setIdScanFileName] = useState("");
+  const signatureCanvasRef = useRef<HTMLCanvasElement>(null);
+  const [isSigning, setIsSigning] = useState(false);
+  const [hasSignature, setHasSignature] = useState(false);
   // House rules modal state
   const [showRulesModal, setShowRulesModal] = useState(false);
   const [rulesStep, setRulesStep] = useState(0);
@@ -670,6 +673,53 @@ export function RegisterFormClient() {
 
   function updateForm<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function getCanvasPoint(event: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) {
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const point = "touches" in event ? event.touches[0] : event;
+    if (!point) return null;
+    return {
+      x: point.clientX - rect.left,
+      y: point.clientY - rect.top
+    };
+  }
+
+  function startSignature(event: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) {
+    const ctx = signatureCanvasRef.current?.getContext("2d");
+    const point = getCanvasPoint(event);
+    if (!ctx || !point) return;
+    setIsSigning(true);
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(point.x, point.y);
+  }
+
+  function drawSignature(event: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) {
+    if (!isSigning) return;
+    const ctx = signatureCanvasRef.current?.getContext("2d");
+    const point = getCanvasPoint(event);
+    if (!ctx || !point) return;
+    ctx.lineTo(point.x, point.y);
+    ctx.stroke();
+    setHasSignature(true);
+  }
+
+  function stopSignature() {
+    setIsSigning(false);
+    signatureCanvasRef.current?.getContext("2d")?.beginPath();
+  }
+
+  function clearSignature() {
+    const canvas = signatureCanvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setHasSignature(false);
   }
 
   useEffect(() => {
@@ -913,6 +963,11 @@ export function RegisterFormClient() {
       return;
     }
 
+    if (!hasSignature) {
+      setSubmitError(lang === "vi" ? "Vui lòng ký tên trước khi gửi đăng ký." : "Please sign before submitting your registration.");
+      return;
+    }
+
     if (form.hasMotorbike && !form.motorbikePlate.trim()) {
       setSubmitError(t.motorbikePlateRequired);
       return;
@@ -980,6 +1035,8 @@ export function RegisterFormClient() {
           motorbikePlate: form.hasMotorbike ? form.motorbikePlate : undefined,
           parkingOptionId: form.hasMotorbike ? form.parkingOptionId : undefined,
           idScanUrl,
+          clientSignatureDataUrl: signatureCanvasRef.current?.toDataURL("image/png"),
+          clientSignatureTimestamp: new Date().toISOString(),
           referralCode: referralTrimmed || undefined,
           claimedDiscounts: eligibleDiscounts.map((d) => d.id)
         })
@@ -996,11 +1053,12 @@ export function RegisterFormClient() {
 
       setSuccessMessage(
         data.contractCode
-          ? `Registration submitted. Contract code: ${data.contractCode}.${data.referralCoinsWarning ? ` Note: ${data.referralCoinsWarning}` : ""}`
-          : `Registration submitted successfully.${data.referralCoinsWarning ? ` Note: ${data.referralCoinsWarning}` : ""}`
+          ? `Registration submitted for owner approval. Reference: ${data.contractCode}.${data.referralCoinsWarning ? ` Note: ${data.referralCoinsWarning}` : ""}`
+          : `Registration submitted for owner approval.${data.referralCoinsWarning ? ` Note: ${data.referralCoinsWarning}` : ""}`
       );
       setReferralLookup("idle");
       setIdScanFileName("");
+      clearSignature();
       setForm((current) => ({ ...initialFormState, sex: current.sex, branchId: current.branchId }));
       setAvailability((current) =>
         current
@@ -1396,6 +1454,41 @@ export function RegisterFormClient() {
               {lang === "vi" ? "Đọc và xác nhận nội quy nhà ở" : "Read and confirm house rules"}
             </button>
           )}
+          <section className="rounded-[1.5rem] border border-slate-200 bg-white p-5">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">{lang === "vi" ? "Chữ ký khách hàng" : "Client signature"}</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {lang === "vi" ? "Chữ ký và thời gian ký sẽ được lưu để đưa vào hợp đồng sau khi chủ nhà duyệt." : "Your signature and signing timestamp will be saved for the contract after owner approval."}
+                </p>
+              </div>
+              {hasSignature ? (
+                <button type="button" onClick={clearSignature} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                  {lang === "vi" ? "Ký lại" : "Clear"}
+                </button>
+              ) : null}
+            </div>
+            <div className="relative h-32 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 p-1">
+              <canvas
+                ref={signatureCanvasRef}
+                width={700}
+                height={128}
+                onMouseDown={startSignature}
+                onMouseMove={drawSignature}
+                onMouseUp={stopSignature}
+                onMouseLeave={stopSignature}
+                onTouchStart={startSignature}
+                onTouchMove={drawSignature}
+                onTouchEnd={stopSignature}
+                className="h-full w-full cursor-crosshair touch-none rounded-xl bg-white"
+              />
+              {!hasSignature ? (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm italic text-slate-400">
+                  {lang === "vi" ? "Ký tại đây" : "Sign here"}
+                </div>
+              ) : null}
+            </div>
+          </section>
           {submitError ? <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{submitError}</p> : null}
           {successMessage ? <p className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{successMessage}</p> : null}
           <div className="flex flex-wrap items-center gap-3">

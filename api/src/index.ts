@@ -273,6 +273,7 @@ import {
 const app = express();
 const port = Number(process.env.PORT) || 4000; // AntiGravity: Use env PORT if available, default to 4000
 const GUEST_AUTH_RATE_PATH = path.join(process.cwd(), "data", "guest-auth-rate.json");
+const CONTRACT_APPROVALS_PATH = path.join(process.cwd(), "data", "contract-approvals.json");
 const GUEST_AUTH_MIN_INTERVAL_MS = 60 * 1000;
 const GUEST_AUTH_MAX_PER_EMAIL_PER_HOUR = 3;
 const GUEST_AUTH_MAX_PER_EMAIL_PER_DAY = 10;
@@ -290,6 +291,65 @@ let autoScheduleRunning = false;
 const WRITE_GUARD_DEFAULT_WINDOW_MS = Number(process.env.WRITE_GUARD_DEFAULT_WINDOW_MS ?? 8000);
 const writeGuardInFlightKeys = new Set<string>();
 const writeGuardRecentKeys = new Map<string, number>();
+type PendingContractApproval = {
+  id: string;
+  type: "registration" | "extension";
+  status: "pending" | "approved" | "rejected";
+  submittedAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  rejectionReason?: string;
+  clientSignatureDataUrl?: string;
+  clientSignatureTimestamp?: string;
+  registration?: Record<string, any>;
+  referralRewards?: {
+    newUserCoins: number;
+    referrerCoins: number;
+    referrerMaHd: string;
+  } | null;
+  extension?: {
+    email: string;
+    extensionMonths: number;
+  };
+};
+type ContractApprovalsFile = { approvals: PendingContractApproval[] };
+
+async function readContractApprovals(): Promise<ContractApprovalsFile> {
+  try {
+    const raw = await readFile(CONTRACT_APPROVALS_PATH, "utf8");
+    const parsed = JSON.parse(raw) as ContractApprovalsFile;
+    return { approvals: Array.isArray(parsed.approvals) ? parsed.approvals : [] };
+  } catch {
+    return { approvals: [] };
+  }
+}
+
+async function writeContractApprovals(file: ContractApprovalsFile): Promise<void> {
+  await mkdir(path.dirname(CONTRACT_APPROVALS_PATH), { recursive: true });
+  await writeFile(CONTRACT_APPROVALS_PATH, JSON.stringify(file, null, 2), "utf8");
+}
+
+function publicApprovalSummary(item: PendingContractApproval) {
+  const registration = (item.registration ?? {}) as Record<string, any>;
+  const extension = (item.extension ?? {}) as Record<string, any>;
+  return {
+    id: item.id,
+    type: item.type,
+    status: item.status,
+    submittedAt: item.submittedAt,
+    reviewedAt: item.reviewedAt,
+    reviewedBy: item.reviewedBy,
+    rejectionReason: item.rejectionReason,
+    clientSignatureTimestamp: item.clientSignatureTimestamp,
+    fullName: String(registration.fullName ?? ""),
+    email: String(registration.email ?? extension.email ?? ""),
+    branchId: String(registration.branchId ?? ""),
+    bedNumber: registration.bedNumber ?? null,
+    contractMonths: registration.contractMonths ?? extension.extensionMonths ?? null,
+    contractStartDate: String(registration.contractStartDate ?? ""),
+    contractEndDate: String(registration.contractEndDate ?? "")
+  };
+}
 const SENSITIVE_CLIENT_FIELD_PATTERNS = [
   "ngaysinh",
   "birthday",
@@ -971,7 +1031,9 @@ const publicRegistrationSchema = z.object({
   idScanUrl: z.string().trim().optional(),
   referralCode: z.string().trim().optional(),
   /** Pre-referral first payment total (rent prepay slice + full deposit); required when referralCode is set. */
-  firstPaymentSubtotalBeforeReferral: z.coerce.number().int().nonnegative().optional()
+  firstPaymentSubtotalBeforeReferral: z.coerce.number().int().nonnegative().optional(),
+  clientSignatureDataUrl: z.string().trim().optional(),
+  clientSignatureTimestamp: z.string().trim().optional()
 });
 const cleaningAvailabilitySchema = z.object({
   email: z.string().email(),
@@ -1231,7 +1293,9 @@ app.post("/clients/sync", async (_request, response) => {
 app.post("/clients/contracts/extend", async (request, response) => {
   const parsed = z.object({
     email: z.string().email(),
-    extensionMonths: z.number().int().positive()
+    extensionMonths: z.number().int().positive(),
+    clientSignatureDataUrl: z.string().trim().optional(),
+    clientSignatureTimestamp: z.string().trim().optional()
   }).safeParse(request.body);
 
   if (!parsed.success) {
@@ -1243,23 +1307,37 @@ app.post("/clients/contracts/extend", async (request, response) => {
     if (!active) {
       return response.status(400).json({ error: "Could not find an active client record to extend." });
     }
-    const branchId = normalizeClientBranch(String(active[CLIENT_BRANCH_COLUMN] ?? ""));
-    const bedNumber = Number.parseInt(String(active[CLIENT_BED_COLUMN] ?? "").replace(/[^0-9]/g, ""), 10);
-    let listPricing: { listMonthlyPriceVnd: number } | undefined;
-    if (bedNumber > 0) {
-      const { monthlyPrice } = await resolveLongTermListPriceForBed(branchId, bedNumber);
-      if (monthlyPrice > 0) {
-        listPricing = { listMonthlyPriceVnd: monthlyPrice };
-      }
-    }
-
-    await runWithWriteGuard({
+    const item = await runWithWriteGuard({
       key: createWriteGuardKey("/clients/contracts/extend", parsed.data),
       duplicateMessage: "This contract extension request was just submitted. Please wait a few seconds.",
       cooldownMs: 15000,
-      action: () => extendClientContract(parsed.data.email, parsed.data.extensionMonths, listPricing)
+      action: async () => {
+        const file = await readContractApprovals();
+        const duplicate = file.approvals.find(
+          (entry) =>
+            entry.status === "pending" &&
+            entry.type === "extension" &&
+            entry.extension?.email.trim().toLowerCase() === parsed.data.email.trim().toLowerCase()
+        );
+        if (duplicate) return duplicate;
+        const next: PendingContractApproval = {
+          id: randomUUID(),
+          type: "extension",
+          status: "pending",
+          submittedAt: new Date().toISOString(),
+          clientSignatureDataUrl: parsed.data.clientSignatureDataUrl,
+          clientSignatureTimestamp: parsed.data.clientSignatureTimestamp,
+          extension: {
+            email: parsed.data.email.trim().toLowerCase(),
+            extensionMonths: parsed.data.extensionMonths
+          }
+        };
+        file.approvals.unshift(next);
+        await writeContractApprovals(file);
+        return next;
+      }
     });
-    return response.json({ ok: true });
+    return response.json({ ok: true, approvalId: item.id, pendingApproval: true });
   } catch (error) {
     return response.status((error as Error & { statusCode?: number }).statusCode ?? 500).json({
       error: error instanceof Error ? error.message : "Unable to extend contract."
@@ -6491,57 +6569,173 @@ app.post("/api/public/register", async (request, response) => {
         void _referralIgnored;
         void _fpSubtotalIgnored;
 
-        const registration = await submitPublicRegistration({
-          ...registrationFields,
-          additionalTerms: mergedAdditionalTerms || undefined,
-          referralNoteLine,
-          cleaningOptOutFeeVnd: configuredCleaningFeeVnd,
-          parkingFeeVnd,
-          parkingPlanSummary,
-          idScanUrl: parsed.data.idScanUrl,
-          motorbikePlate: parsed.data.motorbikePlate
-        });
-
-        if (parsed.data.contractCleaningOptOut) {
-          await upsertContractCleaningOptOut({
-            email: parsed.data.email,
-            branchId: parsed.data.branchId,
-            contractCode: registration.contractCode,
-            contractStartDate: parsed.data.contractStartDate,
-            contractEndDate: parsed.data.contractEndDate,
-            cleaningFeeVnd: configuredCleaningFeeVnd
-          });
+        const pending: PendingContractApproval = {
+          id: randomUUID(),
+          type: "registration",
+          status: "pending",
+          submittedAt: new Date().toISOString(),
+          clientSignatureDataUrl: parsed.data.clientSignatureDataUrl,
+          clientSignatureTimestamp: parsed.data.clientSignatureTimestamp,
+          referralRewards,
+          registration: {
+            ...registrationFields,
+            additionalTerms: mergedAdditionalTerms || undefined,
+            referralNoteLine,
+            cleaningOptOutFeeVnd: configuredCleaningFeeVnd,
+            parkingFeeVnd,
+            parkingPlanSummary,
+            idScanUrl: parsed.data.idScanUrl,
+            motorbikePlate: parsed.data.motorbikePlate,
+            clientSignatureDataUrl: parsed.data.clientSignatureDataUrl,
+            clientSignatureTimestamp: parsed.data.clientSignatureTimestamp
+          }
+        };
+        const file = await readContractApprovals();
+        const duplicate = file.approvals.find(
+          (entry) =>
+            entry.status === "pending" &&
+            entry.type === "registration" &&
+            String(entry.registration?.email ?? "").trim().toLowerCase() === parsed.data.email.trim().toLowerCase()
+        );
+        if (duplicate) {
+          return { contractCode: duplicate.id, pendingApproval: true };
         }
+        file.approvals.unshift(pending);
+        await writeContractApprovals(file);
 
-        return registration;
+        return {
+          contractCode: pending.id,
+          pendingApproval: true
+        };
       }
     });
 
-    if (referralRewards && (referralRewards.newUserCoins > 0 || referralRewards.referrerCoins > 0)) {
-      try {
-        await applyReferralRegistrationRewards({
-          newUserMaHd: result.contractCode,
-          newUserCoins: referralRewards.newUserCoins,
-          referrerMaHd: referralRewards.referrerMaHd,
-          referrerCoins: referralRewards.referrerCoins
-        });
-      } catch (coinError) {
-        console.error("[api/public/register] Referral coin grants failed", coinError);
-        return response.json({
-          ok: true,
-          contractCode: result.contractCode,
-          referralCoinsWarning: coinError instanceof Error ? coinError.message : "Referral coin grants failed"
-        });
-      }
-    }
-
     return response.json({
       ok: true,
-      contractCode: result.contractCode
+      contractCode: result.contractCode,
+      pendingApproval: result.pendingApproval
     });
   } catch (error) {
     return response.status((error as Error & { statusCode?: number }).statusCode ?? 500).json({
       error: error instanceof Error ? error.message : "Unable to submit registration"
+    });
+  }
+});
+
+app.get("/manager/contract-approvals", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "").trim();
+  try {
+    await requirePortalRole(actorEmail, ["owner", "app_admin"], "Only owners can review contract approvals.");
+    const file = await readContractApprovals();
+    return response.json({
+      approvals: file.approvals.map(publicApprovalSummary)
+    });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to load contract approvals" });
+  }
+});
+
+app.post("/manager/contract-approvals/:id/reject", async (request, response) => {
+  const parsed = z.object({
+    actorEmail: z.string().email(),
+    reason: z.string().trim().optional()
+  }).safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Invalid approval rejection payload" });
+
+  try {
+    await requirePortalRole(parsed.data.actorEmail, ["owner", "app_admin"], "Only owners can reject contract approvals.");
+    const file = await readContractApprovals();
+    const item = file.approvals.find((entry) => entry.id === request.params.id);
+    if (!item) return response.status(404).json({ error: "Approval request not found" });
+    if (item.status !== "pending") return response.status(400).json({ error: "This approval request has already been reviewed" });
+    item.status = "rejected";
+    item.reviewedAt = new Date().toISOString();
+    item.reviewedBy = parsed.data.actorEmail.trim().toLowerCase();
+    item.rejectionReason = parsed.data.reason ?? "";
+    await writeContractApprovals(file);
+    return response.json({ ok: true });
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 500).json({
+      error: error instanceof Error ? error.message : "Unable to reject contract approval"
+    });
+  }
+});
+
+app.post("/manager/contract-approvals/:id/approve", async (request, response) => {
+  const parsed = z.object({
+    actorEmail: z.string().email()
+  }).safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Invalid approval payload" });
+
+  try {
+    await requirePortalRole(parsed.data.actorEmail, ["owner", "app_admin"], "Only owners can approve contract approvals.");
+    const file = await readContractApprovals();
+    const item = file.approvals.find((entry) => entry.id === request.params.id);
+    if (!item) return response.status(404).json({ error: "Approval request not found" });
+    if (item.status !== "pending") return response.status(400).json({ error: "This approval request has already been reviewed" });
+
+    const approvedAt = new Date().toISOString();
+    if (item.type === "registration") {
+      const registration = item.registration;
+      if (!registration) throw new Error("Pending registration payload is missing.");
+      const email = String(registration.email ?? "").trim().toLowerCase();
+      if (await anyClientRowExistsForEmail(email)) {
+        throw new Error("This email already has a registration record. Reject this pending request or review the existing contract.");
+      }
+      const result = await submitPublicRegistration({
+        ...(registration as any),
+        clientSignatureDataUrl: item.clientSignatureDataUrl,
+        clientSignatureTimestamp: item.clientSignatureTimestamp
+      });
+      if (registration.contractCleaningOptOut) {
+        await upsertContractCleaningOptOut({
+          email,
+          branchId: registration.branchId,
+          contractCode: result.contractCode,
+          contractStartDate: registration.contractStartDate,
+          contractEndDate: registration.contractEndDate,
+          cleaningFeeVnd: registration.cleaningOptOutFeeVnd ?? 100000
+        });
+      }
+      const rewards = item.referralRewards;
+      if (rewards && (rewards.newUserCoins > 0 || rewards.referrerCoins > 0)) {
+        await applyReferralRegistrationRewards({
+          newUserMaHd: result.contractCode,
+          newUserCoins: rewards.newUserCoins,
+          referrerMaHd: rewards.referrerMaHd,
+          referrerCoins: rewards.referrerCoins
+        });
+      }
+    } else {
+      const extension = item.extension;
+      if (!extension) throw new Error("Pending extension payload is missing.");
+      const active = await getActiveClientByEmail(extension.email);
+      if (!active) throw new Error("Could not find an active client record to extend.");
+      const branchId = normalizeClientBranch(String(active[CLIENT_BRANCH_COLUMN] ?? ""));
+      const bedNumber = Number.parseInt(String(active[CLIENT_BED_COLUMN] ?? "").replace(/[^0-9]/g, ""), 10);
+      let listPricing: { listMonthlyPriceVnd: number } | undefined;
+      if (bedNumber > 0) {
+        const { monthlyPrice } = await resolveLongTermListPriceForBed(branchId, bedNumber);
+        if (monthlyPrice > 0) {
+          listPricing = { listMonthlyPriceVnd: monthlyPrice };
+        }
+      }
+      await extendClientContract(extension.email, extension.extensionMonths, listPricing, {
+        clientSignatureDataUrl: item.clientSignatureDataUrl,
+        clientSignatureTimestamp: item.clientSignatureTimestamp,
+        ownerApprovedBy: parsed.data.actorEmail.trim().toLowerCase(),
+        ownerApprovedAt: approvedAt
+      });
+    }
+
+    item.status = "approved";
+    item.reviewedAt = approvedAt;
+    item.reviewedBy = parsed.data.actorEmail.trim().toLowerCase();
+    await writeContractApprovals(file);
+    return response.json({ ok: true });
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 500).json({
+      error: error instanceof Error ? error.message : "Unable to approve contract"
     });
   }
 });

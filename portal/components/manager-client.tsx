@@ -62,6 +62,24 @@ type ManagerClientRecord = {
   row: Record<string, any>;
 };
 
+type ContractApprovalSummary = {
+  id: string;
+  type: "registration" | "extension";
+  status: "pending" | "approved" | "rejected";
+  submittedAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  rejectionReason?: string;
+  clientSignatureTimestamp?: string;
+  fullName: string;
+  email: string;
+  branchId: string;
+  bedNumber: number | null;
+  contractMonths: number | null;
+  contractStartDate: string;
+  contractEndDate: string;
+};
+
 type SmartDevice = {
   id: string;
   label: string;
@@ -1040,6 +1058,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [inactiveClients, setInactiveClients] = useState<ManagerClientRecord[]>([]);
   const [inactiveClientsLoading, setInactiveClientsLoading] = useState(false);
   const [duplicateClients, setDuplicateClients] = useState<DuplicateEntry[]>([]);
+  const [contractApprovals, setContractApprovals] = useState<ContractApprovalSummary[]>([]);
+  const [contractApprovalsLoading, setContractApprovalsLoading] = useState(false);
+  const [contractApprovalActionId, setContractApprovalActionId] = useState<string | null>(null);
   const [settingInactive, setSettingInactive] = useState<Record<string, boolean>>({});
   const [inactiveBranchFilter, setInactiveBranchFilter] = useState("");
   const [inactiveYearFilter, setInactiveYearFilter] = useState("");
@@ -1965,6 +1986,44 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }
   }
 
+  async function loadContractApprovals() {
+    if (!isOwnerSession && !isAppAdminSession) return;
+    setContractApprovalsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/manager/contract-approvals?actorEmail=${encodeURIComponent(normalizedEmail)}`);
+      const data = (await res.json()) as { approvals?: ContractApprovalSummary[] };
+      setContractApprovals((data.approvals ?? []).filter((entry) => entry.status === "pending"));
+    } catch {
+      setContractApprovals([]);
+    } finally {
+      setContractApprovalsLoading(false);
+    }
+  }
+
+  async function reviewContractApproval(id: string, decision: "approve" | "reject") {
+    setContractApprovalActionId(id);
+    setStatus("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/manager/contract-approvals/${encodeURIComponent(id)}/${decision}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorEmail: normalizedEmail })
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        setStatus(data.error ?? "Unable to review contract.");
+        return;
+      }
+      setStatus(decision === "approve" ? "Contract approved and sent for email generation." : "Contract rejected.");
+      await loadContractApprovals();
+      await loadClients(true);
+    } catch {
+      setStatus("Unable to review contract.");
+    } finally {
+      setContractApprovalActionId(null);
+    }
+  }
+
   async function markContractInactive(args: { maHd: string; rowNumber?: number; email?: string; key: string }) {
     const { maHd, rowNumber, email, key } = args;
     setSettingInactive((prev) => ({ ...prev, [key]: true }));
@@ -2000,6 +2059,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       setInactiveClientsLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (isOwnerSession || isAppAdminSession) {
+      void loadContractApprovals();
+    } else {
+      setContractApprovals([]);
+    }
+  }, [isOwnerSession, isAppAdminSession, normalizedEmail]);
 
   async function loadPaymentPurposeRows() {
     if (!isStaffSession) {
@@ -4142,6 +4209,68 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         ) : (
           <div ref={managerClientWorkspaceRef} className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
             {false ? <section /> : null}
+            {(isOwnerSession || isAppAdminSession) && contractApprovals.length > 0 ? (
+              <section className="rounded-3xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold text-amber-950">Pending contract approvals</h2>
+                    <p className="mt-1 text-sm text-amber-800">Signed registrations and extensions are not emailed until an owner approves them.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void loadContractApprovals()}
+                    disabled={contractApprovalsLoading}
+                    className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm font-medium text-amber-800 disabled:opacity-50"
+                  >
+                    {contractApprovalsLoading ? "Loading..." : "Refresh"}
+                  </button>
+                </div>
+                <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                  {contractApprovals.map((item) => (
+                    <div key={item.id} className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-slate-900">
+                            {item.type === "registration" ? "New registration" : "Contract extension"}
+                          </div>
+                          <div className="mt-1 text-sm text-slate-700">{item.fullName || item.email}</div>
+                          <div className="mt-1 text-xs text-slate-500">{item.email}</div>
+                        </div>
+                        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">
+                          {item.contractMonths ?? "-"} mo
+                        </span>
+                      </div>
+                      <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
+                        <div>Branch: {item.branchId || "-"}</div>
+                        <div>Bed: {item.bedNumber ?? "-"}</div>
+                        <div>Start: {item.contractStartDate || "-"}</div>
+                        <div>End: {item.contractEndDate || "-"}</div>
+                        <div>Signed: {item.clientSignatureTimestamp ? new Date(item.clientSignatureTimestamp).toLocaleString() : "-"}</div>
+                        <div>Submitted: {new Date(item.submittedAt).toLocaleString()}</div>
+                      </div>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void reviewContractApproval(item.id, "approve")}
+                          disabled={contractApprovalActionId === item.id}
+                          className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                        >
+                          {contractApprovalActionId === item.id ? "Working..." : "Approve and send"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void reviewContractApproval(item.id, "reject")}
+                          disabled={contractApprovalActionId === item.id}
+                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
