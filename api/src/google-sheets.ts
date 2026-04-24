@@ -310,6 +310,8 @@ export type PublicRegistrationInput = {
   idScanUrl?: string;
   /** Appended to the registration note (e.g. referral summary). */
   referralNoteLine?: string;
+  clientSignatureDataUrl?: string;
+  clientSignatureTimestamp?: string;
 };
 
 export type FineRow = Record<string, string> & {
@@ -3234,7 +3236,10 @@ export async function submitPublicRegistration(input: PublicRegistrationInput) {
     requiredColumns: [
       CLIENT_CLEANING_FEE_COLUMN,
       "Biển số xe máy đăng ký gởi xe",
-      "Ảnh đính kèm CMND hoặc căn cước công dân"
+      "Ảnh đính kèm CMND hoặc căn cước công dân",
+      "Client Signature",
+      "Client Signature Timestamp",
+      "Contract Approval Status"
     ]
   });
 
@@ -3286,6 +3291,9 @@ export async function submitPublicRegistration(input: PublicRegistrationInput) {
     ["Phí gởi xe"]: input.parkingFeeVnd ? String(input.parkingFeeVnd) : "",
     ["Biển số xe máy đăng ký gởi xe"]: input.motorbikePlate?.trim() ?? "",
     ["Ảnh đính kèm CMND hoặc căn cước công dân"]: input.idScanUrl?.trim() ?? "",
+    ["Client Signature"]: input.clientSignatureDataUrl?.trim() ?? "",
+    ["Client Signature Timestamp"]: input.clientSignatureTimestamp?.trim() ?? "",
+    ["Contract Approval Status"]: "approved",
     ["Tổng tiền thanh toán tháng"]: String(totalMonthlyPayment),
     ["Đã đóng phí tháng"]: "FALSE",
     [CLIENT_NOTE_COLUMN]: [
@@ -5342,7 +5350,13 @@ export type ContractExtensionListPricing = {
 export async function extendClientContract(
   email: string,
   extensionMonths: number,
-  listPricing?: ContractExtensionListPricing | null
+  listPricing?: ContractExtensionListPricing | null,
+  approval?: {
+    clientSignatureDataUrl?: string;
+    clientSignatureTimestamp?: string;
+    ownerApprovedBy?: string;
+    ownerApprovedAt?: string;
+  } | null
 ) {
   const normalizedEmail = email.trim().toLowerCase();
   
@@ -5402,7 +5416,12 @@ export async function extendClientContract(
     "Merged Doc ID - HĐ",
     "Merged Doc URL - HĐ",
     "Link to merged Doc - HĐ",
-    "Document Merge Status - HĐ"
+    "Document Merge Status - HĐ",
+    "Client Signature",
+    "Client Signature Timestamp",
+    "Contract Approval Status",
+    "Contract Approved By",
+    "Contract Approved At"
   ];
   autocratColumns.forEach(col => {
     const idx = headers.indexOf(normalizeHeader(col));
@@ -5481,6 +5500,12 @@ export async function extendClientContract(
 
     payload[norm] = value;
   });
+
+  payload["clientsignature"] = approval?.clientSignatureDataUrl?.trim() ?? "";
+  payload["clientsignaturetimestamp"] = approval?.clientSignatureTimestamp?.trim() ?? "";
+  payload["contractapprovalstatus"] = "approved";
+  payload["contractapprovedby"] = approval?.ownerApprovedBy?.trim() ?? "";
+  payload["contractapprovedat"] = approval?.ownerApprovedAt?.trim() ?? "";
 
   // Reset recurring rent to current list price so first-contract-only promos do not carry into the new row.
   if (listPricing?.listMonthlyPriceVnd != null && listPricing.listMonthlyPriceVnd > 0) {
