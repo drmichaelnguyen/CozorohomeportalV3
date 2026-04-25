@@ -110,6 +110,30 @@ h1 {
   color: var(--green);
 }
 
+.seo-copy-grid,
+.faq-list {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.seo-copy-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.seo-copy-block,
+.faq-item {
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 1rem;
+  background: linear-gradient(180deg, #fff, #f7f2ea);
+}
+
+.seo-copy-block p,
+.faq-item p {
+  margin: 0.35rem 0 0;
+  color: rgba(31, 47, 51, 0.76);
+}
+
 .layout {
   width: min(1180px, 100%);
   margin: 0 auto;
@@ -745,7 +769,8 @@ body {
 
   .form-grid,
   .auth-grid,
-  .wizard-steps {
+  .wizard-steps,
+  .seo-copy-grid {
     grid-template-columns: 1fr;
   }
 

@@ -111,6 +111,7 @@ import {
   updateCoinSheetEntry,
   deleteCoinSheetEntry,
   updateClientColumns,
+  updateClientColumnsByRowNumber,
   uploadFineImageToDrive,
   updateFineSheetEntry,
   deleteFineSheetEntry,
@@ -2925,9 +2926,21 @@ app.get("/staff/clients/duplicates", async (request, response) => {
 app.post("/staff/clients/set-inactive", async (request, response) => {
   const actorEmail = String(request.body?.actorEmail ?? "");
   const maHd = String(request.body?.maHd ?? "").trim();
+  const rowNumberRaw = request.body?.rowNumber;
+  const email = String(request.body?.email ?? "").trim();
+  const rowNumber = typeof rowNumberRaw === "number"
+    ? rowNumberRaw
+    : Number.parseInt(String(rowNumberRaw ?? ""), 10);
   try {
     await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
-    if (!maHd) return response.status(400).json({ error: "maHd is required" });
+    // Prefer row-number based writes: maHd is unreliable because Google Sheets
+    // renders large numeric contract codes as scientific notation, so two
+    // different codes can collide on the displayed string.
+    if (Number.isInteger(rowNumber) && rowNumber >= 2) {
+      await updateClientColumnsByRowNumber(rowNumber, { "Hiện còn ở": "-1" }, email || undefined);
+      return response.json({ ok: true });
+    }
+    if (!maHd) return response.status(400).json({ error: "maHd or rowNumber is required" });
     await updateClientColumns(maHd, { "Hiện còn ở": "-1" });
     return response.json({ ok: true });
   } catch (error) {

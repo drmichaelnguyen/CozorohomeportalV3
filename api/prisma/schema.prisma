@@ -161,6 +161,8 @@ model CleaningTask {
   floor            Int?
   type             CleaningTaskType
   scheduledDate    DateTime
+  /// Slot dedup key: "{type}|{YYYY-MM-DD}|{floor or empty}" — unique per calendar slot across all processes/machines.
+  slotKey          String             @default("")
   calendarId       String?
   calendarEventId  String?
   status           CleaningTaskStatus @default(ASSIGNED)
@@ -175,6 +177,7 @@ model CleaningTask {
   updatedAt        DateTime           @updatedAt
   audits           CleaningAudit[]
 
+  @@unique([slotKey], map: "CleaningTask_slotKey_key")
   @@index([userEmail, scheduledDate])
   @@index([branchId, scheduledDate])
   @@index([type, scheduledDate])

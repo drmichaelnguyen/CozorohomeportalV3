@@ -277,6 +277,9 @@ export function AdminCleaningClient() {
   const [rejectFineDialog, setRejectFineDialog] = useState<{ taskId: string; userEmail: string; scheduledDate: string } | null>(null);
   const [rejectFineCreate, setRejectFineCreate] = useState(false);
   const [rejectFineAmount, setRejectFineAmount] = useState("50000");
+  const [rejectFineSendEmail, setRejectFineSendEmail] = useState(false);
+  const [missedFineSendEmail, setMissedFineSendEmail] = useState(false);
+  const [bulkOverdueLoading, setBulkOverdueLoading] = useState(false);
   const [autoSchedulerConfig, setAutoSchedulerConfig] = useState<AutoSchedulerConfig | null>(null);
   const [autoSchedulerSaving, setAutoSchedulerSaving] = useState(false);
   const [showAutoScheduler, setShowAutoScheduler] = useState(false);
@@ -284,6 +287,8 @@ export function AdminCleaningClient() {
   const [reviewQueue, setReviewQueue] = useState<CleaningReviewQueuePayload | null>(null);
   const [reviewQueueLoading, setReviewQueueLoading] = useState(false);
   const [overdueAssignedVisibleCount, setOverdueAssignedVisibleCount] = useState(OVERDUE_ASSIGNED_PAGE_SIZE);
+  const [editingFineTaskId, setEditingFineTaskId] = useState<string | null>(null);
+  const [editingFineAmount, setEditingFineAmount] = useState<string>("");
   const selectedCalendar =
     calendars.find((entry) => calendarKey(entry) === selectedCalendarKey) ?? calendars[0] ?? null;
   const selectedSchedulerJob =
@@ -371,14 +376,18 @@ export function AdminCleaningClient() {
     }
   }
 
-  async function issueMissedCleaningFine(taskId: string) {
+  async function issueMissedCleaningFine(taskId: string, customAmount?: number, sendEmail?: boolean) {
     setLoading(true);
     setMessage("");
+    setEditingFineTaskId(null);
     try {
+      const body: Record<string, unknown> = { actorEmail: activeEmail };
+      if (customAmount != null && customAmount > 0) body.customAmount = customAmount;
+      if (sendEmail) body.sendEmail = true;
       const response = await fetch(`${API_BASE_URL}/admin/cleaning/tasks/${encodeURIComponent(taskId)}/missed-fine`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actorEmail: activeEmail })
+        body: JSON.stringify(body)
       });
       const data = await readJsonSafely<{ error?: string; fineAmount?: number }>(response);
       if (!response.ok) {
@@ -414,6 +423,30 @@ export function AdminCleaningClient() {
       setMessage(t("adminCleaningErrDismissTask"));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function bulkProcessOverdueTasks(action: "fine" | "dismiss", taskIds: string[], sendEmail?: boolean) {
+    setBulkOverdueLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/cleaning/overdue/bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorEmail: activeEmail, taskIds, action, sendEmail: sendEmail ?? false })
+      });
+      const data = await readJsonSafely<{ processed?: number; failed?: number; error?: string }>(response);
+      if (!response.ok) {
+        setMessage(data.error ?? t("adminCleaningErrMissedFine"));
+        return;
+      }
+      await Promise.all([reloadAll(), loadReviewQueue()]);
+      const failNote = (data.failed ?? 0) > 0 ? ` (${data.failed} failed)` : "";
+      setMessage(`${action === "fine" ? t("adminCleaningIssueMissedFine") : t("adminCleaningDismissTask")}: ${data.processed ?? 0} done${failNote}`);
+    } catch {
+      setMessage(t("adminCleaningErrMissedFine"));
+    } finally {
+      setBulkOverdueLoading(false);
     }
   }
 
@@ -761,7 +794,7 @@ export function AdminCleaningClient() {
   async function auditTask(
     taskId: string,
     decision: "APPROVE" | "REJECT",
-    opts?: { createFine?: boolean; fineAmount?: number; useEmptyNote?: boolean }
+    opts?: { createFine?: boolean; fineAmount?: number; useEmptyNote?: boolean; sendEmail?: boolean }
   ) {
     setLoading(true);
     setMessage("");
@@ -776,7 +809,8 @@ export function AdminCleaningClient() {
           decision,
           note: notePayload,
           createFine: opts?.createFine ?? false,
-          fineAmount: opts?.fineAmount
+          fineAmount: opts?.fineAmount,
+          sendEmail: opts?.sendEmail ?? false
         })
       });
       const data = await readJsonSafely<{ error?: string }>(response);
@@ -992,6 +1026,22 @@ export function AdminCleaningClient() {
             <div>
               <h3 className="text-sm font-semibold text-amber-900">{t("adminCleaningPendingAuditTitle")}</h3>
               <p className="mt-1 text-xs text-slate-500">{t("adminCleaningPendingAuditHint")}</p>
+              {reviewQueue.pendingAudit.length > 1 ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => {
+                      void Promise.all(
+                        reviewQueue.pendingAudit.map((task) => auditTask(task.id, "APPROVE", { useEmptyNote: true }))
+                      );
+                    }}
+                    className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    {t("approveLabel")} {language === "vi" ? "tất cả" : "all"} ({reviewQueue.pendingAudit.length})
+                  </button>
+                </div>
+              ) : null}
               <ul className="mt-3 space-y-2">
                 {reviewQueue.pendingAudit.length === 0 ? (
                   <li className="text-sm text-slate-600">{t("adminCleaningQueueEmpty")}</li>
@@ -1045,14 +1095,48 @@ export function AdminCleaningClient() {
               <h3 className="text-sm font-semibold text-rose-900">{t("adminCleaningOverdueAssignedTitle")}</h3>
               <p className="mt-1 text-xs text-slate-500">{t("adminCleaningOverdueAssignedHint")}</p>
               {overdueAssignedSortedNewestFirst.length > 0 ? (
-                <p className="mt-2 text-xs text-slate-500">
-                  {t("adminCleaningOverdueShowingCount", undefined, {
-                    visible: String(
-                      Math.min(overdueAssignedVisibleCount, overdueAssignedSortedNewestFirst.length)
-                    ),
-                    total: String(overdueAssignedSortedNewestFirst.length)
-                  })}
-                </p>
+                <>
+                  <p className="mt-2 text-xs text-slate-500">
+                    {t("adminCleaningOverdueShowingCount", undefined, {
+                      visible: String(Math.min(overdueAssignedVisibleCount, overdueAssignedSortedNewestFirst.length)),
+                      total: String(overdueAssignedSortedNewestFirst.length)
+                    })}
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={missedFineSendEmail}
+                        onChange={(e) => setMissedFineSendEmail(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-slate-300 text-rose-600"
+                      />
+                      {language === "vi" ? "Gửi email thông báo" : "Send email notification"}
+                    </label>
+                    <button
+                      type="button"
+                      disabled={loading || bulkOverdueLoading}
+                      onClick={() => void bulkProcessOverdueTasks(
+                        "fine",
+                        overdueAssignedSortedNewestFirst.map((t) => t.id),
+                        missedFineSendEmail
+                      )}
+                      className="rounded-lg bg-rose-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+                    >
+                      {t("adminCleaningIssueMissedFine")} ({overdueAssignedSortedNewestFirst.length})
+                    </button>
+                    <button
+                      type="button"
+                      disabled={loading || bulkOverdueLoading}
+                      onClick={() => void bulkProcessOverdueTasks(
+                        "dismiss",
+                        overdueAssignedSortedNewestFirst.map((t) => t.id)
+                      )}
+                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      {t("adminCleaningDismissTask")} ({overdueAssignedSortedNewestFirst.length})
+                    </button>
+                  </div>
+                </>
               ) : null}
               <ul className="mt-3 space-y-2">
                 {overdueAssignedSortedNewestFirst.length === 0 ? (
@@ -1072,17 +1156,58 @@ export function AdminCleaningClient() {
                               {new Date(task.scheduledDate).toLocaleDateString(dateLocale)}
                             </div>
                             <div className="mt-1 text-xs text-slate-600">{task.userEmail}</div>
-                            <div className="mt-1 text-xs text-rose-800">
-                              {t("adminCleaningSuggestedFine", undefined, {
-                                amount: task.suggestedFineAmount.toLocaleString(dateLocale)
-                              })}
-                              {task.hasAutomaticFine ? ` · ${t("adminCleaningFineMayExist")}` : null}
+                            <div className="mt-1 flex items-center gap-1.5 text-xs text-rose-800">
+                              {editingFineTaskId === task.id ? (
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step={1000}
+                                    value={editingFineAmount}
+                                    onChange={(e) => setEditingFineAmount(e.target.value)}
+                                    className="w-24 rounded border border-rose-300 px-1.5 py-0.5 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                                    autoFocus
+                                  />
+                                  <span className="text-rose-700">VND</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => { setEditingFineTaskId(null); setEditingFineAmount(""); }}
+                                    className="ml-1 text-slate-500 hover:text-slate-700"
+                                    title="Cancel"
+                                  >✕</button>
+                                </div>
+                              ) : (
+                                <>
+                                  {t("adminCleaningSuggestedFine", undefined, {
+                                    amount: task.suggestedFineAmount.toLocaleString(dateLocale)
+                                  })}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingFineTaskId(task.id);
+                                      setEditingFineAmount(String(task.suggestedFineAmount));
+                                    }}
+                                    className="ml-1 rounded p-0.5 text-rose-600 hover:bg-rose-100"
+                                    title={language === "vi" ? "Sửa mức phạt" : "Edit fine amount"}
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3">
+                                      <path d="M11.013 2.513a1.75 1.75 0 0 1 2.475 2.474L6.226 12.25a2.751 2.751 0 0 1-.892.596l-2.047.848a.75.75 0 0 1-.98-.98l.848-2.047a2.751 2.751 0 0 1 .596-.892l7.262-7.262Z" />
+                                    </svg>
+                                  </button>
+                                </>
+                              )}
+                              {!editingFineTaskId || editingFineTaskId !== task.id
+                                ? task.hasAutomaticFine ? ` · ${t("adminCleaningFineMayExist")}` : null
+                                : null}
                             </div>
                           </div>
                           <div className="flex shrink-0 flex-col gap-1.5">
                             <button
                               type="button"
-                              onClick={() => void issueMissedCleaningFine(task.id)}
+                              onClick={() => {
+                                const amt = editingFineTaskId === task.id ? Number(editingFineAmount) : undefined;
+                                void issueMissedCleaningFine(task.id, amt && amt > 0 ? amt : undefined, missedFineSendEmail);
+                              }}
                               disabled={loading}
                               className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
                             >
@@ -1572,7 +1697,7 @@ export function AdminCleaningClient() {
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => setRejectFineDialog({ taskId: task.id, userEmail: task.userEmail, scheduledDate: task.scheduledDate })}
+                                  onClick={() => { setRejectFineCreate(false); setRejectFineSendEmail(false); setRejectFineDialog({ taskId: task.id, userEmail: task.userEmail, scheduledDate: task.scheduledDate }); }}
                                   disabled={loading}
                                   className="flex-1 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
                                 >
@@ -1783,17 +1908,30 @@ export function AdminCleaningClient() {
             </label>
 
             {rejectFineCreate && (
-              <label className="block text-sm font-medium text-slate-700">
-                {t("fineAmountLabel")}
-                <input
-                  type="number"
-                  value={rejectFineAmount}
-                  onChange={(e) => setRejectFineAmount(e.target.value)}
-                  min="1000"
-                  step="1000"
-                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
-                />
-              </label>
+              <div className="space-y-3">
+                <label className="block text-sm font-medium text-slate-700">
+                  {t("fineAmountLabel")}
+                  <input
+                    type="number"
+                    value={rejectFineAmount}
+                    onChange={(e) => setRejectFineAmount(e.target.value)}
+                    min="1000"
+                    step="1000"
+                    className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="flex items-center gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={rejectFineSendEmail}
+                    onChange={(e) => setRejectFineSendEmail(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-rose-600"
+                  />
+                  <span className="text-sm text-slate-700">
+                    {language === "vi" ? "Gửi email phiếu phạt" : "Send fine ticket email"}
+                  </span>
+                </label>
+              </div>
             )}
 
             <div className="flex gap-2 pt-2">
@@ -1803,7 +1941,9 @@ export function AdminCleaningClient() {
                 onClick={() => void auditTask(
                   rejectFineDialog.taskId,
                   "REJECT",
-                  rejectFineCreate ? { createFine: true, fineAmount: Number(rejectFineAmount) } : undefined
+                  rejectFineCreate
+                    ? { createFine: true, fineAmount: Number(rejectFineAmount), sendEmail: rejectFineSendEmail }
+                    : undefined
                 )}
                 className="flex-1 rounded-xl bg-rose-600 py-2.5 text-sm font-bold text-white hover:bg-rose-700 disabled:opacity-50"
               >
@@ -1811,7 +1951,7 @@ export function AdminCleaningClient() {
               </button>
               <button
                 type="button"
-                onClick={() => { setRejectFineDialog(null); setRejectFineCreate(false); }}
+                onClick={() => { setRejectFineDialog(null); setRejectFineCreate(false); setRejectFineSendEmail(false); }}
                 className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
                 {t("cancelLabel")}

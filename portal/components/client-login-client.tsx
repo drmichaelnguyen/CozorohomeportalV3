@@ -383,29 +383,34 @@ export function ClientLoginClient() {
           });
 
     const renderGoogleButton = () => {
-      if (cancelled || !window.google?.accounts.id || !googleButtonRef.current) {
+      const mountNode = googleButtonRef.current;
+      if (cancelled || !window.google?.accounts.id || !mountNode || !mountNode.isConnected) {
         return;
       }
 
-      googleButtonRef.current.innerHTML = "";
-      window.google.accounts.id.initialize({
-        client_id: googleClientId,
-        callback: (response) => {
-          void handleGoogleCredential(response);
-        }
-      });
-      window.google.accounts.id.renderButton(googleButtonRef.current, {
-        theme: "outline",
-        size: "large",
-        shape: "pill",
-        text: "continue_with",
-        width: 280,
-        logo_alignment: "left"
-      });
+      try {
+        mountNode.innerHTML = "";
+        window.google.accounts.id.initialize({
+          client_id: googleClientId,
+          callback: (response) => {
+            void handleGoogleCredential(response);
+          }
+        });
+        window.google.accounts.id.renderButton(mountNode, {
+          theme: "outline",
+          size: "large",
+          shape: "pill",
+          text: "continue_with",
+          width: 280,
+          logo_alignment: "left"
+        });
+      } catch (error) {
+        console.warn("[Login Debug] Google button render skipped:", error);
+      }
     };
 
     if (window.google?.accounts.id) {
-      renderGoogleButton();
+      requestAnimationFrame(renderGoogleButton);
       return;
     }
 

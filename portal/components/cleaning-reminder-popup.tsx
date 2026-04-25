@@ -17,6 +17,16 @@ type ReminderNotification = {
   href: string;
 };
 
+type ReminderNotificationResponseItem = {
+  id?: unknown;
+  type?: unknown;
+  title?: unknown;
+  body?: unknown;
+  createdAt?: unknown;
+  unreadCount?: unknown;
+  href?: unknown;
+};
+
 const DISMISS_PREFIX = "cozorohome-reminder-dismissed";
 
 function dismissStorageKey(email: string, reminderId: string) {
@@ -36,6 +46,24 @@ function getReminderGroupLabel(type: ReminderNotification["type"]) {
 
 function getReminderActionLabel(type: ReminderNotification["type"]) {
   return type === "LAUNDRY_REMINDER" ? "Open bookings" : "Open cleaning schedule";
+}
+
+function isReminderNotification(email: string, notification: unknown): notification is ReminderNotification {
+  if (!notification || typeof notification !== "object") {
+    return false;
+  }
+
+  const candidate = notification as ReminderNotificationResponseItem;
+  return (
+    typeof candidate.id === "string" &&
+    (candidate.type === "LAUNDRY_REMINDER" || candidate.type === "CLEANING_REMINDER") &&
+    typeof candidate.title === "string" &&
+    typeof candidate.body === "string" &&
+    typeof candidate.createdAt === "string" &&
+    typeof candidate.unreadCount === "number" &&
+    typeof candidate.href === "string" &&
+    !isDismissed(email, candidate.id)
+  );
 }
 
 export function CleaningReminderPopup() {
@@ -68,7 +96,7 @@ export function CleaningReminderPopup() {
       try {
         const response = await fetch(`${API_BASE_URL}/support/notifications?email=${encodeURIComponent(normalizedEmail)}`);
         const data = (await response.json()) as {
-          notifications?: Array<ReminderNotification | { type?: string }>;
+          notifications?: unknown[];
           error?: string;
         };
 
@@ -79,10 +107,8 @@ export function CleaningReminderPopup() {
           return;
         }
 
-        const reminderNotifications = (data.notifications ?? []).filter(
-          (notification): notification is ReminderNotification =>
-            (notification.type === "LAUNDRY_REMINDER" || notification.type === "CLEANING_REMINDER") &&
-            !isDismissed(normalizedEmail, notification.id)
+        const reminderNotifications = (data.notifications ?? []).filter((notification): notification is ReminderNotification =>
+          isReminderNotification(normalizedEmail, notification)
         );
 
         if (active) {
