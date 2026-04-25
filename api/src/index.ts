@@ -187,6 +187,13 @@ import {
   cancelCleaningOptOut,
   upsertContractCleaningOptOut,
   recoverDeferredCleaningCalendarCreates,
+  CleaningSwapError,
+  getSwapCandidates,
+  createSwapRequest,
+  acceptSwapRequest,
+  declineSwapRequest,
+  cancelSwapRequest,
+  getSwapRequestsForUser,
   flushDeferredCleaningCalendarCreates,
   getDeferredCleaningCalendarFlushChain
 } from "./cleaning.js";
@@ -4054,6 +4061,108 @@ app.post("/cleaning/tasks/:id/release", async (request, response) => {
     });
   }
 });
+
+// ── Cleaning Swap Requests ────────────────────────────────────────────────────
+
+app.get("/cleaning/swap-candidates", async (request, response) => {
+  const taskId = String(request.query.taskId ?? "").trim();
+  const email = String(request.query.email ?? "").trim();
+  if (!taskId || !email) {
+    return response.status(400).json({ error: "taskId and email are required" });
+  }
+  try {
+    const candidates = await getSwapCandidates(taskId, email);
+    return response.json(candidates);
+  } catch (error) {
+    const code = error instanceof CleaningSwapError ? error.code : null;
+    const status = code === "NOT_FOUND" ? 404 : code === "FORBIDDEN" ? 403 : 400;
+    return response.status(status).json({ error: error instanceof Error ? error.message : "Unable to load swap candidates" });
+  }
+});
+
+app.get("/cleaning/swap-requests", async (request, response) => {
+  const email = String(request.query.email ?? "").trim();
+  if (!email) {
+    return response.status(400).json({ error: "email is required" });
+  }
+  try {
+    const result = await getSwapRequestsForUser(email);
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({ error: error instanceof Error ? error.message : "Unable to load swap requests" });
+  }
+});
+
+const swapCreateSchema = z.object({
+  taskId: z.string().min(1),
+  requesterEmail: z.string().email(),
+  targetEmail: z.string().email(),
+  offeredCoins: z.number().int().min(0)
+});
+
+app.post("/cleaning/swap-requests/create", async (request, response) => {
+  const parsed = swapCreateSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid swap request payload" });
+  }
+  try {
+    const swapRequest = await createSwapRequest(parsed.data);
+    return response.json(swapRequest);
+  } catch (error) {
+    const code = error instanceof CleaningSwapError ? error.code : null;
+    const status = code === "CONFLICT" ? 409 : code === "FORBIDDEN" ? 403 : code === "NOT_FOUND" ? 404 : 400;
+    return response.status(status).json({ error: error instanceof Error ? error.message : "Unable to create swap request" });
+  }
+});
+
+const swapActionSchema = z.object({ email: z.string().email() });
+
+app.post("/cleaning/swap-requests/:id/accept", async (request, response) => {
+  const parsed = swapActionSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "email required" });
+  }
+  try {
+    const result = await acceptSwapRequest(request.params.id, parsed.data.email);
+    return response.json(result);
+  } catch (error) {
+    const code = error instanceof CleaningSwapError ? error.code : null;
+    const status = code === "NOT_FOUND" ? 404 : code === "FORBIDDEN" ? 403 : code === "CONFLICT" ? 409 : 400;
+    return response.status(status).json({ error: error instanceof Error ? error.message : "Unable to accept swap request" });
+  }
+});
+
+app.post("/cleaning/swap-requests/:id/decline", async (request, response) => {
+  const parsed = swapActionSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "email required" });
+  }
+  try {
+    const result = await declineSwapRequest(request.params.id, parsed.data.email);
+    return response.json(result);
+  } catch (error) {
+    const code = error instanceof CleaningSwapError ? error.code : null;
+    const status = code === "NOT_FOUND" ? 404 : code === "FORBIDDEN" ? 403 : 400;
+    return response.status(status).json({ error: error instanceof Error ? error.message : "Unable to decline swap request" });
+  }
+});
+
+app.post("/cleaning/swap-requests/:id/cancel", async (request, response) => {
+  const parsed = swapActionSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "email required" });
+  }
+  try {
+    const result = await cancelSwapRequest(request.params.id, parsed.data.email);
+    return response.json(result);
+  } catch (error) {
+    const code = error instanceof CleaningSwapError ? error.code : null;
+    const status = code === "NOT_FOUND" ? 404 : code === "FORBIDDEN" ? 403 : 400;
+    return response.status(status).json({ error: error instanceof Error ? error.message : "Unable to cancel swap request" });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 app.post("/cleaning/self-assign", async (request, response) => {
   const parsed = selfAssignCleaningSchema.safeParse(request.body);

@@ -61,6 +61,38 @@ type PendingSelfAssignment = {
   reason?: string;
 };
 
+type SwapCandidate = {
+  email: string;
+  name: string;
+  bedDisplay: string;
+  branchId: string;
+  floor: number | null;
+  availabilityType: "AVAILABLE" | "PREFERRED" | "UNAVAILABLE" | null;
+  hasSameDayTask: boolean;
+};
+
+type SwapRequest = {
+  id: string;
+  taskId: string;
+  requesterEmail: string;
+  requesterName: string | null;
+  targetEmail: string;
+  targetName: string | null;
+  offeredCoins: number;
+  status: "PENDING" | "ACCEPTED" | "DECLINED" | "CANCELLED";
+  taskType: CleaningTask["type"];
+  taskScheduledDate: string;
+  taskBranchId: string;
+  taskRewardCoins: number;
+  createdAt: string;
+};
+
+type SwapRequestsData = {
+  sent: SwapRequest[];
+  received: SwapRequest[];
+  pendingReceivedCount: number;
+};
+
 function prettyTaskType(type: CleaningTask["type"]) {
   if (type === "KITCHEN_D2") return "Kitchen D2";
   if (type === "KITCHEN_D7") return "Kitchen D7";
@@ -286,8 +318,20 @@ export function CleaningScheduleClient() {
   const [optOutPayment, setOptOutPayment] = useState<"VND" | "COINS">("VND");
   const [optOutLoading, setOptOutLoading] = useState(false);
   const [showPolicyHelp, setShowPolicyHelp] = useState(false);
+  const [showReleaseHelp, setShowReleaseHelp] = useState(false);
+  const [showAssignHelp, setShowAssignHelp] = useState(false);
+  const [showSwapHelp, setShowSwapHelp] = useState(false);
   const [markAwayHelpOpen, setMarkAwayHelpOpen] = useState(false);
   const [markUnavailableHelpOpen, setMarkUnavailableHelpOpen] = useState(false);
+  // Swap request state
+  const [swapFlowTaskId, setSwapFlowTaskId] = useState<string | null>(null);
+  const [swapCandidates, setSwapCandidates] = useState<SwapCandidate[]>([]);
+  const [swapCandidatesLoading, setSwapCandidatesLoading] = useState(false);
+  const [selectedSwapTarget, setSelectedSwapTarget] = useState<SwapCandidate | null>(null);
+  const [swapOfferedCoins, setSwapOfferedCoins] = useState(0);
+  const [swapSubmitting, setSwapSubmitting] = useState(false);
+  const [swapRequestsData, setSwapRequestsData] = useState<SwapRequestsData | null>(null);
+  const [swapActionLoading, setSwapActionLoading] = useState<string | null>(null);
   const canSelfAssignSelectedDate = isTodayOrFuture(selectedDate);
   const activeEmail = sessionEmail.trim().toLowerCase();
 
@@ -310,6 +354,7 @@ export function CleaningScheduleClient() {
     }
     setLoading(true);
     loadOverview(activeEmail)
+      .then(() => void loadSwapRequests())
       .catch(() => {})
       .finally(() => setLoading(false));
     // overview omitted from deps on purpose: we only auto-fetch when session/email gates change, not when overview updates (avoids loops on failed fetch)
@@ -694,6 +739,103 @@ export function CleaningScheduleClient() {
       setMessage("Unable to release this task.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadSwapRequests() {
+    if (!activeEmail) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/cleaning/swap-requests?email=${encodeURIComponent(activeEmail)}`);
+      if (!response.ok) return;
+      const data = await readJsonSafely<SwapRequestsData>(response);
+      setSwapRequestsData(data);
+    } catch {
+      // Non-critical — silently ignore
+    }
+  }
+
+  async function openSwapFlow(taskId: string, taskRewardCoins: number) {
+    setSwapFlowTaskId(taskId);
+    setSelectedSwapTarget(null);
+    setSwapOfferedCoins(Math.min(taskRewardCoins, 10));
+    setSwapCandidates([]);
+    setSwapCandidatesLoading(true);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/cleaning/swap-candidates?taskId=${encodeURIComponent(taskId)}&email=${encodeURIComponent(activeEmail)}`
+      );
+      const data = await readJsonSafely<SwapCandidate[] | { error?: string }>(response);
+      if (!response.ok || !Array.isArray(data)) {
+        setMessage((data as { error?: string }).error ?? "Unable to load swap candidates.");
+        setSwapFlowTaskId(null);
+        return;
+      }
+      setSwapCandidates(data);
+    } catch {
+      setMessage("Unable to load swap candidates.");
+      setSwapFlowTaskId(null);
+    } finally {
+      setSwapCandidatesLoading(false);
+    }
+  }
+
+  async function submitSwapRequest(taskId: string) {
+    if (!selectedSwapTarget) return;
+    setSwapSubmitting(true);
+    setMessage("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/cleaning/swap-requests/create`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          taskId,
+          requesterEmail: activeEmail,
+          targetEmail: selectedSwapTarget.email,
+          offeredCoins: swapOfferedCoins
+        })
+      });
+      const data = await readJsonSafely<{ error?: string }>(response);
+      if (!response.ok) {
+        setMessage(data.error ?? "Unable to send swap request.");
+        return;
+      }
+      setSwapFlowTaskId(null);
+      setSelectedSwapTarget(null);
+      await loadSwapRequests();
+      setMessage(`Swap request sent to ${selectedSwapTarget.name}. They will see it in their Swap Requests section.`);
+    } catch {
+      setMessage("Unable to send swap request.");
+    } finally {
+      setSwapSubmitting(false);
+    }
+  }
+
+  async function respondToSwap(requestId: string, action: "accept" | "decline" | "cancel") {
+    setSwapActionLoading(requestId);
+    setMessage("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/cleaning/swap-requests/${requestId}/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: activeEmail })
+      });
+      const data = await readJsonSafely<{ error?: string }>(response);
+      if (!response.ok) {
+        setMessage(data.error ?? `Unable to ${action} swap request.`);
+        return;
+      }
+      await Promise.all([loadSwapRequests(), loadOverview(activeEmail, { refresh: true })]);
+      setMessage(
+        action === "accept"
+          ? "Swap accepted! The task has been reassigned to you."
+          : action === "decline"
+            ? "Swap request declined."
+            : "Swap request cancelled."
+      );
+    } catch {
+      setMessage(`Unable to ${action} swap request.`);
+    } finally {
+      setSwapActionLoading(null);
     }
   }
 
@@ -1111,6 +1253,100 @@ export function CleaningScheduleClient() {
                             <p className="text-xs font-semibold text-emerald-700">Approved — +{task.rewardCoins.toLocaleString()} coins added to your account</p>
                           </div>
                         )}
+                        {/* Find swap partner (preferred removal path) */}
+                        {task.status === "ASSIGNED" && isFutureDate(new Date(task.scheduledDate)) && (
+                          <div className="space-y-2">
+                            {swapFlowTaskId !== task.id ? (
+                              <button
+                                type="button"
+                                disabled={loading || swapCandidatesLoading}
+                                onClick={() => void openSwapFlow(task.id, task.rewardCoins)}
+                                className="flex w-full items-center gap-3 rounded-xl border border-sky-200 bg-sky-50/60 p-4 text-left transition-all hover:bg-sky-50 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sky-600">
+                                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                                  </svg>
+                                </div>
+                                <div>
+                                  <p className="text-sm font-bold text-sky-900">{t("swapFindPartnerBtn", "Find swap partner")}</p>
+                                  <p className="text-xs text-sky-700">Offer coins to another resident to take your slot — no auto-fine</p>
+                                </div>
+                              </button>
+                            ) : (
+                              <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <p className="text-sm font-semibold text-sky-900">{t("swapSelectCandidate", "Select a resident to request a swap")}</p>
+                                  <button
+                                    type="button"
+                                    onClick={() => { setSwapFlowTaskId(null); setSelectedSwapTarget(null); }}
+                                    className="text-xs text-slate-500 hover:text-slate-700"
+                                  >
+                                    {t("swapCancelFlowBtn", "Cancel")}
+                                  </button>
+                                </div>
+                                {swapCandidatesLoading ? (
+                                  <p className="text-sm text-sky-700">{t("swapCandidatesLoading", "Loading available residents...")}</p>
+                                ) : swapCandidates.length === 0 ? (
+                                  <p className="text-sm text-slate-600">{t("swapNoCandidates", "No available residents found for this date.")}</p>
+                                ) : (
+                                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                                    {swapCandidates.map((candidate) => (
+                                      <button
+                                        key={candidate.email}
+                                        type="button"
+                                        onClick={() => setSelectedSwapTarget(candidate)}
+                                        className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left transition-all ${selectedSwapTarget?.email === candidate.email ? "border-sky-500 bg-sky-100 ring-2 ring-sky-400" : "border-slate-200 hover:bg-slate-50"}`}
+                                      >
+                                        <div>
+                                          <p className="text-sm font-medium text-slate-900">{candidate.name}</p>
+                                          <p className="text-xs text-slate-500">{candidate.bedDisplay}</p>
+                                        </div>
+                                        <div className="flex flex-col items-end gap-0.5">
+                                          {candidate.availabilityType === "PREFERRED" && (
+                                            <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">{t("swapPreferredBadge", "Preferred")}</span>
+                                          )}
+                                          {candidate.availabilityType === "AVAILABLE" && (
+                                            <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">{t("swapAvailableBadge", "Available")}</span>
+                                          )}
+                                          {candidate.hasSameDayTask && (
+                                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">{t("swapConflictWarning", "Already has a task that day")}</span>
+                                          )}
+                                        </div>
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                                {selectedSwapTarget && (
+                                  <div className="space-y-2 pt-1 border-t border-sky-200">
+                                    <label className="block text-xs font-medium text-slate-700">
+                                      {t("swapOfferCoinsLabel", "Offer coins (0 = no incentive, max = task reward)")}
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        max={task.rewardCoins}
+                                        value={swapOfferedCoins}
+                                        onChange={(e) => setSwapOfferedCoins(Math.max(0, Math.min(task.rewardCoins, Number(e.target.value) || 0)))}
+                                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+                                      />
+                                      <span className="text-[10px] text-slate-500">Max: {task.rewardCoins} coins (= task reward)</span>
+                                    </label>
+                                    <button
+                                      type="button"
+                                      disabled={swapSubmitting}
+                                      onClick={() => void submitSwapRequest(task.id)}
+                                      className="w-full rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-60"
+                                    >
+                                      {swapSubmitting ? t("swapSendingBtn", "Sending...") : t("swapSendRequestBtn", "Send swap request")}
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Direct removal (with fine) */}
                         <button
                           disabled={!canRelease || loading}
                           onClick={() => {
@@ -1186,6 +1422,147 @@ export function CleaningScheduleClient() {
               </p>
             </div>
           </section>
+
+          {/* Swap Requests inbox */}
+          {swapRequestsData && (swapRequestsData.sent.length > 0 || swapRequestsData.received.length > 0 || swapRequestsData.pendingReceivedCount > 0) && (
+            <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-sm font-semibold text-slate-900">{t("swapRequestsTitle", "Swap Requests")}</h2>
+                {swapRequestsData.pendingReceivedCount > 0 && (
+                  <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[11px] font-bold text-white">
+                    {t("swapRequestsPendingBadge", "{count} pending").replace("{count}", String(swapRequestsData.pendingReceivedCount))}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowSwapHelp((v) => !v)}
+                  className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-300 text-xs font-bold text-slate-600"
+                  title={t("swapHelpTitle", "How does swap work?")}
+                >
+                  ?
+                </button>
+              </div>
+              {showSwapHelp && (
+                <div className="mt-2 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-slate-700 whitespace-pre-line">
+                  {t("swapHelp")}
+                </div>
+              )}
+
+              {/* Received requests */}
+              {swapRequestsData.received.length > 0 && (
+                <div className="mt-4">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">{t("swapReceivedSection", "Received")}</div>
+                  <div className="space-y-2">
+                    {swapRequestsData.received.map((req) => (
+                      <div
+                        key={req.id}
+                        className={`rounded-xl border p-4 ${req.status === "PENDING" ? "border-amber-200 bg-amber-50/60" : "border-slate-200 bg-slate-50"}`}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">
+                              {t("swapFrom", "From")}: {req.requesterName ?? req.requesterEmail}
+                            </p>
+                            <p className="text-xs text-slate-600 mt-0.5">
+                              {prettyTaskType(req.taskType)} — {new Date(req.taskScheduledDate).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+                            </p>
+                            <p className="text-xs text-slate-600 mt-0.5">
+                              {req.offeredCoins > 0
+                                ? t("swapOfferedCoins", "Offer: {coins} coins").replace("{coins}", String(req.offeredCoins))
+                                : t("swapOfferedNoCoins", "No coin offer")}
+                            </p>
+                          </div>
+                          <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase ${
+                            req.status === "PENDING" ? "bg-amber-100 text-amber-800" :
+                            req.status === "ACCEPTED" ? "bg-emerald-100 text-emerald-800" :
+                            "bg-slate-200 text-slate-600"
+                          }`}>
+                            {req.status === "PENDING" ? t("swapStatusPending") :
+                             req.status === "ACCEPTED" ? t("swapStatusAccepted") :
+                             req.status === "DECLINED" ? t("swapStatusDeclined") :
+                             t("swapStatusCancelled")}
+                          </span>
+                        </div>
+                        {req.status === "PENDING" && (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              disabled={swapActionLoading === req.id}
+                              onClick={() => void respondToSwap(req.id, "accept")}
+                              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                            >
+                              {swapActionLoading === req.id ? "..." : t("swapAcceptBtn", "Accept")}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={swapActionLoading === req.id}
+                              onClick={() => void respondToSwap(req.id, "decline")}
+                              className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                            >
+                              {t("swapDeclineBtn", "Decline")}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Sent requests */}
+              {swapRequestsData.sent.length > 0 && (
+                <div className="mt-4">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">{t("swapSentSection", "Sent")}</div>
+                  <div className="space-y-2">
+                    {swapRequestsData.sent.map((req) => (
+                      <div
+                        key={req.id}
+                        className={`rounded-xl border p-4 ${req.status === "PENDING" ? "border-sky-200 bg-sky-50/60" : "border-slate-200 bg-slate-50"}`}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">
+                              {t("swapTo", "To")}: {req.targetName ?? req.targetEmail}
+                            </p>
+                            <p className="text-xs text-slate-600 mt-0.5">
+                              {prettyTaskType(req.taskType)} — {new Date(req.taskScheduledDate).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+                            </p>
+                            <p className="text-xs text-slate-600 mt-0.5">
+                              {req.offeredCoins > 0
+                                ? t("swapOfferedCoins", "Offer: {coins} coins").replace("{coins}", String(req.offeredCoins))
+                                : t("swapOfferedNoCoins", "No coin offer")}
+                            </p>
+                          </div>
+                          <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase ${
+                            req.status === "PENDING" ? "bg-sky-100 text-sky-800" :
+                            req.status === "ACCEPTED" ? "bg-emerald-100 text-emerald-800" :
+                            "bg-slate-200 text-slate-600"
+                          }`}>
+                            {req.status === "PENDING" ? t("swapStatusPending") :
+                             req.status === "ACCEPTED" ? t("swapStatusAccepted") :
+                             req.status === "DECLINED" ? t("swapStatusDeclined") :
+                             t("swapStatusCancelled")}
+                          </span>
+                        </div>
+                        {req.status === "PENDING" && (
+                          <div className="mt-3">
+                            <button
+                              type="button"
+                              disabled={swapActionLoading === req.id}
+                              onClick={() => void respondToSwap(req.id, "cancel")}
+                              className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                            >
+                              {swapActionLoading === req.id ? "..." : t("swapCancelBtn", "Cancel request")}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
 
           {/* Opt-out section */}
           <section className={`rounded-2xl p-5 shadow-sm ring-1 ${overview.optOut || overview.contractOptOut ? "bg-slate-100 ring-slate-300" : "bg-white ring-slate-200"}`}>
@@ -1567,7 +1944,23 @@ export function CleaningScheduleClient() {
               ) : null}
 
               <div className="mt-6">
-                <div className="text-sm font-medium text-slate-900">Assign myself on this date</div>
+                <div className="flex items-center gap-2">
+                  <div className="text-sm font-medium text-slate-900">Assign myself on this date</div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAssignHelp((v) => !v)}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-emerald-400 text-xs font-bold text-emerald-700"
+                    aria-label={t("autoScheduleHelpTitle", "How does auto-scheduling work?")}
+                    title={t("autoScheduleHelpTitle", "How does auto-scheduling work?")}
+                  >
+                    ?
+                  </button>
+                </div>
+                {showAssignHelp && (
+                  <div className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-slate-700 whitespace-pre-line">
+                    {t("autoScheduleHelp")}
+                  </div>
+                )}
                 {!canSelfAssignSelectedDate ? (
                   <p className="mt-2 text-sm text-amber-700">You can only assign yourself to today or future dates.</p>
                 ) : null}
@@ -1683,11 +2076,25 @@ export function CleaningScheduleClient() {
                 >
                   ?
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setShowReleaseHelp((v) => !v)}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-rose-300 text-sm font-semibold text-rose-700"
+                  aria-label={t("removalHelpTitle", "Removal and reassignment rules")}
+                  title={t("removalHelpTitle", "Removal and reassignment rules")}
+                >
+                  ?
+                </button>
               </div>
               {showPolicyHelp && (
                 <div className="mt-2 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-slate-700 space-y-2">
                   <p><span className="font-semibold">Mark done window:</span> You can submit on the assigned date. D7 kitchen tasks are only open from 17:00 to 23:00 on that date.</p>
                   <p><span className="font-semibold">Late submission:</span> You may still mark the task done up to 10 hours after the deadline and earn 50% of the normal coin reward. After 10 hours the task is marked missed automatically.</p>
+                </div>
+              )}
+              {showReleaseHelp && (
+                <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-slate-700 whitespace-pre-line">
+                  {t("removalHelp")}
                 </div>
               )}
               <div className="mt-4 space-y-3">

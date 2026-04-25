@@ -5,6 +5,7 @@ import {
   CleaningAssignmentSource,
   CleaningAuditDecision,
   CleaningAvailabilityType,
+  CleaningSwapRequestStatus,
   CleaningTaskStatus,
   CleaningTaskType,
   CoinReason,
@@ -25,6 +26,7 @@ import {
   listCleaningCalendarEvents,
   readCachedClients,
   syncClientsFromSheet,
+  transferSwapCoins,
   updateCleaningCalendarEvent
 } from "./google-sheets.js";
 import { getCleaningRewardSettings } from "./cleaning-reward-settings.js";
@@ -3428,4 +3430,305 @@ async function autoReassignReleasedUser(input: {
     await invalidateCleaningOverviewCache(normalizedEmail);
     return;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cleaning Swap Requests
+// Residents can offer coins to another resident to take over their cleaning task.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export class CleaningSwapError extends Error {
+  code: "NOT_FOUND" | "FORBIDDEN" | "INVALID_STATE" | "CONFLICT" | "INSUFFICIENT_COINS" | "VALIDATION";
+  constructor(message: string, code: CleaningSwapError["code"]) {
+    super(message);
+    this.name = "CleaningSwapError";
+    this.code = code;
+  }
+}
+
+/**
+ * Returns eligible residents who could take over the given task.
+ * Reuses getAvailableUsersForAdminSlot — same opt-out + availability logic.
+ */
+export async function getSwapCandidates(taskId: string, requesterEmail: string) {
+  const normalizedEmail = requesterEmail.trim().toLowerCase();
+  const task = await findUniqueCleaningTask({ where: { id: taskId } });
+  if (!task) throw new CleaningSwapError("Cleaning task not found", "NOT_FOUND");
+  if (task.userEmail.toLowerCase() !== normalizedEmail) {
+    throw new CleaningSwapError("You can only find swap partners for your own tasks", "FORBIDDEN");
+  }
+  if (task.status !== CleaningTaskStatus.ASSIGNED) {
+    throw new CleaningSwapError("Only assigned tasks can be swapped", "INVALID_STATE");
+  }
+  if (!isFutureCalendarDate(normalizeCalendarDate(task.scheduledDate))) {
+    throw new CleaningSwapError("Task date has passed — swap is no longer possible", "INVALID_STATE");
+  }
+  return getAvailableUsersForAdminSlot({
+    date: task.scheduledDate,
+    type: task.type,
+    floor: task.floor,
+    excludeEmails: [normalizedEmail],
+    showAll: false
+  });
+}
+
+/**
+ * Creates a pending swap request from the requester to a specific target resident.
+ * One PENDING request per task is enforced (requester must cancel before re-requesting).
+ */
+export async function createSwapRequest(input: {
+  taskId: string;
+  requesterEmail: string;
+  targetEmail: string;
+  offeredCoins: number;
+}) {
+  const normalizedRequester = input.requesterEmail.trim().toLowerCase();
+  const normalizedTarget = input.targetEmail.trim().toLowerCase();
+
+  if (normalizedRequester === normalizedTarget) {
+    throw new CleaningSwapError("You cannot request a swap with yourself", "VALIDATION");
+  }
+  if (!Number.isInteger(input.offeredCoins) || input.offeredCoins < 0) {
+    throw new CleaningSwapError("offeredCoins must be a non-negative integer", "VALIDATION");
+  }
+
+  const task = await findUniqueCleaningTask({ where: { id: input.taskId } });
+  if (!task) throw new CleaningSwapError("Cleaning task not found", "NOT_FOUND");
+  if (task.userEmail.toLowerCase() !== normalizedRequester) {
+    throw new CleaningSwapError("You can only create swap requests for your own tasks", "FORBIDDEN");
+  }
+  if (task.status !== CleaningTaskStatus.ASSIGNED) {
+    throw new CleaningSwapError("Only assigned tasks can be swapped", "INVALID_STATE");
+  }
+  if (!isFutureCalendarDate(normalizeCalendarDate(task.scheduledDate))) {
+    throw new CleaningSwapError("Task date has passed — swap is no longer possible", "INVALID_STATE");
+  }
+  if (input.offeredCoins > task.rewardCoins) {
+    throw new CleaningSwapError(`Offered coins cannot exceed the task reward (${task.rewardCoins})`, "VALIDATION");
+  }
+
+  // Enforce one pending swap per task
+  const existingPending = await prisma.cleaningSwapRequest.findFirst({
+    where: { taskId: input.taskId, requesterEmail: normalizedRequester, status: CleaningSwapRequestStatus.PENDING }
+  });
+  if (existingPending) {
+    throw new CleaningSwapError(
+      "You already have a pending swap request for this task. Cancel it before sending a new one.",
+      "CONFLICT"
+    );
+  }
+
+  // Verify the target is an active resident (getUserCleaningContext is sufficient)
+  const targetUser = await getUserCleaningContext(normalizedTarget);
+  if (!targetUser) {
+    throw new CleaningSwapError("Target resident not found or is not an active cleaning member", "NOT_FOUND");
+  }
+
+  return prisma.cleaningSwapRequest.create({
+    data: {
+      taskId: input.taskId,
+      requesterEmail: normalizedRequester,
+      requesterName: task.userName ?? null,
+      targetEmail: normalizedTarget,
+      targetName: targetUser.name ?? null,
+      offeredCoins: input.offeredCoins,
+      status: CleaningSwapRequestStatus.PENDING,
+      taskType: task.type,
+      taskScheduledDate: task.scheduledDate,
+      taskBranchId: task.branchId,
+      taskRewardCoins: task.rewardCoins
+    }
+  });
+}
+
+/**
+ * Target resident accepts a swap request.
+ * Reassigns the cleaning task and transfers coins.
+ */
+export async function acceptSwapRequest(requestId: string, targetEmail: string) {
+  const normalizedTarget = targetEmail.trim().toLowerCase();
+  const swapReq = await prisma.cleaningSwapRequest.findUnique({ where: { id: requestId } });
+  if (!swapReq) throw new CleaningSwapError("Swap request not found", "NOT_FOUND");
+  if (swapReq.targetEmail.toLowerCase() !== normalizedTarget) {
+    throw new CleaningSwapError("You are not the target of this swap request", "FORBIDDEN");
+  }
+  if (swapReq.status !== CleaningSwapRequestStatus.PENDING) {
+    throw new CleaningSwapError(
+      `This swap request is already ${swapReq.status.toLowerCase()} and can no longer be accepted`,
+      "INVALID_STATE"
+    );
+  }
+
+  // Fresh task check
+  const task = await findUniqueCleaningTask({ where: { id: swapReq.taskId } });
+  if (!task) throw new CleaningSwapError("The cleaning task for this swap no longer exists", "NOT_FOUND");
+  if (task.status !== CleaningTaskStatus.ASSIGNED) {
+    // Auto-cancel the swap since the task is no longer actionable
+    await prisma.cleaningSwapRequest.update({
+      where: { id: requestId },
+      data: { status: CleaningSwapRequestStatus.CANCELLED, cancelledAt: new Date() }
+    });
+    throw new CleaningSwapError(
+      "This task has already been completed, missed, or rejected. The swap request has been cancelled automatically.",
+      "INVALID_STATE"
+    );
+  }
+  if (!isFutureCalendarDate(normalizeCalendarDate(task.scheduledDate))) {
+    await prisma.cleaningSwapRequest.update({
+      where: { id: requestId },
+      data: { status: CleaningSwapRequestStatus.CANCELLED, cancelledAt: new Date() }
+    });
+    throw new CleaningSwapError("The task date has passed. The swap request has been cancelled.", "INVALID_STATE");
+  }
+
+  // Check target doesn't already have a task that day
+  const conflictTask = await findFirstCleaningTask({
+    where: {
+      userEmail: normalizedTarget,
+      scheduledDate: { gte: calendarRangeStart(task.scheduledDate), lte: calendarRangeEnd(task.scheduledDate) },
+      status: { notIn: [CleaningTaskStatus.MISSED, CleaningTaskStatus.REJECTED] }
+    }
+  });
+  if (conflictTask) {
+    throw new CleaningSwapError("You already have a cleaning task on that date", "CONFLICT");
+  }
+
+  const targetUser = await getUserCleaningContext(normalizedTarget);
+  if (!targetUser) throw new CleaningSwapError("Your resident account could not be found", "NOT_FOUND");
+
+  const newFloor = task.type === CleaningTaskType.TRASH_D7 ? (targetUser.floor ?? task.floor) : task.floor;
+
+  // DB transaction: mark accepted, cancel other pending swaps for this task, update task
+  const updatedTask = await prisma.$transaction(async (tx) => {
+    await tx.cleaningSwapRequest.update({
+      where: { id: requestId },
+      data: { status: CleaningSwapRequestStatus.ACCEPTED, respondedAt: new Date() }
+    });
+
+    // Cancel all other pending requests for the same task
+    await tx.cleaningSwapRequest.updateMany({
+      where: { taskId: swapReq.taskId, status: CleaningSwapRequestStatus.PENDING, id: { not: requestId } },
+      data: { status: CleaningSwapRequestStatus.CANCELLED, cancelledAt: new Date() }
+    });
+
+    // Audit trail in CoinLedger
+    if (swapReq.offeredCoins > 0) {
+      await tx.coinLedger.create({
+        data: { userId: swapReq.requesterEmail, delta: -swapReq.offeredCoins, reason: CoinReason.CLEANING_SWAP_DEBIT, refType: "cleaning_swap_request", refId: requestId }
+      });
+      await tx.coinLedger.create({
+        data: { userId: normalizedTarget, delta: swapReq.offeredCoins, reason: CoinReason.CLEANING_SWAP_CREDIT, refType: "cleaning_swap_request", refId: requestId }
+      });
+    }
+
+    return tx.cleaningTask.update({
+      where: { id: task.id },
+      data: { userEmail: normalizedTarget, userName: targetUser.name, branchId: targetUser.branchId, floor: newFloor }
+    });
+  });
+
+  // Google Calendar update (non-blocking)
+  if (task.calendarId && task.calendarEventId) {
+    const target = getCleaningCalendarTarget(task.type, { floor: newFloor });
+    if (target) {
+      updateCleaningCalendarEvent({
+        calendarId: task.calendarId,
+        eventId: task.calendarEventId,
+        title: target.title,
+        scheduledDate: task.scheduledDate,
+        userEmail: targetUser.email,
+        userName: targetUser.name,
+        branchId: targetUser.branchId,
+        floor: newFloor,
+        rewardCoins: task.rewardCoins,
+        type: task.type,
+        status: task.status,
+        completedAt: task.completedAt,
+        completionNote: task.completionNote,
+        completionPhoto: task.completionPhoto,
+        auditorNote: task.auditorNote
+      }).catch((err: unknown) => {
+        console.error("[acceptSwapRequest] Calendar update failed:", err instanceof Error ? err.message : err);
+      });
+    }
+  }
+
+  // Coin transfer via Google Sheets (non-blocking on failure — CoinLedger is source of truth)
+  if (swapReq.offeredCoins > 0) {
+    transferSwapCoins({
+      requesterEmail: swapReq.requesterEmail,
+      requesterName: swapReq.requesterName,
+      targetEmail: normalizedTarget,
+      targetName: targetUser.name,
+      coins: swapReq.offeredCoins,
+      swapRequestId: requestId,
+      branchId: task.branchId
+    }).catch((err: unknown) => {
+      console.error("[acceptSwapRequest] Sheets coin transfer failed:", err instanceof Error ? err.message : err);
+    });
+  }
+
+  await invalidateCleaningOverviewCache(swapReq.requesterEmail);
+  await invalidateCleaningOverviewCache(normalizedTarget);
+
+  return { swapRequest: swapReq, updatedTask };
+}
+
+/**
+ * Target resident declines a swap request.
+ */
+export async function declineSwapRequest(requestId: string, targetEmail: string) {
+  const normalizedTarget = targetEmail.trim().toLowerCase();
+  const swapReq = await prisma.cleaningSwapRequest.findUnique({ where: { id: requestId } });
+  if (!swapReq) throw new CleaningSwapError("Swap request not found", "NOT_FOUND");
+  if (swapReq.targetEmail.toLowerCase() !== normalizedTarget) {
+    throw new CleaningSwapError("You are not the target of this swap request", "FORBIDDEN");
+  }
+  if (swapReq.status !== CleaningSwapRequestStatus.PENDING) {
+    throw new CleaningSwapError(`This request is already ${swapReq.status.toLowerCase()}`, "INVALID_STATE");
+  }
+  return prisma.cleaningSwapRequest.update({
+    where: { id: requestId },
+    data: { status: CleaningSwapRequestStatus.DECLINED, respondedAt: new Date() }
+  });
+}
+
+/**
+ * Requester cancels their own pending swap request.
+ */
+export async function cancelSwapRequest(requestId: string, requesterEmail: string) {
+  const normalizedRequester = requesterEmail.trim().toLowerCase();
+  const swapReq = await prisma.cleaningSwapRequest.findUnique({ where: { id: requestId } });
+  if (!swapReq) throw new CleaningSwapError("Swap request not found", "NOT_FOUND");
+  if (swapReq.requesterEmail.toLowerCase() !== normalizedRequester) {
+    throw new CleaningSwapError("You can only cancel your own swap requests", "FORBIDDEN");
+  }
+  if (swapReq.status !== CleaningSwapRequestStatus.PENDING) {
+    throw new CleaningSwapError(`This request is already ${swapReq.status.toLowerCase()} and cannot be cancelled`, "INVALID_STATE");
+  }
+  return prisma.cleaningSwapRequest.update({
+    where: { id: requestId },
+    data: { status: CleaningSwapRequestStatus.CANCELLED, cancelledAt: new Date() }
+  });
+}
+
+/**
+ * Returns all swap requests involving a user — both sent (requester) and received (target).
+ */
+export async function getSwapRequestsForUser(email: string) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const [sent, received] = await Promise.all([
+    prisma.cleaningSwapRequest.findMany({
+      where: { requesterEmail: normalizedEmail },
+      orderBy: { createdAt: "desc" },
+      take: 50
+    }),
+    prisma.cleaningSwapRequest.findMany({
+      where: { targetEmail: normalizedEmail },
+      orderBy: { createdAt: "desc" },
+      take: 50
+    })
+  ]);
+  const pendingReceivedCount = received.filter((r) => r.status === CleaningSwapRequestStatus.PENDING).length;
+  return { sent, received, pendingReceivedCount };
 }

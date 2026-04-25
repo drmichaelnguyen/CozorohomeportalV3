@@ -27,6 +27,15 @@ enum CoinReason {
   REFUND
   CLEANING_REWARD
   CLEANING_REVERSAL
+  CLEANING_SWAP_DEBIT
+  CLEANING_SWAP_CREDIT
+}
+
+enum CleaningSwapRequestStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  CANCELLED
 }
 
 enum CleaningTaskType {
@@ -496,4 +505,27 @@ model ResidentGuideSection {
   updatedAt   DateTime                 @updatedAt
 
   @@index([sortOrder])
+}
+
+model CleaningSwapRequest {
+  id                String                    @id @default(cuid())
+  taskId            String
+  requesterEmail    String
+  requesterName     String?
+  targetEmail       String
+  targetName        String?
+  offeredCoins      Int                       @default(0)
+  status            CleaningSwapRequestStatus @default(PENDING)
+  taskType          CleaningTaskType
+  taskScheduledDate DateTime
+  taskBranchId      String
+  taskRewardCoins   Int
+  respondedAt       DateTime?
+  cancelledAt       DateTime?
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+
+  @@index([requesterEmail, status, createdAt])
+  @@index([targetEmail, status, createdAt])
+  @@index([taskId, status])
 }

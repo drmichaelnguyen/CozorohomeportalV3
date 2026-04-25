@@ -4577,6 +4577,98 @@ export async function awardCleaningCoinsToSheet(input: {
   }
 }
 
+/**
+ * Transfers coins from the swap requester to the swap target when a cleaning
+ * swap request is accepted. Writes two rows to the coins sheet (debit + credit)
+ * and updates both residents' current balance columns.
+ *
+ * Throws if either client row cannot be found or the requester has insufficient balance.
+ */
+export async function transferSwapCoins(input: {
+  requesterEmail: string;
+  requesterName: string | null;
+  targetEmail: string;
+  targetName: string | null;
+  coins: number;
+  swapRequestId: string;
+  branchId: string;
+}): Promise<{ requesterNewBalance: number; targetNewBalance: number }> {
+  if (!Number.isFinite(input.coins) || input.coins <= 0) {
+    throw new Error("Swap coin transfer amount must be a positive integer");
+  }
+
+  const normalizedRequester = input.requesterEmail.trim().toLowerCase();
+  const normalizedTarget = input.targetEmail.trim().toLowerCase();
+
+  const [requesterClient, targetClient] = await Promise.all([
+    getActiveClientByEmail(normalizedRequester),
+    getActiveClientByEmail(normalizedTarget)
+  ]);
+
+  if (!requesterClient) throw new Error("Requester client row not found for coin transfer");
+  if (!targetClient) throw new Error("Target client row not found for coin transfer");
+
+  const requesterCoins =
+    Number.parseInt(String(requesterClient[CLIENT_CURRENT_COINS_COLUMN] ?? "0").replace(/[^0-9-]/g, ""), 10) || 0;
+  if (requesterCoins < input.coins) {
+    throw new Error("Insufficient coins for swap transfer");
+  }
+
+  const targetCoins =
+    Number.parseInt(String(targetClient[CLIENT_CURRENT_COINS_COLUMN] ?? "0").replace(/[^0-9-]/g, ""), 10) || 0;
+
+  const requesterNewBalance = requesterCoins - input.coins;
+  const targetNewBalance = targetCoins + input.coins;
+  const branchVal = input.branchId.replace("D", "");
+  const now = formatCoinsSheetTimestamp(new Date());
+
+  // Debit row for requester
+  await appendCoinsSheetRow({
+    [COINS_TIMESTAMP_COLUMN]: now,
+    [CONTRACT_CODE_COLUMN]: requesterClient[CONTRACT_CODE_COLUMN] ?? "",
+    ["Chi nhánh Cozoro dorm"]: branchVal,
+    [EMAIL_COLUMN]: normalizedRequester,
+    [CLIENT_NAME_COLUMN]: input.requesterName ?? (requesterClient[CLIENT_NAME_COLUMN] ?? ""),
+    [CLIENT_BED_COLUMN]: requesterClient[CLIENT_BED_COLUMN] ?? "",
+    [COINS_BALANCE_COLUMN]: String(-input.coins),
+    [COINS_EVENT_COLUMN]: "Swap lịch vệ sinh — trả coins",
+    [COINS_OPERATOR_COLUMN]: "SWAP_SYSTEM",
+    [COINS_MEMBER_COLUMN]: requesterClient[COINS_MEMBER_COLUMN] ?? "",
+    [COINS_CURRENT_BALANCE_COLUMN]: String(requesterNewBalance),
+    [COINS_TRANSACTION_CODE_COLUMN]: `SwapDebit${input.swapRequestId}`
+  });
+
+  if (requesterClient[CONTRACT_CODE_COLUMN]) {
+    await updateClientColumns(requesterClient[CONTRACT_CODE_COLUMN], {
+      [CLIENT_CURRENT_COINS_COLUMN]: String(requesterNewBalance)
+    });
+  }
+
+  // Credit row for target
+  await appendCoinsSheetRow({
+    [COINS_TIMESTAMP_COLUMN]: now,
+    [CONTRACT_CODE_COLUMN]: targetClient[CONTRACT_CODE_COLUMN] ?? "",
+    ["Chi nhánh Cozoro dorm"]: branchVal,
+    [EMAIL_COLUMN]: normalizedTarget,
+    [CLIENT_NAME_COLUMN]: input.targetName ?? (targetClient[CLIENT_NAME_COLUMN] ?? ""),
+    [CLIENT_BED_COLUMN]: targetClient[CLIENT_BED_COLUMN] ?? "",
+    [COINS_BALANCE_COLUMN]: String(input.coins),
+    [COINS_EVENT_COLUMN]: "Swap lịch vệ sinh — nhận coins",
+    [COINS_OPERATOR_COLUMN]: "SWAP_SYSTEM",
+    [COINS_MEMBER_COLUMN]: targetClient[COINS_MEMBER_COLUMN] ?? "",
+    [COINS_CURRENT_BALANCE_COLUMN]: String(targetNewBalance),
+    [COINS_TRANSACTION_CODE_COLUMN]: `SwapCredit${input.swapRequestId}`
+  });
+
+  if (targetClient[CONTRACT_CODE_COLUMN]) {
+    await updateClientColumns(targetClient[CONTRACT_CODE_COLUMN], {
+      [CLIENT_CURRENT_COINS_COLUMN]: String(targetNewBalance)
+    });
+  }
+
+  return { requesterNewBalance, targetNewBalance };
+}
+
 /** One-off positive coin line from the resident Cozoro Bee vent-hammer easter egg. */
 export async function awardVentHammerGameCoinsToSheet(input: {
   userEmail: string;

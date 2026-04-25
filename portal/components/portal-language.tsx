@@ -971,6 +971,52 @@ const translations: Record<string, { en: string; vi: string }> = {
   willBeReassignedFree: { en: "You will be reassigned to another date. This will not count against your monthly removal limit.", vi: "Bạn sẽ được phân công lại sang ngày khác. Điều này sẽ không tính vào giới hạn hủy hàng tháng." },
   auditNoteLabel: { en: "Audit note", vi: "Ghi chú kiểm tra" },
   yourNoteLabel: { en: "Your note", vi: "Ghi chú của bạn" },
+  // Swap requests
+  swapRequestsTitle: { en: "Swap Requests", vi: "Yêu cầu đổi lịch" },
+  swapRequestsPendingBadge: { en: "{count} pending", vi: "{count} chờ phản hồi" },
+  swapReceivedSection: { en: "Received", vi: "Yêu cầu gửi đến bạn" },
+  swapSentSection: { en: "Sent", vi: "Yêu cầu bạn đã gửi" },
+  swapNoRequests: { en: "No swap requests.", vi: "Không có yêu cầu đổi lịch nào." },
+  swapFrom: { en: "From", vi: "Từ" },
+  swapTo: { en: "To", vi: "Gửi đến" },
+  swapTaskLabel: { en: "Task", vi: "Lịch trực" },
+  swapOfferedCoins: { en: "Offer: {coins} coins", vi: "Đề nghị: {coins} coin" },
+  swapOfferedNoCoins: { en: "No coin offer", vi: "Không có coin đề nghị" },
+  swapStatusPending: { en: "Waiting for response", vi: "Chờ phản hồi" },
+  swapStatusAccepted: { en: "Accepted", vi: "Đã chấp nhận" },
+  swapStatusDeclined: { en: "Declined", vi: "Đã từ chối" },
+  swapStatusCancelled: { en: "Cancelled", vi: "Đã hủy" },
+  swapAcceptBtn: { en: "Accept", vi: "Chấp nhận" },
+  swapDeclineBtn: { en: "Decline", vi: "Từ chối" },
+  swapCancelBtn: { en: "Cancel request", vi: "Hủy yêu cầu" },
+  swapFindPartnerBtn: { en: "Find swap partner", vi: "Tìm người đổi lịch" },
+  swapCandidatesLoading: { en: "Loading available residents...", vi: "Đang tải danh sách cư dân rảnh..." },
+  swapNoCandidates: { en: "No available residents found for this date.", vi: "Không tìm thấy cư dân rảnh cho ngày này." },
+  swapSelectCandidate: { en: "Select a resident to request a swap", vi: "Chọn cư dân để gửi yêu cầu đổi lịch" },
+  swapOfferCoinsLabel: { en: "Offer coins (0 = no incentive, max = task reward)", vi: "Đề nghị coin (0 = không có thêm, tối đa = thưởng lịch trực)" },
+  swapSendRequestBtn: { en: "Send swap request", vi: "Gửi yêu cầu đổi lịch" },
+  swapSendingBtn: { en: "Sending...", vi: "Đang gửi..." },
+  swapCancelFlowBtn: { en: "Cancel", vi: "Hủy" },
+  swapConflictWarning: { en: "Already has a task that day", vi: "Đã có lịch trực ngày đó" },
+  swapPreferredBadge: { en: "Preferred", vi: "Ưu tiên" },
+  swapAvailableBadge: { en: "Available", vi: "Rảnh" },
+  swapHelpTitle: { en: "How does swap work?", vi: "Đổi lịch hoạt động như thế nào?" },
+  swapHelp: {
+    en: "When you want to remove yourself from a cleaning task, you can request a swap instead of cancelling directly. Choose an available resident, offer some coins as an incentive (up to the task's reward), and send the request. If they accept, the task moves to them and your coins are transferred automatically. If they decline or don't respond, you can try someone else or cancel the request.\n\nYou can only have one pending swap request per task at a time.",
+    vi: "Khi muốn rút khỏi lịch trực vệ sinh, bạn có thể yêu cầu đổi lịch thay vì hủy trực tiếp. Chọn một cư dân rảnh, đề nghị một số coin như phần thưởng (tối đa bằng thưởng của lịch đó), rồi gửi yêu cầu. Nếu họ chấp nhận, lịch trực chuyển sang họ và coin được chuyển tự động. Nếu họ từ chối hoặc không phản hồi, bạn có thể thử người khác hoặc hủy yêu cầu.\n\nBạn chỉ được có một yêu cầu đổi lịch đang chờ cho mỗi lịch trực."
+  },
+  // Auto-scheduling help (EN + VI)
+  autoScheduleHelpTitle: { en: "How does auto-scheduling work?", vi: "Lịch tự động hoạt động như thế nào?" },
+  autoScheduleHelp: {
+    en: "The system automatically fills empty cleaning slots every day. Here is how it picks who gets assigned:\n\n1. Eligibility — only active long-term residents of the correct branch and floor are considered. Residents who opted out for the month or have a contract cleaning exemption are skipped.\n2. Availability — residents marked Unavailable on that date are excluded. Residents marked Preferred are placed at the top of the list.\n3. Fairness — among eligible residents, the one with the fewest cleaning tasks in the past 60 days is picked first. This spreads duty evenly over time.\n4. No double-booking — a resident who already has a task on the same day will not receive a second one.\n\nIf you are assigned automatically (shown as ⚙ System), it means you had no preference set and were the most \"underdue\" eligible resident that day. You can still self-assign earlier to claim a date of your choice before the system fills it.",
+    vi: "Hệ thống tự động lấp đầy các lịch trực vệ sinh còn trống mỗi ngày. Cách chọn người được phân công:\n\n1. Đủ điều kiện — chỉ xét cư dân dài hạn đang hoạt động đúng chi nhánh và tầng. Cư dân đã opt-out tháng này hoặc có hợp đồng miễn vệ sinh sẽ bị bỏ qua.\n2. Lịch rảnh — cư dân đã đánh dấu Không rảnh vào ngày đó sẽ bị loại. Cư dân đánh dấu Ưu tiên sẽ được xét trước.\n3. Công bằng — trong số các cư dân đủ điều kiện, người có ít lịch trực nhất trong 60 ngày qua sẽ được chọn. Cách này phân bổ đều theo thời gian.\n4. Không trùng lịch — cư dân đã có lịch trực vào cùng ngày sẽ không bị phân công thêm.\n\nNếu bạn được phân công tự động (hiển thị ⚙ System), nghĩa là bạn chưa đặt ưu tiên và là cư dân \"nợ nhiều nhất\" đủ điều kiện hôm đó. Bạn vẫn có thể tự đăng ký trước để chọn ngày mình muốn."
+  },
+  // Release/removal help (EN + VI — updated to mention swap)
+  removalHelpTitle: { en: "Removal and reassignment rules", vi: "Quy tắc hủy và phân công lại" },
+  removalHelp: {
+    en: "When you remove yourself from a task, the system immediately finds a replacement from available residents, then tries to auto-assign you to the next open slot of the same type within 15 days.\n\nFine tiers (full fine = 10,000 VND):\n• 5+ days ahead → No fine\n• 1–4 days ahead → 50% fine (5,000 VND)\n• Same day → 75% fine (7,500 VND)\n• Past date → Cannot release\n\nMonthly limit: max 3 removals per calendar month.\nException: self-assigned + released 5+ days ahead → no fine and does not count against the monthly limit.\n\nTip: Use \"Find swap partner\" instead of removing directly. You can offer coins to incentivise another resident to take your slot — no auto-fine, no monthly limit used.",
+    vi: "Khi bạn hủy đăng ký, hệ thống ngay lập tức tìm người thay thế từ các cư dân rảnh, rồi tự động xếp bạn vào lịch trống tiếp theo cùng loại trong vòng 15 ngày.\n\nMức phạt (phạt đầy đủ = 10.000 VND):\n• Trước 5+ ngày → Không phạt\n• Trước 1–4 ngày → Phạt 50% (5.000 VND)\n• Cùng ngày → Phạt 75% (7.500 VND)\n• Ngày đã qua → Không thể hủy\n\nGiới hạn tháng: tối đa 3 lần hủy mỗi tháng.\nNgoại lệ: tự đăng ký + hủy trước 5+ ngày → không phạt và không tính vào giới hạn tháng.\n\nGợi ý: Dùng \"Tìm người đổi lịch\" thay vì hủy trực tiếp. Bạn có thể đề nghị coin để khuyến khích cư dân khác nhận lịch của bạn — không bị phạt tự động, không dùng giới hạn tháng."
+  },
   pastTasksTitle: { en: "Past Tasks", vi: "Lịch trực đã qua" },
   pastTasksShow: { en: "Show past tasks", vi: "Hiện lịch đã qua" },
   pastTasksHide: { en: "Hide past tasks", vi: "Ẩn lịch đã qua" },
