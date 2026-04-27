@@ -29,6 +29,7 @@ import {
   transferSwapCoins,
   updateCleaningCalendarEvent
 } from "./google-sheets.js";
+import { logAction } from "./action-log.js";
 import { getCleaningRewardSettings } from "./cleaning-reward-settings.js";
 import { prisma } from "./prisma.js";
 
@@ -1143,6 +1144,21 @@ async function assignTaskToUser(input: {
           assignedByName: input.assignedByName ?? undefined
         }
       });
+      await logAction({
+        actorEmail: input.assignedByEmail ?? null,
+        actorName: input.assignedByName ?? existingSlot.userName,
+        actorRole:
+          input.assignmentSource === CleaningAssignmentSource.SELF
+            ? "resident"
+            : input.assignmentSource === CleaningAssignmentSource.MANAGER
+              ? "manager"
+              : "system",
+        action: "cleaning.task.reassign",
+        entityType: "CleaningTask",
+        entityId: reassignedTask.id,
+        entityLabel: `${reassignedTask.type}|${reassignedTask.scheduledDate.toISOString().slice(0, 10)}`,
+        details: `from=${existingSlot.userEmail}; to=${normalizedEmail}`
+      });
 
     if (reassignedTask.calendarId && reassignedTask.calendarEventId) {
       const target = getCleaningCalendarTarget(reassignedTask.type, { floor: reassignedTask.floor });
@@ -1224,6 +1240,21 @@ async function assignTaskToUser(input: {
           assignedByName: input.assignedByName ?? undefined
         }
       });
+      await logAction({
+        actorEmail: input.assignedByEmail ?? null,
+        actorName: input.assignedByName ?? raceSlot.userName,
+        actorRole:
+          input.assignmentSource === CleaningAssignmentSource.SELF
+            ? "resident"
+            : input.assignmentSource === CleaningAssignmentSource.MANAGER
+              ? "manager"
+              : "system",
+        action: "cleaning.task.reassign",
+        entityType: "CleaningTask",
+        entityId: raceReassigned.id,
+        entityLabel: `${raceReassigned.type}|${raceReassigned.scheduledDate.toISOString().slice(0, 10)}`,
+        details: `from=${raceSlot.userEmail}; to=${normalizedEmail}`
+      });
       await invalidateCleaningOverviewCache(raceSlot.userEmail);
       await invalidateCleaningOverviewCache(normalizedEmail);
       return raceReassigned;
@@ -1239,6 +1270,21 @@ async function assignTaskToUser(input: {
       assignmentSource: input.assignmentSource ?? (input.isSelfAssigned ? CleaningAssignmentSource.SELF : undefined),
       assignedByEmail: input.assignedByEmail ?? undefined,
       assignedByName: input.assignedByName ?? undefined
+    });
+    await logAction({
+      actorEmail: input.assignedByEmail ?? null,
+      actorName: input.assignedByName ?? input.user.name,
+      actorRole:
+        input.assignmentSource === CleaningAssignmentSource.SELF
+          ? "resident"
+          : input.assignmentSource === CleaningAssignmentSource.MANAGER
+            ? "manager"
+            : "system",
+      action: "cleaning.task.assign",
+      entityType: "CleaningTask",
+      entityId: created.id,
+      entityLabel: `${created.type}|${created.scheduledDate.toISOString().slice(0, 10)}`,
+      details: `source=${input.assignmentSource ?? (input.isSelfAssigned ? "SELF" : "SYSTEM")}`
     });
 
     await invalidateCleaningOverviewCache(normalizedEmail);
@@ -1432,8 +1478,24 @@ async function createCleaningTaskRecord(input: {
         assignedByEmail: input.assignedByEmail ?? undefined,
         assignedByName: input.assignedByName ?? undefined,
         calendarId,
-        calendarEventId
-      }
+      calendarEventId
+    }
+  });
+
+  await logAction({
+    actorEmail: input.assignedByEmail ?? null,
+    actorName: input.assignedByName ?? input.user.name,
+    actorRole:
+      input.assignmentSource === CleaningAssignmentSource.SELF
+        ? "resident"
+        : input.assignmentSource === CleaningAssignmentSource.MANAGER
+          ? "manager"
+          : "system",
+    action: "cleaning.task.create",
+    entityType: "CleaningTask",
+    entityId: created.id,
+    entityLabel: `${created.type}|${created.scheduledDate.toISOString().slice(0, 10)}`,
+    details: `source=${input.assignmentSource ?? (input.isSelfAssigned ? "SELF" : "SYSTEM")}`
   });
 
   if (calendarId) {
@@ -1526,6 +1588,16 @@ async function syncCalendarTasksIntoDatabase(
           calendarEventId: event.id || existingTask.calendarEventId
         }
       });
+      await logAction({
+        actorEmail: normalizedEmail || null,
+        actorName: userName,
+        actorRole: "system",
+        action: "cleaning.task.sync",
+        entityType: "CleaningTask",
+        entityId: updatedTask.id,
+        entityLabel: `${updatedTask.type}|${updatedTask.scheduledDate.toISOString().slice(0, 10)}`,
+        details: `event=${event.id}`
+      });
 
       const staleDuplicateIds = slotMatches
         .filter((task) => task.id !== updatedTask.id)
@@ -1539,6 +1611,16 @@ async function syncCalendarTasksIntoDatabase(
               in: staleDuplicateIds
             }
           }
+        });
+        await logAction({
+          actorEmail: normalizedEmail || null,
+          actorName: userName,
+          actorRole: "system",
+          action: "cleaning.task.delete_many",
+          entityType: "CleaningTask",
+          entityId: updatedTask.id,
+          entityLabel: `${updatedTask.type}|${updatedTask.scheduledDate.toISOString().slice(0, 10)}`,
+          details: `deleted=${staleDuplicateIds.length}`
         });
       }
 
@@ -1562,6 +1644,16 @@ async function syncCalendarTasksIntoDatabase(
           assignedByName: "System"
         }
       });
+    await logAction({
+      actorEmail: normalizedEmail || null,
+      actorName: userName,
+      actorRole: "system",
+      action: "cleaning.task.sync_create",
+      entityType: "CleaningTask",
+      entityId: createdTask.id,
+      entityLabel: `${createdTask.type}|${createdTask.scheduledDate.toISOString().slice(0, 10)}`,
+      details: `event=${event.id}`
+    });
     importedTasks.push(createdTask);
   }
 
@@ -1671,6 +1763,15 @@ export async function setCleaningAvailability(input: {
   });
 
   await invalidateCleaningOverviewCache(input.email);
+  await logAction({
+    actorEmail: input.email.toLowerCase(),
+    actorRole: "resident",
+    action: "cleaning.availability.set",
+    entityType: "CleaningAvailability",
+    entityId: `${input.email.toLowerCase()}|${normalizedDate.toISOString().slice(0, 10)}`,
+    entityLabel: input.email.toLowerCase(),
+    details: `type=${input.type}${input.note ? `; note=${input.note}` : ""}`
+  });
   return availability;
 }
 
@@ -1744,7 +1845,7 @@ export async function selfAssignCleaningTask(input: {
     throw new CleaningSelfAssignConflictError(suggestions);
   }
 
-    return assignTaskToUser({
+  const assignedTask = await assignTaskToUser({
       user,
       date: normalizedTaskDate,
       type: input.type,
@@ -1755,7 +1856,17 @@ export async function selfAssignCleaningTask(input: {
       assignedByEmail: normalizedEmail,
       assignedByName: "Self assign"
     });
-  }
+  await logAction({
+    actorEmail: normalizedEmail,
+    actorName: "Self assign",
+    actorRole: "resident",
+    action: "cleaning.task.self_assign",
+    entityType: "CleaningTask",
+    entityId: assignedTask.id,
+    entityLabel: `${assignedTask.type}|${assignedTask.scheduledDate.toISOString().slice(0, 10)}`
+  });
+  return assignedTask;
+}
 
 export async function checkSelfAssignCleaningTask(input: {
   email: string;
@@ -1992,6 +2103,16 @@ export async function releaseCleaningTask(taskId: string, email: string) {
 
     void updatedAvailability;
     return updatedTask;
+  });
+  await logAction({
+    actorEmail: normalizedEmail,
+    actorName: task.userName ?? normalizedEmail,
+    actorRole: "resident",
+    action: "cleaning.task.release",
+    entityType: "CleaningTask",
+    entityId: reassignedTask.id,
+    entityLabel: `${reassignedTask.type}|${reassignedTask.scheduledDate.toISOString().slice(0, 10)}`,
+    details: `replacement=${replacement.email}; penalty=${releasePenalty.fineAmount}`
   });
 
   if (releasePenalty.fineAmount > 0) {
@@ -2359,7 +2480,7 @@ export async function adminAssignCleaningTask(input: {
     throw new Error("This user is not eligible for that cleaning slot (branch / floor).");
   }
 
-  return assignTaskToUser({
+  const assignedTask = await assignTaskToUser({
     user,
     date: normalizeCalendarDate(input.date),
     type: input.type,
@@ -2372,6 +2493,17 @@ export async function adminAssignCleaningTask(input: {
     assignedByEmail: input.actorEmail?.trim().toLowerCase() ?? null,
     assignedByName: input.actorName?.trim() || "Cozoro"
   });
+  await logAction({
+    actorEmail: input.actorEmail?.trim().toLowerCase() ?? null,
+    actorName: input.actorName?.trim() || "Cozoro",
+    actorRole: "manager",
+    action: "cleaning.task.assign",
+    entityType: "CleaningTask",
+    entityId: assignedTask.id,
+    entityLabel: `${assignedTask.type}|${assignedTask.scheduledDate.toISOString().slice(0, 10)}`,
+    details: `target=${assignedTask.userEmail}`
+  });
+  return assignedTask;
 }
 
 export async function adminAutoAssignCleaningSlots(input: {
@@ -2451,6 +2583,16 @@ export async function adminAutoAssignCleaningSlots(input: {
       assignedByEmail: input.actorEmail?.trim().toLowerCase() ?? null,
       assignedByName: input.actorName?.trim() || "Cozoro"
     });
+    await logAction({
+      actorEmail: input.actorEmail?.trim().toLowerCase() ?? null,
+      actorName: input.actorName?.trim() || "Cozoro",
+      actorRole: "manager",
+      action: "cleaning.task.auto_assign",
+      entityType: "CleaningTask",
+      entityId: assignedTask.id,
+      entityLabel: `${assignedTask.type}|${assignedTask.scheduledDate.toISOString().slice(0, 10)}`,
+      details: `target=${assignedTask.userEmail}`
+    });
     reservedEmails.add(selectedUser.email);
     recentTaskCounts.set(selectedUser.email, (recentTaskCounts.get(selectedUser.email) ?? 0) + 1);
     results.push(assignedTask);
@@ -2459,7 +2601,7 @@ export async function adminAutoAssignCleaningSlots(input: {
   return results;
 }
 
-export async function adminRemoveCleaningTask(taskId: string) {
+export async function adminRemoveCleaningTask(taskId: string, actorEmail?: string, actorName?: string | null) {
   const task = await findUniqueCleaningTask({ where: { id: taskId } });
   if (!task) {
     throw new Error("Cleaning task not found");
@@ -2484,6 +2626,15 @@ export async function adminRemoveCleaningTask(taskId: string) {
   }
 
   await deleteCleaningTask({ where: { id: taskId } });
+  await logAction({
+    actorEmail: actorEmail?.trim().toLowerCase() ?? null,
+    actorName: actorName?.trim() || "Cozoro",
+    actorRole: "manager",
+    action: "cleaning.task.delete",
+    entityType: "CleaningTask",
+    entityId: taskId,
+    entityLabel: `${task.type}|${task.scheduledDate.toISOString().slice(0, 10)}`
+  });
   await invalidateCleaningOverviewCache(task.userEmail);
   return { id: taskId, removed: true };
 }
@@ -2524,6 +2675,16 @@ export async function completeCleaningTask(taskId: string, email: string, note?:
       completionPhoto: photo,
       rewardCoins: lateRewardCoins
     }
+  });
+  await logAction({
+    actorEmail: email.trim().toLowerCase(),
+    actorName: task.userName ?? task.userEmail,
+    actorRole: "resident",
+    action: "cleaning.task.complete",
+    entityType: "CleaningTask",
+    entityId: updated.id,
+    entityLabel: `${updated.type}|${updated.scheduledDate.toISOString().slice(0, 10)}`,
+    details: isLate ? "late=true" : "late=false"
   });
 
   if (updated.calendarId && updated.calendarEventId) {
@@ -2623,6 +2784,19 @@ export async function auditCleaningTask(input: {
         });
       }
     }
+
+    await (tx as any).actionLog.create({
+      data: {
+        actorEmail: input.reviewer.trim().toLowerCase(),
+        actorName: input.reviewer.trim(),
+        actorRole: "manager",
+        action: "cleaning.task.audit",
+        entityType: "CleaningTask",
+        entityId: updated.id,
+        entityLabel: `${updated.type}|${updated.scheduledDate.toISOString().slice(0, 10)}`,
+        details: `${input.decision}${input.note ? `; note=${input.note}` : ""}`
+      }
+    });
 
     return updated;
   });
@@ -2726,6 +2900,16 @@ async function markAssignedTaskMissedWithFine(
         isPaid: false
       }
     });
+
+    await logAction({
+      actorEmail: operatorLabel === AUTO_CLEANING_FINE_OPERATOR ? null : operatorLabel,
+      actorRole: operatorLabel === AUTO_CLEANING_FINE_OPERATOR ? "system" : "manager",
+      action: "cleaning.task.missed_fine",
+      entityType: "CleaningTask",
+      entityId: currentTask.id,
+      entityLabel: `${currentTask.type}|${currentTask.scheduledDate.toISOString().slice(0, 10)}`,
+      details: `fineAmount=${fineAmount}`
+    });
   }
 
   const missedTask = await updateCleaningTask({
@@ -2734,6 +2918,15 @@ async function markAssignedTaskMissedWithFine(
       status: CleaningTaskStatus.MISSED,
       auditorNote: `${operatorLabel === AUTO_CLEANING_FINE_OPERATOR ? "Auto-marked" : "Marked"} as missed on ${now.toISOString()}. Fine amount: ${fineAmount} VND.`
     }
+  });
+  await logAction({
+    actorEmail: operatorLabel === AUTO_CLEANING_FINE_OPERATOR ? null : operatorLabel,
+    actorRole: operatorLabel === AUTO_CLEANING_FINE_OPERATOR ? "system" : "manager",
+    action: "cleaning.task.missed",
+    entityType: "CleaningTask",
+    entityId: missedTask.id,
+    entityLabel: `${missedTask.type}|${missedTask.scheduledDate.toISOString().slice(0, 10)}`,
+    details: `fineAmount=${fineAmount}`
   });
 
   if (missedTask.calendarId && missedTask.calendarEventId) {
@@ -3116,6 +3309,15 @@ export async function upsertContractCleaningOptOut(input: {
   });
 
   await invalidateCleaningOverviewCache(normalizedEmail);
+  await logAction({
+    actorEmail: normalizedEmail,
+    actorRole: "manager",
+    action: "cleaning.opt_out.contract_upsert",
+    entityType: "CleaningContractOptOut",
+    entityId: contractCode,
+    entityLabel: normalizedEmail,
+    details: `fee=${cleaningFeeVnd}`
+  });
   return result;
 }
 
@@ -3142,6 +3344,15 @@ export async function setCleaningOptOut(input: {
     }
   });
   await invalidateCleaningOverviewCache(normalizedEmail);
+  await logAction({
+    actorEmail: normalizedEmail,
+    actorRole: "resident",
+    action: "cleaning.opt_out.create",
+    entityType: "CleaningOptOut",
+    entityId: `${normalizedEmail}|${input.month}`,
+    entityLabel: normalizedEmail,
+    details: `paymentMethod=${input.paymentMethod}`
+  });
   return result;
 }
 
@@ -3151,6 +3362,14 @@ export async function cancelCleaningOptOut(email: string, month: string) {
     where: { userEmail: normalizedEmail, month }
   });
   await invalidateCleaningOverviewCache(normalizedEmail);
+  await logAction({
+    actorEmail: normalizedEmail,
+    actorRole: "resident",
+    action: "cleaning.opt_out.delete",
+    entityType: "CleaningOptOut",
+    entityId: `${normalizedEmail}|${month}`,
+    entityLabel: normalizedEmail
+  });
 }
 
 export async function getOptedOutEmailsForMonth(month: string): Promise<Set<string>> {

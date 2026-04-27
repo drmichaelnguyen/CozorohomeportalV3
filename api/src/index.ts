@@ -202,6 +202,7 @@ import {
   getCleaningAutoSchedulerConfig,
   updateCleaningAutoSchedulerConfig
 } from "./cleaning-scheduler-config.js";
+import { logAction } from "./action-log.js";
 import { prisma } from "./prisma.js";
 import { billingPeriodMonthForGateSession, markGateParkingTicketsPaidForBilling } from "./gate-parking-tickets.js";
 import {
@@ -1398,6 +1399,15 @@ app.post("/internal/guest-bookings/import-paid", async (request, response) => {
       checkOut: parsed.data.checkOut,
       pricingTotal: parsed.data.pricingTotal,
       notes: mergedNotes
+    });
+    await logAction({
+      actorEmail: "homecozoro@gmail.com",
+      actorRole: "manager",
+      action: "short_term.booking.import_paid",
+      entityType: "GuestStayBooking",
+      entityId: parsed.data.bookingId.trim(),
+      entityLabel: parsed.data.guestEmail.trim().toLowerCase(),
+      details: `branchId=${parsed.data.branchId}; bedNumber=${parsed.data.bedNumber}; pricingTotal=${parsed.data.pricingTotal}`
     });
 
     if (
@@ -4870,6 +4880,15 @@ app.post("/bookings", async (request, response) => {
 
       return createdBooking;
     });
+    await logAction({
+      actorEmail: userId,
+      actorRole: "resident",
+      action: "booking.create",
+      entityType: "Booking",
+      entityId: booking.id,
+      entityLabel: booking.resourceId,
+      details: `startAt=${booking.startAt.toISOString()}; endAt=${booking.endAt.toISOString()}; priceCoins=${booking.priceCoins}`
+    });
 
     return response.status(201).json(booking);
   } catch (error) {
@@ -4921,6 +4940,15 @@ app.post("/bookings/:id/cancel", async (request, response) => {
     });
 
     return cancelled;
+  });
+  await logAction({
+    actorEmail: booking.userId,
+    actorRole: "resident",
+    action: "booking.cancel",
+    entityType: "Booking",
+    entityId: booking.id,
+    entityLabel: booking.resourceId,
+    details: `refundedCoins=${booking.priceCoins}`
   });
 
   return response.json(updatedBooking);
@@ -5208,6 +5236,16 @@ Cảm ơn bạn đã đồng hành cùng Cozoro Home!
     });
 
     await markGateParkingTicketsPaidForBilling(targetMonth, emailKey);
+    await logAction({
+      actorEmail: recipientEmail || emailKey,
+      actorName: payerName || recipientEmail || emailKey,
+      actorRole: "manager",
+      action: "rent.payment.record",
+      entityType: "MonthlyRentStatus",
+      entityId: `${emailKey}|${targetMonth}`,
+      entityLabel: emailKey,
+      details: `paid=true; gateParkingUpdated=true`
+    });
 
     res.json({ success: true, message: "Payment recorded and receipt sent" });
   } catch (error) {
@@ -5303,6 +5341,15 @@ app.post("/manager/rent-paid-status", async (req, res) => {
     where: { email_month: { email, month } },
     create: { email, month, isPaid, updatedBy: actorEmail },
     update: { isPaid, updatedBy: actorEmail }
+  });
+  await logAction({
+    actorEmail,
+    actorRole: "manager",
+    action: "rent.status.set",
+    entityType: "MonthlyRentStatus",
+    entityId: `${email}|${month}`,
+    entityLabel: email,
+    details: `isPaid=${isPaid}`
   });
   return res.json({ email: record.email, month: record.month, isPaid: record.isPaid });
 });
@@ -5506,6 +5553,15 @@ app.post("/manager/gate-parking-tickets", async (req, res) => {
         createdBy: actorEmail
       }
     });
+    await logAction({
+      actorEmail,
+      actorRole: "manager",
+      action: "gate_parking.create",
+      entityType: "GateParkingTicket",
+      entityId: ticket.id,
+      entityLabel: email,
+      details: `periodMonth=${periodMonth}; amountVnd=${Math.round(amountVnd)}`
+    });
     return res.json({ ticket });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to create ticket" });
@@ -5583,6 +5639,15 @@ app.patch("/manager/gate-parking-tickets/:id", async (req, res) => {
   }
   try {
     const ticket = await prisma.gateParkingTicket.update({ where: { id }, data });
+    await logAction({
+      actorEmail,
+      actorRole: "manager",
+      action: "gate_parking.update",
+      entityType: "GateParkingTicket",
+      entityId: ticket.id,
+      entityLabel: ticket.residentEmail,
+      details: `changed=${Object.keys(data).join(",")}`
+    });
     return res.json({ ticket });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to update ticket" });
@@ -5599,7 +5664,16 @@ app.delete("/manager/gate-parking-tickets/:id", async (req, res) => {
     return res.status(403).json({ error: "Forbidden" });
   }
   try {
-    await prisma.gateParkingTicket.delete({ where: { id } });
+    const ticket = await prisma.gateParkingTicket.delete({ where: { id } });
+    await logAction({
+      actorEmail,
+      actorRole: "manager",
+      action: "gate_parking.delete",
+      entityType: "GateParkingTicket",
+      entityId: ticket.id,
+      entityLabel: ticket.residentEmail,
+      details: `periodMonth=${ticket.periodMonth}; amountVnd=${ticket.amountVnd}`
+    });
     return res.json({ ok: true });
   } catch {
     return res.status(404).json({ error: "Ticket not found" });
@@ -5679,6 +5753,15 @@ app.post("/rent-paid-status/apply-coins", async (req, res) => {
         updatedBy: "resident-apply-coins"
       }
     });
+    await logAction({
+      actorEmail: email,
+      actorRole: "resident",
+      action: "rent.apply_coins",
+      entityType: "MonthlyRentStatus",
+      entityId: `${email}|${month}`,
+      entityLabel: email,
+      details: `applyCoinsTowardRent=${applyCoinsTowardRent}`
+    });
 
     return res.json({ email, month, applyCoinsTowardRent });
   } catch (error) {
@@ -5757,6 +5840,15 @@ app.post("/rent-paid-status/redeem-coins-for-bill", async (req, res) => {
         rentCoinRedeemAt: new Date(),
         updatedBy: "resident-redeem-coins"
       }
+    });
+    await logAction({
+      actorEmail: email,
+      actorRole: "resident",
+      action: "rent.redeem_coins",
+      entityType: "MonthlyRentStatus",
+      entityId: `${email}|${month}`,
+      entityLabel: email,
+      details: `coins=${coinsToSpend}; valueVnd=${valueVnd}`
     });
 
     const { breakdown: nextBreakdown } = await calculateRentBreakdownForBillingMonth(client, month, {

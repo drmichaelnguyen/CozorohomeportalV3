@@ -8,6 +8,7 @@ import {
 } from "./prepaid-breakdown-overrides.js";
 import { Prisma } from "@prisma/client";
 
+import { logAction } from "./action-log.js";
 import { prisma } from "./prisma.js";
 import { requirePortalRole } from "./staff-access.js";
 import { clearResidentNotificationCacheForEmail } from "./support.js";
@@ -119,6 +120,15 @@ export async function managerUpsertPrepaidPackageBilling(input: {
       confirmedAt: null
     }
   });
+  await logAction({
+    actorEmail: input.actorEmail.trim().toLowerCase(),
+    actorRole: "manager",
+    action: "prepaid_package.billing.upsert",
+    entityType: "PrepaidPackageBilling",
+    entityId: billing.id,
+    entityLabel: email,
+    details: `billingMonth=${input.billingMonth}; totalVnd=${total}`
+  });
 
   const storedOverrides = billing.breakdownOverrides as PrepaidBreakdownOverrides | null | undefined;
   const mergedEstimate = applyPrepaidBreakdownOverridesToEstimate(estimate, storedOverrides ?? null);
@@ -145,6 +155,15 @@ export async function managerConfirmPrepaidPackageBilling(input: {
       confirmedAt: new Date(),
       confirmedBy: normalizeEmail(input.actorEmail)
     }
+  });
+  await logAction({
+    actorEmail: input.actorEmail.trim().toLowerCase(),
+    actorRole: "manager",
+    action: "prepaid_package.billing.confirm",
+    entityType: "PrepaidPackageBilling",
+    entityId: updated.id,
+    entityLabel: email,
+    details: `billingMonth=${input.billingMonth}`
   });
   clearResidentNotificationCacheForEmail(email);
   return { billing: updated };
@@ -193,6 +212,15 @@ export async function managerNotifyPrepaidPackageBilling(input: {
       ...(input.notifyApp ? { lastAppNotifyAt: now } : {}),
       ...(input.notifyEmail ? { lastEmailNotifyAt: now } : {})
     }
+  });
+  await logAction({
+    actorEmail: input.actorEmail.trim().toLowerCase(),
+    actorRole: "manager",
+    action: "prepaid_package.billing.notify",
+    entityType: "PrepaidPackageBilling",
+    entityId: billing.id,
+    entityLabel: email,
+    details: `notifyApp=${input.notifyApp}; notifyEmail=${input.notifyEmail}`
   });
 
   if (input.notifyApp) {

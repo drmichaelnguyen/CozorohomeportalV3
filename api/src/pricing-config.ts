@@ -1,4 +1,5 @@
 import { requirePortalRole } from "./staff-access.js";
+import { logAction } from "./action-log.js";
 import { prisma } from "./prisma.js";
 import {
   readDiscountsFromSheet,
@@ -149,6 +150,15 @@ export async function upsertBedOverride(
       updatedBy: actorEmail.trim().toLowerCase()
     }
   });
+  await logAction({
+    actorEmail: actorEmail.trim().toLowerCase(),
+    actorRole: "owner",
+    action: "pricing.bed_override.upsert",
+    entityType: "BedPriceOverride",
+    entityId: `${input.branchId}|${input.bedNumber}|${input.termType}`,
+    entityLabel: input.branchId,
+    details: `monthlyPrice=${input.monthlyPrice ?? ""}; deposit=${input.deposit ?? ""}; nightlyPrice=${input.nightlyPrice ?? ""}`
+  });
   return { ...row, termType: row.termType as TermType };
 }
 
@@ -161,6 +171,14 @@ export async function deleteBedOverride(
   await requirePortalRole(actorEmail, ["owner", "app_admin"], "Only owners can edit bed pricing.");
   await prisma.bedPriceOverride.deleteMany({
     where: { branchId, bedNumber, termType }
+  });
+  await logAction({
+    actorEmail: actorEmail.trim().toLowerCase(),
+    actorRole: "owner",
+    action: "pricing.bed_override.delete",
+    entityType: "BedPriceOverride",
+    entityId: `${branchId}|${bedNumber}|${termType}`,
+    entityLabel: branchId
   });
 }
 
@@ -255,6 +273,15 @@ export async function upsertBranchPricingSettings(
       updatedBy: actorEmail.trim().toLowerCase()
     }
   });
+  await logAction({
+    actorEmail: actorEmail.trim().toLowerCase(),
+    actorRole: "owner",
+    action: "pricing.branch_settings.upsert",
+    entityType: "BranchPricingSettings",
+    entityId: input.branchId,
+    entityLabel: input.branchId,
+    details: `cleaningOptOutFeeVnd=${row.cleaningOptOutFeeVnd}; parkingFeeVnd=${row.parkingFeeVnd}`
+  });
   return { branchId: row.branchId, cleaningOptOutFeeVnd: row.cleaningOptOutFeeVnd, parkingFeeVnd: row.parkingFeeVnd, updatedBy: row.updatedBy, updatedAt: row.updatedAt };
 }
 
@@ -276,6 +303,15 @@ export async function upsertBedParkingFeeOverride(
     create: { branchId: input.branchId, bedNumber: input.bedNumber, parkingFeeVnd: input.parkingFeeVnd, updatedBy: actorEmail.trim().toLowerCase() },
     update: { parkingFeeVnd: input.parkingFeeVnd, updatedBy: actorEmail.trim().toLowerCase() }
   });
+  await logAction({
+    actorEmail: actorEmail.trim().toLowerCase(),
+    actorRole: "owner",
+    action: "pricing.bed_parking_override.upsert",
+    entityType: "BedParkingFeeOverride",
+    entityId: `${input.branchId}|${input.bedNumber}`,
+    entityLabel: input.branchId,
+    details: `parkingFeeVnd=${row.parkingFeeVnd}`
+  });
   return { id: row.id, branchId: row.branchId, bedNumber: row.bedNumber, parkingFeeVnd: row.parkingFeeVnd, updatedBy: row.updatedBy, updatedAt: row.updatedAt };
 }
 
@@ -286,6 +322,14 @@ export async function deleteBedParkingFeeOverride(
 ): Promise<void> {
   await requirePortalRole(actorEmail, ["owner", "app_admin"], "Only owners can edit parking fees.");
   await prisma.bedParkingFeeOverride.deleteMany({ where: { branchId, bedNumber } });
+  await logAction({
+    actorEmail: actorEmail.trim().toLowerCase(),
+    actorRole: "owner",
+    action: "pricing.bed_parking_override.delete",
+    entityType: "BedParkingFeeOverride",
+    entityId: `${branchId}|${bedNumber}`,
+    entityLabel: branchId
+  });
 }
 
 // Resolve parking fee for a specific bed (bed override > branch default > 0)
@@ -424,6 +468,15 @@ export async function upsertParkingPricingTier(
         updatedBy: actor
       }
     });
+    await logAction({
+      actorEmail: actorEmail.trim().toLowerCase(),
+      actorRole: "manager",
+      action: "pricing.parking_tier.update",
+      entityType: "ParkingPricingTier",
+      entityId: row.id,
+      entityLabel: row.branchId,
+      details: `feeVnd=${row.feeVnd}; active=${row.active}; sortOrder=${row.sortOrder}`
+    });
     return mapParkingTierRow(row);
   }
   const row = await prisma.parkingPricingTier.create({
@@ -437,12 +490,29 @@ export async function upsertParkingPricingTier(
       updatedBy: actor
     }
   });
+  await logAction({
+    actorEmail: actorEmail.trim().toLowerCase(),
+    actorRole: "manager",
+    action: "pricing.parking_tier.create",
+    entityType: "ParkingPricingTier",
+    entityId: row.id,
+    entityLabel: row.branchId,
+    details: `feeVnd=${row.feeVnd}; active=${row.active}; sortOrder=${row.sortOrder}`
+  });
   return mapParkingTierRow(row);
 }
 
 export async function deleteParkingPricingTier(actorEmail: string, id: string): Promise<void> {
   await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Only staff can delete parking tiers.");
-  await prisma.parkingPricingTier.delete({ where: { id } });
+  const row = await prisma.parkingPricingTier.delete({ where: { id } });
+  await logAction({
+    actorEmail: actorEmail.trim().toLowerCase(),
+    actorRole: "manager",
+    action: "pricing.parking_tier.delete",
+    entityType: "ParkingPricingTier",
+    entityId: row.id,
+    entityLabel: row.branchId
+  });
 }
 
 /** Active DB tiers for one branch (empty = use branch default fee as a single synthetic tier on registration). */

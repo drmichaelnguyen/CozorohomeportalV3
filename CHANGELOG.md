@@ -1,5 +1,8 @@
 # Changelog
 
+## [3.8.31] - 2026-04-27
+- Added a unified `ActionLog` for database-changing actions, covering core resident, manager, cleaning, booking, rent, gate parking, pricing, and prepaid billing mutations.
+
 ## [3.8.30] - 2026-04-27
 - Fine ticket client payload no longer includes creator identity; creator is still stored server-side and in the underlying sheet/email workflow.
 

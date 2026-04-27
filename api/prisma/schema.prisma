@@ -136,6 +136,23 @@ model CoinLedger {
   @@index([userId, createdAt])
 }
 
+model ActionLog {
+  id          String   @id @default(cuid())
+  actorEmail  String?
+  actorName   String?
+  actorRole   String?
+  action      String
+  entityType  String
+  entityId    String?
+  entityLabel String?
+  details     String?
+  createdAt   DateTime @default(now())
+
+  @@index([actorEmail, createdAt])
+  @@index([action, createdAt])
+  @@index([entityType, entityId])
+}
+
 model CleaningAvailability {
   id        String                  @id @default(cuid())
   userEmail String

@@ -1,6 +1,7 @@
 import { Prisma, ResidentGuideContentType } from "@prisma/client";
 import { z } from "zod";
 
+import { logAction } from "./action-log.js";
 import { prisma } from "./prisma.js";
 import { requirePortalRole } from "./staff-access.js";
 
@@ -156,6 +157,14 @@ export async function createResidentGuide(input: z.infer<typeof createGuideSchem
       updatedBy: input.actorEmail.trim().toLowerCase()
     }
   });
+  await logAction({
+    actorEmail: input.actorEmail.trim().toLowerCase(),
+    action: "resident_guide.create",
+    entityType: "ResidentGuideSection",
+    entityId: row.id,
+    entityLabel: row.slug,
+    details: `contentType=${row.contentType}`
+  });
   return serialize(row);
 }
 
@@ -222,6 +231,14 @@ export async function updateResidentGuide(
     where: { id },
     data
   });
+  await logAction({
+    actorEmail: input.actorEmail.trim().toLowerCase(),
+    action: "resident_guide.update",
+    entityType: "ResidentGuideSection",
+    entityId: row.id,
+    entityLabel: row.slug,
+    details: `contentType=${row.contentType}`
+  });
   return serialize(row);
 }
 
@@ -231,7 +248,15 @@ export async function deleteResidentGuide(actorEmail: string, id: string): Promi
     ["manager", "owner", "app_admin"],
     "Only managers, owners, or the app admin can edit resident guides."
   );
+  const existing = await prisma.residentGuideSection.findUnique({ where: { id } });
   await prisma.residentGuideSection.delete({ where: { id } });
+  await logAction({
+    actorEmail: actorEmail.trim().toLowerCase(),
+    action: "resident_guide.delete",
+    entityType: "ResidentGuideSection",
+    entityId: id,
+    entityLabel: existing?.slug ?? id
+  });
 }
 
 export { createGuideSchema, updateGuideSchema };

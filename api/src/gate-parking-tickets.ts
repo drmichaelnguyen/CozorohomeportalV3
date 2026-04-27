@@ -1,4 +1,5 @@
 import { COZORO_TIMEZONE } from "./google-sheets.js";
+import { logAction } from "./action-log.js";
 import { prisma } from "./prisma.js";
 
 function normalizeEmail(email: string): string {
@@ -52,5 +53,16 @@ export async function markGateParkingTicketsPaidForBilling(billingMonth: string,
     },
     data: { paidAt: now }
   });
+  if (result.count > 0) {
+    await logAction({
+      actorEmail: email,
+      actorRole: "manager",
+      action: "gate_parking.pay_billing",
+      entityType: "GateParkingTicket",
+      entityId: billingMonth,
+      entityLabel: residentEmail.trim().toLowerCase(),
+      details: `updated=${result.count}`
+    });
+  }
   return result.count;
 }

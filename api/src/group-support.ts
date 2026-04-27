@@ -1,4 +1,5 @@
 import { SupportMessageSenderRole } from "@prisma/client";
+import { logAction } from "./action-log.js";
 import { prisma } from "./prisma.js";
 import { resolvePortalLogin } from "./staff-access.js";
 import { getActiveClientByEmail } from "./google-sheets.js";
@@ -140,7 +141,7 @@ export async function postGroupMessage(input: {
     ? (await getActiveClientByEmail(normalizedSenderEmail))?.["Họ và tên"] ?? "Resident"
     : "Cozoro";
 
-  return prisma.groupMessage.create({
+  const message = await prisma.groupMessage.create({
     data: {
       groupId: input.groupId,
       senderEmail: normalizedSenderEmail,
@@ -150,6 +151,19 @@ export async function postGroupMessage(input: {
       body: trimmedBody
     }
   });
+
+  await logAction({
+    actorEmail: normalizedSenderEmail,
+    actorName: senderName,
+    actorRole: senderRole,
+    action: "group.message.create",
+    entityType: "GroupMessage",
+    entityId: message.id,
+    entityLabel: input.groupId,
+    details: `anonymous=${input.isAnonymous ? "true" : "false"}`
+  });
+
+  return message;
 }
 
 export async function markGroupRead(input: {
@@ -158,7 +172,7 @@ export async function markGroupRead(input: {
 }) {
   const normalizedViewerEmail = normalizeEmail(input.viewerEmail);
 
-  return prisma.groupReadState.upsert({
+  const state = await prisma.groupReadState.upsert({
     where: {
       groupId_viewerEmail: {
         groupId: input.groupId,
@@ -174,4 +188,17 @@ export async function markGroupRead(input: {
       lastReadAt: new Date()
     }
   });
+
+  await logAction({
+    actorEmail: normalizedViewerEmail,
+    actorName: normalizedViewerEmail,
+    actorRole: "resident",
+    action: "group.read.mark",
+    entityType: "GroupReadState",
+    entityId: input.groupId,
+    entityLabel: input.groupId,
+    details: "lastReadAt updated"
+  });
+
+  return state;
 }
