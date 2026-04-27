@@ -1504,7 +1504,6 @@ export async function sendFineTicketEmail(data: {
   const amountVi = `${Math.round(data.amountVnd).toLocaleString("vi-VN")} VND`;
   const amountEn = `${Math.round(data.amountVnd).toLocaleString("en-US")} VND`;
   const subject = `[Cozoro Home] Fine notice / Thông báo phiếu phạt: ${data.content}`;
-  const createdBy = data.operator?.trim() || "Cozoro";
   const dueDateLine = data.dueDate ? `Due date: ${data.dueDate}` : "Due date: not set";
   const eventLine = data.eventAt ? `Event time: ${data.eventAt}` : "Event time: not set";
 
@@ -1518,7 +1517,6 @@ export async function sendFineTicketEmail(data: {
     data.description ? `Description: ${data.description}` : "",
     dueDateLine,
     eventLine,
-    `Created by: ${createdBy}`,
     "",
     "Quý khách thân mến,",
     "",
@@ -1529,7 +1527,6 @@ export async function sendFineTicketEmail(data: {
     data.description ? `Ghi chú: ${data.description}` : "",
     dueDateLine,
     eventLine,
-    `Người tạo: ${createdBy}`,
     "",
     "Attachments are included in this email.",
   ]
@@ -3735,21 +3732,24 @@ export async function getFinesForEmail(email: string) {
 
   return rows
     .filter((row) => row[FINE_EMAIL_COLUMN]?.trim().toLowerCase() === normalizedEmail)
-    .map((row) => ({
-      row,
-      parsedTimestamp: parseSheetTimestamp(row[FINE_TIMESTAMP_COLUMN] ?? ""),
-      parsedDueDate: parseSheetTimestamp(row[FINE_DUE_COLUMN] ?? ""),
-      coinPayment: {
-        coinCost: Math.ceil(parseLooseInteger(row[FINE_AMOUNT_COLUMN]) * multiplier),
-        currentCoins,
-        canPay:
-          !isFineMarkedPaid(row[FINE_STATUS_COLUMN] ?? "") &&
-          currentCoins >= Math.ceil(parseLooseInteger(row[FINE_AMOUNT_COLUMN]) * multiplier),
-        recordedMember,
-        multiplier,
-        isPaid: isFineMarkedPaid(row[FINE_STATUS_COLUMN] ?? "")
-      }
-    }))
+    .map((row) => {
+      const { [FINE_CREATOR_COLUMN]: _creator, ...clientRow } = row;
+      return {
+        row: clientRow,
+        parsedTimestamp: parseSheetTimestamp(row[FINE_TIMESTAMP_COLUMN] ?? ""),
+        parsedDueDate: parseSheetTimestamp(row[FINE_DUE_COLUMN] ?? ""),
+        coinPayment: {
+          coinCost: Math.ceil(parseLooseInteger(row[FINE_AMOUNT_COLUMN]) * multiplier),
+          currentCoins,
+          canPay:
+            !isFineMarkedPaid(row[FINE_STATUS_COLUMN] ?? "") &&
+            currentCoins >= Math.ceil(parseLooseInteger(row[FINE_AMOUNT_COLUMN]) * multiplier),
+          recordedMember,
+          multiplier,
+          isPaid: isFineMarkedPaid(row[FINE_STATUS_COLUMN] ?? "")
+        }
+      };
+    })
     .sort((left, right) => {
       const leftTimestamp = left.parsedTimestamp ?? "";
       const rightTimestamp = right.parsedTimestamp ?? "";

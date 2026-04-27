@@ -1,5 +1,8 @@
 # Changelog
 
+## [3.8.30] - 2026-04-27
+- Fine ticket client payload no longer includes creator identity; creator is still stored server-side and in the underlying sheet/email workflow.
+
 ## [3.7.1] - 2026-04-14
 - **Multi-month prepaid package**: Detailed line-item estimate (rent, tenure surcharge, monthly adjustment, professional discount, parking, then package gross/discount/net; laundry, gate parking, and fines always shown). Improved contrast on resident next-payment and manager client panels. API adds `recurringComponents` and `laundryCashUses` to prepaid estimate payload.
 

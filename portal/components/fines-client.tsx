@@ -11,7 +11,6 @@ const STATUS_COLUMN = "ĐÃ THANH TOÁN?";
 const CONTENT_COLUMN = "NỘI DUNG VI PHẠM";
 const DESCRIPTION_COLUMN = "MÔ TẢ VI PHẠM";
 const DUE_COLUMN = "HẠN THANH TOÁN";
-const CREATOR_COLUMN = "NGƯỜI LẬP PHIẾU";
 const DISPUTE_COLUMN = "Khieu nai tu khach hang";
 const IMAGE_COLUMN = "HÌNH ẢNH";
 
@@ -485,12 +484,6 @@ export function FinesClient() {
                         </div>
                       </div>
                       <div>
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          {language === "vi" ? "Người lập phiếu" : "Created by"}
-                        </div>
-                        <div className="mt-1 text-sm text-slate-900">{entry.row[CREATOR_COLUMN] || "-"}</div>
-                      </div>
-                      <div>
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Nội dung vi phạm</div>
                         <div className="mt-1 text-sm text-slate-900">{entry.row[CONTENT_COLUMN] || "-"}</div>
                       </div>
@@ -597,7 +590,6 @@ export function FinesClient() {
     </div>
   );
 }
-
 
 
 
