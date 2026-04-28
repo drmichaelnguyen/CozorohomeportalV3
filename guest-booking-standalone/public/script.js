@@ -739,8 +739,12 @@ function calculateBedPricingPreview(bedDetails) {
   const nights = Math.round((end.getTime() - start.getTime()) / 86400000);
   const discountRule = getActiveDiscountRule(nights);
   const cancellationPolicy = normalizeCancellationPolicy(els.cancellationPolicy.value || state.cancellationPolicy);
-  const nightlyPrice = Number(bedDetails.nightlyPrice) || 0;
-  const subtotal = nightlyPrice * nights;
+  const nightlyRates = Array.isArray(bedDetails.nightlyPrices) && bedDetails.nightlyPrices.length
+    ? bedDetails.nightlyPrices.map((entry) => Number(entry?.nightlyPrice ?? entry)).filter((rate) => Number.isFinite(rate) && rate > 0)
+    : [];
+  const nightlyPrice = nightlyRates[0] || Number(bedDetails.nightlyPrice) || 0;
+  const subtotal = nightlyRates.length > 0 ? nightlyRates.reduce((sum, rate) => sum + rate, 0) : nightlyPrice * nights;
+  const hasVariableNightlyRates = nightlyRates.length > 1 && new Set(nightlyRates).size > 1;
   const stayDiscountPercent = discountRule ? discountRule.percent : 0;
   const stayDiscountAmount = Math.round(subtotal * (stayDiscountPercent / 100));
   const cancellationDiscountPercent = getCancellationPolicyDiscountPercent(cancellationPolicy);
@@ -762,6 +766,7 @@ function calculateBedPricingPreview(bedDetails) {
     discountPercent,
     discountType: discountRule ? discountRule.name : "",
     nightlyPriceSource: bedDetails.nightlyPriceSource || "configured",
+    hasVariableNightlyRates,
     subtotal,
     discountAmount,
     depositAmount,
@@ -823,6 +828,12 @@ function updatePriceSummary(pricing) {
   if (pricing.depositAmount) {
     els.priceDetails.insertAdjacentHTML("beforeend", `
       <div class="section-note">Refundable damage deposit (separate): ${formatCurrencyVnd(pricing.depositAmount)}</div>
+    `);
+  }
+
+  if (pricing.hasVariableNightlyRates) {
+    els.priceDetails.insertAdjacentHTML("beforeend", `
+      <div class="section-note">This stay uses different nightly prices by date. The total above already sums each night.</div>
     `);
   }
 
@@ -1367,4 +1378,3 @@ window.addEventListener("languageChanged", () => {
   updateCancellationPolicyNote();
   updateBranchOptions();
 });
-

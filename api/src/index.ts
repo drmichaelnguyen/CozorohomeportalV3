@@ -7062,6 +7062,7 @@ app.get("/api/public/short-term-config", async (_request, response) => {
     const config = await getShortTermConfig();
     return response.json({
       bedPricing: config.bedPricing,
+      bedPricingByDate: config.bedPricingByDate,
       discounts: config.discounts,
       minimumStay: config.minimumStay,
       updatedAt: config.updatedAt

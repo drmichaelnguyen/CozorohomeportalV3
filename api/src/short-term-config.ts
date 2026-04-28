@@ -7,6 +7,7 @@ const dataDir = path.join(process.cwd(), "data");
 const configFilePath = path.join(dataDir, "short-term-config.json");
 
 export type BedPricing = Record<string, Record<string, number>>; // branch -> bed -> nightly VND
+export type BedPricingByDate = Record<string, Record<string, Record<string, number>>>; // branch -> YYYY-MM-DD -> bed -> nightly VND
 
 export type DiscountRule = {
   enabled: boolean;
@@ -16,6 +17,7 @@ export type DiscountRule = {
 
 export type ShortTermConfig = {
   bedPricing: BedPricing;
+  bedPricingByDate: BedPricingByDate;
   discounts: {
     weekly: DiscountRule;
     monthly: DiscountRule;
@@ -27,6 +29,7 @@ export type ShortTermConfig = {
 
 const DEFAULT_CONFIG: ShortTermConfig = {
   bedPricing: {},
+  bedPricingByDate: {},
   discounts: {
     weekly:  { enabled: false, minNights: 7,  percent: 10 },
     monthly: { enabled: false, minNights: 30, percent: 20 }
@@ -40,7 +43,17 @@ async function readConfig(): Promise<ShortTermConfig> {
   await mkdir(dataDir, { recursive: true });
   try {
     const raw = await readFile(configFilePath, "utf8");
-    return { ...DEFAULT_CONFIG, ...(JSON.parse(raw) as Partial<ShortTermConfig>) };
+    const parsed = JSON.parse(raw) as Partial<ShortTermConfig>;
+    return {
+      ...DEFAULT_CONFIG,
+      ...parsed,
+      bedPricing: parsed.bedPricing && typeof parsed.bedPricing === "object" ? parsed.bedPricing : {},
+      bedPricingByDate: parsed.bedPricingByDate && typeof parsed.bedPricingByDate === "object" ? parsed.bedPricingByDate : {},
+      discounts: {
+        ...DEFAULT_CONFIG.discounts,
+        ...(parsed.discounts ?? {})
+      }
+    };
   } catch {
     return { ...DEFAULT_CONFIG };
   }
@@ -64,6 +77,8 @@ export async function updateShortTermConfig(
   const next: ShortTermConfig = {
     ...current,
     ...patch,
+    bedPricing: patch.bedPricing && typeof patch.bedPricing === "object" ? patch.bedPricing : current.bedPricing,
+    bedPricingByDate: patch.bedPricingByDate && typeof patch.bedPricingByDate === "object" ? patch.bedPricingByDate : current.bedPricingByDate,
     discounts: { ...current.discounts, ...(patch.discounts ?? {}) },
     updatedAt: new Date().toISOString(),
     updatedBy: actorEmail.trim().toLowerCase()

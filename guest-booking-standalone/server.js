@@ -64,6 +64,8 @@ const BRANCH_DETAILS = {
 const DEFAULT_SHORT_TERM_CONFIG = {
   currency: "VND",
   fallbackNightlyPrice: 221425,
+  bedPricing: {},
+  bedPricingByDate: {},
   discounts: {
     weekly: { enabled: true, minNights: 7, percent: 10 },
     monthly: { enabled: true, minNights: 30, percent: 20 }
@@ -108,6 +110,7 @@ function normalizeDiscountRule(rule, fallback) {
 function normalizeShortTermConfig(raw) {
   const source = raw && typeof raw === "object" ? raw : {};
   const bedPricing = source.bedPricing && typeof source.bedPricing === "object" ? source.bedPricing : {};
+  const bedPricingByDate = source.bedPricingByDate && typeof source.bedPricingByDate === "object" ? source.bedPricingByDate : {};
   const discounts = source.discounts && typeof source.discounts === "object" ? source.discounts : {};
   const minimumStay = Number(source.minimumStay);
 
@@ -115,6 +118,7 @@ function normalizeShortTermConfig(raw) {
     currency: DEFAULT_SHORT_TERM_CONFIG.currency,
     fallbackNightlyPrice: DEFAULT_SHORT_TERM_CONFIG.fallbackNightlyPrice,
     bedPricing,
+    bedPricingByDate,
     discounts: {
       weekly: normalizeDiscountRule(discounts.weekly, DEFAULT_SHORT_TERM_CONFIG.discounts.weekly),
       monthly: normalizeDiscountRule(discounts.monthly, DEFAULT_SHORT_TERM_CONFIG.discounts.monthly)
@@ -654,7 +658,27 @@ async function requireVerifiedEmailToken(email, token) {
   return { ...verified, type: "email-verification" };
 }
 
-function getBedPricingEntry(config, branchId, bedNumber) {
+function listStayDateKeys(checkIn, checkOut) {
+  const { start, end } = ensureValidDateRange(checkIn, checkOut);
+  const keys = [];
+  for (let cursor = new Date(start.getTime()); cursor < end; cursor = new Date(cursor.getTime() + 86400000)) {
+    keys.push(cursor.toISOString().slice(0, 10));
+  }
+  return keys;
+}
+
+function getBedPricingEntry(config, branchId, bedNumber, dateKey = "") {
+  const datePricing = dateKey
+    ? config?.bedPricingByDate?.[branchId]?.[dateKey]
+    : null;
+  const dateValues = datePricing ? [datePricing[String(bedNumber)], datePricing[Number(bedNumber)], datePricing[bedNumber]] : [];
+  for (const value of dateValues) {
+    const nightlyPrice = Number(value);
+    if (Number.isFinite(nightlyPrice) && nightlyPrice > 0) {
+      return { nightlyPrice, source: `configured:${dateKey}` };
+    }
+  }
+
   const branchPricing = config?.bedPricing?.[branchId] || {};
   const values = [branchPricing[String(bedNumber)], branchPricing[Number(bedNumber)], branchPricing[bedNumber]];
 
@@ -666,6 +690,14 @@ function getBedPricingEntry(config, branchId, bedNumber) {
   }
 
   return { nightlyPrice: DEFAULT_SHORT_TERM_CONFIG.fallbackNightlyPrice, source: "fallback" };
+}
+
+function getNightlyPricesForStay(config, branchId, bedNumber, checkIn, checkOut) {
+  const dates = listStayDateKeys(checkIn, checkOut);
+  return dates.map((dateKey) => {
+    const entry = getBedPricingEntry(config, branchId, bedNumber, dateKey);
+    return { date: dateKey, nightlyPrice: entry.nightlyPrice, source: entry.source };
+  });
 }
 
 async function getShortTermPricingConfig({ refresh = false } = {}) {
@@ -722,10 +754,13 @@ function calculatePricing(nights, nightlyPrice, pricingConfig, options = {}) {
   const normalizedNights = Number(nights);
   const stayNights = Number.isFinite(normalizedNights) && normalizedNights > 0 ? Math.floor(normalizedNights) : 0;
   const nightlyRate = Number(nightlyPrice);
+  const nightlyRates = Array.isArray(options.nightlyPrices)
+    ? options.nightlyPrices.map((rate) => Number(rate)).filter((rate) => Number.isFinite(rate) && rate > 0)
+    : [];
   const config = normalizeShortTermConfig(pricingConfig || DEFAULT_SHORT_TERM_CONFIG);
   const cancellationPolicy = normalizeCancellationPolicy(options.cancellationPolicy);
 
-  if (!Number.isFinite(nightlyRate) || nightlyRate <= 0) {
+  if ((!Number.isFinite(nightlyRate) || nightlyRate <= 0) && nightlyRates.length === 0) {
     throw new Error("Nightly price is not configured for the selected bed.");
   }
 
@@ -743,7 +778,8 @@ function calculatePricing(nights, nightlyPrice, pricingConfig, options = {}) {
     discountRule = weeklyRule;
   }
 
-  const subtotal = nightlyRate * stayNights;
+  const effectiveNightlyRates = nightlyRates.length > 0 ? nightlyRates : Array.from({ length: stayNights }, () => nightlyRate);
+  const subtotal = effectiveNightlyRates.reduce((sum, rate) => sum + rate, 0);
   const stayDiscountPercent = discountRule ? Number(discountRule.percent) || 0 : 0;
   const stayDiscountAmount = Math.round(subtotal * (stayDiscountPercent / 100));
   const cancellationDiscountPercent = getCancellationPolicyDiscountPercent(cancellationPolicy);
@@ -752,10 +788,11 @@ function calculatePricing(nights, nightlyPrice, pricingConfig, options = {}) {
   const discountAmount = stayDiscountAmount + cancellationDiscountAmount;
   const depositAmount = DEPOSIT_AMOUNT;
   const stayTotal = subtotal - discountAmount;
+  const nightlyRateAverage = stayNights > 0 ? Math.round(subtotal / stayNights) : nightlyRate;
 
   return {
     currency: config.currency,
-    nightlyRate,
+    nightlyRate: nightlyRateAverage,
     nights: stayNights,
     cancellationPolicy,
     stayDiscountPercent,
@@ -769,7 +806,8 @@ function calculatePricing(nights, nightlyPrice, pricingConfig, options = {}) {
     stayTotal,
     total: stayTotal + depositAmount,
     minimumStay: config.minimumStay,
-    discountType: discountRule === monthlyRule ? "monthly" : discountRule === weeklyRule ? "weekly" : ""
+    discountType: discountRule === monthlyRule ? "monthly" : discountRule === weeklyRule ? "weekly" : "",
+    nightlyPrices: effectiveNightlyRates
   };
 }
 
@@ -1124,12 +1162,15 @@ async function calculateBookingChange(booking, input, pricingConfig = null) {
   ensureValidDateRange(requestedCheckIn, requestedCheckOut);
 
   const currentPricing = buildStoredPricingFromBooking(booking, config);
-  const bedPricing = getBedPricingEntry(config, booking.branch_id, booking.bed_number);
+  const nightlyPrices = getNightlyPricesForStay(config, booking.branch_id, booking.bed_number, requestedCheckIn, requestedCheckOut);
+  const bedPricing = nightlyPrices[0]
+    ? { nightlyPrice: nightlyPrices[0].nightlyPrice, source: nightlyPrices[0].source }
+    : getBedPricingEntry(config, booking.branch_id, booking.bed_number);
   const requestedPricing = calculatePricing(
     requestedNights,
     bedPricing.nightlyPrice,
     config,
-    { cancellationPolicy: booking.cancellation_policy }
+    { cancellationPolicy: booking.cancellation_policy, nightlyPrices: nightlyPrices.map((entry) => entry.nightlyPrice) }
   );
   const totalDifference = requestedPricing.total - currentPricing.total;
   const cancellationTerms = getBookingCancellationTerms(booking, config);
@@ -1713,7 +1754,8 @@ async function buildAvailability(branchId, checkIn, checkOut, bioSex, excludeBoo
     const beds = Array.from({ length: room.endBed - room.startBed + 1 }, (_, index) => {
       const bedNumber = room.startBed + index;
       const guestBooking = bookedBeds.get(bedNumber) || null;
-      const bedPricing = getBedPricingEntry(config, branchId, bedNumber);
+      const nightlyRates = getNightlyPricesForStay(config, branchId, bedNumber, checkIn, checkOut);
+      const bedPricing = nightlyRates[0] ? { nightlyPrice: nightlyRates[0].nightlyPrice, source: nightlyRates[0].source } : getBedPricingEntry(config, branchId, bedNumber);
       let status = "available";
 
       if (residentBeds.has(bedNumber)) {
@@ -1728,7 +1770,8 @@ async function buildAvailability(branchId, checkIn, checkOut, bioSex, excludeBoo
         status,
         bookingGuestName: guestBooking ? guestBooking.guest_name : null,
         nightlyPrice: bedPricing.nightlyPrice,
-        nightlyPriceSource: bedPricing.source
+        nightlyPriceSource: bedPricing.source,
+        nightlyPrices: nightlyRates
       };
     }).filter((bed) => bed.status === "available");
 
@@ -1804,12 +1847,15 @@ async function createPendingBooking(input, pricingConfig = null) {
   const connectionPool = await getPool();
   const { start, end } = ensureValidDateRange(input.checkIn, input.checkOut);
   const config = pricingConfig || await getShortTermPricingConfig();
-  const bedPricing = getBedPricingEntry(config, input.branchId, input.bedNumber);
+  const nightlyPrices = getNightlyPricesForStay(config, input.branchId, input.bedNumber, input.checkIn, input.checkOut);
+  const bedPricing = nightlyPrices[0]
+    ? { nightlyPrice: nightlyPrices[0].nightlyPrice, source: nightlyPrices[0].source }
+    : getBedPricingEntry(config, input.branchId, input.bedNumber);
   let pricing = calculatePricing(
     nightsBetween(input.checkIn, input.checkOut),
     bedPricing.nightlyPrice,
     config,
-    { cancellationPolicy: input.cancellationPolicy }
+    { cancellationPolicy: input.cancellationPolicy, nightlyPrices: nightlyPrices.map((entry) => entry.nightlyPrice) }
   );
   let referralCodeStored = "";
   const referralRaw = typeof input.referralCode === "string" ? input.referralCode.trim() : "";
@@ -1879,7 +1925,16 @@ async function createPendingBooking(input, pricingConfig = null) {
     ]
   );
 
-  return { id, pricing, start, end, idPhoto, nightlyPriceSource: bedPricing.source, referralCode: referralCodeStored };
+  return {
+    id,
+    pricing,
+    start,
+    end,
+    idPhoto,
+    nightlyPriceSource: bedPricing.source,
+    nightlyPrices: nightlyPrices.map((entry) => ({ date: entry.date, nightlyPrice: entry.nightlyPrice, source: entry.source })),
+    referralCode: referralCodeStored
+  };
 }
 
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
@@ -1963,6 +2018,7 @@ app.get("/api/config", async (_req, res) => {
     pricing: {
       currency: pricing.currency,
       bedPricing: pricing.bedPricing,
+      bedPricingByDate: pricing.bedPricingByDate,
       discounts: pricing.discounts,
       minimumStay: pricing.minimumStay,
       cancellationPolicies: {
@@ -2935,5 +2991,3 @@ startServer().catch((error) => {
   console.error("Failed to start booking server:", error);
   process.exit(1);
 });
-
-

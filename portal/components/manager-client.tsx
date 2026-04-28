@@ -442,6 +442,11 @@ function formatDateTime(value: string | null | undefined) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
+function formatDateInputValue(date: Date) {
+  const offsetMs = date.getTimezoneOffset() * 60 * 1000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 10);
+}
+
 function toDateTimeLocalValue(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -583,6 +588,7 @@ const KNOWN_BRANCHES = ["D2", "D7"];
 
 type ShortTermConfig = {
   bedPricing: Record<string, Record<string, number>>;
+  bedPricingByDate: Record<string, Record<string, Record<string, number>>>;
   discounts: {
     weekly:  { enabled: boolean; minNights: number; percent: number };
     monthly: { enabled: boolean; minNights: number; percent: number };
@@ -1173,7 +1179,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [stConfigSaving, setStConfigSaving] = useState(false);
   const [stGuests, setStGuests] = useState<{ current: ManagerClientRecord[]; past: ManagerClientRecord[] } | null>(null);
   const [stGuestsLoading, setStGuestsLoading] = useState(false);
-  const [stEditBedPricing, setStEditBedPricing] = useState<Record<string, Record<string, number>>>({});
+  const [stPricingDate, setStPricingDate] = useState<string>(() => formatDateInputValue(new Date()));
+  const [stEditBedPricing, setStEditBedPricing] = useState<Record<string, number>>({});
   const [stPendingBookings, setStPendingBookings] = useState<StandaloneBooking[] | null>(null);
   const [stPendingLoading, setStPendingLoading] = useState(false);
   const [stConfirmDialog, setStConfirmDialog] = useState<{ booking: StandaloneBooking; branch: "D2" | "D7"; bed: string; saving: boolean; result: string } | null>(null);
@@ -2813,6 +2820,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   }, [activeTab, selectedMaHd, workspace]);
 
   useEffect(() => {
+    if (clientTermTab !== "short_term") {
+      return;
+    }
+    const branchPricing = stConfig?.bedPricingByDate?.[stPricingBranch]?.[stPricingDate] ?? stConfig?.bedPricing?.[stPricingBranch] ?? {};
+    setStEditBedPricing({ ...branchPricing });
+  }, [clientTermTab, stConfig, stPricingBranch, stPricingDate]);
+
+  useEffect(() => {
     setShowClientDetails(false);
     setClientPanelSections({ ...DEFAULT_MANAGER_CLIENT_PANEL_SECTIONS });
     setPrepaidPkgBreakdownOpen(false);
@@ -3843,7 +3858,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 const res = await fetch(`${API_BASE_URL}/manager/short-term/config?actorEmail=${encodeURIComponent(normalizedEmail)}`);
                 const data = (await res.json()) as ShortTermConfig;
                 setStConfig(data);
-                setStEditBedPricing(data.bedPricing ?? {});
               } catch { /* ignore */ } finally { setStConfigLoading(false); }
             }
             async function stLoadGuests() {
@@ -3874,7 +3888,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 });
                 const data = (await res.json()) as ShortTermConfig;
                 setStConfig(data);
-                setStEditBedPricing(data.bedPricing ?? {});
                 setStatus("Short-term config saved.");
               } catch { setStatus("Failed to save config."); } finally { setStConfigSaving(false); }
             }
@@ -4006,11 +4019,80 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 </StSection>
 
                 {/* Bed pricing */}
-                <StSection id="pricing" title="Bed pricing (nightly rate ₫)" onOpen={() => { void stLoadConfig(); }}>
+                <StSection id="pricing" title="Bed pricing by date (nightly rate ₫)" onOpen={() => { void stLoadConfig(); }}>
                   {stConfigLoading ? (
                     <p className="text-sm text-slate-500">Loading…</p>
                   ) : (
                     <div className="space-y-4">
+                      {(() => {
+                        const selectedDateOverride = stConfig?.bedPricingByDate?.[stPricingBranch]?.[stPricingDate] ?? null;
+                        const legacyBranchPricing = stConfig?.bedPricing?.[stPricingBranch] ?? {};
+                        const saveBedPricingByDate = {
+                          ...(stConfig?.bedPricingByDate ?? {}),
+                          [stPricingBranch]: {
+                            ...(stConfig?.bedPricingByDate?.[stPricingBranch] ?? {}),
+                            [stPricingDate]: stEditBedPricing
+                          }
+                        };
+                        const clearBedPricingByDate = {
+                          ...(stConfig?.bedPricingByDate ?? {})
+                        };
+                        if (clearBedPricingByDate[stPricingBranch]) {
+                          const nextBranchDates = { ...clearBedPricingByDate[stPricingBranch] };
+                          delete nextBranchDates[stPricingDate];
+                          clearBedPricingByDate[stPricingBranch] = nextBranchDates;
+                        }
+                        return (
+                          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+                            <div className="flex flex-wrap items-end gap-3">
+                              <label className="space-y-1">
+                                <span className="text-xs font-medium text-slate-700">{t("selectedDate", "Selected date")}</span>
+                                <input
+                                  type="date"
+                                  value={stPricingDate}
+                                  onChange={(e) => setStPricingDate(e.target.value)}
+                                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-sky-400 focus:outline-none"
+                                />
+                              </label>
+                              <div className="text-xs text-slate-500">
+                                {selectedDateOverride
+                                  ? "This date has its own saved prices."
+                                  : "This date currently uses the branch's legacy nightly prices."}
+                              </div>
+                              <div className="ml-auto flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setStEditBedPricing({ ...legacyBranchPricing });
+                                  }}
+                                  className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-white"
+                                >
+                                  Load legacy prices
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={stConfigSaving}
+                                  onClick={() => void stSaveConfig({ bedPricingByDate: saveBedPricingByDate })}
+                                  className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                                >
+                                  {stConfigSaving ? "Saving…" : "Save date prices"}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={stConfigSaving || !selectedDateOverride}
+                                  onClick={() => void stSaveConfig({ bedPricingByDate: clearBedPricingByDate })}
+                                  className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-40"
+                                >
+                                  Clear date override
+                                </button>
+                              </div>
+                            </div>
+                            <p className="text-xs text-slate-500">
+                              Edit the prices for this specific date. That date will use these values when hostel guests book.
+                            </p>
+                          </div>
+                        );
+                      })()}
                       {/* Branch selector */}
                       <div className="flex gap-2">
                         {(["D2", "D7"] as const).map((br) => (
@@ -4051,7 +4133,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                                 const levelLabel = level === 1 ? "T" : level === 2 ? "M" : "B";
                                                 const isTop = level === 1;
                                                 const defaultPrice = isTop ? 150000 : 250000;
-                                                const currentVal = stEditBedPricing[stPricingBranch]?.[String(bedNum)];
+                                                const currentVal = stEditBedPricing[String(bedNum)];
                                                 const displayVal = currentVal !== undefined ? currentVal : defaultPrice;
                                                 return (
                                                   <div key={bedNum} className={`rounded-lg border p-1.5 w-16 ${isTop ? "border-sky-200 bg-sky-50" : "border-slate-200 bg-white"}`}>
@@ -4066,7 +4148,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                                       value={displayVal}
                                                       onChange={(e) => setStEditBedPricing((prev) => ({
                                                         ...prev,
-                                                        [stPricingBranch]: { ...(prev[stPricingBranch] ?? {}), [String(bedNum)]: Number(e.target.value) }
+                                                        [String(bedNum)]: Number(e.target.value)
                                                       }))}
                                                       className="w-full rounded border border-slate-200 px-1 py-0.5 text-center text-[10px] focus:border-sky-400 focus:outline-none bg-transparent"
                                                     />
@@ -4089,23 +4171,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       <div className="flex items-center gap-3">
                         <button
                           type="button"
-                          disabled={stConfigSaving}
-                          onClick={() => void stSaveConfig({ bedPricing: stEditBedPricing })}
-                          className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-                        >
-                          {stConfigSaving ? "Saving…" : "Save bed prices"}
-                        </button>
-                        <button
-                          type="button"
                           onClick={() => {
-                            const defaults: Record<string, Record<string, number>> = {};
-                            for (const br of ["D2", "D7"] as const) {
-                              defaults[br] = {};
-                              for (const room of BRANCH_LAYOUTS[br]) {
-                                for (let b = room.startBed; b <= room.endBed; b++) {
-                                  const level = ((b - 1) % 3) + 1;
-                                  defaults[br][String(b)] = level === 1 ? 150000 : 250000;
-                                }
+                            const defaults: Record<string, number> = {};
+                            for (const room of BRANCH_LAYOUTS[stPricingBranch]) {
+                              for (let b = room.startBed; b <= room.endBed; b++) {
+                                const level = ((b - 1) % 3) + 1;
+                                defaults[String(b)] = level === 1 ? 150000 : 250000;
                               }
                             }
                             setStEditBedPricing(defaults);
