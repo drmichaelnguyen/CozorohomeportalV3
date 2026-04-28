@@ -1,5 +1,8 @@
 # Changelog
 
+## [3.8.32] - 2026-04-28
+- Hostel pricing now supports date-specific bed rates from the main app and the standalone booking site sums nightly prices across the stay.
+
 ## [3.8.31] - 2026-04-27
 - Added a unified `ActionLog` for database-changing actions, covering core resident, manager, cleaning, booking, rent, gate parking, pricing, and prepaid billing mutations.
 
