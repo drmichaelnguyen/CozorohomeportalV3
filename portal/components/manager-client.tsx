@@ -457,7 +457,7 @@ function getLastName(fullName: string) {
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) {
-    return "Unknown";
+    return "-";
   }
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" });
@@ -563,7 +563,7 @@ function getPaymentAnalyticsField(row: Record<string, string>, dimension: Paymen
       String(row["NGƯỜI NHẬN TIỀN"] ?? "").trim() ||
       findRowValue(row, ["nguoinhantien"]) ||
       findRowValue(row, ["receiver"]) ||
-      "Unknown receiver"
+      "Unknown"
     );
   }
   if (dimension === "branch") {
@@ -571,7 +571,7 @@ function getPaymentAnalyticsField(row: Record<string, string>, dimension: Paymen
       String(row["Chi nhánh Dorm"] ?? row["CHI NHÁNH DORM"] ?? "").trim() ||
         findRowValue(row, ["chinhanh"]) ||
         findRowValue(row, ["branch"]) ||
-        "Unknown branch"
+        "Unknown"
     );
   }
   if (dimension === "category") {
@@ -587,14 +587,14 @@ function getPaymentAnalyticsField(row: Record<string, string>, dimension: Paymen
       String(row["Số giường"] ?? row.BED ?? "").trim() ||
       findRowValue(row, ["sogiuong"]) ||
       findRowValue(row, ["bed"]) ||
-      "Unknown bed"
+      "Unknown"
     );
   }
 
   const timestamp = getPaymentAnalyticsTimestamp(row);
   const parsed = parseLooseDate(timestamp);
   if (!parsed) {
-    return dimension === "year" ? "Unknown year" : "Unknown month";
+    return "Unknown";
   }
   if (dimension === "year") {
     return String(parsed.getFullYear());
@@ -636,6 +636,13 @@ function groupPaymentAnalyticsRows(rows: Record<string, string>[], dimension: Pa
 function describePaymentAnalyticsDimension(dimension: PaymentAnalyticsDimension, t: (key: string) => string) {
   const labelKey = PAYMENT_ANALYTICS_DIMENSIONS.find((item) => item.key === dimension)?.label ?? dimension;
   return t(labelKey);
+}
+
+function translateAnalyticsValue(value: string, t: (key: string) => string) {
+  if (value === "Unknown") return t("unknownLabel");
+  if (value === "System") return t("systemLabel");
+  if (value === "Uncategorized") return t("uncategorizedLabel");
+  return value;
 }
 
 function parseLooseDate(value: string | null | undefined): Date | null {
@@ -1002,8 +1009,8 @@ function PaymentAnalyticsDashboard({
       <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div className="text-sm font-semibold text-slate-900">Group order</div>
-            <div className="mt-1 text-xs text-slate-500">Change the order, then click through the chart from left to right.</div>
+            <div className="text-sm font-semibold text-slate-900">{t("analyticsGroupOrder")}</div>
+            <div className="mt-1 text-xs text-slate-500">{t("analyticsGroupOrderDesc")}</div>
           </div>
           <div className="flex rounded-xl border border-slate-200 bg-white p-1">
             {(["bar", "donut"] as PaymentAnalyticsChartView[]).map((view) => (
@@ -1015,7 +1022,7 @@ function PaymentAnalyticsDashboard({
                   chartView === view ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
                 }`}
               >
-                {view === "bar" ? "Bar chart" : "Donut chart"}
+                {view === "bar" ? t("analyticsBarChart") : t("analyticsDonutChart")}
               </button>
             ))}
           </div>
@@ -1079,7 +1086,7 @@ function PaymentAnalyticsDashboard({
           </div>
           {availableDimensions.length ? (
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Add group</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("analyticsAddGroup")}</span>
               {availableDimensions.map((dimension) => (
                 <button
                   key={dimension.key}
@@ -1112,7 +1119,7 @@ function PaymentAnalyticsDashboard({
             onClick={() => setPath(path.slice(0, index + 1))}
             className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 font-medium text-sky-900 hover:bg-sky-100"
           >
-            {describePaymentAnalyticsDimension(item.dimension, t)}: {item.value}
+            {describePaymentAnalyticsDimension(item.dimension, t)}: {translateAnalyticsValue(item.value, t)}
           </button>
         ))}
       </div>
@@ -1138,7 +1145,19 @@ function PaymentAnalyticsDashboard({
               <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
                   {PAYMENT_COMPACT_COLUMNS.map((column) => (
-                    <th key={column} className="whitespace-nowrap px-4 py-3 font-semibold">{column}</th>
+                    <th key={column} className="whitespace-nowrap px-4 py-3 font-semibold">
+                      {t(({
+                        "Chi nhánh Dorm": "colBranch",
+                        "DẤU THỜI GIAN": "colWhen",
+                        "Địa chỉ email": "emailLabel",
+                        "Số giường": "colBed",
+                        "NGƯỜI NHẬN TIỀN": "dimReceiver",
+                        "NGƯỜI ĐÓNG TIỀN": "dimActor",
+                        "SỐ TIỀN": "colAmount",
+                        "MỤC ĐÍCH": "colContent",
+                        "MỤC ĐÍCH - GHI RÕ": "colDetails"
+                      } as Record<string, string>)[column] ?? column)}
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -1178,7 +1197,7 @@ function PaymentAnalyticsDashboard({
                     />
                     <span className="relative z-10 flex h-full items-center justify-between gap-3 px-3 text-sm font-semibold text-slate-900">
                       <span>{formatCurrency(group.total)}</span>
-                      <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs text-slate-700">{group.count} entries</span>
+                      <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs text-slate-700">{t("analyticsEntriesWithCount", { count: group.count })}</span>
                     </span>
                   </span>
                 </button>
@@ -1546,7 +1565,7 @@ function GroupedAnalyticsDashboard({
             onClick={() => setPath(path.slice(0, index + 1))}
             className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 font-medium text-sky-900 hover:bg-sky-100"
           >
-            {(dimensions.find((dimension) => dimension.key === item.dimension)?.label ?? item.dimension)}: {item.value}
+            {(dimensions.find((dimension) => dimension.key === item.dimension)?.label ?? item.dimension)}: {translateAnalyticsValue(item.value, t)}
           </button>
         ))}
       </div>
@@ -1705,7 +1724,7 @@ function groupAnalyticsRows(
   return Array.from(groups.values()).sort((left, right) => right.total - left.total || left.label.localeCompare(right.label));
 }
 
-function summarizeOwnerCoins(rows: Record<string, string>[]): StatSummaryItem[] {
+function summarizeOwnerCoins(rows: Record<string, string>[], t: (key: string) => string): StatSummaryItem[] {
   const deltas = rows.map((row) =>
     parseLooseNumber(findRowValue(row, ["coins"]) || row.COINS || row["COINS"])
   );
@@ -1717,14 +1736,14 @@ function summarizeOwnerCoins(rows: Record<string, string>[]): StatSummaryItem[] 
     .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] ?? null;
 
   return [
-    { label: "Coin entries", value: formatNumber(rows.length) },
-    { label: "Coins added", value: formatNumber(earned), tone: earned > 0 ? "positive" : "default" },
-    { label: "Coins used", value: formatNumber(spent), tone: spent > 0 ? "warning" : "default" },
-    { label: "Latest activity", value: latest ? formatDateTime(latest) : "No coin history yet" }
+    { label: t("coinEntries"), value: formatNumber(rows.length) },
+    { label: t("coinsAdded"), value: formatNumber(earned), tone: earned > 0 ? "positive" : "default" },
+    { label: t("coinsUsed"), value: formatNumber(spent), tone: spent > 0 ? "warning" : "default" },
+    { label: t("latestActivity"), value: latest ? formatDateTime(latest) : t("noCoinHistoryYet") }
   ];
 }
 
-function summarizeOwnerFines(rows: Record<string, string>[]): StatSummaryItem[] {
+function summarizeOwnerFines(rows: Record<string, string>[], t: (key: string) => string): StatSummaryItem[] {
   const amounts = rows.map((row) =>
     parseLooseNumber(findRowValue(row, ["chiphi"]) || findRowValue(row, ["amount"]))
   );
@@ -1738,14 +1757,14 @@ function summarizeOwnerFines(rows: Record<string, string>[]): StatSummaryItem[] 
     .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] ?? null;
 
   return [
-    { label: "Fine entries", value: formatNumber(rows.length) },
-    { label: "Unpaid fines", value: formatNumber(unpaidCount), tone: unpaidCount > 0 ? "warning" : "default" },
-    { label: "Total fine value", value: formatCurrency(amounts.reduce((sum, value) => sum + value, 0)) },
-    { label: "Latest fine", value: latest ? formatDateTime(latest) : "No fine history yet" }
+    { label: t("fineEntries"), value: formatNumber(rows.length) },
+    { label: t("unpaidFines"), value: formatNumber(unpaidCount), tone: unpaidCount > 0 ? "warning" : "default" },
+    { label: t("totalFineValue"), value: formatCurrency(amounts.reduce((sum, value) => sum + value, 0)) },
+    { label: t("latestFine"), value: latest ? formatDateTime(latest) : t("noFineHistoryYet") }
   ];
 }
 
-function summarizeControllerUsage(entries: ControllerHistoryEntry[], deviceType: ControllerHistoryEntry["deviceType"]): StatSummaryItem[] {
+function summarizeControllerUsage(entries: ControllerHistoryEntry[], deviceType: ControllerHistoryEntry["deviceType"], t: (key: string) => string): StatSummaryItem[] {
   const scoped = entries.filter((entry) => entry.deviceType === deviceType);
   const branchCounts = new Map<string, number>();
   scoped.forEach((entry) => {
@@ -1754,10 +1773,10 @@ function summarizeControllerUsage(entries: ControllerHistoryEntry[], deviceType:
   const topBranch = [...branchCounts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? "";
 
   return [
-    { label: "Usage count", value: formatNumber(scoped.length) },
-    { label: "Branches", value: formatNumber(branchCounts.size) },
-    { label: "Top branch", value: topBranch || "No branch yet" },
-    { label: "Latest use", value: scoped[0]?.timestamp ? formatDateTime(scoped[0].timestamp) : "No usage yet" }
+    { label: t("usageCount"), value: formatNumber(scoped.length) },
+    { label: t("branches"), value: formatNumber(branchCounts.size) },
+    { label: t("topBranch"), value: topBranch || t("noBranchYet") },
+    { label: t("latestUse"), value: scoped[0]?.timestamp ? formatDateTime(scoped[0].timestamp) : t("noUsageYet") }
   ];
 }
 
@@ -1772,6 +1791,7 @@ function OwnerAnalyticsDashboard({
   paymentLoading: boolean;
   onRefreshPayments: () => void;
 }) {
+  const { t } = usePortalLanguage();
   const [activeTab, setActiveTab] = useState<OwnerAnalyticsTab>("payments");
   const [coinsRows, setCoinsRows] = useState<Record<string, string>[]>([]);
   const [coinsLoading, setCoinsLoading] = useState(false);
@@ -1974,8 +1994,8 @@ function OwnerAnalyticsDashboard({
     laundryHistoryLoading
   ]);
 
-  const coinsSummary = useMemo(() => summarizeOwnerCoins(coinsRows), [coinsRows]);
-  const finesSummary = useMemo(() => summarizeOwnerFines(finesRows), [finesRows]);
+  const coinsSummary = useMemo(() => summarizeOwnerCoins(coinsRows, t), [coinsRows, t]);
+  const finesSummary = useMemo(() => summarizeOwnerFines(finesRows, t), [finesRows, t]);
   const coinsAnalyticsRows = useMemo(
     () =>
       [...coinsRows]
@@ -1983,7 +2003,7 @@ function OwnerAnalyticsDashboard({
           ...row,
           __timestamp: getPaymentAnalyticsTimestamp(row),
           __branch: normalizeBranchLabel(findRowValue(row, ["chinhanh"]) || row["Chi nhánh Dorm"] || ""),
-          __actor: findRowValue(row, ["nguoithaotac"]) || row["Người thao tác"] || "System",
+          __actor: findRowValue(row, ["nguoithaotac"]) || row["Người thao tác"] || t("systemLabel"),
           __event: findRowValue(row, ["sukien"]) || row["Sự kiện"] || "-",
           __amount: String(findRowValue(row, ["coins"]) || row.COINS || row["COINS"] || "0")
         }))
@@ -2013,7 +2033,7 @@ function OwnerAnalyticsDashboard({
         __timestamp: entry.timestamp,
         __device: entry.deviceLabel,
         __branch: entry.branchId,
-        __actor: entry.actorName || entry.actorEmail || "Unknown",
+        __actor: entry.actorName || entry.actorEmail || t("unknownLabel"),
         __details: entry.details ?? entry.action,
         __deviceType: entry.deviceType
       })),
@@ -2025,11 +2045,11 @@ function OwnerAnalyticsDashboard({
       laundryHistory
         .map((entry) => ({
           __timestamp: entry.start,
-          __device: entry.calendarSummary || entry.summary || "Unknown",
+          __device: entry.calendarSummary || entry.summary || t("unknownLabel"),
           __branch: normalizeBranchLabel(
             extractLaundryBranch(entry.description) || extractLaundryBranch(entry.calendarSummary) || ""
           ),
-          __actor: extractLaundryEmail(entry.summary) || extractLaundryEmail(entry.description) || "Unknown",
+          __actor: extractLaundryEmail(entry.summary) || extractLaundryEmail(entry.description) || t("unknownLabel"),
           __details:
             extractLaundryField(entry.description, "Payment method") ||
             extractLaundryField(entry.description, "Coin cost") ||
@@ -2129,17 +2149,17 @@ function OwnerAnalyticsDashboard({
             { key: "branch", label: t("colBranch"), getValue: (row) => row.__branch || "-" }
           ]}
           getField={(row, dimension) => {
-            if (dimension === "actor") return row.__actor || "Unknown";
-            if (dimension === "branch") return row.__branch || "Unknown";
-            if (dimension === "event") return row.__event || "Unknown";
+            if (dimension === "actor") return row.__actor || t("unknownLabel");
+            if (dimension === "branch") return row.__branch || t("unknownLabel");
+            if (dimension === "event") return row.__event || t("unknownLabel");
             if (dimension === "year" || dimension === "month") {
               const parsed = getPaymentAnalyticsTimestamp(row);
               const date = new Date(parsed);
-              if (Number.isNaN(date.getTime())) return "Unknown";
+              if (Number.isNaN(date.getTime())) return t("unknownLabel");
               if (dimension === "year") return String(date.getFullYear());
               return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
             }
-            return findRowValue(row, [dimension]) || "Unknown";
+            return findRowValue(row, [dimension]) || t("unknownLabel");
           }}
           getMetricValue={(row) => parseLooseNumber(row.__amount)}
           formatMetricValue={(value) => formatNumber(value)}
@@ -2173,17 +2193,17 @@ function OwnerAnalyticsDashboard({
             { key: "due", label: t("colDue"), getValue: (row) => row.__due || "-" }
           ]}
           getField={(row, dimension) => {
-            if (dimension === "branch") return row.__branch || "Unknown";
-            if (dimension === "status") return row.__status || "Unknown";
-            if (dimension === "content") return row.__content || "Unknown";
+            if (dimension === "branch") return row.__branch || t("unknownLabel");
+            if (dimension === "status") return row.__status || t("unknownLabel");
+            if (dimension === "content") return row.__content || t("unknownLabel");
             if (dimension === "year" || dimension === "month") {
               const parsed = getPaymentAnalyticsTimestamp(row);
               const date = new Date(parsed);
-              if (Number.isNaN(date.getTime())) return "Unknown";
+              if (Number.isNaN(date.getTime())) return t("unknownLabel");
               if (dimension === "year") return String(date.getFullYear());
               return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
             }
-            return findRowValue(row, [dimension]) || "Unknown";
+            return findRowValue(row, [dimension]) || t("unknownLabel");
           }}
           getMetricValue={(row) => parseLooseNumber(row.__amount)}
           formatMetricValue={(value) => formatCurrency(value)}
@@ -2216,16 +2236,16 @@ function OwnerAnalyticsDashboard({
             { key: "details", label: t("colDetails"), getValue: (row) => row.__details || "-" }
           ]}
           getField={(row, dimension) => {
-            if (dimension === "device") return row.__device || "Unknown";
-            if (dimension === "branch") return row.__branch || "Unknown";
-            if (dimension === "actor") return row.__actor || "Unknown";
+            if (dimension === "device") return row.__device || t("unknownLabel");
+            if (dimension === "branch") return row.__branch || t("unknownLabel");
+            if (dimension === "actor") return row.__actor || t("unknownLabel");
             if (dimension === "year" || dimension === "month") {
               const date = new Date(row.__timestamp);
-              if (Number.isNaN(date.getTime())) return "Unknown";
+              if (Number.isNaN(date.getTime())) return t("unknownLabel");
               if (dimension === "year") return String(date.getFullYear());
               return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
             }
-            return row[dimension] || "Unknown";
+            return row[dimension] || t("unknownLabel");
           }}
           getMetricValue={() => 1}
           formatMetricValue={(value) => formatNumber(value)}
@@ -2258,15 +2278,15 @@ function OwnerAnalyticsDashboard({
             { key: "details", label: t("colDetails"), getValue: (row) => row.__details || "-" }
           ]}
           getField={(row, dimension) => {
-            if (dimension === "branch") return row.__branch || "Unknown";
-            if (dimension === "actor") return row.__actor || "Unknown";
+            if (dimension === "branch") return row.__branch || t("unknownLabel");
+            if (dimension === "actor") return row.__actor || t("unknownLabel");
             if (dimension === "year" || dimension === "month") {
               const date = new Date(row.__timestamp);
-              if (Number.isNaN(date.getTime())) return "Unknown";
+              if (Number.isNaN(date.getTime())) return t("unknownLabel");
               if (dimension === "year") return String(date.getFullYear());
               return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
             }
-            return row[dimension] || "Unknown";
+            return row[dimension] || t("unknownLabel");
           }}
           getMetricValue={() => 1}
           formatMetricValue={(value) => formatNumber(value)}
@@ -2301,16 +2321,16 @@ function OwnerAnalyticsDashboard({
             { key: "detail", label: t("colDetail"), getValue: (row) => row.__detail || "-" }
           ]}
           getField={(row, dimension) => {
-            if (dimension === "status") return row.__status || "Unknown";
-            if (dimension === "branch") return row.__branch || "Unknown";
-            if (dimension === "task") return row.__task || "Unknown";
+            if (dimension === "status") return row.__status || t("unknownLabel");
+            if (dimension === "branch") return row.__branch || t("unknownLabel");
+            if (dimension === "task") return row.__task || t("unknownLabel");
             if (dimension === "year" || dimension === "month") {
               const date = new Date(row.__timestamp);
-              if (Number.isNaN(date.getTime())) return "Unknown";
+              if (Number.isNaN(date.getTime())) return t("unknownLabel");
               if (dimension === "year") return String(date.getFullYear());
               return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
             }
-            return row[dimension] || "Unknown";
+            return row[dimension] || t("unknownLabel");
           }}
           getMetricValue={() => 1}
           formatMetricValue={(value) => formatNumber(value)}
@@ -2328,7 +2348,7 @@ function normalizeBranchLabel(value: string) {
   if (normalized === "2" || normalized === "D2" || normalized.includes("D2")) {
     return "D2";
   }
-  return value.trim() || "Unknown";
+  return value.trim() || t("unknownLabel");
 }
 
 function extractLaundryEmail(value: string) {
@@ -5876,7 +5896,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           })()}
           </div>
         ) : clientSubTab === "analytics" && isOwnerSession ? (
-          <OwnerAnalyticsDashboard
+           <OwnerAnalyticsDashboard
             paymentRows={paymentPurposeRows}
             normalizedEmail={normalizedEmail}
             paymentLoading={loading}
