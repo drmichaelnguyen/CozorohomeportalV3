@@ -1847,19 +1847,19 @@ function OwnerAnalyticsDashboard({
           data = (await response.json()) as PaymentCachePayload;
         }
         if (!response.ok) {
-          throw new Error(data.error ?? `Unable to load ${kind} analytics`);
+          throw new Error(data.error ?? t("requestFailed", "Request failed. Please try again."));
         }
         setRows(data.rows ?? []);
         setLoaded(true);
       } catch (error) {
         setRows([]);
         setLoaded(true);
-        setError(error instanceof Error ? error.message : `Unable to load ${kind} analytics`);
+        setError(error instanceof Error ? error.message : t("requestFailed", "Request failed. Please try again."));
       } finally {
         setLoading(false);
       }
     },
-    []
+    [t]
   );
 
   const loadControllerHistory = useCallback(async () => {
@@ -2166,6 +2166,7 @@ function OwnerAnalyticsDashboard({
           }}
           getMetricValue={(row) => parseLooseNumber(row.__amount)}
           formatMetricValue={(value) => formatNumber(value)}
+          t={t}
         />
       ) : activeTab === "fines" ? (
         <GroupedAnalyticsDashboard
@@ -2210,6 +2211,7 @@ function OwnerAnalyticsDashboard({
           }}
           getMetricValue={(row) => parseLooseNumber(row.__amount)}
           formatMetricValue={(value) => formatCurrency(value)}
+          t={t}
         />
       ) : activeTab === "laundry" ? (
         <GroupedAnalyticsDashboard
@@ -2337,6 +2339,7 @@ function OwnerAnalyticsDashboard({
           }}
           getMetricValue={() => 1}
           formatMetricValue={(value) => formatNumber(value)}
+          t={t}
         />
       )}
     </section>
@@ -2351,7 +2354,7 @@ function normalizeBranchLabel(value: string) {
   if (normalized === "2" || normalized === "D2" || normalized.includes("D2")) {
     return "D2";
   }
-  return value.trim() || t("unknownLabel");
+  return value.trim() || "Unknown";
 }
 
 function extractLaundryEmail(value: string) {
@@ -6357,7 +6360,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     setClientPanelSections((s) => ({
                       ...s,
                       contractTermination: !s.contractTermination
-}
+                    }))
+                  }
                 >
                 {(() => {
                   const isTerminated = terminationStatus && terminationStatus !== "loading";
