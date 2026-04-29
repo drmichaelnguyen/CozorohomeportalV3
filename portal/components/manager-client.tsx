@@ -197,6 +197,7 @@ type PricingSettingsSectionKey =
 type ManagerSettingsMainSection = "pricing" | "resident_guides" | "tools";
 type PricingSettingsSubTab = "long_term" | "short_term" | "referral" | "staff";
 type ClientSubTab = "list" | "details" | "analytics";
+type OwnerAnalyticsTab = "payments" | "coins" | "laundry" | "fines" | "cleaning" | "airfryer";
 type PaymentAnalyticsChartView = "bar" | "donut";
 type PaymentAnalyticsDimension = "receiver" | "branch" | "category" | "bed" | "year" | "month";
 type PaymentAnalyticsPathItem = { dimension: PaymentAnalyticsDimension; value: string };
@@ -206,6 +207,38 @@ type PaymentAnalyticsGroup = {
   total: number;
   count: number;
   rows: Record<string, string>[];
+};
+type CleaningReviewQueuePayload = {
+  pendingAudit: Array<{
+    id: string;
+    userEmail: string;
+    userName: string;
+    bedDisplay: string | null;
+    branchId: string;
+    floor: number | null;
+    type: string;
+    scheduledDate: string;
+    status: string;
+    rewardCoins: number;
+    completedAt?: string | null;
+    completionNote?: string | null;
+    completionPhoto?: string | null;
+  }>;
+  overdueAssigned: Array<{
+    id: string;
+    userEmail: string;
+    userName: string;
+    bedDisplay: string | null;
+    branchId: string;
+    floor: number | null;
+    type: string;
+    scheduledDate: string;
+    status: string;
+    rewardCoins: number;
+    hasAutomaticFine: boolean;
+    suggestedFineAmount: number;
+    missedFineDeadlineAt: string;
+  }>;
 };
 
 function CollapsibleSettingsSection({
@@ -1234,6 +1267,495 @@ function PaymentAnalyticsDashboard({
               </div>
             </div>
           )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function summarizeOwnerCoins(rows: Record<string, string>[]): StatSummaryItem[] {
+  const deltas = rows.map((row) =>
+    parseLooseNumber(findRowValue(row, ["coins"]) || row.COINS || row["COINS"])
+  );
+  const earned = deltas.filter((value) => value > 0).reduce((sum, value) => sum + value, 0);
+  const spent = Math.abs(deltas.filter((value) => value < 0).reduce((sum, value) => sum + value, 0));
+  const latest = [...rows]
+    .map((row) => getPaymentAnalyticsTimestamp(row))
+    .filter(Boolean)
+    .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] ?? null;
+
+  return [
+    { label: "Coin entries", value: formatNumber(rows.length) },
+    { label: "Coins added", value: formatNumber(earned), tone: earned > 0 ? "positive" : "default" },
+    { label: "Coins used", value: formatNumber(spent), tone: spent > 0 ? "warning" : "default" },
+    { label: "Latest activity", value: latest ? formatDateTime(latest) : "No coin history yet" }
+  ];
+}
+
+function summarizeOwnerFines(rows: Record<string, string>[]): StatSummaryItem[] {
+  const amounts = rows.map((row) =>
+    parseLooseNumber(findRowValue(row, ["chiphi"]) || findRowValue(row, ["amount"]))
+  );
+  const unpaidCount = rows.filter((row) => {
+    const status = (findRowValue(row, ["dathanhtoan"]) || findRowValue(row, ["status"]) || "").toLowerCase();
+    return status ? !(status.includes("yes") || status.includes("paid") || status.includes("roi") || status.includes("rồi")) : true;
+  }).length;
+  const latest = [...rows]
+    .map((row) => getPaymentAnalyticsTimestamp(row))
+    .filter(Boolean)
+    .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] ?? null;
+
+  return [
+    { label: "Fine entries", value: formatNumber(rows.length) },
+    { label: "Unpaid fines", value: formatNumber(unpaidCount), tone: unpaidCount > 0 ? "warning" : "default" },
+    { label: "Total fine value", value: formatCurrency(amounts.reduce((sum, value) => sum + value, 0)) },
+    { label: "Latest fine", value: latest ? formatDateTime(latest) : "No fine history yet" }
+  ];
+}
+
+function summarizeControllerUsage(entries: ControllerHistoryEntry[], deviceType: ControllerHistoryEntry["deviceType"]): StatSummaryItem[] {
+  const scoped = entries.filter((entry) => entry.deviceType === deviceType);
+  const branchCounts = new Map<string, number>();
+  scoped.forEach((entry) => {
+    branchCounts.set(entry.branchId, (branchCounts.get(entry.branchId) ?? 0) + 1);
+  });
+  const topBranch = [...branchCounts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? "";
+
+  return [
+    { label: "Usage count", value: formatNumber(scoped.length) },
+    { label: "Branches", value: formatNumber(branchCounts.size) },
+    { label: "Top branch", value: topBranch || "No branch yet" },
+    { label: "Latest use", value: scoped[0]?.timestamp ? formatDateTime(scoped[0].timestamp) : "No usage yet" }
+  ];
+}
+
+function summarizeCleaningQueue(queue: CleaningReviewQueuePayload | null): StatSummaryItem[] {
+  const pending = queue?.pendingAudit ?? [];
+  const overdue = queue?.overdueAssigned ?? [];
+  const branches = new Set<string>();
+  for (const item of [...pending, ...overdue]) {
+    if (item.branchId) {
+      branches.add(item.branchId);
+    }
+  }
+
+  return [
+    { label: "Pending audits", value: formatNumber(pending.length), tone: pending.length > 0 ? "warning" : "default" },
+    { label: "Overdue tasks", value: formatNumber(overdue.length), tone: overdue.length > 0 ? "warning" : "default" },
+    { label: "Branches covered", value: formatNumber(branches.size) },
+    { label: "Review queue", value: pending.length + overdue.length > 0 ? "Loaded" : "Empty" }
+  ];
+}
+
+function OwnerAnalyticsDashboard({
+  paymentRows,
+  normalizedEmail,
+  paymentLoading,
+  onRefreshPayments
+}: {
+  paymentRows: Record<string, string>[];
+  normalizedEmail: string;
+  paymentLoading: boolean;
+  onRefreshPayments: () => void;
+}) {
+  const [activeTab, setActiveTab] = useState<OwnerAnalyticsTab>("payments");
+  const [coinsRows, setCoinsRows] = useState<Record<string, string>[]>([]);
+  const [coinsLoading, setCoinsLoading] = useState(false);
+  const [coinsLoaded, setCoinsLoaded] = useState(false);
+  const [coinsError, setCoinsError] = useState("");
+  const [finesRows, setFinesRows] = useState<Record<string, string>[]>([]);
+  const [finesLoading, setFinesLoading] = useState(false);
+  const [finesLoaded, setFinesLoaded] = useState(false);
+  const [finesError, setFinesError] = useState("");
+  const [controllerHistory, setControllerHistory] = useState<ControllerHistoryEntry[]>([]);
+  const [controllerHistoryLoading, setControllerHistoryLoading] = useState(false);
+  const [controllerHistoryLoaded, setControllerHistoryLoaded] = useState(false);
+  const [controllerHistoryError, setControllerHistoryError] = useState("");
+  const [cleaningQueue, setCleaningQueue] = useState<CleaningReviewQueuePayload | null>(null);
+  const [cleaningLoading, setCleaningLoading] = useState(false);
+  const [cleaningLoaded, setCleaningLoaded] = useState(false);
+  const [cleaningError, setCleaningError] = useState("");
+
+  const tabItems: Array<{ key: OwnerAnalyticsTab; label: string }> = [
+    { key: "payments", label: "Payments" },
+    { key: "coins", label: "Coins" },
+    { key: "laundry", label: "Laundry" },
+    { key: "fines", label: "Fine" },
+    { key: "cleaning", label: "Cleaning" },
+    { key: "airfryer", label: "Airfryer usage" }
+  ];
+
+  const activeTabLabel = tabItems.find((item) => item.key === activeTab)?.label ?? "Analytics";
+
+  const loadCachedRows = useCallback(
+    async (
+      kind: "coins" | "fines",
+      setRows: (rows: Record<string, string>[]) => void,
+      setLoading: (loading: boolean) => void,
+      setLoaded: (loaded: boolean) => void,
+      setError: (error: string) => void
+    ) => {
+      setLoading(true);
+      setError("");
+      try {
+        let response = await fetch(`${API_BASE_URL}/${kind}/cache`);
+        let data = (await response.json()) as PaymentCachePayload;
+        if (!response.ok || !(data.rows ?? []).length) {
+          await fetch(`${API_BASE_URL}/${kind}/sync`, { method: "POST" });
+          response = await fetch(`${API_BASE_URL}/${kind}/cache`);
+          data = (await response.json()) as PaymentCachePayload;
+        }
+        if (!response.ok) {
+          throw new Error(data.error ?? `Unable to load ${kind} analytics`);
+        }
+        setRows(data.rows ?? []);
+        setLoaded(true);
+      } catch (error) {
+        setRows([]);
+        setLoaded(true);
+        setError(error instanceof Error ? error.message : `Unable to load ${kind} analytics`);
+      } finally {
+        setLoading(false);
+      }
+    },
+    []
+  );
+
+  const loadControllerHistory = useCallback(async () => {
+    setControllerHistoryLoading(true);
+    setControllerHistoryError("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/manager/controller/history?limit=200`);
+      const data = (await response.json()) as { entries?: ControllerHistoryEntry[]; error?: string };
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to load controller history");
+      }
+      setControllerHistory(data.entries ?? []);
+      setControllerHistoryLoaded(true);
+    } catch (error) {
+      setControllerHistory([]);
+      setControllerHistoryLoaded(true);
+      setControllerHistoryError(error instanceof Error ? error.message : "Unable to load controller history");
+    } finally {
+      setControllerHistoryLoading(false);
+    }
+  }, []);
+
+  const loadCleaningQueue = useCallback(async () => {
+    setCleaningLoading(true);
+    setCleaningError("");
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/admin/cleaning/review-queue?actorEmail=${encodeURIComponent(normalizedEmail)}`
+      );
+      const data = (await response.json()) as CleaningReviewQueuePayload & { error?: string };
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to load cleaning review queue");
+      }
+      setCleaningQueue({
+        pendingAudit: data.pendingAudit ?? [],
+        overdueAssigned: data.overdueAssigned ?? []
+      });
+      setCleaningLoaded(true);
+    } catch (error) {
+      setCleaningQueue({ pendingAudit: [], overdueAssigned: [] });
+      setCleaningLoaded(true);
+      setCleaningError(error instanceof Error ? error.message : "Unable to load cleaning review queue");
+    } finally {
+      setCleaningLoading(false);
+    }
+  }, [normalizedEmail]);
+
+  useEffect(() => {
+    if (activeTab === "coins" && !coinsLoaded && !coinsLoading) {
+      void loadCachedRows("coins", setCoinsRows, setCoinsLoading, setCoinsLoaded, setCoinsError);
+    }
+    if (activeTab === "fines" && !finesLoaded && !finesLoading) {
+      void loadCachedRows("fines", setFinesRows, setFinesLoading, setFinesLoaded, setFinesError);
+    }
+    if ((activeTab === "laundry" || activeTab === "airfryer") && !controllerHistoryLoaded && !controllerHistoryLoading) {
+      void loadControllerHistory();
+    }
+    if (activeTab === "cleaning" && !cleaningLoaded && !cleaningLoading) {
+      void loadCleaningQueue();
+    }
+  }, [
+    activeTab,
+    cleaningLoading,
+    cleaningLoaded,
+    coinsLoaded,
+    coinsLoading,
+    controllerHistoryLoaded,
+    controllerHistoryLoading,
+    finesLoaded,
+    finesLoading,
+    loadCachedRows,
+    loadCleaningQueue,
+    loadControllerHistory
+  ]);
+
+  const coinsSummary = useMemo(() => summarizeOwnerCoins(coinsRows), [coinsRows]);
+  const finesSummary = useMemo(() => summarizeOwnerFines(finesRows), [finesRows]);
+  const laundrySummary = useMemo(
+    () => summarizeControllerUsage(controllerHistory, "laundry"),
+    [controllerHistory]
+  );
+  const airfryerSummary = useMemo(
+    () => summarizeControllerUsage(controllerHistory, "airfryer"),
+    [controllerHistory]
+  );
+  const cleaningSummary = useMemo(() => summarizeCleaningQueue(cleaningQueue), [cleaningQueue]);
+
+  const renderMetricGrid = (items: StatSummaryItem[]) => (
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      {items.map((item) => (
+        <div key={item.label} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{item.label}</div>
+          <div
+            className={`mt-2 text-lg font-semibold ${
+              item.tone === "positive"
+                ? "text-emerald-700"
+                : item.tone === "warning"
+                  ? "text-amber-700"
+                  : "text-slate-900"
+            }`}
+          >
+            {item.value}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  const renderNotice = (message: string) => (
+    <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
+      {message}
+    </div>
+  );
+
+  const renderSimpleHistoryTable = (
+    title: string,
+    rows: Array<{ timestamp: string; left: string; middle: string; right: string; extra?: string }>,
+    emptyMessage: string
+  ) => (
+    <div className="space-y-3">
+      <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+      {rows.length ? (
+        <div className="max-h-[32rem] overflow-auto rounded-2xl border border-slate-200">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-4 py-3 font-semibold">When</th>
+                <th className="px-4 py-3 font-semibold">Left</th>
+                <th className="px-4 py-3 font-semibold">Middle</th>
+                <th className="px-4 py-3 font-semibold">Right</th>
+                {rows.some((row) => row.extra) ? <th className="px-4 py-3 font-semibold">Extra</th> : null}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200 bg-white">
+              {rows.map((row, index) => (
+                <tr key={`${row.timestamp}:${index}`} className="align-top">
+                  <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDateTime(row.timestamp)}</td>
+                  <td className="px-4 py-3 text-slate-700">{row.left}</td>
+                  <td className="px-4 py-3 text-slate-700">{row.middle}</td>
+                  <td className="px-4 py-3 text-slate-700">{row.right}</td>
+                  {rows.some((item) => item.extra) ? <td className="px-4 py-3 text-slate-700">{row.extra ?? "-"}</td> : null}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        renderNotice(emptyMessage)
+      )}
+    </div>
+  );
+
+  const recentCoinsRows = [...coinsRows]
+    .sort((left, right) => {
+      const leftTs = getPaymentAnalyticsTimestamp(left);
+      const rightTs = getPaymentAnalyticsTimestamp(right);
+      return new Date(rightTs).getTime() - new Date(leftTs).getTime();
+    })
+    .slice(0, 25)
+    .map((row) => ({
+      timestamp: getPaymentAnalyticsTimestamp(row),
+      left: findRowValue(row, ["coins"]) || row.COINS || row["COINS"] || "-",
+      middle: findRowValue(row, ["sukien"]) || row["Sự kiện"] || "-",
+      right: findRowValue(row, ["nguoithaotac"]) || row["Người thao tác"] || "System",
+      extra: findRowValue(row, ["chinhanh"]) || row["Chi nhánh Dorm"] || "-"
+    }));
+
+  const recentFinesRows = [...finesRows]
+    .sort((left, right) => {
+      const leftTs = getPaymentAnalyticsTimestamp(left);
+      const rightTs = getPaymentAnalyticsTimestamp(right);
+      return new Date(rightTs).getTime() - new Date(leftTs).getTime();
+    })
+    .slice(0, 25)
+    .map((row) => ({
+      timestamp: getPaymentAnalyticsTimestamp(row),
+      left: findRowValue(row, ["chiphi"]) || findRowValue(row, ["amount"]) || "-",
+      middle: findRowValue(row, ["noidungvipham"]) || findRowValue(row, ["content"]) || "-",
+      right: (findRowValue(row, ["dathanhtoan"]) || findRowValue(row, ["status"]) || "-").toString(),
+      extra: findRowValue(row, ["duedate"]) || row["Ngày đến hạn"] || "-"
+    }));
+
+  const recentLaundryRows = controllerHistory
+    .filter((entry) => entry.deviceType === "laundry")
+    .slice(0, 25)
+    .map((entry) => ({
+      timestamp: entry.timestamp,
+      left: entry.deviceLabel,
+      middle: entry.branchId,
+      right: entry.actorName || entry.actorEmail || "Unknown",
+      extra: entry.details ?? entry.action
+    }));
+
+  const recentAirfryerRows = controllerHistory
+    .filter((entry) => entry.deviceType === "airfryer")
+    .slice(0, 25)
+    .map((entry) => ({
+      timestamp: entry.timestamp,
+      left: entry.deviceLabel,
+      middle: entry.branchId,
+      right: entry.actorName || entry.actorEmail || "Unknown",
+      extra: entry.details ?? entry.action
+    }));
+
+  return (
+    <section className="space-y-5 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Owner analytics</h2>
+          <p className="mt-1 text-sm text-slate-600">Switch between payment, usage, and review tabs for the owner view.</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            if (activeTab === "payments") {
+              onRefreshPayments();
+            } else if (activeTab === "coins") {
+              void loadCachedRows("coins", setCoinsRows, setCoinsLoading, setCoinsLoaded, setCoinsError);
+            } else if (activeTab === "fines") {
+              void loadCachedRows("fines", setFinesRows, setFinesLoading, setFinesLoaded, setFinesError);
+            } else if (activeTab === "laundry" || activeTab === "airfryer") {
+              void loadControllerHistory();
+            } else {
+              void loadCleaningQueue();
+            }
+          }}
+          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        >
+          Refresh {activeTabLabel.toLowerCase()}
+        </button>
+      </div>
+
+      <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-2">
+        {tabItems.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => setActiveTab(item.key)}
+            className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+              activeTab === item.key ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-white"
+            }`}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "payments" ? (
+        <PaymentAnalyticsDashboard rows={paymentRows} loading={paymentLoading} onRefresh={onRefreshPayments} />
+      ) : activeTab === "coins" ? (
+        <div className="space-y-4">
+          {coinsError ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{coinsError}</div> : null}
+          {coinsLoading && !coinsLoaded ? renderNotice("Loading coin analytics...") : renderMetricGrid(coinsSummary)}
+          {renderSimpleHistoryTable("Coin activity", recentCoinsRows, "No coin rows available yet.")}
+        </div>
+      ) : activeTab === "fines" ? (
+        <div className="space-y-4">
+          {finesError ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{finesError}</div> : null}
+          {finesLoading && !finesLoaded ? renderNotice("Loading fine analytics...") : renderMetricGrid(finesSummary)}
+          {renderSimpleHistoryTable("Fine activity", recentFinesRows, "No fine rows available yet.")}
+        </div>
+      ) : activeTab === "laundry" ? (
+        <div className="space-y-4">
+          {controllerHistoryError ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{controllerHistoryError}</div> : null}
+          {controllerHistoryLoading && !controllerHistoryLoaded ? renderNotice("Loading laundry usage...") : renderMetricGrid(laundrySummary)}
+          {renderSimpleHistoryTable("Laundry usage", recentLaundryRows, "No laundry usage has been recorded yet.")}
+        </div>
+      ) : activeTab === "airfryer" ? (
+        <div className="space-y-4">
+          {controllerHistoryError ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{controllerHistoryError}</div> : null}
+          {controllerHistoryLoading && !controllerHistoryLoaded ? renderNotice("Loading airfryer usage...") : renderMetricGrid(airfryerSummary)}
+          {renderSimpleHistoryTable("Airfryer usage", recentAirfryerRows, "No airfryer usage has been recorded yet.")}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {cleaningError ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{cleaningError}</div> : null}
+          {cleaningLoading && !cleaningLoaded ? renderNotice("Loading cleaning analytics...") : renderMetricGrid(cleaningSummary)}
+          <div className="grid gap-4 xl:grid-cols-2">
+            <div className="space-y-3">
+              <h3 className="text-base font-semibold text-slate-900">Pending audit</h3>
+              {cleaningQueue?.pendingAudit?.length ? (
+                <div className="max-h-[30rem] overflow-auto rounded-2xl border border-slate-200">
+                  <table className="min-w-full divide-y divide-slate-200 text-sm">
+                    <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                      <tr>
+                        <th className="px-4 py-3 font-semibold">When</th>
+                        <th className="px-4 py-3 font-semibold">Resident</th>
+                        <th className="px-4 py-3 font-semibold">Task</th>
+                        <th className="px-4 py-3 font-semibold">Branch</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 bg-white">
+                      {cleaningQueue.pendingAudit.map((item) => (
+                        <tr key={item.id}>
+                          <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDateTime(item.scheduledDate)}</td>
+                          <td className="px-4 py-3 text-slate-700">{item.userName || item.userEmail}</td>
+                          <td className="px-4 py-3 text-slate-700">{item.type}</td>
+                          <td className="px-4 py-3 text-slate-700">{item.branchId}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                renderNotice("No pending audits at the moment.")
+              )}
+            </div>
+            <div className="space-y-3">
+              <h3 className="text-base font-semibold text-slate-900">Overdue assigned</h3>
+              {cleaningQueue?.overdueAssigned?.length ? (
+                <div className="max-h-[30rem] overflow-auto rounded-2xl border border-slate-200">
+                  <table className="min-w-full divide-y divide-slate-200 text-sm">
+                    <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                      <tr>
+                        <th className="px-4 py-3 font-semibold">When</th>
+                        <th className="px-4 py-3 font-semibold">Resident</th>
+                        <th className="px-4 py-3 font-semibold">Task</th>
+                        <th className="px-4 py-3 font-semibold">Fine</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 bg-white">
+                      {cleaningQueue.overdueAssigned.map((item) => (
+                        <tr key={item.id}>
+                          <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDateTime(item.missedFineDeadlineAt)}</td>
+                          <td className="px-4 py-3 text-slate-700">{item.userName || item.userEmail}</td>
+                          <td className="px-4 py-3 text-slate-700">{item.type}</td>
+                          <td className="px-4 py-3 text-slate-700">{formatCurrency(item.suggestedFineAmount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                renderNotice("No overdue cleaning tasks at the moment.")
+              )}
+            </div>
+          </div>
         </div>
       )}
     </section>
@@ -4790,10 +5312,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           })()}
           </div>
         ) : clientSubTab === "analytics" && isOwnerSession ? (
-          <PaymentAnalyticsDashboard
-            rows={paymentPurposeRows}
-            loading={loading}
-            onRefresh={() => void loadPaymentPurposeRows()}
+          <OwnerAnalyticsDashboard
+            paymentRows={paymentPurposeRows}
+            normalizedEmail={normalizedEmail}
+            paymentLoading={loading}
+            onRefreshPayments={() => void loadPaymentPurposeRows()}
           />
         ) : (
           <div ref={managerClientWorkspaceRef} className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
