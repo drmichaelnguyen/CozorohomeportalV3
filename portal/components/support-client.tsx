@@ -9,6 +9,7 @@ import { usePortalLanguage } from "./portal-language";
 import { ManagerSupportInbox } from "./manager-support-inbox";
 import { ResidentPortalAiBee } from "./resident-portal-ai-bee";
 import { VentHammerGameModal } from "./vent-hammer-game-modal";
+import { formatCozoroDateTime } from "../lib/date-format";
 
 const SOUND_PREF_KEY = "chat_sound_enabled";
 const POLL_INTERVAL_MS = 10000;
@@ -93,7 +94,7 @@ type ResolvedLogin = {
 
 
 function formatDateTime(value: string) {
-  return new Date(value).toLocaleString();
+  return formatCozoroDateTime(value);
 }
 
 function senderLabel(message: SupportMessage, sessionEmail: string, t: (key: string, fallback?: string) => string) {

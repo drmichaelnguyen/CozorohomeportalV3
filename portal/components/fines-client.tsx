@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
+import { formatCozoroDateTime } from "../lib/date-format";
 const TIMESTAMP_COLUMN = "Dấu thời gian";
 const EMAIL_COLUMN = "EMAIL";
 const AMOUNT_COLUMN = "CHI PHÍ THANH TOÁN CHO VI PHẠM";
@@ -152,7 +153,7 @@ export function FinesClient() {
         setYearFilter("all");
         setStatusFilter("all");
         setSortDirection("desc");
-        setMessage(`Fine history loaded from local storage. Last saved ${new Date(cached.savedAt).toLocaleString()}.`);
+        setMessage(`Fine history loaded from local storage. Last saved ${formatCozoroDateTime(cached.savedAt)}.`);
       } else {
         const response = await fetch(`${API_BASE_URL}/fines?email=${encodeURIComponent(activeEmail)}`);
         const data = await readJsonSafely<{ entries?: FineEntry[]; error?: string }>(response);
@@ -474,13 +475,13 @@ export function FinesClient() {
                       <div>
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Dấu thời gian</div>
                         <div className="mt-1 text-sm text-slate-900">
-                          {parseDisplayDate(entry.parsedTimestamp)?.toLocaleString() ?? entry.row[TIMESTAMP_COLUMN] ?? "-"}
+                          {entry.parsedTimestamp ? formatCozoroDateTime(entry.parsedTimestamp) : entry.row[TIMESTAMP_COLUMN] ?? "-"}
                         </div>
                       </div>
                       <div>
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Hạn thanh toán</div>
                         <div className="mt-1 text-sm text-slate-900">
-                          {parseDisplayDate(entry.parsedDueDate)?.toLocaleString() ?? entry.row[DUE_COLUMN] ?? "-"}
+                          {entry.parsedDueDate ? formatCozoroDateTime(entry.parsedDueDate) : entry.row[DUE_COLUMN] ?? "-"}
                         </div>
                       </div>
                       <div>
@@ -590,6 +591,5 @@ export function FinesClient() {
     </div>
   );
 }
-
 
 

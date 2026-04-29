@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
+import { formatCozoroDateTime } from "../lib/date-format";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 const REMEMBERED_LOGIN_EMAIL_KEY = "cozorohome-portal-remembered-email";
@@ -202,7 +203,7 @@ function sameDay(left: Date, right: Date) {
 }
 
 function formatRange(start: string, end: string) {
-  return `${new Date(start).toLocaleString()} to ${new Date(end).toLocaleString()}`;
+  return `${formatCozoroDateTime(start)} to ${formatCozoroDateTime(end)}`;
 }
 
 function PasswordVisibilityButton({

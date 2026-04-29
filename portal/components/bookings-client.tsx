@@ -86,7 +86,7 @@ function getTimeZoneLabel(timeZone: string) {
 }
 
 function formatDateInTimeZone(value: string, timeZone: string, options?: Intl.DateTimeFormatOptions) {
-  return new Intl.DateTimeFormat("en-CA", {
+  return new Intl.DateTimeFormat("vi-VN", {
     timeZone,
     year: "numeric",
     month: "short",
@@ -96,7 +96,7 @@ function formatDateInTimeZone(value: string, timeZone: string, options?: Intl.Da
 }
 
 function formatTimeInTimeZone(value: string, timeZone: string) {
-  return new Intl.DateTimeFormat("en-CA", {
+  return new Intl.DateTimeFormat("vi-VN", {
     timeZone,
     hour: "numeric",
     minute: "2-digit",
@@ -105,7 +105,7 @@ function formatTimeInTimeZone(value: string, timeZone: string) {
 }
 
 function formatDateTimeInTimeZone(value: string, timeZone: string) {
-  return new Intl.DateTimeFormat("en-CA", {
+  return new Intl.DateTimeFormat("vi-VN", {
     timeZone,
     year: "numeric",
     month: "short",

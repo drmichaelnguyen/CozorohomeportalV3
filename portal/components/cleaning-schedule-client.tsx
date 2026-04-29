@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { usePortalSession } from "./portal-session";
 import { usePortalLanguage } from "./portal-language";
 import { API_BASE_URL } from "../lib/api-base-url";
+import { formatCozoroDate, formatCozoroDateTime, formatCozoroMonth } from "../lib/date-format";
 
 type CleaningTask = {
   id: string;
@@ -598,7 +599,7 @@ export function CleaningScheduleClient() {
       });
       setMessage(
         data.canSubmit
-          ? `Review ${prettyTaskType(type)} on ${selectedDate.toLocaleDateString()} and submit when ready.`
+          ? `Review ${prettyTaskType(type)} on ${formatCozoroDate(selectedDate)} and submit when ready.`
           : (data.reason ?? "This date cannot be self-assigned.")
       );
     } catch {
@@ -655,9 +656,9 @@ export function CleaningScheduleClient() {
       await loadOverview(activeEmail, { refresh: true });
       setPendingSelfAssignment(null);
       setMessage(
-        `${prettyTaskType(pendingSelfAssignment.type)} assigned to you on ${new Date(
+        `${prettyTaskType(pendingSelfAssignment.type)} assigned to you on ${formatCozoroDate(
           `${pendingSelfAssignment.date}T12:00:00`
-        ).toLocaleDateString()}.`
+        )}.`
       );
     } catch {
       setMessage("Unable to self-assign this date.");
@@ -990,7 +991,7 @@ export function CleaningScheduleClient() {
               <div>
                 <h2 className="text-sm font-bold text-amber-900 uppercase tracking-tight">{t("nextCleaning", "Your Next Cleaning")}</h2>
                 <p className="text-xl font-black text-slate-900">
-                  {new Date(nextCleaningCardTask.scheduledDate).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+                  {formatCozoroDate(nextCleaningCardTask.scheduledDate, { weekday: "long", month: "long", day: "numeric" })}
                 </p>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   <span className="rounded-md bg-white/60 px-2 py-0.5 text-[10px] font-bold text-slate-700 ring-1 ring-amber-200 uppercase">{prettyTaskType(nextCleaningCardTask.type)}</span>
@@ -1003,7 +1004,7 @@ export function CleaningScheduleClient() {
                 </div>
                 <p className="mt-2 text-sm text-slate-600">
                   {canCompleteTaskLate(nextCleaningCardTask)
-                    ? t("nextCleaningDueNow", "Due now. Late submissions stay open until {deadline} and earn 50% coins.").replace("{deadline}", getLateDeadline(nextCleaningCardTask).toLocaleString())
+                    ? t("nextCleaningDueNow", "Due now. Late submissions stay open until {deadline} and earn 50% coins.").replace("{deadline}", formatCozoroDateTime(getLateDeadline(nextCleaningCardTask)))
                     : canCompleteTaskNow(nextCleaningCardTask)
                       ? t("nextCleaningCanDone", "You can mark this done during {window}.").replace("{window}", getCompletionWindow(nextCleaningCardTask).label)
                       : t("nextCleaningOpensSoon", "Mark done opens during {window}.").replace("{window}", getCompletionWindow(nextCleaningCardTask).label)}
@@ -1086,7 +1087,7 @@ export function CleaningScheduleClient() {
               >
                 <div className="flex items-center justify-between">
                   <h3 className="text-lg font-bold text-slate-900">
-                    {activeMenuDate.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+                    {formatCozoroDate(activeMenuDate, { weekday: "long", month: "long", day: "numeric" })}
                   </h3>
                   <button 
                     onClick={() => setActiveMenuDate(null)}
@@ -1464,7 +1465,7 @@ export function CleaningScheduleClient() {
                               {t("swapFrom", "From")}: {req.requesterName ?? req.requesterEmail}
                             </p>
                             <p className="text-xs text-slate-600 mt-0.5">
-                              {prettyTaskType(req.taskType)} — {new Date(req.taskScheduledDate).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+                              {prettyTaskType(req.taskType)} — {formatCozoroDate(req.taskScheduledDate, { weekday: "short", month: "short", day: "numeric" })}
                             </p>
                             <p className="text-xs text-slate-600 mt-0.5">
                               {req.offeredCoins > 0
@@ -1525,7 +1526,7 @@ export function CleaningScheduleClient() {
                               {t("swapTo", "To")}: {req.targetName ?? req.targetEmail}
                             </p>
                             <p className="text-xs text-slate-600 mt-0.5">
-                              {prettyTaskType(req.taskType)} — {new Date(req.taskScheduledDate).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+                              {prettyTaskType(req.taskType)} — {formatCozoroDate(req.taskScheduledDate, { weekday: "short", month: "short", day: "numeric" })}
                             </p>
                             <p className="text-xs text-slate-600 mt-0.5">
                               {req.offeredCoins > 0
@@ -1628,7 +1629,7 @@ export function CleaningScheduleClient() {
                       <div className="mt-1 space-y-1">
                         {Object.entries(byMonth).map(([month, monthDates]) => {
                           const [year, mon] = month.split("-");
-                          const monthLabel = new Date(Number(year), Number(mon) - 1, 1).toLocaleString(undefined, { month: "long", year: "numeric" });
+                          const monthLabel = formatCozoroMonth(new Date(Number(year), Number(mon) - 1, 1));
                           return (
                             <div key={month} className="flex flex-wrap items-baseline gap-x-2">
                               <span className="text-xs font-medium text-emerald-800 w-28 shrink-0">{monthLabel}:</span>
@@ -1733,7 +1734,7 @@ export function CleaningScheduleClient() {
 
               <div className="mt-4 flex items-center justify-between gap-3">
                 <div className="text-sm text-slate-600">
-                  {calendarFocusDate.toLocaleString(undefined, { month: "long", year: "numeric" })}
+                  {formatCozoroMonth(calendarFocusDate)}
                 </div>
                 {awayMode && (
                   <div className="flex items-center gap-2">
@@ -1869,7 +1870,7 @@ export function CleaningScheduleClient() {
             <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
               <h2 className="text-lg font-semibold text-slate-900">Selected Date</h2>
               <div className="mt-2 text-sm text-slate-600">
-                {selectedDate.toLocaleDateString(undefined, {
+                {formatCozoroDate(selectedDate, {
                   weekday: "long",
                   month: "long",
                   day: "numeric",
@@ -1979,7 +1980,7 @@ export function CleaningScheduleClient() {
                           }}
                           className="rounded-lg border border-amber-300 px-3 py-1 text-sm text-amber-900"
                         >
-                          {new Date(`${date}T12:00:00`).toLocaleDateString()}
+                          {formatCozoroDate(`${date}T12:00:00`)}
                         </button>
                       ))}
                     </div>
@@ -2008,7 +2009,7 @@ export function CleaningScheduleClient() {
                     <div className="text-sm font-medium text-slate-900">Ready to submit</div>
                     <div className="mt-2 text-sm text-slate-700">
                       {prettyTaskType(pendingSelfAssignment.type)} on{" "}
-                      {new Date(`${pendingSelfAssignment.date}T12:00:00`).toLocaleDateString()}
+                      {formatCozoroDate(`${pendingSelfAssignment.date}T12:00:00`)}
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
                       {pendingSelfAssignment.canSubmit
@@ -2109,7 +2110,7 @@ export function CleaningScheduleClient() {
                   return (
                   <div key={task.id} className="rounded-xl border border-slate-200 p-4">
                     <div className="font-medium text-slate-900">
-                      {prettyTaskType(task.type)} - {new Date(task.scheduledDate).toLocaleDateString()}
+                      {prettyTaskType(task.type)} - {formatCozoroDate(task.scheduledDate)}
                     </div>
                     <div className="mt-1 text-sm text-slate-600">
                       Status: {task.status} | Reward: {task.rewardCoins} coins
@@ -2149,7 +2150,7 @@ export function CleaningScheduleClient() {
                           </div>
                         ) : !canCompleteTaskNow(task) ? (
                           <div className="mt-2 text-sm text-rose-600">
-                            Deadline passed. You had until {getLateDeadline(task).toLocaleString()} to submit late.
+                            Deadline passed. You had until {formatCozoroDateTime(getLateDeadline(task))} to submit late.
                           </div>
                         ) : null}
                         <button
@@ -2245,7 +2246,7 @@ export function CleaningScheduleClient() {
                     {visiblePastTasks.map((task) => (
                       <div key={task.id} className="rounded-xl border border-slate-200 p-4">
                         <div className="font-medium text-slate-900">
-                          {prettyTaskType(task.type)} - {new Date(task.scheduledDate).toLocaleDateString()}
+                          {prettyTaskType(task.type)} - {formatCozoroDate(task.scheduledDate)}
                         </div>
                         <div className="mt-1 text-sm text-slate-600">
                           Status: {task.status} | Reward: {task.rewardCoins} coins

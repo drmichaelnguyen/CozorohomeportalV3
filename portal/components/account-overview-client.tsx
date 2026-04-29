@@ -22,6 +22,7 @@ import { NextPaymentSummary } from "./next-payment-summary";
 import { AccountNoonFlappyBee } from "./account-noon-flappy-bee";
 import { ResidentInstructionsPanel } from "./resident-instructions-panel";
 import type { RentPaidStatusPayload } from "../lib/rent-paid-status";
+import { formatCozoroDate, formatCozoroDateTime, formatCozoroMonth } from "../lib/date-format";
 
 type ClientRecord = Record<string, string>;
 
@@ -128,7 +129,7 @@ function sameDay(left: Date, right: Date) {
 }
 
 function formatRange(start: string, end: string) {
-  return `${new Date(start).toLocaleString()} to ${new Date(end).toLocaleString()}`;
+  return `${formatCozoroDateTime(start)} to ${formatCozoroDateTime(end)}`;
 }
 
 function parseFlexibleDate(value: string | null | undefined) {
@@ -1160,7 +1161,7 @@ export function AccountOverviewClient() {
               <div className="rounded-xl border border-slate-200 p-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Next Payment Date</div>
                 <div className="mt-2 text-lg font-semibold text-slate-900">
-                  {nextPaymentDate ? nextPaymentDate.toLocaleDateString() : "-"}
+                  {nextPaymentDate ? formatCozoroDate(nextPaymentDate) : "-"}
                 </div>
             </div>
 
@@ -1180,7 +1181,7 @@ export function AccountOverviewClient() {
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Next Cleaning Schedule</div>
                 <div className="mt-2 text-sm text-slate-900">
                   {nextCleaningTask
-                    ? `${nextCleaningTask.type} - ${new Date(nextCleaningTask.scheduledDate).toLocaleDateString()}`
+                    ? `${nextCleaningTask.type} - ${formatCozoroDate(nextCleaningTask.scheduledDate)}`
                     : "No upcoming cleaning task"}
                 </div>
                 {nextCleaningTask ? (
@@ -1204,7 +1205,7 @@ export function AccountOverviewClient() {
                     </div>
                     <div className="mt-2 text-xs text-slate-600">
                       {canCompleteCleaningTaskLate(nextCleaningTask)
-                        ? `Late window is open until ${getCleaningLateDeadline(nextCleaningTask).toLocaleString()}.`
+                        ? `Late window is open until ${formatCozoroDateTime(getCleaningLateDeadline(nextCleaningTask))}.`
                         : canCompleteCleaningTaskNow(nextCleaningTask)
                           ? `Mark done is open during ${getCleaningCompletionWindow(nextCleaningTask).label}.`
                           : `Mark done opens during ${getCleaningCompletionWindow(nextCleaningTask).label}.`}
@@ -1540,7 +1541,7 @@ export function AccountOverviewClient() {
                   <option value="all">All months</option>
                   {monthOptions.map((month) => (
                     <option key={month} value={month}>
-                      {new Date(2000, Number(month) - 1, 1).toLocaleString(undefined, { month: "short" })}
+                      {formatCozoroMonth(new Date(2000, Number(month) - 1, 1), { month: "short" })}
                     </option>
                   ))}
                 </select>
@@ -1657,7 +1658,7 @@ export function AccountOverviewClient() {
                   <div key={idx} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 p-3 text-sm">
                     <div>
                       <div className="font-medium text-slate-900">{payment.row["MỤC ĐÍCH"] || "Payment"}</div>
-                      <div className="text-xs text-slate-500">{payment.parsedTimestamp ? new Date(payment.parsedTimestamp).toLocaleDateString() : ""}</div>
+                      <div className="text-xs text-slate-500">{payment.parsedTimestamp ? formatCozoroDate(payment.parsedTimestamp) : ""}</div>
                     </div>
                     <div className="font-semibold text-slate-900">{payment.row["SỐ TIỀN"]}</div>
                   </div>
@@ -1709,7 +1710,7 @@ export function AccountOverviewClient() {
                       <span className="text-red-600">{fine.row["CHI PHÍ THANH TOÁN CHO VI PHẠM"]}</span>
                     </div>
                     <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
-                      <span>{fine.parsedTimestamp ? new Date(fine.parsedTimestamp).toLocaleDateString() : ""}</span>
+                      <span>{fine.parsedTimestamp ? formatCozoroDate(fine.parsedTimestamp) : ""}</span>
                       <span className={fine.row["ĐÃ THANH TOÁN?"] === "1" ? "text-green-600 font-medium" : "text-amber-600 font-medium"}>
                         {fine.row["ĐÃ THANH TOÁN?"] === "1" ? "Paid" : "Unpaid"}
                       </span>
@@ -1767,7 +1768,7 @@ export function AccountOverviewClient() {
                             {entry.row["Sự kiện"] || "—"}
                           </div>
                           <div className="mt-0.5 text-xs text-slate-500">
-                            {entry.parsedTimestamp ? new Date(entry.parsedTimestamp).toLocaleString() : ""}
+                            {entry.parsedTimestamp ? formatCozoroDateTime(entry.parsedTimestamp) : ""}
                             {` · ${formatResidentCoinsOperatorLabel(entry.row["Người thao tác"], activeEmail, language)}`}
                           </div>
                         </div>

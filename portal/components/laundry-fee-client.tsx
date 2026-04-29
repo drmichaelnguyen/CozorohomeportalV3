@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
+import { formatCozoroDateTime } from "../lib/date-format";
 import { usePortalSession } from "./portal-session";
 
 type ClientRecord = Record<string, string>;
@@ -57,7 +58,7 @@ function formatDateTime(value: string) {
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return date.toLocaleString();
+  return formatCozoroDateTime(date);
 }
 
 function getMonthKey(value: string) {

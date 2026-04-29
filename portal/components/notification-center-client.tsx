@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
+import { formatCozoroDateTime } from "../lib/date-format";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 
@@ -40,7 +41,7 @@ type StaffNotification = {
 };
 
 function formatDateTime(value: string) {
-  return new Date(value).toLocaleString();
+  return formatCozoroDateTime(value);
 }
 
 export function NotificationCenterClient() {

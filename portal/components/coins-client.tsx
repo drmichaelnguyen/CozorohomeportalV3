@@ -9,6 +9,7 @@ import {
   COZORO_MEMBER_DIAMOND_EXAMPLE_KEYS,
   COZORO_MEMBER_RULE_DETAIL_KEYS
 } from "../lib/cozoro-member";
+import { formatCozoroDateTime } from "../lib/date-format";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 const COINS_COLUMN = "COINS";
@@ -154,7 +155,7 @@ export function CoinsClient() {
         setEventFilter("all");
         setSortDirection("desc");
         setVisibleEntriesCount(DEFAULT_VISIBLE_ENTRIES);
-        setMessage(`Coin history loaded from local storage. Last saved ${new Date(cached.savedAt).toLocaleString()}.`);
+        setMessage(`Coin history loaded from local storage. Last saved ${formatCozoroDateTime(cached.savedAt)}.`);
       } else {
         const response = await fetch(`${API_BASE_URL}/coins?email=${encodeURIComponent(activeEmail)}`);
         const data = await readJsonSafely<{ entries?: CoinEntry[]; error?: string }>(response);
@@ -639,7 +640,7 @@ export function CoinsClient() {
                         <tr key={`${entry.row[TIMESTAMP_COLUMN]}-${index}`} className="align-top">
                           <td className="px-4 py-3 whitespace-nowrap text-slate-900">
                             {entry.parsedTimestamp
-                              ? new Date(entry.parsedTimestamp).toLocaleString()
+                              ? formatCozoroDateTime(entry.parsedTimestamp)
                               : entry.row[TIMESTAMP_COLUMN] || "-"}
                           </td>
                           <td className="px-4 py-3 text-slate-900">{entry.row[EVENT_COLUMN] || "-"}</td>

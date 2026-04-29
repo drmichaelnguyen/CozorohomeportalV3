@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePortalSession } from "./portal-session";
 import { API_BASE_URL } from "../lib/api-base-url";
+import { formatCozoroDateTime } from "../lib/date-format";
 
 type LaundryBooking = {
   id: string;
@@ -79,7 +80,7 @@ export function NextLaundryPreviewClient() {
           >
             <div className="font-medium text-slate-900">{nextBooking.summary || nextBooking.calendarSummary}</div>
             <div className="mt-1 text-sm text-slate-600">
-              {new Date(nextBooking.start).toLocaleString()} – {new Date(nextBooking.end).toLocaleString()}
+              {formatCozoroDateTime(nextBooking.start)} – {formatCozoroDateTime(nextBooking.end)}
             </div>
           </Link>
         )}

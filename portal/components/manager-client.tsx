@@ -257,12 +257,12 @@ const PAYMENT_COMPACT_COLUMNS = [
 ] as const;
 
 const PAYMENT_ANALYTICS_DIMENSIONS: Array<{ key: PaymentAnalyticsDimension; label: string }> = [
-  { key: "receiver", label: "Receiver" },
-  { key: "branch", label: "Branch" },
-  { key: "category", label: "Category" },
-  { key: "bed", label: "Bed" },
-  { key: "year", label: "Year" },
-  { key: "month", label: "Month" }
+  { key: "receiver", label: "dimReceiver" },
+  { key: "branch", label: "dimBranch" },
+  { key: "category", label: "dimCategory" },
+  { key: "bed", label: "dimBed" },
+  { key: "year", label: "dimYear" },
+  { key: "month", label: "dimMonth" }
 ];
 
 const MANAGER_FUNCTION_HELP = {
@@ -633,8 +633,9 @@ function groupPaymentAnalyticsRows(rows: Record<string, string>[], dimension: Pa
   return Array.from(groups.values()).sort((left, right) => right.total - left.total || left.label.localeCompare(right.label));
 }
 
-function describePaymentAnalyticsDimension(dimension: PaymentAnalyticsDimension) {
-  return PAYMENT_ANALYTICS_DIMENSIONS.find((item) => item.key === dimension)?.label ?? dimension;
+function describePaymentAnalyticsDimension(dimension: PaymentAnalyticsDimension, t: (key: string) => string) {
+  const labelKey = PAYMENT_ANALYTICS_DIMENSIONS.find((item) => item.key === dimension)?.label ?? dimension;
+  return t(labelKey);
 }
 
 function parseLooseDate(value: string | null | undefined): Date | null {
@@ -854,11 +855,13 @@ function getSummaryItems(tab: StatsTab, workspace: WorkspacePayload | null, t: (
 function PaymentAnalyticsDashboard({
   rows,
   loading,
-  onRefresh
+  onRefresh,
+  t
 }: {
   rows: Record<string, string>[];
   loading: boolean;
   onRefresh: () => void;
+  t: (key: string, params?: any) => string;
 }) {
   const [chartView, setChartView] = useState<PaymentAnalyticsChartView>("bar");
   const [groupOrder, setGroupOrder] = useState<PaymentAnalyticsDimension[]>([
@@ -964,9 +967,9 @@ function PaymentAnalyticsDashboard({
     <section className="space-y-5 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">Payment Analytics</h2>
+          <h2 className="text-lg font-semibold text-slate-900">{t("paymentAnalyticsTitle")}</h2>
           <p className="mt-1 text-sm text-slate-600">
-            Owner-only revenue overview from payment receipts. Click a bar or donut slice to drill into the next group.
+            {t("paymentAnalyticsDesc")}
           </p>
         </div>
         <button
@@ -975,23 +978,23 @@ function PaymentAnalyticsDashboard({
           disabled={loading}
           className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-60"
         >
-          {loading ? "Refreshing..." : "Refresh payments"}
+          {loading ? t("refreshing") : t("refreshWithLabel", { label: t("analyticsPaymentsTab").toLowerCase() })}
         </button>
       </div>
 
       <div className="grid gap-3 md:grid-cols-3">
         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Revenue in view</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("revenueInView")}</div>
           <div className="mt-2 text-xl font-semibold text-emerald-700">{formatCurrency(totalRevenue)}</div>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Payment entries</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("paymentEntries")}</div>
           <div className="mt-2 text-xl font-semibold text-slate-900">{formatNumber(scopedRows.length)}</div>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current group</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("analyticsCurrentGroup")}</div>
           <div className="mt-2 text-xl font-semibold text-slate-900">
-            {nextDimension ? describePaymentAnalyticsDimension(nextDimension) : "Entries"}
+            {nextDimension ? describePaymentAnalyticsDimension(nextDimension, t) : t("analyticsEntries")}
           </div>
         </div>
       </div>
@@ -1036,9 +1039,9 @@ function PaymentAnalyticsDashboard({
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-semibold text-slate-900">
-                    {describePaymentAnalyticsDimension(dimension)}
+                    {describePaymentAnalyticsDimension(dimension, t)}
                   </div>
-                  <div className="text-xs text-slate-500">Drag to reorder this grouping step.</div>
+                  <div className="text-xs text-slate-500">{t("analyticsDragToReorder")}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
                   <button
@@ -1046,8 +1049,8 @@ function PaymentAnalyticsDashboard({
                     onClick={() => moveGroupDimension(index, index - 1)}
                     disabled={index === 0}
                     className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
-                    aria-label={`Move ${describePaymentAnalyticsDimension(dimension)} up`}
-                    title={`Move ${describePaymentAnalyticsDimension(dimension)} up`}
+                    aria-label={t("analyticsMoveUp", { label: describePaymentAnalyticsDimension(dimension, t) })}
+                    title={t("analyticsMoveUp", { label: describePaymentAnalyticsDimension(dimension, t) })}
                   >
                     {renderMoveIcon("up")}
                   </button>
@@ -1056,8 +1059,8 @@ function PaymentAnalyticsDashboard({
                     onClick={() => moveGroupDimension(index, index + 1)}
                     disabled={index === groupOrder.length - 1}
                     className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
-                    aria-label={`Move ${describePaymentAnalyticsDimension(dimension)} down`}
-                    title={`Move ${describePaymentAnalyticsDimension(dimension)} down`}
+                    aria-label={t("analyticsMoveDown", { label: describePaymentAnalyticsDimension(dimension, t) })}
+                    title={t("analyticsMoveDown", { label: describePaymentAnalyticsDimension(dimension, t) })}
                   >
                     {renderMoveIcon("down")}
                   </button>
@@ -1065,8 +1068,8 @@ function PaymentAnalyticsDashboard({
                     type="button"
                     onClick={() => removeGroupDimension(dimension)}
                     className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
-                    aria-label={`Remove ${describePaymentAnalyticsDimension(dimension)}`}
-                    title={`Remove ${describePaymentAnalyticsDimension(dimension)}`}
+                    aria-label={t("analyticsRemoveDim", { label: describePaymentAnalyticsDimension(dimension, t) })}
+                    title={t("analyticsRemoveDim", { label: describePaymentAnalyticsDimension(dimension, t) })}
                   >
                     {renderTrashIcon()}
                   </button>
@@ -1100,7 +1103,7 @@ function PaymentAnalyticsDashboard({
             path.length ? "border-slate-300 text-slate-700 hover:bg-slate-50" : "border-slate-200 bg-slate-100 text-slate-500"
           }`}
         >
-          All receipts
+          {t("analyticsAllReceipts")}
         </button>
         {path.map((item, index) => (
           <button
@@ -1109,25 +1112,25 @@ function PaymentAnalyticsDashboard({
             onClick={() => setPath(path.slice(0, index + 1))}
             className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 font-medium text-sky-900 hover:bg-sky-100"
           >
-            {describePaymentAnalyticsDimension(item.dimension)}: {item.value}
+            {describePaymentAnalyticsDimension(item.dimension, t)}: {item.value}
           </button>
         ))}
       </div>
 
       {!rows.length ? (
         <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-600">
-          No payment cache is loaded yet. Refresh payments to sync the receipt sheet.
+          {t("analyticsEmptyPayment")}
         </div>
       ) : finalRows ? (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h3 className="text-base font-semibold text-slate-900">Payment entries</h3>
+            <h3 className="text-base font-semibold text-slate-900">{t("paymentEntries")}</h3>
             <button
               type="button"
               onClick={() => setPath(path.slice(0, -1))}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
             >
-              Back to chart
+              {t("analyticsBackToChart")}
             </button>
           </div>
           <div className="max-h-[34rem] overflow-auto rounded-2xl border border-slate-200">
@@ -1209,7 +1212,7 @@ function PaymentAnalyticsDashboard({
                     </circle>
                   );
                 })}
-                <text x="120" y="112" textAnchor="middle" className="fill-slate-500 text-[12px] font-semibold">Revenue</text>
+                <text x="120" y="112" textAnchor="middle" className="fill-slate-500 text-[12px] font-semibold">{t("revenueLabel")}</text>
                 <text x="120" y="132" textAnchor="middle" className="fill-slate-900 text-[14px] font-bold">{formatNumber(totalRevenue)}</text>
               </svg>
               <div className="grid content-start gap-2 sm:grid-cols-2">
@@ -1291,8 +1294,9 @@ function GroupedAnalyticsDashboard({
   tableColumns,
   getField,
   getMetricValue,
-  formatMetricValue
-}: GroupedAnalyticsConfig) {
+  formatMetricValue,
+  t
+}: GroupedAnalyticsConfig & { t: (key: string, params?: any) => string }) {
   const [chartView, setChartView] = useState<PaymentAnalyticsChartView>("bar");
   const [groupOrder, setGroupOrder] = useState<string[]>(defaultOrder);
   const [path, setPath] = useState<AnalyticsPathItem[]>([]);
@@ -1408,21 +1412,21 @@ function GroupedAnalyticsDashboard({
           disabled={loading}
           className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-60"
         >
-          {loading ? "Refreshing..." : `Refresh ${title.toLowerCase()}`}
+          {loading ? t("refreshing") : t("refreshWithLabel", { label: title.toLowerCase() })}
         </button>
       </div>
 
       <div className="grid gap-3 md:grid-cols-3">
         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{metricLabel} in view</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("analyticsMetricInView", { label: metricLabel })}</div>
           <div className="mt-2 text-xl font-semibold text-emerald-700">{metricFormatter(totalMetric)}</div>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Entries</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("analyticsEntries")}</div>
           <div className="mt-2 text-xl font-semibold text-slate-900">{formatNumber(scopedRows.length)}</div>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current group</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("analyticsCurrentGroup")}</div>
           <div className="mt-2 text-xl font-semibold text-slate-900">
             {nextDimension ? dimensions.find((item) => item.key === nextDimension)?.label ?? nextDimension : allLabel}
           </div>
@@ -1432,8 +1436,8 @@ function GroupedAnalyticsDashboard({
       <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div className="text-sm font-semibold text-slate-900">Group order</div>
-            <div className="mt-1 text-xs text-slate-500">Change the order, then click through the chart from left to right.</div>
+            <div className="text-sm font-semibold text-slate-900">{t("analyticsGroupOrder")}</div>
+            <div className="mt-1 text-xs text-slate-500">{t("analyticsGroupOrderDesc")}</div>
           </div>
           <div className="flex rounded-xl border border-slate-200 bg-white p-1">
             {(["bar", "donut"] as PaymentAnalyticsChartView[]).map((view) => (
@@ -1445,7 +1449,7 @@ function GroupedAnalyticsDashboard({
                   chartView === view ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
                 }`}
               >
-                {view === "bar" ? "Bar chart" : "Donut chart"}
+                {view === "bar" ? t("analyticsBarChart") : t("analyticsDonutChart")}
               </button>
             ))}
           </div>
@@ -1471,7 +1475,7 @@ function GroupedAnalyticsDashboard({
                   <div className="truncate text-sm font-semibold text-slate-900">
                     {dimensions.find((item) => item.key === dimension)?.label ?? dimension}
                   </div>
-                  <div className="text-xs text-slate-500">Drag to reorder this grouping step.</div>
+                  <div className="text-xs text-slate-500">{t("analyticsDragToReorder")}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
                   <button
@@ -1479,8 +1483,8 @@ function GroupedAnalyticsDashboard({
                     onClick={() => moveGroupDimension(index, index - 1)}
                     disabled={index === 0}
                     className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
-                    aria-label={`Move ${dimensions.find((item) => item.key === dimension)?.label ?? dimension} up`}
-                    title={`Move ${dimensions.find((item) => item.key === dimension)?.label ?? dimension} up`}
+                    aria-label={t("analyticsMoveUp", { label: dimensions.find((item) => item.key === dimension)?.label ?? dimension })}
+                    title={t("analyticsMoveUp", { label: dimensions.find((item) => item.key === dimension)?.label ?? dimension })}
                   >
                     {renderMoveIcon("up")}
                   </button>
@@ -1489,8 +1493,8 @@ function GroupedAnalyticsDashboard({
                     onClick={() => moveGroupDimension(index, index + 1)}
                     disabled={index === groupOrder.length - 1}
                     className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
-                    aria-label={`Move ${dimensions.find((item) => item.key === dimension)?.label ?? dimension} down`}
-                    title={`Move ${dimensions.find((item) => item.key === dimension)?.label ?? dimension} down`}
+                    aria-label={t("analyticsMoveDown", { label: dimensions.find((item) => item.key === dimension)?.label ?? dimension })}
+                    title={t("analyticsMoveDown", { label: dimensions.find((item) => item.key === dimension)?.label ?? dimension })}
                   >
                     {renderMoveIcon("down")}
                   </button>
@@ -1498,8 +1502,8 @@ function GroupedAnalyticsDashboard({
                     type="button"
                     onClick={() => removeGroupDimension(dimension)}
                     className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
-                    aria-label={`Remove ${dimensions.find((item) => item.key === dimension)?.label ?? dimension}`}
-                    title={`Remove ${dimensions.find((item) => item.key === dimension)?.label ?? dimension}`}
+                    aria-label={t("analyticsRemoveDim", { label: dimensions.find((item) => item.key === dimension)?.label ?? dimension })}
+                    title={t("analyticsRemoveDim", { label: dimensions.find((item) => item.key === dimension)?.label ?? dimension })}
                   >
                     {renderTrashIcon()}
                   </button>
@@ -1509,7 +1513,7 @@ function GroupedAnalyticsDashboard({
           </div>
           {availableDimensions.length ? (
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Add group</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("analyticsAddGroup")}</span>
               {availableDimensions.map((dimension) => (
                 <button
                   key={dimension.key}
@@ -1560,7 +1564,7 @@ function GroupedAnalyticsDashboard({
               onClick={() => setPath(path.slice(0, -1))}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
             >
-              Back to chart
+              {t("analyticsBackToChart")}
             </button>
           </div>
           <div className="max-h-[34rem] overflow-auto rounded-2xl border border-slate-200">
@@ -1781,21 +1785,25 @@ function OwnerAnalyticsDashboard({
   const [controllerHistoryLoading, setControllerHistoryLoading] = useState(false);
   const [controllerHistoryLoaded, setControllerHistoryLoaded] = useState(false);
   const [controllerHistoryError, setControllerHistoryError] = useState("");
+  const [laundryHistory, setLaundryHistory] = useState<LaundryEntry[]>([]);
+  const [laundryHistoryLoading, setLaundryHistoryLoading] = useState(false);
+  const [laundryHistoryLoaded, setLaundryHistoryLoaded] = useState(false);
+  const [laundryHistoryError, setLaundryHistoryError] = useState("");
   const [cleaningTasks, setCleaningTasks] = useState<Record<string, string>[]>([]);
   const [cleaningLoading, setCleaningLoading] = useState(false);
   const [cleaningLoaded, setCleaningLoaded] = useState(false);
   const [cleaningError, setCleaningError] = useState("");
 
   const tabItems: Array<{ key: OwnerAnalyticsTab; label: string }> = [
-    { key: "payments", label: "Payments" },
-    { key: "coins", label: "Coins" },
-    { key: "laundry", label: "Laundry" },
-    { key: "fines", label: "Fine" },
-    { key: "cleaning", label: "Cleaning" },
-    { key: "airfryer", label: "Airfryer usage" }
+    { key: "payments", label: t("analyticsPaymentsTab") },
+    { key: "coins", label: t("analyticsCoinsTab") },
+    { key: "laundry", label: t("analyticsLaundryTab") },
+    { key: "fines", label: t("analyticsFineTab") },
+    { key: "cleaning", label: t("analyticsCleaningTab") },
+    { key: "airfryer", label: t("analyticsAirfryerTab") }
   ];
 
-  const activeTabLabel = tabItems.find((item) => item.key === activeTab)?.label ?? "Analytics";
+  const activeTabLabel = tabItems.find((item) => item.key === activeTab)?.label ?? t("analyticsTab", "Analytics");
 
   const loadCachedRows = useCallback(
     async (
@@ -1845,9 +1853,40 @@ function OwnerAnalyticsDashboard({
     } catch (error) {
       setControllerHistory([]);
       setControllerHistoryLoaded(true);
-      setControllerHistoryError(error instanceof Error ? error.message : "Unable to load controller history");
+      setControllerHistoryError(error instanceof Error ? error.message : t("errLoadController"));
     } finally {
       setControllerHistoryLoading(false);
+    }
+  }, []);
+
+  const loadLaundryHistory = useCallback(async () => {
+    setLaundryHistoryLoading(true);
+    setLaundryHistoryError("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/laundry-calendars`);
+      const data = (await response.json()) as {
+        calendars?: Array<{
+          events?: LaundryEntry[];
+          error?: string;
+        }>;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to load laundry history");
+      }
+      const now = Date.now();
+      const entries = (data.calendars ?? [])
+        .flatMap((calendar) => calendar.events ?? [])
+        .filter((entry) => entry.id && entry.start && new Date(entry.start).getTime() <= now)
+        .sort((left, right) => new Date(right.start).getTime() - new Date(left.start).getTime());
+      setLaundryHistory(entries);
+      setLaundryHistoryLoaded(true);
+    } catch (error) {
+      setLaundryHistory([]);
+      setLaundryHistoryLoaded(true);
+      setLaundryHistoryError(error instanceof Error ? error.message : t("errLoadLaundry"));
+    } finally {
+      setLaundryHistoryLoading(false);
     }
   }, []);
 
@@ -1875,7 +1914,7 @@ function OwnerAnalyticsDashboard({
         error?: string;
       };
       if (!response.ok) {
-        throw new Error(data.error ?? "Unable to load cleaning tasks");
+        throw new Error(data.error ?? t("errLoadCleaning"));
       }
       const tasks = (data.tasks ?? []).map((task) => ({
         __timestamp: String(task.scheduledDate ?? ""),
@@ -1908,7 +1947,10 @@ function OwnerAnalyticsDashboard({
     if (activeTab === "fines" && !finesLoaded && !finesLoading) {
       void loadCachedRows("fines", setFinesRows, setFinesLoading, setFinesLoaded, setFinesError);
     }
-    if ((activeTab === "laundry" || activeTab === "airfryer") && !controllerHistoryLoaded && !controllerHistoryLoading) {
+    if (activeTab === "laundry" && !laundryHistoryLoaded && !laundryHistoryLoading) {
+      void loadLaundryHistory();
+    }
+    if (activeTab === "airfryer" && !controllerHistoryLoaded && !controllerHistoryLoading) {
       void loadControllerHistory();
     }
     if (activeTab === "cleaning" && !cleaningLoaded && !cleaningLoading) {
@@ -1926,7 +1968,10 @@ function OwnerAnalyticsDashboard({
     finesLoading,
     loadCachedRows,
     loadCleaningTasks,
-    loadControllerHistory
+    loadControllerHistory,
+    loadLaundryHistory,
+    laundryHistoryLoaded,
+    laundryHistoryLoading
   ]);
 
   const coinsSummary = useMemo(() => summarizeOwnerCoins(coinsRows), [coinsRows]);
@@ -1976,8 +2021,24 @@ function OwnerAnalyticsDashboard({
   );
 
   const laundryAnalyticsRows = useMemo(
-    () => controllerAnalyticsRows.filter((row) => row.__deviceType === "laundry"),
-    [controllerAnalyticsRows]
+    () =>
+      laundryHistory
+        .map((entry) => ({
+          __timestamp: entry.start,
+          __device: entry.calendarSummary || entry.summary || "Unknown",
+          __branch: normalizeBranchLabel(
+            extractLaundryBranch(entry.description) || extractLaundryBranch(entry.calendarSummary) || ""
+          ),
+          __actor: extractLaundryEmail(entry.summary) || extractLaundryEmail(entry.description) || "Unknown",
+          __details:
+            extractLaundryField(entry.description, "Payment method") ||
+            extractLaundryField(entry.description, "Coin cost") ||
+            entry.description ||
+            entry.location ||
+            "-"
+        }))
+        .sort((left, right) => new Date(right.__timestamp).getTime() - new Date(left.__timestamp).getTime()),
+    [laundryHistory]
   );
 
   const airfryerAnalyticsRows = useMemo(
@@ -1997,8 +2058,8 @@ function OwnerAnalyticsDashboard({
     <section className="space-y-5 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">Owner analytics</h2>
-          <p className="mt-1 text-sm text-slate-600">Switch between payment, usage, and review tabs for the owner view.</p>
+          <h2 className="text-lg font-semibold text-slate-900">{t("ownerAnalyticsTitle")}</h2>
+          <p className="mt-1 text-sm text-slate-600">{t("ownerAnalyticsDesc")}</p>
         </div>
         <button
           type="button"
@@ -2009,7 +2070,9 @@ function OwnerAnalyticsDashboard({
               void loadCachedRows("coins", setCoinsRows, setCoinsLoading, setCoinsLoaded, setCoinsError);
             } else if (activeTab === "fines") {
               void loadCachedRows("fines", setFinesRows, setFinesLoading, setFinesLoaded, setFinesError);
-            } else if (activeTab === "laundry" || activeTab === "airfryer") {
+            } else if (activeTab === "laundry") {
+              void loadLaundryHistory();
+            } else if (activeTab === "airfryer") {
               void loadControllerHistory();
             } else {
               void loadCleaningTasks();
@@ -2017,7 +2080,7 @@ function OwnerAnalyticsDashboard({
           }}
           className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
         >
-          Refresh {activeTabLabel.toLowerCase()}
+          {t("refreshWithLabel", { label: activeTabLabel.toLowerCase() })}
         </button>
       </div>
 
@@ -2037,33 +2100,33 @@ function OwnerAnalyticsDashboard({
       </div>
 
       {activeTab === "payments" ? (
-        <PaymentAnalyticsDashboard rows={paymentRows} loading={paymentLoading} onRefresh={onRefreshPayments} />
+        <PaymentAnalyticsDashboard rows={paymentRows} loading={paymentLoading} onRefresh={onRefreshPayments} t={t} />
       ) : activeTab === "coins" ? (
         <GroupedAnalyticsDashboard
-          title="Coin analytics"
-          description="Owner-only coin movement grouped by person, branch, event, and date."
+          title={t("coinAnalyticsTitle")}
+          description={t("coinAnalyticsDesc")}
           rows={coinsAnalyticsRows}
           loading={coinsLoading}
           onRefresh={() => void loadCachedRows("coins", setCoinsRows, setCoinsLoading, setCoinsLoaded, setCoinsError)}
-          metricLabel="Coins"
+          metricLabel={t("analyticsCoinsTab")}
           metricMode="sum"
           dimensions={[
-            { key: "actor", label: "Actor" },
-            { key: "branch", label: "Branch" },
-            { key: "event", label: "Event" },
-            { key: "year", label: "Year" },
-            { key: "month", label: "Month" }
+            { key: "actor", label: t("dimActor") },
+            { key: "branch", label: t("dimBranch") },
+            { key: "event", label: t("dimEvent") },
+            { key: "year", label: t("dimYear") },
+            { key: "month", label: t("dimMonth") }
           ]}
           defaultOrder={["actor", "branch", "event", "year", "month"]}
-          allLabel="All coin entries"
-          emptyMessage={coinsError || "No coin rows available yet. Refresh to sync the coin sheet."}
-          tableTitle="Coin entries"
+          allLabel={t("analyticsAllCoinEntries")}
+          emptyMessage={coinsError || t("analyticsEmptyCoin")}
+          tableTitle={t("analyticsAllCoinEntries")}
           tableColumns={[
-            { key: "when", label: "When", getValue: (row) => formatDateTime(row.__timestamp) },
-            { key: "coin", label: "Coins", getValue: (row) => row.__amount || "-" },
-            { key: "event", label: "Event", getValue: (row) => row.__event || "-" },
-            { key: "actor", label: "Actor", getValue: (row) => row.__actor || "-" },
-            { key: "branch", label: "Branch", getValue: (row) => row.__branch || "-" }
+            { key: "when", label: t("colWhen"), getValue: (row) => formatDateTime(row.__timestamp) },
+            { key: "coin", label: t("colCoin"), getValue: (row) => row.__amount || "-" },
+            { key: "event", label: t("colEvent"), getValue: (row) => row.__event || "-" },
+            { key: "actor", label: t("colActor"), getValue: (row) => row.__actor || "-" },
+            { key: "branch", label: t("colBranch"), getValue: (row) => row.__branch || "-" }
           ]}
           getField={(row, dimension) => {
             if (dimension === "actor") return row.__actor || "Unknown";
@@ -2083,31 +2146,31 @@ function OwnerAnalyticsDashboard({
         />
       ) : activeTab === "fines" ? (
         <GroupedAnalyticsDashboard
-          title="Fine analytics"
-          description="Owner-only fine records grouped by branch, status, content, and date."
+          title={t("fineAnalyticsTitle")}
+          description={t("fineAnalyticsDesc")}
           rows={finesAnalyticsRows}
           loading={finesLoading}
           onRefresh={() => void loadCachedRows("fines", setFinesRows, setFinesLoading, setFinesLoaded, setFinesError)}
-          metricLabel="Fine value"
+          metricLabel={t("fineAnalyticsTitle")}
           metricMode="sum"
           dimensions={[
-            { key: "branch", label: "Branch" },
-            { key: "status", label: "Status" },
-            { key: "content", label: "Content" },
-            { key: "year", label: "Year" },
-            { key: "month", label: "Month" }
+            { key: "branch", label: t("dimBranch") },
+            { key: "status", label: t("dimStatus") },
+            { key: "content", label: t("dimContent") },
+            { key: "year", label: t("dimYear") },
+            { key: "month", label: t("dimMonth") }
           ]}
           defaultOrder={["branch", "status", "content", "year", "month"]}
-          allLabel="All fine entries"
-          emptyMessage={finesError || "No fine rows available yet. Refresh to sync the fine sheet."}
-          tableTitle="Fine entries"
+          allLabel={t("analyticsAllFineEntries")}
+          emptyMessage={finesError || t("analyticsEmptyFine")}
+          tableTitle={t("analyticsAllFineEntries")}
           tableColumns={[
-            { key: "when", label: "When", getValue: (row) => formatDateTime(row.__timestamp) },
-            { key: "amount", label: "Amount", getValue: (row) => formatCurrency(parseLooseNumber(row.__amount)) },
-            { key: "content", label: "Content", getValue: (row) => row.__content || "-" },
-            { key: "status", label: "Status", getValue: (row) => row.__status || "-" },
-            { key: "branch", label: "Branch", getValue: (row) => row.__branch || "-" },
-            { key: "due", label: "Due", getValue: (row) => row.__due || "-" }
+            { key: "when", label: t("colWhen"), getValue: (row) => formatDateTime(row.__timestamp) },
+            { key: "amount", label: t("colAmount"), getValue: (row) => formatCurrency(parseLooseNumber(row.__amount)) },
+            { key: "content", label: t("colContent"), getValue: (row) => row.__content || "-" },
+            { key: "status", label: t("colStatus"), getValue: (row) => row.__status || "-" },
+            { key: "branch", label: t("colBranch"), getValue: (row) => row.__branch || "-" },
+            { key: "due", label: t("colDue"), getValue: (row) => row.__due || "-" }
           ]}
           getField={(row, dimension) => {
             if (dimension === "branch") return row.__branch || "Unknown";
@@ -2127,30 +2190,30 @@ function OwnerAnalyticsDashboard({
         />
       ) : activeTab === "laundry" ? (
         <GroupedAnalyticsDashboard
-          title="Laundry analytics"
-          description="Laundry usage grouped by machine, branch, actor, and time."
+          title={t("laundryAnalyticsTitle")}
+          description={t("laundryAnalyticsDesc")}
           rows={laundryAnalyticsRows}
-          loading={controllerHistoryLoading}
-          onRefresh={() => void loadControllerHistory()}
-          metricLabel="Uses"
+          loading={laundryHistoryLoading}
+          onRefresh={() => void loadLaundryHistory()}
+          metricLabel={t("analyticsAllLaundryUses")}
           metricMode="count"
           dimensions={[
-            { key: "device", label: "Machine" },
-            { key: "branch", label: "Branch" },
-            { key: "actor", label: "Actor" },
-            { key: "year", label: "Year" },
-            { key: "month", label: "Month" }
+            { key: "device", label: t("dimMachine") },
+            { key: "branch", label: t("dimBranch") },
+            { key: "actor", label: t("dimActor") },
+            { key: "year", label: t("dimYear") },
+            { key: "month", label: t("dimMonth") }
           ]}
           defaultOrder={["device", "branch", "actor", "year", "month"]}
-          allLabel="All laundry uses"
-          emptyMessage={controllerHistoryError || "No laundry usage has been recorded yet."}
-          tableTitle="Laundry usage"
+          allLabel={t("analyticsAllLaundryUses")}
+          emptyMessage={laundryHistoryError || t("analyticsEmptyLaundry")}
+          tableTitle={t("analyticsAllLaundryUses")}
           tableColumns={[
-            { key: "when", label: "When", getValue: (row) => formatDateTime(row.__timestamp) },
-            { key: "machine", label: "Machine", getValue: (row) => row.__device || "-" },
-            { key: "branch", label: "Branch", getValue: (row) => row.__branch || "-" },
-            { key: "actor", label: "Actor", getValue: (row) => row.__actor || "-" },
-            { key: "details", label: "Details", getValue: (row) => row.__details || "-" }
+            { key: "when", label: t("colWhen"), getValue: (row) => formatDateTime(row.__timestamp) },
+            { key: "machine", label: t("colMachine"), getValue: (row) => row.__device || "-" },
+            { key: "branch", label: t("colBranch"), getValue: (row) => row.__branch || "-" },
+            { key: "actor", label: t("colActor"), getValue: (row) => row.__actor || "-" },
+            { key: "details", label: t("colDetails"), getValue: (row) => row.__details || "-" }
           ]}
           getField={(row, dimension) => {
             if (dimension === "device") return row.__device || "Unknown";
@@ -2166,32 +2229,33 @@ function OwnerAnalyticsDashboard({
           }}
           getMetricValue={() => 1}
           formatMetricValue={(value) => formatNumber(value)}
+          t={t}
         />
       ) : activeTab === "airfryer" ? (
         <GroupedAnalyticsDashboard
-          title="Airfryer analytics"
-          description="Airfryer usage grouped by branch, actor, and time."
+          title={t("airfryerAnalyticsTitle")}
+          description={t("airfryerAnalyticsDesc")}
           rows={airfryerAnalyticsRows}
           loading={controllerHistoryLoading}
           onRefresh={() => void loadControllerHistory()}
-          metricLabel="Uses"
+          metricLabel={t("analyticsAllAirfryerUses")}
           metricMode="count"
           dimensions={[
-            { key: "branch", label: "Branch" },
-            { key: "actor", label: "Actor" },
-            { key: "year", label: "Year" },
-            { key: "month", label: "Month" }
+            { key: "branch", label: t("dimBranch") },
+            { key: "actor", label: t("dimActor") },
+            { key: "year", label: t("dimYear") },
+            { key: "month", label: t("dimMonth") }
           ]}
           defaultOrder={["branch", "actor", "year", "month"]}
-          allLabel="All airfryer uses"
-          emptyMessage={controllerHistoryError || "No airfryer usage has been recorded yet."}
-          tableTitle="Airfryer usage"
+          allLabel={t("analyticsAllAirfryerUses")}
+          emptyMessage={controllerHistoryError || t("analyticsEmptyAirfryer")}
+          tableTitle={t("analyticsAllAirfryerUses")}
           tableColumns={[
-            { key: "when", label: "When", getValue: (row) => formatDateTime(row.__timestamp) },
-            { key: "device", label: "Machine", getValue: (row) => row.__device || "-" },
-            { key: "branch", label: "Branch", getValue: (row) => row.__branch || "-" },
-            { key: "actor", label: "Actor", getValue: (row) => row.__actor || "-" },
-            { key: "details", label: "Details", getValue: (row) => row.__details || "-" }
+            { key: "when", label: t("colWhen"), getValue: (row) => formatDateTime(row.__timestamp) },
+            { key: "device", label: t("colMachine"), getValue: (row) => row.__device || "-" },
+            { key: "branch", label: t("colBranch"), getValue: (row) => row.__branch || "-" },
+            { key: "actor", label: t("colActor"), getValue: (row) => row.__actor || "-" },
+            { key: "details", label: t("colDetails"), getValue: (row) => row.__details || "-" }
           ]}
           getField={(row, dimension) => {
             if (dimension === "branch") return row.__branch || "Unknown";
@@ -2206,34 +2270,35 @@ function OwnerAnalyticsDashboard({
           }}
           getMetricValue={() => 1}
           formatMetricValue={(value) => formatNumber(value)}
+          t={t}
         />
       ) : (
         <GroupedAnalyticsDashboard
-          title="Cleaning analytics"
-          description="Cleaning review and overdue queues grouped by status, branch, task, and date."
+          title={t("cleaningAnalyticsTitle")}
+          description={t("cleaningAnalyticsDesc")}
           rows={cleaningAnalyticsRows}
           loading={cleaningLoading}
           onRefresh={() => void loadCleaningTasks()}
-          metricLabel="Tasks"
+          metricLabel={t("analyticsCleaningTab")}
           metricMode="count"
           dimensions={[
-            { key: "status", label: "Status" },
-            { key: "branch", label: "Branch" },
-            { key: "task", label: "Task" },
-            { key: "year", label: "Year" },
-            { key: "month", label: "Month" }
+            { key: "status", label: t("dimStatus") },
+            { key: "branch", label: t("dimBranch") },
+            { key: "task", label: t("dimTask") },
+            { key: "year", label: t("dimYear") },
+            { key: "month", label: t("dimMonth") }
           ]}
           defaultOrder={["status", "branch", "task", "year", "month"]}
-          allLabel="All cleaning items"
-          emptyMessage={cleaningError || "No cleaning review items are available yet."}
-          tableTitle="Cleaning items"
+          allLabel={t("analyticsAllCleaningItems")}
+          emptyMessage={cleaningError || t("analyticsEmptyCleaning")}
+          tableTitle={t("analyticsAllCleaningItems")}
           tableColumns={[
-            { key: "when", label: "When", getValue: (row) => formatDateTime(row.__timestamp) },
-            { key: "status", label: "Status", getValue: (row) => row.__status || "-" },
-            { key: "task", label: "Task", getValue: (row) => row.__task || "-" },
-            { key: "resident", label: "Resident", getValue: (row) => row.__resident || "-" },
-            { key: "branch", label: "Branch", getValue: (row) => row.__branch || "-" },
-            { key: "detail", label: "Detail", getValue: (row) => row.__detail || "-" }
+            { key: "when", label: t("colWhen"), getValue: (row) => formatDateTime(row.__timestamp) },
+            { key: "status", label: t("colStatus"), getValue: (row) => row.__status || "-" },
+            { key: "task", label: t("colTask"), getValue: (row) => row.__task || "-" },
+            { key: "resident", label: t("colResident"), getValue: (row) => row.__resident || "-" },
+            { key: "branch", label: t("colBranch"), getValue: (row) => row.__branch || "-" },
+            { key: "detail", label: t("colDetail"), getValue: (row) => row.__detail || "-" }
           ]}
           getField={(row, dimension) => {
             if (dimension === "status") return row.__status || "Unknown";
@@ -2264,6 +2329,27 @@ function normalizeBranchLabel(value: string) {
     return "D2";
   }
   return value.trim() || "Unknown";
+}
+
+function extractLaundryEmail(value: string) {
+  const match = value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return match?.[0]?.trim().toLowerCase() ?? null;
+}
+
+function extractLaundryBranch(value: string) {
+  const match = value.match(/\bD\s*([27])\b/i);
+  if (match?.[1] === "2") {
+    return "D2";
+  }
+  if (match?.[1] === "7") {
+    return "D7";
+  }
+  return null;
+}
+
+function extractLaundryField(value: string, label: string) {
+  const match = value.match(new RegExp(`^${label}\\s*:\\s*(.+)$`, "im"));
+  return match?.[1]?.trim() ?? null;
 }
 
 function findConfiguredRoom(branch: string, bedValue: string) {
@@ -2428,33 +2514,18 @@ function buildRoomDiagram(room: BranchLayoutRoom, clients: ManagerClientRecord[]
   };
 }
 
-function fineFieldLabels(language: "en" | "vi") {
-  if (language === "vi") {
-    return {
-      dueDate: "HẠN THANH TOÁN",
-      eventDateTime: "Thời điểm vi phạm",
-      eventDateTimeHint: "Ngày giờ sự việc xảy ra. Để trống để dùng thời điểm tạo phiếu.",
-      location: "VỊ TRÍ PHÁT HIỆN VI PHẠM",
-      content: "NỘI DUNG VI PHẠM",
-      description: "MÔ TẢ VI PHẠM",
-      image: "ẢNH / VIDEO MINH CHỨNG",
-      amount: "CHI PHÍ THANH TOÁN CHO VI PHẠM",
-      imagePlaceholder: "Dán liên kết minh chứng",
-      submit: "Tạo phiếu phạt"
-    };
-  }
-
+function fineFieldLabels(t: (key: string) => string) {
   return {
-    dueDate: "Payment Due Date",
-    eventDateTime: "Date & time of violation",
-    eventDateTimeHint: "When the incident occurred. Leave blank to use the time you submit the ticket.",
-    location: "Violation Location",
-    content: "Violation Content",
-    description: "Violation Description",
-    image: "Photo / video evidence",
-    amount: "Violation Payment Cost",
-    imagePlaceholder: "Paste evidence URL",
-    submit: "Create fine ticket"
+    dueDate: t("fineFieldDueDate"),
+    eventDateTime: t("fineFieldEventDateTime"),
+    eventDateTimeHint: t("fineFieldEventDateTimeHint"),
+    location: t("fineFieldLocation"),
+    content: t("fineFieldContent"),
+    description: t("fineFieldDescription"),
+    image: t("fineFieldEvidence"),
+    amount: t("fineFieldAmount"),
+    imagePlaceholder: t("fineFieldEvidencePlaceholder"),
+    submit: t("fineFieldSubmit")
   };
 }
 
@@ -3130,7 +3201,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       ?? null,
     [clients, inactiveClients, selectedMaHd]
   );
-  const fineLabels = fineFieldLabels(language);
+  const fineLabels = fineFieldLabels(t);
   const fineUiText = {
     suggestionPlaceholder: t("suggestionPlaceholder", "Search previous entries or type a new value"),
     uploadHint: t("fineEvidenceUploadHint"),
@@ -5204,7 +5275,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           {clientTermTab === "inactive" && (
             <section className="space-y-5">
               {inactiveClientsLoading ? (
-                <p className="text-sm text-slate-500">Loading inactive clients…</p>
+                <p className="text-sm text-slate-500">{t("loadingInactiveClients")}</p>
               ) : (
                 <>
                   <input
@@ -5443,8 +5514,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             return (
               <section className="space-y-4">
                 <div>
-                  <h2 className="text-lg font-semibold text-slate-900">Hostel Portal</h2>
-                  <p className="text-sm text-slate-500 mt-0.5">Manage hostel guests (hostel.cozorohome.com, Booking.com, Airbnb, direct), pricing, and discount rules.</p>
+                  <h2 className="text-lg font-semibold text-slate-900">{t("hostelPortalTitle")}</h2>
+                  <p className="text-sm text-slate-500 mt-0.5">{t("hostelPortalDesc")}</p>
                 </div>
 
                 {/* Add hostel guest button */}
@@ -5467,9 +5538,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   badge={stPendingBookings?.length ?? undefined}
                   onOpen={() => { void stLoadPending(); }}>
                   {stPendingLoading ? (
-                    <p className="text-sm text-slate-500">Loading…</p>
+                    <p className="text-sm text-slate-500">{t("loadingGeneral")}</p>
                   ) : !stPendingBookings?.length ? (
-                    <p className="text-sm text-slate-500">No pending bookings waiting to be imported.</p>
+                    <p className="text-sm text-slate-500">{t("noPendingBookings")}</p>
                   ) : (
                     <div className="space-y-3">
                       {stPendingBookings.map((b) => (
@@ -5499,9 +5570,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 <StSection id="current" title="Current hostel guests" badge={stGuests?.current.length}
                   onOpen={() => { void stLoadGuests(); }}>
                   {stGuestsLoading ? (
-                    <p className="text-sm text-slate-500">Loading…</p>
+                    <p className="text-sm text-slate-500">{t("loadingGeneral")}</p>
                   ) : !stGuests?.current.length ? (
-                    <p className="text-sm text-slate-500">No guests currently checked in.</p>
+                    <p className="text-sm text-slate-500">{t("noGuestsCheckedIn")}</p>
                   ) : (
                     <div className="space-y-2">
                       {stGuests.current.map((g) => (
@@ -5513,7 +5584,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               {String(g.row?.["Ngày bắt đầu hợp đồng"] ?? "")} → {String(g.row?.["Ngày hết hạn hợp đồng"] ?? "")}
                             </div>
                           </div>
-                          <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">Active</span>
+                          <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">{t("bookingStatusActive")}</span>
                         </div>
                       ))}
                     </div>
@@ -5524,9 +5595,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 <StSection id="past" title="Past hostel guests" badge={stGuests?.past.length}
                   onOpen={() => { void stLoadGuests(); }}>
                   {stGuestsLoading ? (
-                    <p className="text-sm text-slate-500">Loading…</p>
+                    <p className="text-sm text-slate-500">{t("loadingGeneral")}</p>
                   ) : !stGuests?.past.length ? (
-                    <p className="text-sm text-slate-500">No past short-stay records found.</p>
+                    <p className="text-sm text-slate-500">{t("noPastShortStayRecords")}</p>
                   ) : (
                     <div className="space-y-2 max-h-72 overflow-y-auto">
                       {stGuests.past.map((g) => (
@@ -5538,7 +5609,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               {String(g.row?.["Ngày bắt đầu hợp đồng"] ?? "")} → {String(g.row?.["Ngày hết hạn hợp đồng"] ?? "")}
                             </div>
                           </div>
-                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">Checked out</span>
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">{t("bookingStatusCheckedOut")}</span>
                         </div>
                       ))}
                     </div>
@@ -5548,7 +5619,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 {/* Bed pricing */}
                 <StSection id="pricing" title="Bed pricing by date (nightly rate ₫)" onOpen={() => { void stLoadConfig(); }}>
                   {stConfigLoading ? (
-                    <p className="text-sm text-slate-500">Loading…</p>
+                    <p className="text-sm text-slate-500">{t("loadingGeneral")}</p>
                   ) : (
                     <div className="space-y-4">
                       {(() => {
@@ -5720,7 +5791,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 {/* Discounts */}
                 <StSection id="discounts" title="Discounts" onOpen={() => { void stLoadConfig(); }}>
                   {stConfigLoading ? (
-                    <p className="text-sm text-slate-500">Loading…</p>
+                    <p className="text-sm text-slate-500">{t("loadingGeneral")}</p>
                   ) : stConfig ? (
                     <div className="space-y-4">
                       {(["weekly", "monthly"] as const).map((type) => {
@@ -5741,7 +5812,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             </div>
                             <div className="flex gap-3">
                               <label className="flex flex-col gap-1 flex-1">
-                                <span className="text-xs text-slate-500">Min nights</span>
+                                <span className="text-xs text-slate-500">{t("minNights")}</span>
                                 <input
                                   type="number" min={1} value={rule.minNights}
                                   onChange={(e) => setStConfig({ ...stConfig, discounts: { ...stConfig.discounts, [type]: { ...rule, minNights: Number(e.target.value) } } })}
@@ -5749,7 +5820,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 />
                               </label>
                               <label className="flex flex-col gap-1 flex-1">
-                                <span className="text-xs text-slate-500">Discount %</span>
+                                <span className="text-xs text-slate-500">{t("discountPercent")}</span>
                                 <input
                                   type="number" min={0} max={100} value={rule.percent}
                                   onChange={(e) => setStConfig({ ...stConfig, discounts: { ...stConfig.discounts, [type]: { ...rule, percent: Number(e.target.value) } } })}
@@ -5774,7 +5845,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 {/* Minimum stay */}
                 <StSection id="minstay" title="Minimum stay requirement" onOpen={() => { void stLoadConfig(); }}>
                   {stConfigLoading ? (
-                    <p className="text-sm text-slate-500">Loading…</p>
+                    <p className="text-sm text-slate-500">{t("loadingGeneral")}</p>
                   ) : stConfig ? (
                     <div className="flex items-center gap-4">
                       <input
@@ -5818,8 +5889,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               <section className="rounded-3xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-lg font-semibold text-amber-950">Pending contract approvals</h2>
-                    <p className="mt-1 text-sm text-amber-800">Signed registrations and extensions are not emailed until an owner approves them.</p>
+                    <h2 className="text-lg font-semibold text-amber-950">{t("pendingContractApprovals")}</h2>
+                    <p className="mt-1 text-sm text-amber-800">{t("pendingContractApprovalsDesc")}</p>
                   </div>
                   <button
                     type="button"
@@ -6023,7 +6094,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     <div className={`rounded-2xl border p-4 ${ps.isDue ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-slate-50"}`}>
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="space-y-1">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Payment Plan</div>
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("paymentPlanLabel")}</div>
                           <div className="flex items-center gap-2">
                             <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold ${
                               ps.planType === "monthly" ? "bg-sky-100 text-sky-800" :
@@ -6033,7 +6104,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             {ps.isDue && (
                               <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-bold text-rose-700">
                                 <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
-                                Payment due
+                                {t("paymentDueLabel")}
                               </span>
                             )}
                           </div>
@@ -6041,11 +6112,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         <div className="text-right space-y-1">
                           {expiryStr && (
                             <div className="text-xs text-slate-500">
-                              Package expires: <span className="font-semibold text-slate-700">{expiryStr}</span>
+                              {t("packageExpiresLabel", { date: expiryStr })}
                             </div>
                           )}
                           <div className={`text-xs ${ps.isDue ? "text-rose-600 font-semibold" : "text-slate-500"}`}>
-                            {ps.isDue ? "Overdue since" : "Next payment:"}{" "}
+                            {ps.isDue ? t("overdueSinceLabel") : t("nextPaymentLabel")}{" "}
                             <span className="font-semibold">{nextStr}</span>
                           </div>
                         </div>
@@ -6056,7 +6127,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 </ManagerClientPanelCollapsible>
                 {selectedClientDuplicate ? (
                 <ManagerClientPanelCollapsible
-                  title="Duplicate active contracts"
+                  title={t("duplicateContractDetected")}
                   right={
                     <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-900">
                       {selectedClientDuplicate.rows.length}
@@ -6083,9 +6154,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 space-y-3">
                       <div className="flex items-center gap-2">
                         <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-400 text-[10px] font-black text-white">!</span>
-                        <div className="text-sm font-semibold text-amber-900">Duplicate Active Contract Detected</div>
+                        <div className="text-sm font-semibold text-amber-900">{t("duplicateContractDetected")}</div>
                       </div>
-                      <p className="text-xs text-amber-800">This client has <strong>{selectedClientDuplicate.rows.length} active rows</strong> in the sheet. The app uses the one with the latest <em>DẤU THỜI GIAN</em> (submission timestamp) automatically. Mark old rows inactive to fix this.</p>
+                      <p className="text-xs text-amber-800">{t("duplicateContractDesc", { count: selectedClientDuplicate.rows.length })}</p>
                       <div className="space-y-2">
                         {sortedRows.map((row, idx) => {
                           const isLatest = row.submissionTimestamp === latestTs;
@@ -6098,11 +6169,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               <div className="space-y-0.5">
                                 <div className="font-semibold text-slate-800">
                                   {row.maHd || <span className="italic text-slate-400">no contract code</span>}
-                                  {isLatest && <span className="ml-1 rounded-full bg-amber-400 px-1.5 py-0.5 text-[9px] font-bold text-white">USING THIS</span>}
+                                  {isLatest && <span className="ml-1 rounded-full bg-amber-400 px-1.5 py-0.5 text-[9px] font-bold text-white">{t("usingThisRow")}</span>}
                                 </div>
-                                {row.submissionTimestamp && <div className="text-slate-400">Submitted: {row.submissionTimestamp}</div>}
+                                {row.submissionTimestamp && <div className="text-slate-400">{t("submittedAtWithDate", { date: row.submissionTimestamp })}</div>}
                                 <div className="text-slate-500">{row.branch} · Bed {row.bed} · {row.contractStart} → {row.contractEnd}</div>
-                                <div className="text-slate-500">Status: <span className={row.activeStay === "1" ? "text-emerald-700 font-semibold" : "text-slate-500"}>{row.activeStay || "not set"}</span></div>
+                                <div className="text-slate-500">{t("statusWithLabel", { status: <span className={row.activeStay === "1" ? "text-emerald-700 font-semibold" : "text-slate-500"}>{row.activeStay || "not set"}</span> })}</div>
                               </div>
                               {canMarkInactive && (
                                 <button
@@ -6115,7 +6186,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 </button>
                               )}
                               {!isLatest && !canMarkInactive && (
-                                <span className="ml-3 text-[10px] text-slate-400 italic">Missing identifier — fix manually in sheet</span>
+                                <span className="ml-3 text-[10px] text-slate-400 italic">{t("missingIdentifierFixSheet")}</span>
                               )}
                             </div>
                           );
@@ -6128,7 +6199,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 ) : null}
 
                 <ManagerClientPanelCollapsible
-                  title="Stay status"
+                  title={t("stayStatusLabel")}
                   open={clientPanelSections.stayStatus}
                   onToggle={() =>
                     setClientPanelSections((s) => ({
@@ -6144,12 +6215,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   const isMovedOut = stay === "0";
                   const isLeft = stay === "-1";
                   const stayLabel = isUnset
-                    ? "Not set — new registration"
+                    ? t("stayStatusNotSet")
                     : isStaying
-                      ? "Currently staying"
+                      ? t("stayStatusStaying")
                       : isMovedOut
-                        ? "Moved out (0)"
-                        : "Left / removed (−1)";
+                        ? t("stayStatusMovedOut")
+                        : t("stayStatusLeft");
                   const stayColor = isUnset ? "text-pink-700" : isStaying ? "text-emerald-700" : "text-rose-700";
                   const borderColor = isUnset ? "border-pink-300 bg-pink-50" : "border-slate-200 bg-slate-50";
 
@@ -6195,9 +6266,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 {selectedClient && showDepositRefundButton ? (
                   <div className="rounded-2xl border border-sky-200 bg-sky-50/90 p-4 space-y-3">
                     <div>
-                      <div className="text-xs font-semibold uppercase tracking-wide text-sky-900">Deposit refund (email)</div>
+                      <div className="text-xs font-semibold uppercase tracking-wide text-sky-900">{t("depositRefundEmailLabel")}</div>
                       <p className="mt-1 text-xs text-sky-950/80">
-                        Shows deposit on file minus unpaid fines and gate parking tickets. You can change the refund amount before sending a bilingual notice (Vietnamese + English) to the resident.
+                        {t("depositRefundDesc")}
                       </p>
                     </div>
                     <button
@@ -6249,7 +6320,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       }}
                       className="rounded-lg border border-sky-400 bg-white px-3 py-2 text-xs font-semibold text-sky-900 shadow-sm hover:bg-sky-100 disabled:opacity-50"
                     >
-                      Deposit refund…
+                      {t("depositRefundBtn")}
                     </button>
                   </div>
                 ) : null}
@@ -6257,14 +6328,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 {/* Contract Termination — hidden for inactive clients */}
                 {selectedClient && selectedClient.activeStay !== "0" && selectedClient.activeStay !== "-1" ? (
                 <ManagerClientPanelCollapsible
-                  title="Contract termination"
+                  title={t("contractTerminationBtn")}
                   open={clientPanelSections.contractTermination}
                   onToggle={() =>
                     setClientPanelSections((s) => ({
                       ...s,
                       contractTermination: !s.contractTermination
-                    }))
-                  }
+}
                 >
                 {(() => {
                   const isTerminated = terminationStatus && terminationStatus !== "loading";
@@ -6274,7 +6344,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
                           <div className="flex items-center gap-2">
-                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Contract Status</div>
+                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("contractStatusLabel")}</div>
                             <InlineHelp
                               label="How contract status works"
                               title="Contract Status"
@@ -6283,16 +6353,16 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           </div>
                           <div className={`mt-1 text-sm font-medium ${isTerminated ? (checkedOut ? "text-emerald-700" : "text-rose-700") : "text-slate-700"}`}>
                             {terminationStatus === "loading"
-                              ? "Loading…"
+                              ? t("loadingGeneral")
                               : checkedOut
-                                ? `Checked out — ${formatCozoroDate((terminationStatus as { checkOut: { submittedAt: string } }).checkOut.submittedAt)}`
+                                ? t("checkedOutWithDate", { date: formatCozoroDate((terminationStatus as { checkOut: { submittedAt: string } }).checkOut.submittedAt) })
                                 : isTerminated
-                                  ? "Terminated — check-out pending"
-                                  : "Active"}
+                                  ? t("terminatedCheckOutPending")
+                                  : t("contractStatusActive")}
                           </div>
                           {isTerminated && !checkedOut && (terminationStatus as { terminatedAt: string }).terminatedAt && (
                             <div className="mt-0.5 text-xs text-rose-600">
-                              Terminated {formatCozoroDate((terminationStatus as { terminatedAt: string }).terminatedAt)}
+                              {t("terminatedWithDate", { date: formatCozoroDate((terminationStatus as { terminatedAt: string }).terminatedAt) })}
                             </div>
                           )}
                         </div>
@@ -6302,7 +6372,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             onClick={() => { setTerminateNote(""); setTerminateDialog(true); }}
                             className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50"
                           >
-                            Terminate contract
+                            {t("terminateContractBtn")}
                           </button>
                         )}
                       </div>
@@ -6316,23 +6386,23 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 {terminateDialog && selectedClient && (
                   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
                     <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-xl space-y-4">
-                      <h3 className="font-semibold text-slate-900">Terminate contract?</h3>
+                      <h3 className="font-semibold text-slate-900">{t("terminateContractQuestion")}</h3>
                       <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800 space-y-1">
-                        <p className="font-semibold">⚠️ Important — deposit policy</p>
-                        <p>The client must find a replacement tenant to continue their contract. If they cannot find one, <strong>the deposit is not guaranteed to be refunded</strong>.</p>
+                        <p className="font-semibold">{t("depositPolicyWarningTitle")}</p>
+                        <p>{t("terminateContractWarning")}</p>
                       </div>
                       <div>
-                        <label className="text-xs font-medium text-slate-600">Deposit note (shown to client)</label>
+                        <label className="text-xs font-medium text-slate-600">{t("depositNoteToClient")}</label>
                         <textarea
                           value={terminateNote}
                           onChange={(e) => setTerminateNote(e.target.value)}
                           rows={2}
-                          placeholder="e.g. No replacement found — deposit at risk"
+                          placeholder={t("terminateNotePlaceholder")}
                           className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
                         />
                       </div>
                       <div className="flex gap-2">
-                        <button type="button" onClick={() => setTerminateDialog(false)} className="flex-1 rounded-xl border border-slate-200 py-2 text-sm font-medium text-slate-700">Cancel</button>
+                        <button type="button" onClick={() => setTerminateDialog(false)} className="flex-1 rounded-xl border border-slate-200 py-2 text-sm font-medium text-slate-700">{t("cancelLabel")}</button>
                         <button
                           type="button"
                           disabled={terminateLoading}
@@ -6356,7 +6426,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               if (!res.ok) throw new Error(data.error ?? "Failed");
                               setTerminationStatus(data.record ?? null);
                               setTerminateDialog(false);
-                              setStatus("Contract terminated. When eligible, check-out appears on their Home / Account and at /check-out.");
+                              setStatus(t("contractTerminatedStatus"));
                             } catch (err) {
                               setStatus(err instanceof Error ? err.message : "Failed to terminate contract");
                             } finally {
@@ -6365,7 +6435,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           }}
                           className="flex-1 rounded-xl bg-rose-600 py-2 text-sm font-semibold text-white disabled:opacity-50"
                         >
-                          {terminateLoading ? "Processing…" : "Confirm termination"}
+                          {terminateLoading ? t("processingLabel") : t("confirmTerminationBtn")}
                         </button>
                       </div>
                     </div>
@@ -6376,7 +6446,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
                     <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-xl space-y-4 max-h-[90vh] overflow-y-auto">
                       <div className="flex items-start justify-between gap-2">
-                        <h3 className="font-semibold text-slate-900">Deposit refund email</h3>
+                        <h3 className="font-semibold text-slate-900">{t("depositRefundEmailLabel")}</h3>
                         <button
                           type="button"
                           className="rounded-lg px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100"
