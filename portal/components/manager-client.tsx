@@ -1273,6 +1273,467 @@ function PaymentAnalyticsDashboard({
   );
 }
 
+type AnalyticsDimensionDefinition = {
+  key: string;
+  label: string;
+};
+
+type AnalyticsPathItem = {
+  dimension: string;
+  value: string;
+};
+
+type AnalyticsTableColumn = {
+  key: string;
+  label: string;
+  getValue: (row: Record<string, string>) => string;
+};
+
+type GroupedAnalyticsConfig = {
+  title: string;
+  description: string;
+  rows: Record<string, string>[];
+  loading: boolean;
+  onRefresh: () => void;
+  metricLabel: string;
+  metricMode: "sum" | "count";
+  dimensions: AnalyticsDimensionDefinition[];
+  defaultOrder: string[];
+  allLabel: string;
+  emptyMessage: string;
+  tableTitle: string;
+  tableColumns: AnalyticsTableColumn[];
+  getField: (row: Record<string, string>, dimension: string) => string;
+  getMetricValue?: (row: Record<string, string>) => number;
+  formatMetricValue?: (value: number) => string;
+};
+
+function GroupedAnalyticsDashboard({
+  title,
+  description,
+  rows,
+  loading,
+  onRefresh,
+  metricLabel,
+  metricMode,
+  dimensions,
+  defaultOrder,
+  allLabel,
+  emptyMessage,
+  tableTitle,
+  tableColumns,
+  getField,
+  getMetricValue,
+  formatMetricValue
+}: GroupedAnalyticsConfig) {
+  const [chartView, setChartView] = useState<PaymentAnalyticsChartView>("bar");
+  const [groupOrder, setGroupOrder] = useState<string[]>(defaultOrder);
+  const [path, setPath] = useState<AnalyticsPathItem[]>([]);
+  const [draggedDimension, setDraggedDimension] = useState<string | null>(null);
+  const defaultOrderKey = defaultOrder.join("::");
+
+  useEffect(() => {
+    setGroupOrder(defaultOrder);
+    setPath([]);
+  }, [defaultOrderKey]);
+
+  const scopedRows = useMemo(() => filterAnalyticsRowsByPath(rows, path, getField), [getField, path, rows]);
+  const nextDimension = groupOrder[path.length] ?? null;
+  const groups = useMemo(
+    () => (nextDimension ? groupAnalyticsRows(scopedRows, nextDimension, getField, metricMode, getMetricValue) : []),
+    [getField, getMetricValue, metricMode, nextDimension, scopedRows]
+  );
+  const totalMetric = useMemo(
+    () =>
+      scopedRows.reduce(
+        (sum, row) => sum + (metricMode === "count" ? 1 : getMetricValue?.(row) ?? 0),
+        0
+      ),
+    [getMetricValue, metricMode, scopedRows]
+  );
+  const maxGroupTotal = Math.max(1, ...groups.map((group) => group.total));
+  const finalRows = !nextDimension;
+  const chartTotal = groups.reduce((sum, group) => sum + group.total, 0) || 1;
+  let donutOffset = 0;
+  const availableDimensions = dimensions.filter((dimension) => !groupOrder.includes(dimension.key));
+  const metricFormatter = formatMetricValue ?? ((value: number) => formatNumber(value));
+
+  function resetPathForOrderChange() {
+    setPath([]);
+  }
+
+  function moveGroupDimension(from: number, to: number) {
+    if (from === to || from < 0 || to < 0 || from >= groupOrder.length || to >= groupOrder.length) {
+      return;
+    }
+    const next = [...groupOrder];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setGroupOrder(next);
+    resetPathForOrderChange();
+  }
+
+  function removeGroupDimension(dimension: string) {
+    setGroupOrder((current) => current.filter((item) => item !== dimension));
+    resetPathForOrderChange();
+  }
+
+  function addGroupDimension(dimension: string) {
+    setGroupOrder((current) => (current.includes(dimension) ? current : [...current, dimension]));
+    resetPathForOrderChange();
+  }
+
+  function handleGroupDragStart(dimension: string) {
+    setDraggedDimension(dimension);
+  }
+
+  function handleGroupDrop(target: string) {
+    if (!draggedDimension) {
+      return;
+    }
+    moveGroupDimension(groupOrder.indexOf(draggedDimension), groupOrder.indexOf(target));
+    setDraggedDimension(null);
+  }
+
+  function handleGroupClick(group: PaymentAnalyticsGroup) {
+    if (!nextDimension) {
+      return;
+    }
+    setPath((current) => [...current, { dimension: nextDimension, value: group.label }]);
+  }
+
+  function renderMoveIcon(direction: "up" | "down") {
+    return direction === "up" ? (
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+        <path d="M10 4 5.25 8.75h9.5L10 4Z" fill="currentColor" />
+        <path d="M10 4v12" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      </svg>
+    ) : (
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+        <path d="M10 16 14.75 11.25h-9.5L10 16Z" fill="currentColor" />
+        <path d="M10 4v12" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  function renderTrashIcon() {
+    return (
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+        <path d="M7 3.75h6M4.5 6h11" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+        <path d="M7.25 6.25h5.5l-.45 9a1 1 0 0 1-1 .95H8.7a1 1 0 0 1-1-.95l-.45-9Z" stroke="currentColor" strokeWidth="1.75" />
+        <path d="M8.5 9v4.5M11.5 9v4.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  const visibleFinalRows = finalRows ? scopedRows : [];
+
+  return (
+    <section className="space-y-5 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
+          <p className="mt-1 text-sm text-slate-600">{description}</p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading}
+          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-60"
+        >
+          {loading ? "Refreshing..." : `Refresh ${title.toLowerCase()}`}
+        </button>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{metricLabel} in view</div>
+          <div className="mt-2 text-xl font-semibold text-emerald-700">{metricFormatter(totalMetric)}</div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Entries</div>
+          <div className="mt-2 text-xl font-semibold text-slate-900">{formatNumber(scopedRows.length)}</div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current group</div>
+          <div className="mt-2 text-xl font-semibold text-slate-900">
+            {nextDimension ? dimensions.find((item) => item.key === nextDimension)?.label ?? nextDimension : allLabel}
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold text-slate-900">Group order</div>
+            <div className="mt-1 text-xs text-slate-500">Change the order, then click through the chart from left to right.</div>
+          </div>
+          <div className="flex rounded-xl border border-slate-200 bg-white p-1">
+            {(["bar", "donut"] as PaymentAnalyticsChartView[]).map((view) => (
+              <button
+                key={view}
+                type="button"
+                onClick={() => setChartView(view)}
+                className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
+                  chartView === view ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                {view === "bar" ? "Bar chart" : "Donut chart"}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="space-y-3">
+          <div className="grid gap-2 md:grid-cols-2">
+            {groupOrder.map((dimension, index) => (
+              <div
+                key={dimension}
+                draggable
+                onDragStart={() => handleGroupDragStart(dimension)}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={() => handleGroupDrop(dimension)}
+                onDragEnd={() => setDraggedDimension(null)}
+                className={`flex items-center gap-3 rounded-xl border bg-white p-3 shadow-sm transition ${
+                  draggedDimension === dimension ? "border-sky-300 opacity-60" : "border-slate-200"
+                }`}
+              >
+                <span className="flex h-8 w-8 shrink-0 cursor-grab items-center justify-center rounded-lg bg-slate-100 text-sm font-bold text-slate-500 active:cursor-grabbing">
+                  {index + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-semibold text-slate-900">
+                    {dimensions.find((item) => item.key === dimension)?.label ?? dimension}
+                  </div>
+                  <div className="text-xs text-slate-500">Drag to reorder this grouping step.</div>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => moveGroupDimension(index, index - 1)}
+                    disabled={index === 0}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
+                    aria-label={`Move ${dimensions.find((item) => item.key === dimension)?.label ?? dimension} up`}
+                    title={`Move ${dimensions.find((item) => item.key === dimension)?.label ?? dimension} up`}
+                  >
+                    {renderMoveIcon("up")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveGroupDimension(index, index + 1)}
+                    disabled={index === groupOrder.length - 1}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
+                    aria-label={`Move ${dimensions.find((item) => item.key === dimension)?.label ?? dimension} down`}
+                    title={`Move ${dimensions.find((item) => item.key === dimension)?.label ?? dimension} down`}
+                  >
+                    {renderMoveIcon("down")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeGroupDimension(dimension)}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                    aria-label={`Remove ${dimensions.find((item) => item.key === dimension)?.label ?? dimension}`}
+                    title={`Remove ${dimensions.find((item) => item.key === dimension)?.label ?? dimension}`}
+                  >
+                    {renderTrashIcon()}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          {availableDimensions.length ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Add group</span>
+              {availableDimensions.map((dimension) => (
+                <button
+                  key={dimension.key}
+                  type="button"
+                  onClick={() => addGroupDimension(dimension.key)}
+                  className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-sky-300 hover:bg-sky-50"
+                >
+                  + {dimension.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <button
+          type="button"
+          onClick={() => setPath([])}
+          className={`rounded-full border px-3 py-1.5 font-medium ${
+            path.length ? "border-slate-300 text-slate-700 hover:bg-slate-50" : "border-slate-200 bg-slate-100 text-slate-500"
+          }`}
+        >
+          {allLabel}
+        </button>
+        {path.map((item, index) => (
+          <button
+            key={`${item.dimension}:${item.value}:${index}`}
+            type="button"
+            onClick={() => setPath(path.slice(0, index + 1))}
+            className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 font-medium text-sky-900 hover:bg-sky-100"
+          >
+            {(dimensions.find((dimension) => dimension.key === item.dimension)?.label ?? item.dimension)}: {item.value}
+          </button>
+        ))}
+      </div>
+
+      {!rows.length ? (
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-600">
+          {emptyMessage}
+        </div>
+      ) : finalRows ? (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-base font-semibold text-slate-900">{tableTitle}</h3>
+            <button
+              type="button"
+              onClick={() => setPath(path.slice(0, -1))}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
+            >
+              Back to chart
+            </button>
+          </div>
+          <div className="max-h-[34rem] overflow-auto rounded-2xl border border-slate-200">
+            <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  {tableColumns.map((column) => (
+                    <th key={column.key} className="whitespace-nowrap px-4 py-3 font-semibold">{column.label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 bg-white">
+                {visibleFinalRows.map((row, index) => (
+                  <tr key={`${index}`} className="align-top">
+                    {tableColumns.map((column) => (
+                      <td key={`${column.key}:${index}`} className="whitespace-nowrap px-4 py-3 text-slate-700">
+                        {column.getValue(row) || "-"}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          {chartView === "bar" ? (
+            <div className="space-y-3">
+              {groups.map((group) => (
+                <button
+                  key={group.key}
+                  type="button"
+                  onClick={() => handleGroupClick(group)}
+                  className="group grid w-full grid-cols-[minmax(7rem,12rem)_1fr] items-center gap-3 text-left"
+                >
+                  <span className="truncate text-sm font-medium text-slate-700" title={group.label}>{group.label}</span>
+                  <span className="relative h-11 overflow-hidden rounded-xl bg-slate-100">
+                    <span
+                      className="absolute inset-y-0 left-0 rounded-xl bg-sky-500 transition-all group-hover:bg-sky-600"
+                      style={{ width: `${Math.max(4, (group.total / maxGroupTotal) * 100)}%` }}
+                    />
+                    <span className="relative z-10 flex h-full items-center justify-between gap-3 px-3 text-sm font-semibold text-slate-900">
+                      <span>{metricFormatter(group.total)}</span>
+                      <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs text-slate-700">{group.count} entries</span>
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="grid gap-5 lg:grid-cols-[22rem_1fr]">
+              <svg viewBox="0 0 240 240" className="mx-auto h-72 w-72 max-w-full" role="img" aria-label={`${title} donut chart`}>
+                <circle cx="120" cy="120" r="78" fill="none" stroke="#e2e8f0" strokeWidth="42" />
+                {groups.map((group, index) => {
+                  const circumference = 2 * Math.PI * 78;
+                  const dash = (group.total / chartTotal) * circumference;
+                  const segmentOffset = donutOffset;
+                  donutOffset += dash;
+                  return (
+                    <circle
+                      key={group.key}
+                      cx="120"
+                      cy="120"
+                      r="78"
+                      fill="none"
+                      stroke={["#0ea5e9", "#10b981", "#f59e0b", "#6366f1", "#ef4444", "#14b8a6", "#64748b"][index % 7]}
+                      strokeWidth="42"
+                      strokeDasharray={`${dash} ${circumference - dash}`}
+                      strokeDashoffset={-segmentOffset}
+                      transform="rotate(-90 120 120)"
+                      className="cursor-pointer opacity-90 hover:opacity-100"
+                      onClick={() => handleGroupClick(group)}
+                    >
+                      <title>{`${group.label}: ${metricFormatter(group.total)}`}</title>
+                    </circle>
+                  );
+                })}
+                <text x="120" y="112" textAnchor="middle" className="fill-slate-500 text-[12px] font-semibold">{metricLabel}</text>
+                <text x="120" y="132" textAnchor="middle" className="fill-slate-900 text-[14px] font-bold">{metricFormatter(totalMetric)}</text>
+              </svg>
+              <div className="grid content-start gap-2 sm:grid-cols-2">
+                {groups.map((group, index) => (
+                  <button
+                    key={group.key}
+                    type="button"
+                    onClick={() => handleGroupClick(group)}
+                    className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-left hover:border-sky-300 hover:bg-sky-50"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="h-3 w-3 rounded-full"
+                        style={{ backgroundColor: ["#0ea5e9", "#10b981", "#f59e0b", "#6366f1", "#ef4444", "#14b8a6", "#64748b"][index % 7] }}
+                      />
+                      <span className="truncate text-sm font-semibold text-slate-900">{group.label}</span>
+                    </div>
+                    <div className="mt-2 text-sm font-semibold text-emerald-700">{metricFormatter(group.total)}</div>
+                    <div className="text-xs text-slate-500">{group.count} entries</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function filterAnalyticsRowsByPath(
+  rows: Record<string, string>[],
+  path: AnalyticsPathItem[],
+  getField: (row: Record<string, string>, dimension: string) => string
+) {
+  return rows.filter((row) => path.every((item) => getField(row, item.dimension) === item.value));
+}
+
+function groupAnalyticsRows(
+  rows: Record<string, string>[],
+  dimension: string,
+  getField: (row: Record<string, string>, dimension: string) => string,
+  metricMode: "sum" | "count",
+  getMetricValue?: (row: Record<string, string>) => number
+) {
+  const groups = new Map<string, PaymentAnalyticsGroup>();
+  rows.forEach((row) => {
+    const label = getField(row, dimension);
+    const total = metricMode === "count" ? 1 : getMetricValue?.(row) ?? 0;
+    const existing = groups.get(label);
+    if (existing) {
+      existing.total += total;
+      existing.count += 1;
+      existing.rows.push(row);
+      return;
+    }
+    groups.set(label, { key: `${dimension}:${label}`, label, total, count: 1, rows: [row] });
+  });
+  return Array.from(groups.values()).sort((left, right) => right.total - left.total || left.label.localeCompare(right.label));
+}
+
 function summarizeOwnerCoins(rows: Record<string, string>[]): StatSummaryItem[] {
   const deltas = rows.map((row) =>
     parseLooseNumber(findRowValue(row, ["coins"]) || row.COINS || row["COINS"])
@@ -1496,132 +1957,81 @@ function OwnerAnalyticsDashboard({
 
   const coinsSummary = useMemo(() => summarizeOwnerCoins(coinsRows), [coinsRows]);
   const finesSummary = useMemo(() => summarizeOwnerFines(finesRows), [finesRows]);
-  const laundrySummary = useMemo(
-    () => summarizeControllerUsage(controllerHistory, "laundry"),
+  const coinsAnalyticsRows = useMemo(
+    () =>
+      [...coinsRows]
+        .map((row) => ({
+          ...row,
+          __timestamp: getPaymentAnalyticsTimestamp(row),
+          __branch: normalizeBranchLabel(findRowValue(row, ["chinhanh"]) || row["Chi nhánh Dorm"] || ""),
+          __actor: findRowValue(row, ["nguoithaotac"]) || row["Người thao tác"] || "System",
+          __event: findRowValue(row, ["sukien"]) || row["Sự kiện"] || "-",
+          __amount: String(findRowValue(row, ["coins"]) || row.COINS || row["COINS"] || "0")
+        }))
+        .sort((left, right) => new Date(right.__timestamp).getTime() - new Date(left.__timestamp).getTime()),
+    [coinsRows]
+  );
+
+  const finesAnalyticsRows = useMemo(
+    () =>
+      [...finesRows]
+        .map((row) => ({
+          ...row,
+          __timestamp: getPaymentAnalyticsTimestamp(row),
+          __branch: normalizeBranchLabel(findRowValue(row, ["chinhanh"]) || row["Chi nhánh Dorm"] || ""),
+          __status: findRowValue(row, ["dathanhtoan"]) || findRowValue(row, ["status"]) || "-",
+          __content: findRowValue(row, ["noidungvipham"]) || findRowValue(row, ["content"]) || "-",
+          __amount: String(findRowValue(row, ["chiphi"]) || findRowValue(row, ["amount"]) || "0"),
+          __due: findRowValue(row, ["duedate"]) || row["Ngày đến hạn"] || "-"
+        }))
+        .sort((left, right) => new Date(right.__timestamp).getTime() - new Date(left.__timestamp).getTime()),
+    [finesRows]
+  );
+
+  const controllerAnalyticsRows = useMemo(
+    () =>
+      controllerHistory.map((entry) => ({
+        __timestamp: entry.timestamp,
+        __device: entry.deviceLabel,
+        __branch: entry.branchId,
+        __actor: entry.actorName || entry.actorEmail || "Unknown",
+        __details: entry.details ?? entry.action,
+        __deviceType: entry.deviceType
+      })),
     [controllerHistory]
   );
-  const airfryerSummary = useMemo(
-    () => summarizeControllerUsage(controllerHistory, "airfryer"),
-    [controllerHistory]
-  );
-  const cleaningSummary = useMemo(() => summarizeCleaningQueue(cleaningQueue), [cleaningQueue]);
 
-  const renderMetricGrid = (items: StatSummaryItem[]) => (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-      {items.map((item) => (
-        <div key={item.label} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{item.label}</div>
-          <div
-            className={`mt-2 text-lg font-semibold ${
-              item.tone === "positive"
-                ? "text-emerald-700"
-                : item.tone === "warning"
-                  ? "text-amber-700"
-                  : "text-slate-900"
-            }`}
-          >
-            {item.value}
-          </div>
-        </div>
-      ))}
-    </div>
+  const laundryAnalyticsRows = useMemo(
+    () => controllerAnalyticsRows.filter((row) => row.__deviceType === "laundry"),
+    [controllerAnalyticsRows]
   );
 
-  const renderNotice = (message: string) => (
-    <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
-      {message}
-    </div>
+  const airfryerAnalyticsRows = useMemo(
+    () => controllerAnalyticsRows.filter((row) => row.__deviceType === "airfryer"),
+    [controllerAnalyticsRows]
   );
 
-  const renderSimpleHistoryTable = (
-    title: string,
-    rows: Array<{ timestamp: string; left: string; middle: string; right: string; extra?: string }>,
-    emptyMessage: string
-  ) => (
-    <div className="space-y-3">
-      <h3 className="text-base font-semibold text-slate-900">{title}</h3>
-      {rows.length ? (
-        <div className="max-h-[32rem] overflow-auto rounded-2xl border border-slate-200">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-3 font-semibold">When</th>
-                <th className="px-4 py-3 font-semibold">Left</th>
-                <th className="px-4 py-3 font-semibold">Middle</th>
-                <th className="px-4 py-3 font-semibold">Right</th>
-                {rows.some((row) => row.extra) ? <th className="px-4 py-3 font-semibold">Extra</th> : null}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 bg-white">
-              {rows.map((row, index) => (
-                <tr key={`${row.timestamp}:${index}`} className="align-top">
-                  <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDateTime(row.timestamp)}</td>
-                  <td className="px-4 py-3 text-slate-700">{row.left}</td>
-                  <td className="px-4 py-3 text-slate-700">{row.middle}</td>
-                  <td className="px-4 py-3 text-slate-700">{row.right}</td>
-                  {rows.some((item) => item.extra) ? <td className="px-4 py-3 text-slate-700">{row.extra ?? "-"}</td> : null}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        renderNotice(emptyMessage)
-      )}
-    </div>
-  );
-
-  const recentCoinsRows = [...coinsRows]
-    .sort((left, right) => {
-      const leftTs = getPaymentAnalyticsTimestamp(left);
-      const rightTs = getPaymentAnalyticsTimestamp(right);
-      return new Date(rightTs).getTime() - new Date(leftTs).getTime();
-    })
-    .slice(0, 25)
-    .map((row) => ({
-      timestamp: getPaymentAnalyticsTimestamp(row),
-      left: findRowValue(row, ["coins"]) || row.COINS || row["COINS"] || "-",
-      middle: findRowValue(row, ["sukien"]) || row["Sự kiện"] || "-",
-      right: findRowValue(row, ["nguoithaotac"]) || row["Người thao tác"] || "System",
-      extra: findRowValue(row, ["chinhanh"]) || row["Chi nhánh Dorm"] || "-"
+  const cleaningAnalyticsRows = useMemo(() => {
+    const pending = (cleaningQueue?.pendingAudit ?? []).map((item) => ({
+      __timestamp: item.scheduledDate,
+      __branch: item.branchId,
+      __status: "Pending audit",
+      __task: item.type,
+      __resident: item.userName || item.userEmail,
+      __detail: item.completionNote ?? item.completionPhoto ?? "",
+      __value: String(item.rewardCoins)
     }));
-
-  const recentFinesRows = [...finesRows]
-    .sort((left, right) => {
-      const leftTs = getPaymentAnalyticsTimestamp(left);
-      const rightTs = getPaymentAnalyticsTimestamp(right);
-      return new Date(rightTs).getTime() - new Date(leftTs).getTime();
-    })
-    .slice(0, 25)
-    .map((row) => ({
-      timestamp: getPaymentAnalyticsTimestamp(row),
-      left: findRowValue(row, ["chiphi"]) || findRowValue(row, ["amount"]) || "-",
-      middle: findRowValue(row, ["noidungvipham"]) || findRowValue(row, ["content"]) || "-",
-      right: (findRowValue(row, ["dathanhtoan"]) || findRowValue(row, ["status"]) || "-").toString(),
-      extra: findRowValue(row, ["duedate"]) || row["Ngày đến hạn"] || "-"
+    const overdue = (cleaningQueue?.overdueAssigned ?? []).map((item) => ({
+      __timestamp: item.missedFineDeadlineAt,
+      __branch: item.branchId,
+      __status: "Overdue",
+      __task: item.type,
+      __resident: item.userName || item.userEmail,
+      __detail: item.hasAutomaticFine ? "Auto fine already exists" : "Awaiting fine",
+      __value: String(item.suggestedFineAmount)
     }));
-
-  const recentLaundryRows = controllerHistory
-    .filter((entry) => entry.deviceType === "laundry")
-    .slice(0, 25)
-    .map((entry) => ({
-      timestamp: entry.timestamp,
-      left: entry.deviceLabel,
-      middle: entry.branchId,
-      right: entry.actorName || entry.actorEmail || "Unknown",
-      extra: entry.details ?? entry.action
-    }));
-
-  const recentAirfryerRows = controllerHistory
-    .filter((entry) => entry.deviceType === "airfryer")
-    .slice(0, 25)
-    .map((entry) => ({
-      timestamp: entry.timestamp,
-      left: entry.deviceLabel,
-      middle: entry.branchId,
-      right: entry.actorName || entry.actorEmail || "Unknown",
-      extra: entry.details ?? entry.action
-    }));
+    return [...pending, ...overdue].sort((left, right) => new Date(right.__timestamp).getTime() - new Date(left.__timestamp).getTime());
+  }, [cleaningQueue]);
 
   return (
     <section className="space-y-5 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
@@ -1669,94 +2079,217 @@ function OwnerAnalyticsDashboard({
       {activeTab === "payments" ? (
         <PaymentAnalyticsDashboard rows={paymentRows} loading={paymentLoading} onRefresh={onRefreshPayments} />
       ) : activeTab === "coins" ? (
-        <div className="space-y-4">
-          {coinsError ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{coinsError}</div> : null}
-          {coinsLoading && !coinsLoaded ? renderNotice("Loading coin analytics...") : renderMetricGrid(coinsSummary)}
-          {renderSimpleHistoryTable("Coin activity", recentCoinsRows, "No coin rows available yet.")}
-        </div>
+        <GroupedAnalyticsDashboard
+          title="Coin analytics"
+          description="Owner-only coin movement grouped by person, branch, event, and date."
+          rows={coinsAnalyticsRows}
+          loading={coinsLoading}
+          onRefresh={() => void loadCachedRows("coins", setCoinsRows, setCoinsLoading, setCoinsLoaded, setCoinsError)}
+          metricLabel="Coins"
+          metricMode="sum"
+          dimensions={[
+            { key: "actor", label: "Actor" },
+            { key: "branch", label: "Branch" },
+            { key: "event", label: "Event" },
+            { key: "year", label: "Year" },
+            { key: "month", label: "Month" }
+          ]}
+          defaultOrder={["actor", "branch", "event", "year", "month"]}
+          allLabel="All coin entries"
+          emptyMessage={coinsError || "No coin rows available yet. Refresh to sync the coin sheet."}
+          tableTitle="Coin entries"
+          tableColumns={[
+            { key: "when", label: "When", getValue: (row) => formatDateTime(row.__timestamp) },
+            { key: "coin", label: "Coins", getValue: (row) => row.__amount || "-" },
+            { key: "event", label: "Event", getValue: (row) => row.__event || "-" },
+            { key: "actor", label: "Actor", getValue: (row) => row.__actor || "-" },
+            { key: "branch", label: "Branch", getValue: (row) => row.__branch || "-" }
+          ]}
+          getField={(row, dimension) => {
+            if (dimension === "actor") return row.__actor || "Unknown";
+            if (dimension === "branch") return row.__branch || "Unknown";
+            if (dimension === "event") return row.__event || "Unknown";
+            if (dimension === "year" || dimension === "month") {
+              const parsed = getPaymentAnalyticsTimestamp(row);
+              const date = new Date(parsed);
+              if (Number.isNaN(date.getTime())) return "Unknown";
+              if (dimension === "year") return String(date.getFullYear());
+              return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+            }
+            return findRowValue(row, [dimension]) || "Unknown";
+          }}
+          getMetricValue={(row) => parseLooseNumber(row.__amount)}
+          formatMetricValue={(value) => formatNumber(value)}
+        />
       ) : activeTab === "fines" ? (
-        <div className="space-y-4">
-          {finesError ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{finesError}</div> : null}
-          {finesLoading && !finesLoaded ? renderNotice("Loading fine analytics...") : renderMetricGrid(finesSummary)}
-          {renderSimpleHistoryTable("Fine activity", recentFinesRows, "No fine rows available yet.")}
-        </div>
+        <GroupedAnalyticsDashboard
+          title="Fine analytics"
+          description="Owner-only fine records grouped by branch, status, content, and date."
+          rows={finesAnalyticsRows}
+          loading={finesLoading}
+          onRefresh={() => void loadCachedRows("fines", setFinesRows, setFinesLoading, setFinesLoaded, setFinesError)}
+          metricLabel="Fine value"
+          metricMode="sum"
+          dimensions={[
+            { key: "branch", label: "Branch" },
+            { key: "status", label: "Status" },
+            { key: "content", label: "Content" },
+            { key: "year", label: "Year" },
+            { key: "month", label: "Month" }
+          ]}
+          defaultOrder={["branch", "status", "content", "year", "month"]}
+          allLabel="All fine entries"
+          emptyMessage={finesError || "No fine rows available yet. Refresh to sync the fine sheet."}
+          tableTitle="Fine entries"
+          tableColumns={[
+            { key: "when", label: "When", getValue: (row) => formatDateTime(row.__timestamp) },
+            { key: "amount", label: "Amount", getValue: (row) => formatCurrency(parseLooseNumber(row.__amount)) },
+            { key: "content", label: "Content", getValue: (row) => row.__content || "-" },
+            { key: "status", label: "Status", getValue: (row) => row.__status || "-" },
+            { key: "branch", label: "Branch", getValue: (row) => row.__branch || "-" },
+            { key: "due", label: "Due", getValue: (row) => row.__due || "-" }
+          ]}
+          getField={(row, dimension) => {
+            if (dimension === "branch") return row.__branch || "Unknown";
+            if (dimension === "status") return row.__status || "Unknown";
+            if (dimension === "content") return row.__content || "Unknown";
+            if (dimension === "year" || dimension === "month") {
+              const parsed = getPaymentAnalyticsTimestamp(row);
+              const date = new Date(parsed);
+              if (Number.isNaN(date.getTime())) return "Unknown";
+              if (dimension === "year") return String(date.getFullYear());
+              return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+            }
+            return findRowValue(row, [dimension]) || "Unknown";
+          }}
+          getMetricValue={(row) => parseLooseNumber(row.__amount)}
+          formatMetricValue={(value) => formatCurrency(value)}
+        />
       ) : activeTab === "laundry" ? (
-        <div className="space-y-4">
-          {controllerHistoryError ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{controllerHistoryError}</div> : null}
-          {controllerHistoryLoading && !controllerHistoryLoaded ? renderNotice("Loading laundry usage...") : renderMetricGrid(laundrySummary)}
-          {renderSimpleHistoryTable("Laundry usage", recentLaundryRows, "No laundry usage has been recorded yet.")}
-        </div>
+        <GroupedAnalyticsDashboard
+          title="Laundry analytics"
+          description="Laundry usage grouped by machine, branch, actor, and time."
+          rows={laundryAnalyticsRows}
+          loading={controllerHistoryLoading}
+          onRefresh={() => void loadControllerHistory()}
+          metricLabel="Uses"
+          metricMode="count"
+          dimensions={[
+            { key: "device", label: "Machine" },
+            { key: "branch", label: "Branch" },
+            { key: "actor", label: "Actor" },
+            { key: "year", label: "Year" },
+            { key: "month", label: "Month" }
+          ]}
+          defaultOrder={["device", "branch", "actor", "year", "month"]}
+          allLabel="All laundry uses"
+          emptyMessage={controllerHistoryError || "No laundry usage has been recorded yet."}
+          tableTitle="Laundry usage"
+          tableColumns={[
+            { key: "when", label: "When", getValue: (row) => formatDateTime(row.__timestamp) },
+            { key: "machine", label: "Machine", getValue: (row) => row.__device || "-" },
+            { key: "branch", label: "Branch", getValue: (row) => row.__branch || "-" },
+            { key: "actor", label: "Actor", getValue: (row) => row.__actor || "-" },
+            { key: "details", label: "Details", getValue: (row) => row.__details || "-" }
+          ]}
+          getField={(row, dimension) => {
+            if (dimension === "device") return row.__device || "Unknown";
+            if (dimension === "branch") return row.__branch || "Unknown";
+            if (dimension === "actor") return row.__actor || "Unknown";
+            if (dimension === "year" || dimension === "month") {
+              const date = new Date(row.__timestamp);
+              if (Number.isNaN(date.getTime())) return "Unknown";
+              if (dimension === "year") return String(date.getFullYear());
+              return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+            }
+            return row[dimension] || "Unknown";
+          }}
+          getMetricValue={() => 1}
+          formatMetricValue={(value) => formatNumber(value)}
+        />
       ) : activeTab === "airfryer" ? (
-        <div className="space-y-4">
-          {controllerHistoryError ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{controllerHistoryError}</div> : null}
-          {controllerHistoryLoading && !controllerHistoryLoaded ? renderNotice("Loading airfryer usage...") : renderMetricGrid(airfryerSummary)}
-          {renderSimpleHistoryTable("Airfryer usage", recentAirfryerRows, "No airfryer usage has been recorded yet.")}
-        </div>
+        <GroupedAnalyticsDashboard
+          title="Airfryer analytics"
+          description="Airfryer usage grouped by branch, actor, and time."
+          rows={airfryerAnalyticsRows}
+          loading={controllerHistoryLoading}
+          onRefresh={() => void loadControllerHistory()}
+          metricLabel="Uses"
+          metricMode="count"
+          dimensions={[
+            { key: "branch", label: "Branch" },
+            { key: "actor", label: "Actor" },
+            { key: "year", label: "Year" },
+            { key: "month", label: "Month" }
+          ]}
+          defaultOrder={["branch", "actor", "year", "month"]}
+          allLabel="All airfryer uses"
+          emptyMessage={controllerHistoryError || "No airfryer usage has been recorded yet."}
+          tableTitle="Airfryer usage"
+          tableColumns={[
+            { key: "when", label: "When", getValue: (row) => formatDateTime(row.__timestamp) },
+            { key: "device", label: "Machine", getValue: (row) => row.__device || "-" },
+            { key: "branch", label: "Branch", getValue: (row) => row.__branch || "-" },
+            { key: "actor", label: "Actor", getValue: (row) => row.__actor || "-" },
+            { key: "details", label: "Details", getValue: (row) => row.__details || "-" }
+          ]}
+          getField={(row, dimension) => {
+            if (dimension === "branch") return row.__branch || "Unknown";
+            if (dimension === "actor") return row.__actor || "Unknown";
+            if (dimension === "year" || dimension === "month") {
+              const date = new Date(row.__timestamp);
+              if (Number.isNaN(date.getTime())) return "Unknown";
+              if (dimension === "year") return String(date.getFullYear());
+              return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+            }
+            return row[dimension] || "Unknown";
+          }}
+          getMetricValue={() => 1}
+          formatMetricValue={(value) => formatNumber(value)}
+        />
       ) : (
-        <div className="space-y-4">
-          {cleaningError ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{cleaningError}</div> : null}
-          {cleaningLoading && !cleaningLoaded ? renderNotice("Loading cleaning analytics...") : renderMetricGrid(cleaningSummary)}
-          <div className="grid gap-4 xl:grid-cols-2">
-            <div className="space-y-3">
-              <h3 className="text-base font-semibold text-slate-900">Pending audit</h3>
-              {cleaningQueue?.pendingAudit?.length ? (
-                <div className="max-h-[30rem] overflow-auto rounded-2xl border border-slate-200">
-                  <table className="min-w-full divide-y divide-slate-200 text-sm">
-                    <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-                      <tr>
-                        <th className="px-4 py-3 font-semibold">When</th>
-                        <th className="px-4 py-3 font-semibold">Resident</th>
-                        <th className="px-4 py-3 font-semibold">Task</th>
-                        <th className="px-4 py-3 font-semibold">Branch</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 bg-white">
-                      {cleaningQueue.pendingAudit.map((item) => (
-                        <tr key={item.id}>
-                          <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDateTime(item.scheduledDate)}</td>
-                          <td className="px-4 py-3 text-slate-700">{item.userName || item.userEmail}</td>
-                          <td className="px-4 py-3 text-slate-700">{item.type}</td>
-                          <td className="px-4 py-3 text-slate-700">{item.branchId}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                renderNotice("No pending audits at the moment.")
-              )}
-            </div>
-            <div className="space-y-3">
-              <h3 className="text-base font-semibold text-slate-900">Overdue assigned</h3>
-              {cleaningQueue?.overdueAssigned?.length ? (
-                <div className="max-h-[30rem] overflow-auto rounded-2xl border border-slate-200">
-                  <table className="min-w-full divide-y divide-slate-200 text-sm">
-                    <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-                      <tr>
-                        <th className="px-4 py-3 font-semibold">When</th>
-                        <th className="px-4 py-3 font-semibold">Resident</th>
-                        <th className="px-4 py-3 font-semibold">Task</th>
-                        <th className="px-4 py-3 font-semibold">Fine</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 bg-white">
-                      {cleaningQueue.overdueAssigned.map((item) => (
-                        <tr key={item.id}>
-                          <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDateTime(item.missedFineDeadlineAt)}</td>
-                          <td className="px-4 py-3 text-slate-700">{item.userName || item.userEmail}</td>
-                          <td className="px-4 py-3 text-slate-700">{item.type}</td>
-                          <td className="px-4 py-3 text-slate-700">{formatCurrency(item.suggestedFineAmount)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                renderNotice("No overdue cleaning tasks at the moment.")
-              )}
-            </div>
-          </div>
-        </div>
+        <GroupedAnalyticsDashboard
+          title="Cleaning analytics"
+          description="Cleaning review and overdue queues grouped by status, branch, task, and date."
+          rows={cleaningAnalyticsRows}
+          loading={cleaningLoading}
+          onRefresh={() => void loadCleaningQueue()}
+          metricLabel="Tasks"
+          metricMode="count"
+          dimensions={[
+            { key: "status", label: "Status" },
+            { key: "branch", label: "Branch" },
+            { key: "task", label: "Task" },
+            { key: "year", label: "Year" },
+            { key: "month", label: "Month" }
+          ]}
+          defaultOrder={["status", "branch", "task", "year", "month"]}
+          allLabel="All cleaning items"
+          emptyMessage={cleaningError || "No cleaning review items are available yet."}
+          tableTitle="Cleaning items"
+          tableColumns={[
+            { key: "when", label: "When", getValue: (row) => formatDateTime(row.__timestamp) },
+            { key: "status", label: "Status", getValue: (row) => row.__status || "-" },
+            { key: "task", label: "Task", getValue: (row) => row.__task || "-" },
+            { key: "resident", label: "Resident", getValue: (row) => row.__resident || "-" },
+            { key: "branch", label: "Branch", getValue: (row) => row.__branch || "-" },
+            { key: "detail", label: "Detail", getValue: (row) => row.__detail || "-" }
+          ]}
+          getField={(row, dimension) => {
+            if (dimension === "status") return row.__status || "Unknown";
+            if (dimension === "branch") return row.__branch || "Unknown";
+            if (dimension === "task") return row.__task || "Unknown";
+            if (dimension === "year" || dimension === "month") {
+              const date = new Date(row.__timestamp);
+              if (Number.isNaN(date.getTime())) return "Unknown";
+              if (dimension === "year") return String(date.getFullYear());
+              return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+            }
+            return row[dimension] || "Unknown";
+          }}
+          getMetricValue={() => 1}
+          formatMetricValue={(value) => formatNumber(value)}
+        />
       )}
     </section>
   );

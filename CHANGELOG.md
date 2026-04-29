@@ -1,5 +1,8 @@
 # Changelog
 
+## [3.8.34] - 2026-04-29
+- Owner analytics now group coins and fines like payment analytics, and laundry, cleaning, and airfryer tabs now group usage by count with the same drilldown controls.
+
 ## [3.8.33] - 2026-04-29
 - Owner analytics now include subtabs for payments, coins, laundry usage, fines, cleaning review, and airfryer usage, with compact icon-only ordering controls in the payment analytics panel.
 - Payment analytics date parsing now reads timestamps with time values from the sheet, so the year is derived from `DẤU THỜI GIAN` instead of falling back to `Unknown year`.
