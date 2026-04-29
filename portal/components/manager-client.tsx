@@ -208,39 +208,6 @@ type PaymentAnalyticsGroup = {
   count: number;
   rows: Record<string, string>[];
 };
-type CleaningReviewQueuePayload = {
-  pendingAudit: Array<{
-    id: string;
-    userEmail: string;
-    userName: string;
-    bedDisplay: string | null;
-    branchId: string;
-    floor: number | null;
-    type: string;
-    scheduledDate: string;
-    status: string;
-    rewardCoins: number;
-    completedAt?: string | null;
-    completionNote?: string | null;
-    completionPhoto?: string | null;
-  }>;
-  overdueAssigned: Array<{
-    id: string;
-    userEmail: string;
-    userName: string;
-    bedDisplay: string | null;
-    branchId: string;
-    floor: number | null;
-    type: string;
-    scheduledDate: string;
-    status: string;
-    rewardCoins: number;
-    hasAutomaticFine: boolean;
-    suggestedFineAmount: number;
-    missedFineDeadlineAt: string;
-  }>;
-};
-
 function CollapsibleSettingsSection({
   title,
   description,
@@ -1790,24 +1757,6 @@ function summarizeControllerUsage(entries: ControllerHistoryEntry[], deviceType:
   ];
 }
 
-function summarizeCleaningQueue(queue: CleaningReviewQueuePayload | null): StatSummaryItem[] {
-  const pending = queue?.pendingAudit ?? [];
-  const overdue = queue?.overdueAssigned ?? [];
-  const branches = new Set<string>();
-  for (const item of [...pending, ...overdue]) {
-    if (item.branchId) {
-      branches.add(item.branchId);
-    }
-  }
-
-  return [
-    { label: "Pending audits", value: formatNumber(pending.length), tone: pending.length > 0 ? "warning" : "default" },
-    { label: "Overdue tasks", value: formatNumber(overdue.length), tone: overdue.length > 0 ? "warning" : "default" },
-    { label: "Branches covered", value: formatNumber(branches.size) },
-    { label: "Review queue", value: pending.length + overdue.length > 0 ? "Loaded" : "Empty" }
-  ];
-}
-
 function OwnerAnalyticsDashboard({
   paymentRows,
   normalizedEmail,
@@ -1832,7 +1781,7 @@ function OwnerAnalyticsDashboard({
   const [controllerHistoryLoading, setControllerHistoryLoading] = useState(false);
   const [controllerHistoryLoaded, setControllerHistoryLoaded] = useState(false);
   const [controllerHistoryError, setControllerHistoryError] = useState("");
-  const [cleaningQueue, setCleaningQueue] = useState<CleaningReviewQueuePayload | null>(null);
+  const [cleaningTasks, setCleaningTasks] = useState<Record<string, string>[]>([]);
   const [cleaningLoading, setCleaningLoading] = useState(false);
   const [cleaningLoaded, setCleaningLoaded] = useState(false);
   const [cleaningError, setCleaningError] = useState("");
@@ -1886,7 +1835,7 @@ function OwnerAnalyticsDashboard({
     setControllerHistoryLoading(true);
     setControllerHistoryError("");
     try {
-      const response = await fetch(`${API_BASE_URL}/manager/controller/history?limit=200`);
+      const response = await fetch(`${API_BASE_URL}/manager/controller/history?limit=500`);
       const data = (await response.json()) as { entries?: ControllerHistoryEntry[]; error?: string };
       if (!response.ok) {
         throw new Error(data.error ?? "Unable to load controller history");
@@ -1902,30 +1851,55 @@ function OwnerAnalyticsDashboard({
     }
   }, []);
 
-  const loadCleaningQueue = useCallback(async () => {
+  const loadCleaningTasks = useCallback(async () => {
     setCleaningLoading(true);
     setCleaningError("");
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/admin/cleaning/review-queue?actorEmail=${encodeURIComponent(normalizedEmail)}`
-      );
-      const data = (await response.json()) as CleaningReviewQueuePayload & { error?: string };
+      const response = await fetch(`${API_BASE_URL}/admin/cleaning/tasks`);
+      const data = (await response.json()) as {
+        tasks?: Array<{
+          id: string;
+          userEmail: string;
+          userName?: string | null;
+          branchId: string;
+          type: string;
+          status: string;
+          scheduledDate: string;
+          rewardCoins?: number;
+          completedAt?: string | null;
+          completionNote?: string | null;
+          completionPhoto?: string | null;
+          audits?: Array<{ createdAt?: string }>;
+          auditorNote?: string | null;
+        }>;
+        error?: string;
+      };
       if (!response.ok) {
-        throw new Error(data.error ?? "Unable to load cleaning review queue");
+        throw new Error(data.error ?? "Unable to load cleaning tasks");
       }
-      setCleaningQueue({
-        pendingAudit: data.pendingAudit ?? [],
-        overdueAssigned: data.overdueAssigned ?? []
-      });
+      const tasks = (data.tasks ?? []).map((task) => ({
+        __timestamp: String(task.scheduledDate ?? ""),
+        __branch: normalizeBranchLabel(task.branchId),
+        __status: String(task.status ?? ""),
+        __task: String(task.type ?? ""),
+        __resident: String(task.userName ?? task.userEmail ?? ""),
+        __detail:
+          String(task.completionNote ?? task.auditorNote ?? task.completionPhoto ?? "").trim() ||
+          `${String(task.rewardCoins ?? 0)} coins`,
+        __reward: String(task.rewardCoins ?? 0),
+        __completedAt: String(task.completedAt ?? ""),
+        __audits: String(task.audits?.length ?? 0)
+      }));
+      setCleaningTasks(tasks);
       setCleaningLoaded(true);
     } catch (error) {
-      setCleaningQueue({ pendingAudit: [], overdueAssigned: [] });
+      setCleaningTasks([]);
       setCleaningLoaded(true);
-      setCleaningError(error instanceof Error ? error.message : "Unable to load cleaning review queue");
+      setCleaningError(error instanceof Error ? error.message : "Unable to load cleaning tasks");
     } finally {
       setCleaningLoading(false);
     }
-  }, [normalizedEmail]);
+  }, []);
 
   useEffect(() => {
     if (activeTab === "coins" && !coinsLoaded && !coinsLoading) {
@@ -1938,7 +1912,7 @@ function OwnerAnalyticsDashboard({
       void loadControllerHistory();
     }
     if (activeTab === "cleaning" && !cleaningLoaded && !cleaningLoading) {
-      void loadCleaningQueue();
+      void loadCleaningTasks();
     }
   }, [
     activeTab,
@@ -1951,7 +1925,7 @@ function OwnerAnalyticsDashboard({
     finesLoaded,
     finesLoading,
     loadCachedRows,
-    loadCleaningQueue,
+    loadCleaningTasks,
     loadControllerHistory
   ]);
 
@@ -2011,27 +1985,13 @@ function OwnerAnalyticsDashboard({
     [controllerAnalyticsRows]
   );
 
-  const cleaningAnalyticsRows = useMemo(() => {
-    const pending = (cleaningQueue?.pendingAudit ?? []).map((item) => ({
-      __timestamp: item.scheduledDate,
-      __branch: item.branchId,
-      __status: "Pending audit",
-      __task: item.type,
-      __resident: item.userName || item.userEmail,
-      __detail: item.completionNote ?? item.completionPhoto ?? "",
-      __value: String(item.rewardCoins)
-    }));
-    const overdue = (cleaningQueue?.overdueAssigned ?? []).map((item) => ({
-      __timestamp: item.missedFineDeadlineAt,
-      __branch: item.branchId,
-      __status: "Overdue",
-      __task: item.type,
-      __resident: item.userName || item.userEmail,
-      __detail: item.hasAutomaticFine ? "Auto fine already exists" : "Awaiting fine",
-      __value: String(item.suggestedFineAmount)
-    }));
-    return [...pending, ...overdue].sort((left, right) => new Date(right.__timestamp).getTime() - new Date(left.__timestamp).getTime());
-  }, [cleaningQueue]);
+  const cleaningAnalyticsRows = useMemo(
+    () =>
+      [...cleaningTasks].sort(
+        (left, right) => new Date(right.__timestamp).getTime() - new Date(left.__timestamp).getTime()
+      ),
+    [cleaningTasks]
+  );
 
   return (
     <section className="space-y-5 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
@@ -2052,7 +2012,7 @@ function OwnerAnalyticsDashboard({
             } else if (activeTab === "laundry" || activeTab === "airfryer") {
               void loadControllerHistory();
             } else {
-              void loadCleaningQueue();
+              void loadCleaningTasks();
             }
           }}
           className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
@@ -2253,7 +2213,7 @@ function OwnerAnalyticsDashboard({
           description="Cleaning review and overdue queues grouped by status, branch, task, and date."
           rows={cleaningAnalyticsRows}
           loading={cleaningLoading}
-          onRefresh={() => void loadCleaningQueue()}
+          onRefresh={() => void loadCleaningTasks()}
           metricLabel="Tasks"
           metricMode="count"
           dimensions={[
