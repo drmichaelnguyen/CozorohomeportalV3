@@ -1,5 +1,8 @@
 # Changelog
 
+## [3.8.30] - 2026-04-29
+- **Owner payment analytics**: Added an owner-only Client → Analytics dashboard with bar and donut revenue views, configurable grouping order, click-through drilldowns, and a final payment receipt entry table.
+
 ## [3.7.1] - 2026-04-14
 - **Multi-month prepaid package**: Detailed line-item estimate (rent, tenure surcharge, monthly adjustment, professional discount, parking, then package gross/discount/net; laundry, gate parking, and fines always shown). Improved contrast on resident next-payment and manager client panels. API adds `recurringComponents` and `laundryCashUses` to prepaid estimate payload.
 
