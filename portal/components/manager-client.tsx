@@ -266,15 +266,11 @@ const PAYMENT_ANALYTICS_DIMENSIONS: Array<{ key: PaymentAnalyticsDimension; labe
 ];
 
 const MANAGER_FUNCTION_HELP = {
-  contractStatus:
-    "Contract Status lets a manager see whether the resident is active, terminated, or already checked out.\n\nThis aligns with Cozorohome policy by making termination and check-out steps explicit before access or deposit decisions are changed.",
-  monthlyRent:
-    "Monthly Rent is collapsed by default. Expand to see line items (zeros are shown). The gate parking line sums unpaid gate parking tickets (managed under Client Actions) until rent is paid. Laundry uses cash washes from the previous calendar month; unpaid fines from the sheet are included until settled.\n\nThis aligns with Cozorohome policy by separating recurring rent from prior-period usage and ticketed gate charges.",
-  featureLock:
-    "Feature Lock controls whether the resident follows the normal automatic restriction rules or has a temporary manager override.\n\nThis aligns with Cozorohome policy by keeping overdue-rent and expired-contract restrictions automatic unless a manager intentionally unlocks access.",
-  clientActions:
-    "Client Actions are the manager-side tools for calling, messaging, fines, coins, gate parking tickets, password support, and receipt creation.\n\nThis aligns with Cozorohome policy by keeping resident support actions inside tracked manager workflows instead of unrecorded side actions."
-} as const;
+  contractStatus: "helpContractStatus",
+  monthlyRent: "helpMonthlyRent",
+  featureLock: "helpFeatureLock",
+  clientActions: "helpClientActions"
+};
 
 type RentBreakdown = {
   email: string;
@@ -645,6 +641,13 @@ function translateAnalyticsValue(value: string, t: (key: string) => string) {
   return value;
 }
 
+function translateCoinEvent(event: string, t: (key: string) => string) {
+  if (!event) return "-";
+  const key = `coinEvent_${event.trim().replace(/ /g, "_")}`;
+  // @ts-ignore
+  return t(key) === key ? event : t(key);
+}
+
 function parseLooseDate(value: string | null | undefined): Date | null {
   return parseVietnamDate(String(value ?? ""));
 }
@@ -693,14 +696,14 @@ type ManagerPermissionsState = {
 };
 
 const DATA_CATEGORIES: { key: DataCategory; label: string; hasWrite: boolean }[] = [
-  { key: "clients",  label: "Clients",           hasWrite: true  },
-  { key: "fines",    label: "Fines",              hasWrite: true  },
-  { key: "payments", label: "Payments",           hasWrite: true  },
-  { key: "cleaning", label: "Cleaning schedule",  hasWrite: true  },
-  { key: "laundry",  label: "Laundry",            hasWrite: true  },
-  { key: "support",  label: "Support / Messages", hasWrite: true  },
-  { key: "coins",    label: "Coins",              hasWrite: true  },
-  { key: "stats",    label: "Statistics",         hasWrite: false },
+  { key: "clients",  label: "clientsTab",           hasWrite: true  },
+  { key: "fines",    label: "finesTab",             hasWrite: true  },
+  { key: "payments", label: "paymentsTab",          hasWrite: true  },
+  { key: "cleaning", label: "cleaningTab",          hasWrite: true  },
+  { key: "laundry",  label: "laundryTab",           hasWrite: true  },
+  { key: "support",  label: "supportTab",           hasWrite: true  },
+  { key: "coins",    label: "coinsTab",             hasWrite: true  },
+  { key: "stats",    label: "statsTab",             hasWrite: false },
 ];
 const KNOWN_BRANCHES = ["D2", "D7"];
 
@@ -1189,7 +1192,7 @@ function PaymentAnalyticsDashboard({
                   onClick={() => handleGroupClick(group)}
                   className="group grid w-full grid-cols-[minmax(7rem,12rem)_1fr] items-center gap-3 text-left"
                 >
-                  <span className="truncate text-sm font-medium text-slate-700" title={group.label}>{group.label}</span>
+                  <span className="truncate text-sm font-medium text-slate-700" title={translateAnalyticsValue(group.label, t)}>{translateAnalyticsValue(group.label, t)}</span>
                   <span className="relative h-11 overflow-hidden rounded-xl bg-slate-100">
                     <span
                       className="absolute inset-y-0 left-0 rounded-xl bg-sky-500 transition-all group-hover:bg-sky-600"
@@ -1205,7 +1208,7 @@ function PaymentAnalyticsDashboard({
             </div>
           ) : (
             <div className="grid gap-5 lg:grid-cols-[22rem_1fr]">
-              <svg viewBox="0 0 240 240" className="mx-auto h-72 w-72 max-w-full" role="img" aria-label="Payment revenue donut chart">
+              <svg viewBox="0 0 240 240" className="mx-auto h-72 w-72 max-w-full" role="img" aria-label={t("paymentRevenueDonutChart", "Payment revenue donut chart")}>
                 <circle cx="120" cy="120" r="78" fill="none" stroke="#e2e8f0" strokeWidth="42" />
                 {groups.map((group, index) => {
                   const circumference = 2 * Math.PI * 78;
@@ -1227,7 +1230,7 @@ function PaymentAnalyticsDashboard({
                       className="cursor-pointer opacity-90 hover:opacity-100"
                       onClick={() => handleGroupClick(group)}
                     >
-                      <title>{`${group.label}: ${formatCurrency(group.total)}`}</title>
+                      <title>{`${translateAnalyticsValue(group.label, t)}: ${formatCurrency(group.total)}`}</title>
                     </circle>
                   );
                 })}
@@ -1247,10 +1250,10 @@ function PaymentAnalyticsDashboard({
                         className="h-3 w-3 rounded-full"
                         style={{ backgroundColor: ["#0ea5e9", "#10b981", "#f59e0b", "#6366f1", "#ef4444", "#14b8a6", "#64748b"][index % 7] }}
                       />
-                      <span className="truncate text-sm font-semibold text-slate-900">{group.label}</span>
+                      <span className="truncate text-sm font-semibold text-slate-900">{translateAnalyticsValue(group.label, t)}</span>
                     </div>
                     <div className="mt-2 text-sm font-semibold text-emerald-700">{formatCurrency(group.total)}</div>
-                    <div className="text-xs text-slate-500">{group.count} payment entries</div>
+                    <div className="text-xs text-slate-500">{t("analyticsPaymentsWithCount", { count: group.count })}</div>
                   </button>
                 ))}
               </div>
@@ -1628,7 +1631,7 @@ function GroupedAnalyticsDashboard({
                     />
                     <span className="relative z-10 flex h-full items-center justify-between gap-3 px-3 text-sm font-semibold text-slate-900">
                       <span>{metricFormatter(group.total)}</span>
-                      <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs text-slate-700">{group.count} entries</span>
+                      <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs text-slate-700">{t("analyticsEntriesWithCount", { count: group.count })}</span>
                     </span>
                   </span>
                 </button>
@@ -1636,7 +1639,7 @@ function GroupedAnalyticsDashboard({
             </div>
           ) : (
             <div className="grid gap-5 lg:grid-cols-[22rem_1fr]">
-              <svg viewBox="0 0 240 240" className="mx-auto h-72 w-72 max-w-full" role="img" aria-label={`${title} donut chart`}>
+              <svg viewBox="0 0 240 240" className="mx-auto h-72 w-72 max-w-full" role="img" aria-label={t("donutChartWithTitle", { title })}>
                 <circle cx="120" cy="120" r="78" fill="none" stroke="#e2e8f0" strokeWidth="42" />
                 {groups.map((group, index) => {
                   const circumference = 2 * Math.PI * 78;
@@ -1658,7 +1661,7 @@ function GroupedAnalyticsDashboard({
                       className="cursor-pointer opacity-90 hover:opacity-100"
                       onClick={() => handleGroupClick(group)}
                     >
-                      <title>{`${group.label}: ${metricFormatter(group.total)}`}</title>
+                      <title>{`${translateAnalyticsValue(group.label, t)}: ${metricFormatter(group.total)}`}</title>
                     </circle>
                   );
                 })}
@@ -1678,10 +1681,10 @@ function GroupedAnalyticsDashboard({
                         className="h-3 w-3 rounded-full"
                         style={{ backgroundColor: ["#0ea5e9", "#10b981", "#f59e0b", "#6366f1", "#ef4444", "#14b8a6", "#64748b"][index % 7] }}
                       />
-                      <span className="truncate text-sm font-semibold text-slate-900">{group.label}</span>
+                      <span className="truncate text-sm font-semibold text-slate-900">{translateAnalyticsValue(group.label, t)}</span>
                     </div>
                     <div className="mt-2 text-sm font-semibold text-emerald-700">{metricFormatter(group.total)}</div>
-                    <div className="text-xs text-slate-500">{group.count} entries</div>
+                    <div className="text-xs text-slate-500">{t("analyticsEntriesWithCount", { count: group.count })}</div>
                   </button>
                 ))}
               </div>
@@ -2143,10 +2146,10 @@ function OwnerAnalyticsDashboard({
           tableTitle={t("analyticsAllCoinEntries")}
           tableColumns={[
             { key: "when", label: t("colWhen"), getValue: (row) => formatDateTime(row.__timestamp) },
-            { key: "coin", label: t("colCoin"), getValue: (row) => row.__amount || "-" },
-            { key: "event", label: t("colEvent"), getValue: (row) => row.__event || "-" },
-            { key: "actor", label: t("colActor"), getValue: (row) => row.__actor || "-" },
-            { key: "branch", label: t("colBranch"), getValue: (row) => row.__branch || "-" }
+            { key: "coin", label: t("colCoin"), getValue: (row) => row.__amount || t("noValueLabel") },
+            { key: "event", label: t("colEvent"), getValue: (row) => translateCoinEvent(row.__event, t) },
+            { key: "actor", label: t("colActor"), getValue: (row) => row.__actor || t("noValueLabel") },
+            { key: "branch", label: t("colBranch"), getValue: (row) => row.__branch || t("noValueLabel") }
           ]}
           getField={(row, dimension) => {
             if (dimension === "actor") return row.__actor || t("unknownLabel");
@@ -4984,7 +4987,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     : "border-transparent text-slate-400 hover:text-slate-600"
                 }`}
               >
-                Analytics
+                {t("statsTab")}
               </button>
             ) : null}
           </div>
@@ -5339,7 +5342,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   </div>
                   {groupedInactiveClients.length === 0 ? (
                     <div className="rounded-2xl bg-slate-50 p-8 text-center text-sm text-slate-500">
-                      {inactiveClients.length === 0 ? "No inactive clients found." : "No clients match the current filters."}
+                      {inactiveClients.length === 0 ? t("noInactiveClients") : t("noClientsMatchFilters")}
                     </div>
                   ) : (
                     <div className="space-y-4">
@@ -6248,7 +6251,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     <div className={`rounded-2xl border p-4 ${borderColor}`}>
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Stay Status</div>
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("stayStatusLabel")}</div>
                           <div className={`mt-1 text-sm font-medium ${stayColor}`}>{stayLabel}</div>
                         </div>
                         <div className="flex flex-wrap gap-2">
@@ -6366,9 +6369,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           <div className="flex items-center gap-2">
                             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("contractStatusLabel")}</div>
                             <InlineHelp
-                              label="How contract status works"
-                              title="Contract Status"
-                              body={MANAGER_FUNCTION_HELP.contractStatus}
+                              label={t("howContractStatusWorks")}
+                              title={t("contractStatusTitle")}
+                              body={t(MANAGER_FUNCTION_HELP.contractStatus)}
                             />
                           </div>
                           <div className={`mt-1 text-sm font-medium ${isTerminated ? (checkedOut ? "text-emerald-700" : "text-rose-700") : "text-slate-700"}`}>
@@ -6598,7 +6601,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           {depositRefundModalError ? (
                             <p className="text-sm font-medium text-rose-600">{depositRefundModalError}</p>
                           ) : (
-                            <p className="text-sm text-slate-600">No preview loaded.</p>
+                            <p className="text-sm text-slate-600">{t("noPreviewLoaded")}</p>
                           )}
                           <button
                             type="button"
@@ -6804,7 +6807,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             )}
                           </div>
                         ) : (
-                          <p className="text-xs text-amber-950 border-t border-slate-200 pt-3">No engine estimate for this client or month.</p>
+                          <p className="text-xs text-amber-950 border-t border-slate-200 pt-3">{t("noEngineEstimate")}</p>
                         )}
 
                         {!prepaidPkgLoading && est ? (
@@ -7023,11 +7026,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       <div className="flex items-center justify-between">
                         <div>
                           <div className="flex items-center gap-2">
-                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Monthly Rent</div>
+                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("monthlyRentLabel")}</div>
                             <InlineHelp
-                              label="How monthly rent works"
-                              title="Monthly Rent"
-                              body={MANAGER_FUNCTION_HELP.monthlyRent}
+                              label={t("howMonthlyRentWorks")}
+                              title={t("monthlyRentTitle")}
+                              body={t(MANAGER_FUNCTION_HELP.monthlyRent)}
                             />
                           </div>
                           <div className="mt-0.5 text-sm font-medium text-slate-700">{rentPaidMonth || "This month"}</div>
@@ -7078,32 +7081,32 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             </p>
                           ) : null}
                           {[
-                            { label: "Base rent", value: infoRentBreakdown.baseRent ?? 0, color: "" },
+                            { label: t("baseRent"), value: infoRentBreakdown.baseRent ?? 0, color: "" },
                             {
-                              label: `Short-term surcharge (+${((infoRentBreakdown.tenureSurchargeRate ?? 0) * 100).toFixed(0)}%)`,
+                              label: `${t("tenureSurcharge")} (+${((infoRentBreakdown.tenureSurchargeRate ?? 0) * 100).toFixed(0)}%)`,
                               value: infoRentBreakdown.tenureSurchargeVnd ?? 0,
                               color: "text-amber-600"
                             },
                             {
-                              label: "Monthly adjustment surcharge",
+                              label: t("monthlyAdjustmentSurcharge"),
                               value: Math.max(0, infoRentBreakdown.monthlyAdjustmentVnd ?? 0),
                               color: "text-amber-600"
                             },
                             {
-                              label: "Monthly adjustment discount (professional)",
+                              label: t("monthlyAdjustmentDiscount"),
                               value: -(infoRentBreakdown.professionalDiscountVnd ?? 0),
                               color: "text-emerald-600"
                             },
-                            { label: "Plan discount", value: -(infoRentBreakdown.planDiscountVnd ?? 0), color: "text-emerald-600" },
-                            { label: "Manager discount", value: -(infoRentBreakdown.managerDiscountVnd ?? 0), color: "text-emerald-600" },
-                            { label: "Parking (sheet)", value: infoRentBreakdown.parkingFeeVnd ?? 0, color: "" },
-                            { label: "Gate parking (unpaid tickets before billing month)", value: infoRentBreakdown.gateParkingFeeVnd ?? 0, color: "" },
+                            { label: t("planDiscount"), value: -(infoRentBreakdown.planDiscountVnd ?? 0), color: "text-emerald-600" },
+                            { label: t("managerDiscount"), value: -(infoRentBreakdown.managerDiscountVnd ?? 0), color: "text-emerald-600" },
+                            { label: t("parkingFee"), value: infoRentBreakdown.parkingFeeVnd ?? 0, color: "" },
+                            { label: t("gateParkingFeeDetail"), value: infoRentBreakdown.gateParkingFeeVnd ?? 0, color: "" },
                             {
-                              label: `Laundry — prior month ${infoRentBreakdown.details?.billingPrevMonth || "—"} (${infoRentBreakdown.details?.laundryCount?.cash ?? 0} cash)`,
+                              label: t("laundryPriorMonthDetail", { month: infoRentBreakdown.details?.billingPrevMonth || "—", count: infoRentBreakdown.details?.laundryCount?.cash ?? 0 }),
                               value: infoRentBreakdown.laundryFeeVnd ?? 0,
                               color: ""
                             },
-                            { label: `Fines (unpaid, sheet)`, value: infoRentBreakdown.finesVnd ?? 0, color: "" },
+                            { label: t("unpaidFinesLabel"), value: infoRentBreakdown.finesVnd ?? 0, color: "" },
                             ...(infoRentBreakdown.maxCoinUsageVnd > 0 &&
                             infoRentBreakdown.coinRateVndPerCoin > 0 &&
                             (infoRentBreakdown.recommendedCoinValueVnd > 0 || rentCoinRedeemInfo)
@@ -7188,7 +7191,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           </div>
                         </div>
                       ) : (
-                        <p className="text-xs text-slate-500 border-t border-slate-200 pt-3">No breakdown available</p>
+                        <p className="text-xs text-slate-500 border-t border-slate-200 pt-3">{t("noBreakdownAvailable")}</p>
                       )}
 
                       {!rentSectionCollapsed ? (
@@ -7286,9 +7289,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 <div className="flex items-center gap-2">
                   <h2 className="text-lg font-semibold text-slate-900">{t("clientActions")}</h2>
                   <InlineHelp
-                    label="How client actions work"
-                    title="Client Actions"
-                    body={MANAGER_FUNCTION_HELP.clientActions}
+                    label={t("howClientActionsWork")}
+                    title={t("clientActionsTitle")}
+                    body={t(MANAGER_FUNCTION_HELP.clientActions)}
                   />
                 </div>
                 <p className="mt-1 text-sm text-slate-600">
@@ -7296,8 +7299,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 </p>
               </div>
               <div className="text-sm text-slate-600">
-                <div>Email: {selectedClient?.email || "-"}</div>
-                <div>Phone: {selectedClientPhone || "-"}</div>
+                <div>{t("emailLabel")}: {selectedClient?.email || "-"}</div>
+                <div>{t("phoneLabel")}: {selectedClientPhone || "-"}</div>
               </div>
 	            </div>
 	              <div className="mt-4 flex flex-wrap gap-3">
@@ -7307,12 +7310,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     const canToggle = !!selectedClient?.email && (sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin");
                     const isUnavailable = !autoLock || (!autoLock.isBlocked && !isUnlocked);
                     const label = accountLockOverrideLoading
-                      ? "Loading…"
+                      ? t("loadingLabel")
                       : isUnlocked
-                        ? "Feature Lock: Off"
+                        ? t("featureLockOff")
                         : autoLock?.isBlocked
-                          ? "Feature Lock: On"
-                          : "Feature Lock";
+                          ? t("featureLockOn")
+                          : t("featureLockTitle");
 
                     return (
                       <div className="flex items-center gap-2">
@@ -7326,9 +7329,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 actorEmail: normalizedEmail,
                                 targetEmail: selectedClient.email,
                                 unlocked: !isUnlocked,
-                                note: !isUnlocked ? "Manual unlock for overdue rent or expired contract restrictions." : ""
+                                note: !isUnlocked ? t("manualUnlockNote") : ""
                               },
-                              !isUnlocked ? "Account functions unlocked." : "Account returned to automatic lock rules.",
+                              !isUnlocked ? t("accountUnlockedSuccess") : t("accountLockedResetSuccess"),
                               async () => {
                                 await loadAccountLockOverride(selectedClient.email);
                               }
@@ -7345,17 +7348,17 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           title={
                             autoLock?.isBlocked
                               ? isUnlocked
-                                ? `Override by ${accountLockOverride?.updatedBy ?? "manager"}`
+                                ? t("overrideByLabel", { manager: accountLockOverride?.updatedBy ?? t("manager") })
                                 : autoLock.reason
-                              : "Laundry booking and controller access follow the normal automatic rules."
+                              : t("normalAutomaticRulesDesc")
                           }
                         >
                           {label}
                         </button>
                         <InlineHelp
-                          label="How feature lock works"
-                          title="Feature Lock"
-                          body={MANAGER_FUNCTION_HELP.featureLock}
+                          label={t("howFeatureLockWorks")}
+                          title={t("featureLockTitle")}
+                          body={t(MANAGER_FUNCTION_HELP.featureLock)}
                         />
                       </div>
                     );
@@ -7411,9 +7414,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                       : t("createCoinsEntry")}
                     </h3>
                     <InlineHelp
-                      label="How client actions work"
-                      title="Client Actions"
-                      body={MANAGER_FUNCTION_HELP.clientActions}
+                      label={t("howClientActionsWork")}
+                      title={t("clientActionsTitle")}
+                      body={t(MANAGER_FUNCTION_HELP.clientActions)}
                     />
                   </div>
                   <button
@@ -7706,12 +7709,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                   tone: "amber" as const
                                 },
                                 {
-                                  label: "Monthly adjustment surcharge",
+                                  label: t("monthlyAdjustmentSurcharge"),
                                   value: Math.max(0, rentBreakdown.monthlyAdjustmentVnd ?? 0),
                                   tone: "amber" as const
                                 },
                                 {
-                                  label: "Monthly adjustment discount (professional)",
+                                  label: t("monthlyAdjustmentDiscount"),
                                   value: -(rentBreakdown.professionalDiscountVnd ?? 0),
                                   tone: "discount" as const
                                 },
@@ -7719,12 +7722,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 { label: t("managerDiscount"), value: -(rentBreakdown.managerDiscountVnd ?? 0), tone: "discount" as const },
                                 { label: t("parkingFee"), value: rentBreakdown.parkingFeeVnd, tone: "neutral" as const },
                                 {
-                                  label: "Gate parking (unpaid tickets before billing month)",
+                                  label: t("gateParkingFeeDetail"),
                                   value: rentBreakdown.gateParkingFeeVnd ?? 0,
                                   tone: "neutral" as const
                                 },
                                 {
-                                  label: `${t("laundryServices", "Laundry")} — prior month ${rentBreakdown.details?.billingPrevMonth || "—"} (${rentBreakdown.details?.laundryCount?.cash ?? 0} cash)`,
+                                  label: t("laundryPriorMonthDetail", { month: rentBreakdown.details?.billingPrevMonth || "—", count: rentBreakdown.details?.laundryCount?.cash ?? 0 }),
                                   value: rentBreakdown.laundryFeeVnd,
                                   tone: "neutral" as const
                                 },
@@ -7920,7 +7923,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                   }
                                 }}
                                 className="min-w-[14rem] flex-1 border-0 bg-transparent px-1 py-1 text-sm outline-none"
-                                placeholder={paymentPurposeSelections.length ? "Search or type new" : "Select existing or type new"}
+                                placeholder={paymentPurposeSelections.length ? t("searchOrTypeNew") : t("selectExistingOrTypeNew")}
                               />
                             </div>
                             {paymentPurposeOpen ? (
@@ -7949,7 +7952,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                   </button>
                                 ))}
                                 {!filteredPaymentPurposeSuggestions.length && !paymentPurposeInput.trim() ? (
-                                  <div className="px-3 py-2 text-sm text-slate-400">No existing values yet</div>
+                                  <div className="px-3 py-2 text-sm text-slate-400">{t("noExistingValuesYet")}</div>
                                 ) : null}
                               </div>
                             ) : null}
@@ -8301,7 +8304,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                   : "border border-slate-300 bg-white text-slate-700"
                               }`}
                             >
-                              {option}
+                              {translateCoinEvent(option, t)}
                             </button>
                           ))
                         ) : (
@@ -8626,7 +8629,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       : activeTab === "coins"
                         ? `${workspace.stats.coins.length} coin entries`
                         : activeTab === "payments"
-                          ? `${workspace.stats.payments.length} payment entries`
+                          ? t("analyticsPaymentsWithCount", { count: workspace.stats.payments.length })
                           : `${workspace.stats.fines.length} fine entries`}
                   </div>
                   <button
@@ -9480,7 +9483,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               <span className="text-xs font-medium text-slate-700">Monthly price (VND)</span>
                               <input type="number" min={0} value={bulkTierEdit.monthlyPrice}
                                 onChange={(e) => setBulkTierEdit({ ...bulkTierEdit, monthlyPrice: e.target.value })}
-                                placeholder="blank = reset to sheet" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-teal-500 focus:outline-none" />
+                                placeholder={t("resetToSheetPlaceholder")} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-teal-500 focus:outline-none" />
                             </label>
                           </div>
                           {bulkTierEdit.result ? <p className={`text-sm font-medium ${bulkTierEdit.result.startsWith("✓") ? "text-emerald-700" : "text-rose-700"}`}>{bulkTierEdit.result}</p> : null}
@@ -9603,7 +9606,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                       <div className="space-y-2">
                                         <input type="number" min={0} value={parkingBedEdit!.parkingFeeVnd}
                                           onChange={(e) => setParkingBedEdit({ ...parkingBedEdit!, parkingFeeVnd: e.target.value })}
-                                          placeholder="Parking fee VND/month"
+                                          placeholder={t("parkingFeePlaceholder")}
                                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-amber-400 focus:outline-none" />
                                         {parkingBedEdit!.result ? <p className={`text-xs font-medium ${parkingBedEdit!.result.startsWith("✓") ? "text-emerald-700" : "text-rose-700"}`}>{parkingBedEdit!.result}</p> : null}
                                         <div className="flex gap-2 flex-wrap">
@@ -9711,7 +9714,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               </div>
                             ))}
                           </div>
-                        ) : <p className="text-sm text-slate-400 italic">No long-term discounts configured.</p>}
+                        ) : <p className="text-sm text-slate-400 italic">{t("noLongTermDiscounts")}</p>}
                         {discountEdit?.termType === "long_term" ? (
                           <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5 space-y-4">
                             <p className="text-sm font-semibold text-sky-900">{discountEdit.id && (pricingData?.discounts ?? []).some((d) => d.id === discountEdit.id) ? "Edit discount" : "New long-term discount"}</p>
@@ -10760,7 +10763,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         };
                         return (
                           <>
-                            <div key={`${key}-label`} className="text-sm text-slate-700">{label}</div>
+                            <div key={`${key}-label`} className="text-sm text-slate-700">{t(label)}</div>
                             <div key={`${key}-read`} className="flex justify-center">
                               <button
                                 type="button"
