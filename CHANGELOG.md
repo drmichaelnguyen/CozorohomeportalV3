@@ -1,5 +1,8 @@
 # Changelog
 
+## [3.8.33] - 2026-04-29
+- **Owner payment analytics**: Added an owner-only Client -> Analytics dashboard with bar and donut revenue views, configurable grouping order, click-through drilldowns, and a final payment receipt entry table.
+
 ## [3.8.32] - 2026-04-28
 - Hostel pricing now supports date-specific bed rates from the main app and the standalone booking site sums nightly prices across the stay.
 

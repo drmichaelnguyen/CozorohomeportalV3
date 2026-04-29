@@ -223,6 +223,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.8.33 | Owner-only Client -> Analytics payment dashboard: native bar/donut revenue charts, configurable grouping order (all payments, receiver, branch, category, bed, year, month), click/tap drilldown through each grouping level, and final payment receipt entry table |
 | 3.8.29 | Cleaning swap requests: residents can offer coins (up to task reward) to another available resident to take over their cleaning slot; resident-to-resident coin transfer via Google Sheets on accept; `CleaningSwapRequest` DB table + migration; 6 new API routes (`swap-candidates`, `swap-requests` CRUD); inline swap flow UI in task card with candidate list and coin offer input; Swap Requests inbox section (received + sent, accept/decline/cancel); bilingual EN/VI `?` help panels for removal rules (with swap tip), auto-scheduling (4-step fairness algorithm), and swap flow |
 | 3.7.2 | Manager deposit refund email (preview, editable amount, bilingual VI/EN, 5–10 business days); checkout step 5 deposit timing copy; API routes for deposit refund |
 | 3.7.1 | Multi-month prepaid: full package calculator breakdown (register-style recurring lines, no deposit; laundry / gate / fines explicit); readable UI on manager package card and resident next payment |

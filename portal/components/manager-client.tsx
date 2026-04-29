@@ -195,6 +195,17 @@ type PricingSettingsSectionKey =
 
 type ManagerSettingsMainSection = "pricing" | "resident_guides" | "tools";
 type PricingSettingsSubTab = "long_term" | "short_term" | "referral" | "staff";
+type ClientSubTab = "list" | "details" | "analytics";
+type PaymentAnalyticsChartView = "bar" | "donut";
+type PaymentAnalyticsDimension = "all" | "receiver" | "branch" | "category" | "bed" | "year" | "month";
+type PaymentAnalyticsPathItem = { dimension: PaymentAnalyticsDimension; value: string };
+type PaymentAnalyticsGroup = {
+  key: string;
+  label: string;
+  total: number;
+  count: number;
+  rows: Record<string, string>[];
+};
 
 function CollapsibleSettingsSection({
   title,
@@ -243,6 +254,16 @@ const PAYMENT_COMPACT_COLUMNS = [
   "MỤC ĐÍCH - GHI RÕ",
   "Địa chỉ email người nhận"
 ] as const;
+
+const PAYMENT_ANALYTICS_DIMENSIONS: Array<{ key: PaymentAnalyticsDimension; label: string }> = [
+  { key: "all", label: "All payments" },
+  { key: "receiver", label: "Receiver" },
+  { key: "branch", label: "Branch" },
+  { key: "category", label: "Category" },
+  { key: "bed", label: "Bed" },
+  { key: "year", label: "Year" },
+  { key: "month", label: "Month" }
+];
 
 const MANAGER_FUNCTION_HELP = {
   contractStatus:
@@ -527,6 +548,98 @@ function formatCurrency(value: number) {
   return `${formatNumber(value)} VND`;
 }
 
+function getPaymentAnalyticsTimestamp(row: Record<string, string>) {
+  return (
+    String(row["DẤU THỜI GIAN"] ?? "").trim() ||
+    String(row["ĐẤU THỜI GIAN"] ?? "").trim() ||
+    findRowValue(row, ["dauthoigian"]) ||
+    findRowValue(row, ["timestamp"])
+  );
+}
+
+function getPaymentAnalyticsField(row: Record<string, string>, dimension: PaymentAnalyticsDimension) {
+  if (dimension === "all") {
+    return "All payments";
+  }
+  if (dimension === "receiver") {
+    return (
+      String(row["NGƯỜI NHẬN TIỀN"] ?? "").trim() ||
+      findRowValue(row, ["nguoinhantien"]) ||
+      findRowValue(row, ["receiver"]) ||
+      "Unknown receiver"
+    );
+  }
+  if (dimension === "branch") {
+    return normalizeBranchLabel(
+      String(row["Chi nhánh Dorm"] ?? row["CHI NHÁNH DORM"] ?? "").trim() ||
+        findRowValue(row, ["chinhanh"]) ||
+        findRowValue(row, ["branch"]) ||
+        "Unknown branch"
+    );
+  }
+  if (dimension === "category") {
+    return (
+      String(row["MỤC ĐÍCH"] ?? "").trim() ||
+      findRowValue(row, ["mucdich"]) ||
+      findRowValue(row, ["category"]) ||
+      "Uncategorized"
+    );
+  }
+  if (dimension === "bed") {
+    return (
+      String(row["Số giường"] ?? row.BED ?? "").trim() ||
+      findRowValue(row, ["sogiuong"]) ||
+      findRowValue(row, ["bed"]) ||
+      "Unknown bed"
+    );
+  }
+
+  const timestamp = getPaymentAnalyticsTimestamp(row);
+  const parsed = parseLooseDate(timestamp);
+  if (!parsed) {
+    return dimension === "year" ? "Unknown year" : "Unknown month";
+  }
+  if (dimension === "year") {
+    return String(parsed.getFullYear());
+  }
+  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function getPaymentAnalyticsAmount(row: Record<string, string>) {
+  return parseLooseNumber(
+    String(row["SỐ TIỀN"] ?? "").trim() ||
+      findRowValue(row, ["sotien"]) ||
+      findRowValue(row, ["amount"])
+  );
+}
+
+function filterPaymentRowsByPath(rows: Record<string, string>[], path: PaymentAnalyticsPathItem[]) {
+  return rows.filter((row) =>
+    path.every((item) => getPaymentAnalyticsField(row, item.dimension) === item.value)
+  );
+}
+
+function groupPaymentAnalyticsRows(rows: Record<string, string>[], dimension: PaymentAnalyticsDimension) {
+  const groups = new Map<string, PaymentAnalyticsGroup>();
+  rows.forEach((row) => {
+    const label = getPaymentAnalyticsField(row, dimension);
+    const amount = getPaymentAnalyticsAmount(row);
+    const existing = groups.get(label);
+    if (existing) {
+      existing.total += amount;
+      existing.count += 1;
+      existing.rows.push(row);
+      return;
+    }
+    groups.set(label, { key: `${dimension}:${label}`, label, total: amount, count: 1, rows: [row] });
+  });
+  return Array.from(groups.values()).sort((left, right) => right.total - left.total || left.label.localeCompare(right.label));
+}
+
+function describePaymentAnalyticsDimension(dimension: PaymentAnalyticsDimension) {
+  return PAYMENT_ANALYTICS_DIMENSIONS.find((item) => item.key === dimension)?.label ?? dimension;
+}
+
 function parseLooseDate(value: string | null | undefined): Date | null {
   return parseVietnamDate(String(value ?? ""));
 }
@@ -739,6 +852,283 @@ function getSummaryItems(tab: StatsTab, workspace: WorkspacePayload | null, t: (
     return summarizePayments(workspace.stats.payments, t);
   }
   return summarizeFines(workspace.stats.fines, t);
+}
+
+function PaymentAnalyticsDashboard({
+  rows,
+  loading,
+  onRefresh
+}: {
+  rows: Record<string, string>[];
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  const [chartView, setChartView] = useState<PaymentAnalyticsChartView>("bar");
+  const [groupOrder, setGroupOrder] = useState<PaymentAnalyticsDimension[]>([
+    "all",
+    "receiver",
+    "branch",
+    "category",
+    "bed",
+    "year",
+    "month"
+  ]);
+  const [path, setPath] = useState<PaymentAnalyticsPathItem[]>([]);
+
+  const scopedRows = useMemo(() => filterPaymentRowsByPath(rows, path), [path, rows]);
+  const nextDimension = groupOrder[path.length] ?? null;
+  const groups = useMemo(
+    () => (nextDimension ? groupPaymentAnalyticsRows(scopedRows, nextDimension) : []),
+    [nextDimension, scopedRows]
+  );
+  const totalRevenue = useMemo(
+    () => scopedRows.reduce((sum, row) => sum + getPaymentAnalyticsAmount(row), 0),
+    [scopedRows]
+  );
+  const maxGroupTotal = Math.max(1, ...groups.map((group) => group.total));
+  const finalRows = !nextDimension;
+  const chartTotal = groups.reduce((sum, group) => sum + group.total, 0) || 1;
+  let donutOffset = 0;
+
+  function updateGroupOrder(index: number, dimension: PaymentAnalyticsDimension) {
+    const next = [...groupOrder];
+    next[index] = dimension;
+    setGroupOrder(next);
+    setPath([]);
+  }
+
+  function handleGroupClick(group: PaymentAnalyticsGroup) {
+    if (!nextDimension) {
+      return;
+    }
+    setPath((current) => [...current, { dimension: nextDimension, value: group.label }]);
+  }
+
+  const visibleFinalRows = finalRows ? scopedRows : [];
+
+  return (
+    <section className="space-y-5 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Payment Analytics</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Owner-only revenue overview from payment receipts. Click a bar or donut slice to drill into the next group.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading}
+          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-60"
+        >
+          {loading ? "Refreshing..." : "Refresh payments"}
+        </button>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Revenue in view</div>
+          <div className="mt-2 text-xl font-semibold text-emerald-700">{formatCurrency(totalRevenue)}</div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Payment entries</div>
+          <div className="mt-2 text-xl font-semibold text-slate-900">{formatNumber(scopedRows.length)}</div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current group</div>
+          <div className="mt-2 text-xl font-semibold text-slate-900">
+            {nextDimension ? describePaymentAnalyticsDimension(nextDimension) : "Entries"}
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold text-slate-900">Group order</div>
+            <div className="mt-1 text-xs text-slate-500">Change the order, then click through the chart from left to right.</div>
+          </div>
+          <div className="flex rounded-xl border border-slate-200 bg-white p-1">
+            {(["bar", "donut"] as PaymentAnalyticsChartView[]).map((view) => (
+              <button
+                key={view}
+                type="button"
+                onClick={() => setChartView(view)}
+                className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
+                  chartView === view ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                {view === "bar" ? "Bar chart" : "Donut chart"}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {groupOrder.map((dimension, index) => (
+            <label key={`${dimension}:${index}`} className="block text-xs font-semibold text-slate-600">
+              Step {index + 1}
+              <select
+                value={dimension}
+                onChange={(event) => updateGroupOrder(index, event.target.value as PaymentAnalyticsDimension)}
+                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800"
+              >
+                {PAYMENT_ANALYTICS_DIMENSIONS.map((option) => (
+                  <option key={option.key} value={option.key}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <button
+          type="button"
+          onClick={() => setPath([])}
+          className={`rounded-full border px-3 py-1.5 font-medium ${
+            path.length ? "border-slate-300 text-slate-700 hover:bg-slate-50" : "border-slate-200 bg-slate-100 text-slate-500"
+          }`}
+        >
+          All receipts
+        </button>
+        {path.map((item, index) => (
+          <button
+            key={`${item.dimension}:${item.value}:${index}`}
+            type="button"
+            onClick={() => setPath(path.slice(0, index + 1))}
+            className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 font-medium text-sky-900 hover:bg-sky-100"
+          >
+            {describePaymentAnalyticsDimension(item.dimension)}: {item.value}
+          </button>
+        ))}
+      </div>
+
+      {!rows.length ? (
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-600">
+          No payment cache is loaded yet. Refresh payments to sync the receipt sheet.
+        </div>
+      ) : finalRows ? (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-base font-semibold text-slate-900">Payment entries</h3>
+            <button
+              type="button"
+              onClick={() => setPath(path.slice(0, -1))}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
+            >
+              Back to chart
+            </button>
+          </div>
+          <div className="max-h-[34rem] overflow-auto rounded-2xl border border-slate-200">
+            <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  {PAYMENT_COMPACT_COLUMNS.map((column) => (
+                    <th key={column} className="whitespace-nowrap px-4 py-3 font-semibold">{column}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 bg-white">
+                {visibleFinalRows.map((row, index) => (
+                  <tr key={`${getPaymentAnalyticsTimestamp(row)}:${index}`} className="align-top">
+                    {PAYMENT_COMPACT_COLUMNS.map((column) => {
+                      const value = getPaymentRowValue(row, column);
+                      return (
+                        <td key={`${column}:${index}`} className="whitespace-nowrap px-4 py-3 text-slate-700">
+                          {column === "SỐ TIỀN" && value ? formatCurrency(parseLooseNumber(value)) : value || "-"}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          {chartView === "bar" ? (
+            <div className="space-y-3">
+              {groups.map((group) => (
+                <button
+                  key={group.key}
+                  type="button"
+                  onClick={() => handleGroupClick(group)}
+                  className="group grid w-full grid-cols-[minmax(7rem,12rem)_1fr] items-center gap-3 text-left"
+                >
+                  <span className="truncate text-sm font-medium text-slate-700" title={group.label}>{group.label}</span>
+                  <span className="relative h-11 overflow-hidden rounded-xl bg-slate-100">
+                    <span
+                      className="absolute inset-y-0 left-0 rounded-xl bg-sky-500 transition-all group-hover:bg-sky-600"
+                      style={{ width: `${Math.max(4, (group.total / maxGroupTotal) * 100)}%` }}
+                    />
+                    <span className="relative z-10 flex h-full items-center justify-between gap-3 px-3 text-sm font-semibold text-slate-900">
+                      <span>{formatCurrency(group.total)}</span>
+                      <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs text-slate-700">{group.count} entries</span>
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="grid gap-5 lg:grid-cols-[22rem_1fr]">
+              <svg viewBox="0 0 240 240" className="mx-auto h-72 w-72 max-w-full" role="img" aria-label="Payment revenue donut chart">
+                <circle cx="120" cy="120" r="78" fill="none" stroke="#e2e8f0" strokeWidth="42" />
+                {groups.map((group, index) => {
+                  const circumference = 2 * Math.PI * 78;
+                  const dash = (group.total / chartTotal) * circumference;
+                  const segmentOffset = donutOffset;
+                  donutOffset += dash;
+                  return (
+                    <circle
+                      key={group.key}
+                      cx="120"
+                      cy="120"
+                      r="78"
+                      fill="none"
+                      stroke={["#0ea5e9", "#10b981", "#f59e0b", "#6366f1", "#ef4444", "#14b8a6", "#64748b"][index % 7]}
+                      strokeWidth="42"
+                      strokeDasharray={`${dash} ${circumference - dash}`}
+                      strokeDashoffset={-segmentOffset}
+                      transform="rotate(-90 120 120)"
+                      className="cursor-pointer opacity-90 hover:opacity-100"
+                      onClick={() => handleGroupClick(group)}
+                    >
+                      <title>{`${group.label}: ${formatCurrency(group.total)}`}</title>
+                    </circle>
+                  );
+                })}
+                <text x="120" y="112" textAnchor="middle" className="fill-slate-500 text-[12px] font-semibold">Revenue</text>
+                <text x="120" y="132" textAnchor="middle" className="fill-slate-900 text-[14px] font-bold">{formatNumber(totalRevenue)}</text>
+              </svg>
+              <div className="grid content-start gap-2 sm:grid-cols-2">
+                {groups.map((group, index) => (
+                  <button
+                    key={group.key}
+                    type="button"
+                    onClick={() => handleGroupClick(group)}
+                    className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-left hover:border-sky-300 hover:bg-sky-50"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="h-3 w-3 rounded-full"
+                        style={{ backgroundColor: ["#0ea5e9", "#10b981", "#f59e0b", "#6366f1", "#ef4444", "#14b8a6", "#64748b"][index % 7] }}
+                      />
+                      <span className="truncate text-sm font-semibold text-slate-900">{group.label}</span>
+                    </div>
+                    <div className="mt-2 text-sm font-semibold text-emerald-700">{formatCurrency(group.total)}</div>
+                    <div className="text-xs text-slate-500">{group.count} payment entries</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
 }
 
 function normalizeBranchLabel(value: string) {
@@ -1418,7 +1808,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [controllerActionFeedback, setControllerActionFeedback] = useState<Record<string, { tone: "success" | "error"; message: string }>>({});
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [supportSubTab, setSupportSubTab] = useState<"messages" | "feedbacks" | "maintenance" | "assistant">("messages");
-  const [clientSubTab, setClientSubTab] = useState<"list" | "details">("list");
+  const [clientSubTab, setClientSubTab] = useState<ClientSubTab>("list");
   const [clientTermTab, setClientTermTab] = useState<"long_term" | "short_term" | "inactive">(
     initialView === "short_term" ? "short_term" : "long_term"
   );
@@ -3369,6 +3759,19 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 {t("clientDetailsTab")}
               </button>
             )}
+            {isOwnerSession ? (
+              <button
+                type="button"
+                onClick={() => setClientSubTab("analytics")}
+                className={`whitespace-nowrap px-6 py-3 text-sm font-bold uppercase tracking-wider transition-all border-b-2 ${
+                  clientSubTab === "analytics"
+                    ? "border-sky-500 text-sky-600"
+                    : "border-transparent text-slate-400 hover:text-slate-600"
+                }`}
+              >
+                Analytics
+              </button>
+            ) : null}
           </div>
 
           {clientSubTab === "list" ? (
@@ -4277,6 +4680,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             );
           })()}
           </div>
+        ) : clientSubTab === "analytics" && isOwnerSession ? (
+          <PaymentAnalyticsDashboard
+            rows={paymentPurposeRows}
+            loading={loading}
+            onRefresh={() => void loadPaymentPurposeRows()}
+          />
         ) : (
           <div ref={managerClientWorkspaceRef} className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
             {false ? <section /> : null}
