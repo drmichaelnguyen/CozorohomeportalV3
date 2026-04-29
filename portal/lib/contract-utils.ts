@@ -5,13 +5,27 @@ export function parseVietnamDate(
   const trimmed = value?.trim() ?? "";
   if (!trimmed) return null;
 
-  const match = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  const match = trimmed.match(
+    /^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?)?$/i
+  );
   let parsed: Date;
 
   if (match) {
-    const [, dayValue, monthValue, yearValue] = match;
+    const [, dayValue, monthValue, yearValue, hourValue, minuteValue, secondValue, meridiemValue] = match;
     const year = Number(yearValue) < 100 ? 2000 + Number(yearValue) : Number(yearValue);
-    parsed = new Date(year, Number(monthValue) - 1, Number(dayValue));
+    let hour = hourValue ? Number(hourValue) : 0;
+    const minute = minuteValue ? Number(minuteValue) : 0;
+    const second = secondValue ? Number(secondValue) : 0;
+    const meridiem = meridiemValue?.toUpperCase();
+
+    if (meridiem === "PM" && hour < 12) {
+      hour += 12;
+    }
+    if (meridiem === "AM" && hour === 12) {
+      hour = 0;
+    }
+
+    parsed = new Date(year, Number(monthValue) - 1, Number(dayValue), hour, minute, second);
   } else {
     parsed = new Date(trimmed);
   }

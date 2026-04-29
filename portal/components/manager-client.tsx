@@ -11,6 +11,7 @@ import {
 } from "../lib/prepaid-breakdown-overrides";
 import { formatBillingMonthLabel, type PrepaidNextPaymentEstimatePayload } from "../lib/rent-paid-status";
 import { parseVietnamDate } from "../lib/contract-utils";
+import { formatCozoroDate, formatCozoroDateTime } from "../lib/date-format";
 import { AdminCleaningClient } from "./admin-cleaning-client";
 import { ManagerAiChat } from "./manager-ai-chat";
 import { ManagerSupportInbox } from "./manager-support-inbox";
@@ -195,6 +196,17 @@ type PricingSettingsSectionKey =
 
 type ManagerSettingsMainSection = "pricing" | "resident_guides" | "tools";
 type PricingSettingsSubTab = "long_term" | "short_term" | "referral" | "staff";
+type ClientSubTab = "list" | "details" | "analytics";
+type PaymentAnalyticsChartView = "bar" | "donut";
+type PaymentAnalyticsDimension = "receiver" | "branch" | "category" | "bed" | "year" | "month";
+type PaymentAnalyticsPathItem = { dimension: PaymentAnalyticsDimension; value: string };
+type PaymentAnalyticsGroup = {
+  key: string;
+  label: string;
+  total: number;
+  count: number;
+  rows: Record<string, string>[];
+};
 
 function CollapsibleSettingsSection({
   title,
@@ -243,6 +255,15 @@ const PAYMENT_COMPACT_COLUMNS = [
   "MỤC ĐÍCH - GHI RÕ",
   "Địa chỉ email người nhận"
 ] as const;
+
+const PAYMENT_ANALYTICS_DIMENSIONS: Array<{ key: PaymentAnalyticsDimension; label: string }> = [
+  { key: "receiver", label: "Receiver" },
+  { key: "branch", label: "Branch" },
+  { key: "category", label: "Category" },
+  { key: "bed", label: "Bed" },
+  { key: "year", label: "Year" },
+  { key: "month", label: "Month" }
+];
 
 const MANAGER_FUNCTION_HELP = {
   contractStatus:
@@ -317,7 +338,7 @@ function formatGateSessionDisplay(iso: string | null | undefined, lang: "en" | "
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString(lang === "vi" ? "vi-VN" : "en-GB", { dateStyle: "short", timeStyle: "short" });
+  return d.toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" });
 }
 
 function formatGateDurationHours(h: number | null | undefined): string {
@@ -439,7 +460,7 @@ function formatDateTime(value: string | null | undefined) {
     return "Unknown";
   }
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" });
 }
 
 function formatDateInputValue(date: Date) {
@@ -525,6 +546,95 @@ function formatNumber(value: number) {
 
 function formatCurrency(value: number) {
   return `${formatNumber(value)} VND`;
+}
+
+function getPaymentAnalyticsTimestamp(row: Record<string, string>) {
+  return (
+    String(row["DẤU THỜI GIAN"] ?? "").trim() ||
+    String(row["ĐẤU THỜI GIAN"] ?? "").trim() ||
+    findRowValue(row, ["dauthoigian"]) ||
+    findRowValue(row, ["timestamp"])
+  );
+}
+
+function getPaymentAnalyticsField(row: Record<string, string>, dimension: PaymentAnalyticsDimension) {
+  if (dimension === "receiver") {
+    return (
+      String(row["NGƯỜI NHẬN TIỀN"] ?? "").trim() ||
+      findRowValue(row, ["nguoinhantien"]) ||
+      findRowValue(row, ["receiver"]) ||
+      "Unknown receiver"
+    );
+  }
+  if (dimension === "branch") {
+    return normalizeBranchLabel(
+      String(row["Chi nhánh Dorm"] ?? row["CHI NHÁNH DORM"] ?? "").trim() ||
+        findRowValue(row, ["chinhanh"]) ||
+        findRowValue(row, ["branch"]) ||
+        "Unknown branch"
+    );
+  }
+  if (dimension === "category") {
+    return (
+      String(row["MỤC ĐÍCH"] ?? "").trim() ||
+      findRowValue(row, ["mucdich"]) ||
+      findRowValue(row, ["category"]) ||
+      "Uncategorized"
+    );
+  }
+  if (dimension === "bed") {
+    return (
+      String(row["Số giường"] ?? row.BED ?? "").trim() ||
+      findRowValue(row, ["sogiuong"]) ||
+      findRowValue(row, ["bed"]) ||
+      "Unknown bed"
+    );
+  }
+
+  const timestamp = getPaymentAnalyticsTimestamp(row);
+  const parsed = parseLooseDate(timestamp);
+  if (!parsed) {
+    return dimension === "year" ? "Unknown year" : "Unknown month";
+  }
+  if (dimension === "year") {
+    return String(parsed.getFullYear());
+  }
+  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function getPaymentAnalyticsAmount(row: Record<string, string>) {
+  return parseLooseNumber(
+    String(row["SỐ TIỀN"] ?? "").trim() ||
+      findRowValue(row, ["sotien"]) ||
+      findRowValue(row, ["amount"])
+  );
+}
+
+function filterPaymentRowsByPath(rows: Record<string, string>[], path: PaymentAnalyticsPathItem[]) {
+  return rows.filter((row) =>
+    path.every((item) => getPaymentAnalyticsField(row, item.dimension) === item.value)
+  );
+}
+
+function groupPaymentAnalyticsRows(rows: Record<string, string>[], dimension: PaymentAnalyticsDimension) {
+  const groups = new Map<string, PaymentAnalyticsGroup>();
+  rows.forEach((row) => {
+    const label = getPaymentAnalyticsField(row, dimension);
+    const amount = getPaymentAnalyticsAmount(row);
+    const existing = groups.get(label);
+    if (existing) {
+      existing.total += amount;
+      existing.count += 1;
+      existing.rows.push(row);
+      return;
+    }
+    groups.set(label, { key: `${dimension}:${label}`, label, total: amount, count: 1, rows: [row] });
+  });
+  return Array.from(groups.values()).sort((left, right) => right.total - left.total || left.label.localeCompare(right.label));
+}
+
+function describePaymentAnalyticsDimension(dimension: PaymentAnalyticsDimension) {
+  return PAYMENT_ANALYTICS_DIMENSIONS.find((item) => item.key === dimension)?.label ?? dimension;
 }
 
 function parseLooseDate(value: string | null | undefined): Date | null {
@@ -739,6 +849,395 @@ function getSummaryItems(tab: StatsTab, workspace: WorkspacePayload | null, t: (
     return summarizePayments(workspace.stats.payments, t);
   }
   return summarizeFines(workspace.stats.fines, t);
+}
+
+function PaymentAnalyticsDashboard({
+  rows,
+  loading,
+  onRefresh
+}: {
+  rows: Record<string, string>[];
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  const [chartView, setChartView] = useState<PaymentAnalyticsChartView>("bar");
+  const [groupOrder, setGroupOrder] = useState<PaymentAnalyticsDimension[]>([
+    "receiver",
+    "branch",
+    "category",
+    "bed",
+    "year",
+    "month"
+  ]);
+  const [path, setPath] = useState<PaymentAnalyticsPathItem[]>([]);
+  const [draggedDimension, setDraggedDimension] = useState<PaymentAnalyticsDimension | null>(null);
+
+  const scopedRows = useMemo(() => filterPaymentRowsByPath(rows, path), [path, rows]);
+  const nextDimension = groupOrder[path.length] ?? null;
+  const groups = useMemo(
+    () => (nextDimension ? groupPaymentAnalyticsRows(scopedRows, nextDimension) : []),
+    [nextDimension, scopedRows]
+  );
+  const totalRevenue = useMemo(
+    () => scopedRows.reduce((sum, row) => sum + getPaymentAnalyticsAmount(row), 0),
+    [scopedRows]
+  );
+  const maxGroupTotal = Math.max(1, ...groups.map((group) => group.total));
+  const finalRows = !nextDimension;
+  const chartTotal = groups.reduce((sum, group) => sum + group.total, 0) || 1;
+  let donutOffset = 0;
+  const availableDimensions = PAYMENT_ANALYTICS_DIMENSIONS.filter(
+    (dimension) => !groupOrder.includes(dimension.key)
+  );
+
+  function resetPathForOrderChange() {
+    setPath([]);
+  }
+
+  function moveGroupDimension(from: number, to: number) {
+    if (from === to || from < 0 || to < 0 || from >= groupOrder.length || to >= groupOrder.length) {
+      return;
+    }
+    const next = [...groupOrder];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setGroupOrder(next);
+    resetPathForOrderChange();
+  }
+
+  function removeGroupDimension(dimension: PaymentAnalyticsDimension) {
+    setGroupOrder((current) => current.filter((item) => item !== dimension));
+    resetPathForOrderChange();
+  }
+
+  function addGroupDimension(dimension: PaymentAnalyticsDimension) {
+    setGroupOrder((current) => (current.includes(dimension) ? current : [...current, dimension]));
+    resetPathForOrderChange();
+  }
+
+  function handleGroupDragStart(dimension: PaymentAnalyticsDimension) {
+    setDraggedDimension(dimension);
+  }
+
+  function handleGroupDrop(target: PaymentAnalyticsDimension) {
+    if (!draggedDimension) {
+      return;
+    }
+    moveGroupDimension(groupOrder.indexOf(draggedDimension), groupOrder.indexOf(target));
+    setDraggedDimension(null);
+  }
+
+  function handleGroupClick(group: PaymentAnalyticsGroup) {
+    if (!nextDimension) {
+      return;
+    }
+    setPath((current) => [...current, { dimension: nextDimension, value: group.label }]);
+  }
+
+  function renderMoveIcon(direction: "up" | "down") {
+    return direction === "up" ? (
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+        <path d="M10 4 5.25 8.75h9.5L10 4Z" fill="currentColor" />
+        <path d="M10 4v12" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      </svg>
+    ) : (
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+        <path d="M10 16 14.75 11.25h-9.5L10 16Z" fill="currentColor" />
+        <path d="M10 4v12" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  function renderTrashIcon() {
+    return (
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+        <path d="M7 3.75h6M4.5 6h11" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+        <path d="M7.25 6.25h5.5l-.45 9a1 1 0 0 1-1 .95H8.7a1 1 0 0 1-1-.95l-.45-9Z" stroke="currentColor" strokeWidth="1.75" />
+        <path d="M8.5 9v4.5M11.5 9v4.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  const visibleFinalRows = finalRows ? scopedRows : [];
+
+  return (
+    <section className="space-y-5 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Payment Analytics</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Owner-only revenue overview from payment receipts. Click a bar or donut slice to drill into the next group.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading}
+          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-60"
+        >
+          {loading ? "Refreshing..." : "Refresh payments"}
+        </button>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Revenue in view</div>
+          <div className="mt-2 text-xl font-semibold text-emerald-700">{formatCurrency(totalRevenue)}</div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Payment entries</div>
+          <div className="mt-2 text-xl font-semibold text-slate-900">{formatNumber(scopedRows.length)}</div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current group</div>
+          <div className="mt-2 text-xl font-semibold text-slate-900">
+            {nextDimension ? describePaymentAnalyticsDimension(nextDimension) : "Entries"}
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold text-slate-900">Group order</div>
+            <div className="mt-1 text-xs text-slate-500">Change the order, then click through the chart from left to right.</div>
+          </div>
+          <div className="flex rounded-xl border border-slate-200 bg-white p-1">
+            {(["bar", "donut"] as PaymentAnalyticsChartView[]).map((view) => (
+              <button
+                key={view}
+                type="button"
+                onClick={() => setChartView(view)}
+                className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
+                  chartView === view ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                {view === "bar" ? "Bar chart" : "Donut chart"}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="space-y-3">
+          <div className="grid gap-2 md:grid-cols-2">
+            {groupOrder.map((dimension, index) => (
+              <div
+                key={dimension}
+                draggable
+                onDragStart={() => handleGroupDragStart(dimension)}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={() => handleGroupDrop(dimension)}
+                onDragEnd={() => setDraggedDimension(null)}
+                className={`flex items-center gap-3 rounded-xl border bg-white p-3 shadow-sm transition ${
+                  draggedDimension === dimension ? "border-sky-300 opacity-60" : "border-slate-200"
+                }`}
+              >
+                <span className="flex h-8 w-8 shrink-0 cursor-grab items-center justify-center rounded-lg bg-slate-100 text-sm font-bold text-slate-500 active:cursor-grabbing">
+                  {index + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-semibold text-slate-900">
+                    {describePaymentAnalyticsDimension(dimension)}
+                  </div>
+                  <div className="text-xs text-slate-500">Drag to reorder this grouping step.</div>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => moveGroupDimension(index, index - 1)}
+                    disabled={index === 0}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
+                    aria-label={`Move ${describePaymentAnalyticsDimension(dimension)} up`}
+                    title={`Move ${describePaymentAnalyticsDimension(dimension)} up`}
+                  >
+                    {renderMoveIcon("up")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveGroupDimension(index, index + 1)}
+                    disabled={index === groupOrder.length - 1}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
+                    aria-label={`Move ${describePaymentAnalyticsDimension(dimension)} down`}
+                    title={`Move ${describePaymentAnalyticsDimension(dimension)} down`}
+                  >
+                    {renderMoveIcon("down")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeGroupDimension(dimension)}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                    aria-label={`Remove ${describePaymentAnalyticsDimension(dimension)}`}
+                    title={`Remove ${describePaymentAnalyticsDimension(dimension)}`}
+                  >
+                    {renderTrashIcon()}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          {availableDimensions.length ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Add group</span>
+              {availableDimensions.map((dimension) => (
+                <button
+                  key={dimension.key}
+                  type="button"
+                  onClick={() => addGroupDimension(dimension.key)}
+                  className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-sky-300 hover:bg-sky-50"
+                >
+                  + {dimension.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <button
+          type="button"
+          onClick={() => setPath([])}
+          className={`rounded-full border px-3 py-1.5 font-medium ${
+            path.length ? "border-slate-300 text-slate-700 hover:bg-slate-50" : "border-slate-200 bg-slate-100 text-slate-500"
+          }`}
+        >
+          All receipts
+        </button>
+        {path.map((item, index) => (
+          <button
+            key={`${item.dimension}:${item.value}:${index}`}
+            type="button"
+            onClick={() => setPath(path.slice(0, index + 1))}
+            className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 font-medium text-sky-900 hover:bg-sky-100"
+          >
+            {describePaymentAnalyticsDimension(item.dimension)}: {item.value}
+          </button>
+        ))}
+      </div>
+
+      {!rows.length ? (
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-600">
+          No payment cache is loaded yet. Refresh payments to sync the receipt sheet.
+        </div>
+      ) : finalRows ? (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-base font-semibold text-slate-900">Payment entries</h3>
+            <button
+              type="button"
+              onClick={() => setPath(path.slice(0, -1))}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
+            >
+              Back to chart
+            </button>
+          </div>
+          <div className="max-h-[34rem] overflow-auto rounded-2xl border border-slate-200">
+            <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  {PAYMENT_COMPACT_COLUMNS.map((column) => (
+                    <th key={column} className="whitespace-nowrap px-4 py-3 font-semibold">{column}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 bg-white">
+                {visibleFinalRows.map((row, index) => (
+                  <tr key={`${getPaymentAnalyticsTimestamp(row)}:${index}`} className="align-top">
+                    {PAYMENT_COMPACT_COLUMNS.map((column) => {
+                      const value = getPaymentRowValue(row, column);
+                      return (
+                        <td key={`${column}:${index}`} className="whitespace-nowrap px-4 py-3 text-slate-700">
+                          {column === "SỐ TIỀN" && value ? formatCurrency(parseLooseNumber(value)) : value || "-"}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          {chartView === "bar" ? (
+            <div className="space-y-3">
+              {groups.map((group) => (
+                <button
+                  key={group.key}
+                  type="button"
+                  onClick={() => handleGroupClick(group)}
+                  className="group grid w-full grid-cols-[minmax(7rem,12rem)_1fr] items-center gap-3 text-left"
+                >
+                  <span className="truncate text-sm font-medium text-slate-700" title={group.label}>{group.label}</span>
+                  <span className="relative h-11 overflow-hidden rounded-xl bg-slate-100">
+                    <span
+                      className="absolute inset-y-0 left-0 rounded-xl bg-sky-500 transition-all group-hover:bg-sky-600"
+                      style={{ width: `${Math.max(4, (group.total / maxGroupTotal) * 100)}%` }}
+                    />
+                    <span className="relative z-10 flex h-full items-center justify-between gap-3 px-3 text-sm font-semibold text-slate-900">
+                      <span>{formatCurrency(group.total)}</span>
+                      <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs text-slate-700">{group.count} entries</span>
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="grid gap-5 lg:grid-cols-[22rem_1fr]">
+              <svg viewBox="0 0 240 240" className="mx-auto h-72 w-72 max-w-full" role="img" aria-label="Payment revenue donut chart">
+                <circle cx="120" cy="120" r="78" fill="none" stroke="#e2e8f0" strokeWidth="42" />
+                {groups.map((group, index) => {
+                  const circumference = 2 * Math.PI * 78;
+                  const dash = (group.total / chartTotal) * circumference;
+                  const segmentOffset = donutOffset;
+                  donutOffset += dash;
+                  return (
+                    <circle
+                      key={group.key}
+                      cx="120"
+                      cy="120"
+                      r="78"
+                      fill="none"
+                      stroke={["#0ea5e9", "#10b981", "#f59e0b", "#6366f1", "#ef4444", "#14b8a6", "#64748b"][index % 7]}
+                      strokeWidth="42"
+                      strokeDasharray={`${dash} ${circumference - dash}`}
+                      strokeDashoffset={-segmentOffset}
+                      transform="rotate(-90 120 120)"
+                      className="cursor-pointer opacity-90 hover:opacity-100"
+                      onClick={() => handleGroupClick(group)}
+                    >
+                      <title>{`${group.label}: ${formatCurrency(group.total)}`}</title>
+                    </circle>
+                  );
+                })}
+                <text x="120" y="112" textAnchor="middle" className="fill-slate-500 text-[12px] font-semibold">Revenue</text>
+                <text x="120" y="132" textAnchor="middle" className="fill-slate-900 text-[14px] font-bold">{formatNumber(totalRevenue)}</text>
+              </svg>
+              <div className="grid content-start gap-2 sm:grid-cols-2">
+                {groups.map((group, index) => (
+                  <button
+                    key={group.key}
+                    type="button"
+                    onClick={() => handleGroupClick(group)}
+                    className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-left hover:border-sky-300 hover:bg-sky-50"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="h-3 w-3 rounded-full"
+                        style={{ backgroundColor: ["#0ea5e9", "#10b981", "#f59e0b", "#6366f1", "#ef4444", "#14b8a6", "#64748b"][index % 7] }}
+                      />
+                      <span className="truncate text-sm font-semibold text-slate-900">{group.label}</span>
+                    </div>
+                    <div className="mt-2 text-sm font-semibold text-emerald-700">{formatCurrency(group.total)}</div>
+                    <div className="text-xs text-slate-500">{group.count} payment entries</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
 }
 
 function normalizeBranchLabel(value: string) {
@@ -1418,7 +1917,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [controllerActionFeedback, setControllerActionFeedback] = useState<Record<string, { tone: "success" | "error"; message: string }>>({});
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [supportSubTab, setSupportSubTab] = useState<"messages" | "feedbacks" | "maintenance" | "assistant">("messages");
-  const [clientSubTab, setClientSubTab] = useState<"list" | "details">("list");
+  const [clientSubTab, setClientSubTab] = useState<ClientSubTab>("list");
   const [clientTermTab, setClientTermTab] = useState<"long_term" | "short_term" | "inactive">(
     initialView === "short_term" ? "short_term" : "long_term"
   );
@@ -3369,6 +3868,19 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 {t("clientDetailsTab")}
               </button>
             )}
+            {isOwnerSession ? (
+              <button
+                type="button"
+                onClick={() => setClientSubTab("analytics")}
+                className={`whitespace-nowrap px-6 py-3 text-sm font-bold uppercase tracking-wider transition-all border-b-2 ${
+                  clientSubTab === "analytics"
+                    ? "border-sky-500 text-sky-600"
+                    : "border-transparent text-slate-400 hover:text-slate-600"
+                }`}
+              >
+                Analytics
+              </button>
+            ) : null}
           </div>
 
           {clientSubTab === "list" ? (
@@ -4270,13 +4782,19 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
                 {stConfig?.updatedAt && stConfig.updatedAt !== new Date(0).toISOString() && (
                   <p className="text-xs text-slate-400 text-right">
-                    Last updated {new Date(stConfig.updatedAt).toLocaleString()} by {stConfig.updatedBy}
+                    Last updated {formatCozoroDateTime(stConfig.updatedAt)} by {stConfig.updatedBy}
                   </p>
                 )}
               </section>
             );
           })()}
           </div>
+        ) : clientSubTab === "analytics" && isOwnerSession ? (
+          <PaymentAnalyticsDashboard
+            rows={paymentPurposeRows}
+            loading={loading}
+            onRefresh={() => void loadPaymentPurposeRows()}
+          />
         ) : (
           <div ref={managerClientWorkspaceRef} className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
             {false ? <section /> : null}
@@ -4316,8 +4834,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         <div>Bed: {item.bedNumber ?? "-"}</div>
                         <div>Start: {item.contractStartDate || "-"}</div>
                         <div>End: {item.contractEndDate || "-"}</div>
-                        <div>Signed: {item.clientSignatureTimestamp ? new Date(item.clientSignatureTimestamp).toLocaleString() : "-"}</div>
-                        <div>Submitted: {new Date(item.submittedAt).toLocaleString()}</div>
+                        <div>Signed: {item.clientSignatureTimestamp ? formatCozoroDateTime(item.clientSignatureTimestamp) : "-"}</div>
+                        <div>Submitted: {formatCozoroDateTime(item.submittedAt)}</div>
                       </div>
                       <div className="mt-4 flex flex-wrap gap-2">
                         <button
@@ -4482,9 +5000,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 {(() => {
                   const ps = derivePaymentPlanSummary(selectedClient.row ?? {}, rentPaidStatus);
                   const expiryStr = ps.packageExpiry
-                    ? ps.packageExpiry.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
+                    ? formatCozoroDate(ps.packageExpiry, { day: "2-digit", month: "short", year: "numeric" })
                     : null;
-                  const nextStr = ps.nextPaymentDate.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+                  const nextStr = formatCozoroDate(ps.nextPaymentDate, { day: "2-digit", month: "short", year: "numeric" });
                   return (
                     <div className={`rounded-2xl border p-4 ${ps.isDue ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-slate-50"}`}>
                       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -4751,14 +5269,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             {terminationStatus === "loading"
                               ? "Loading…"
                               : checkedOut
-                                ? `Checked out — ${new Date((terminationStatus as { checkOut: { submittedAt: string } }).checkOut.submittedAt).toLocaleDateString()}`
+                                ? `Checked out — ${formatCozoroDate((terminationStatus as { checkOut: { submittedAt: string } }).checkOut.submittedAt)}`
                                 : isTerminated
                                   ? "Terminated — check-out pending"
                                   : "Active"}
                           </div>
                           {isTerminated && !checkedOut && (terminationStatus as { terminatedAt: string }).terminatedAt && (
                             <div className="mt-0.5 text-xs text-rose-600">
-                              Terminated {new Date((terminationStatus as { terminatedAt: string }).terminatedAt).toLocaleDateString()}
+                              Terminated {formatCozoroDate((terminationStatus as { terminatedAt: string }).terminatedAt)}
                             </div>
                           )}
                         </div>
@@ -5174,8 +5692,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             </label>
                             {(prepaidPkgBilling?.lastAppNotifyAt || prepaidPkgBilling?.lastEmailNotifyAt) && (
                               <p className="text-xs text-slate-500">
-                                Last notify — app: {prepaidPkgBilling?.lastAppNotifyAt ? new Date(prepaidPkgBilling.lastAppNotifyAt).toLocaleString() : "—"} · email:{" "}
-                                {prepaidPkgBilling?.lastEmailNotifyAt ? new Date(prepaidPkgBilling.lastEmailNotifyAt).toLocaleString() : "—"}
+                                Last notify — app: {prepaidPkgBilling?.lastAppNotifyAt ? formatCozoroDateTime(prepaidPkgBilling.lastAppNotifyAt) : "—"} · email:{" "}
+                                {prepaidPkgBilling?.lastEmailNotifyAt ? formatCozoroDateTime(prepaidPkgBilling.lastEmailNotifyAt) : "—"}
                               </p>
                             )}
                           </div>
@@ -5448,7 +5966,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                   }`
                                 : `Coins exchanged for this bill: ${rentCoinRedeemInfo.coins.toLocaleString()} coins (≈ ${rentCoinRedeemInfo.valueVnd.toLocaleString()} VND)${
                                     rentCoinRedeemInfo.at
-                                      ? ` — ${new Date(rentCoinRedeemInfo.at).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" })}`
+                                      ? ` — ${formatCozoroDateTime(rentCoinRedeemInfo.at)}`
                                       : ""
                                   }`}
                             </p>
