@@ -700,6 +700,24 @@ function summarizeFines(entries: FineEntry[], t: (key: string, fallback?: string
   ];
 }
 
+function summarizeFinesCorrected(entries: FineEntry[], t: (key: string, fallback?: string) => string): StatSummaryItem[] {
+  const unpaidEntries = entries.filter((entry) => entry.coinPayment?.isPaid !== true);
+  const unpaidFineValue = unpaidEntries.reduce(
+    (sum, entry) => sum + parseLooseNumber(findRowValue(entry.row, ["chiphi"]) || findRowValue(entry.row, ["amount"])),
+    0
+  );
+  const nextDue = unpaidEntries
+    .filter((entry) => entry.parsedDueDate)
+    .sort((left, right) => new Date(left.parsedDueDate ?? "").getTime() - new Date(right.parsedDueDate ?? "").getTime())[0];
+
+  return [
+    { label: t("fineCount", "Fine count"), value: formatNumber(entries.length) },
+    { label: t("unpaidFines", "Unpaid fines"), value: formatNumber(unpaidEntries.length), tone: unpaidEntries.length > 0 ? "warning" : "default" },
+    { label: t("totalFineValue", "Unpaid fine value"), value: formatCurrency(unpaidFineValue) },
+    { label: t("nearestDueDate", "Nearest due date"), value: nextDue?.parsedDueDate ? formatDateTime(nextDue.parsedDueDate) : t("noDueDate", "No due date"), tone: nextDue?.parsedDueDate ? "warning" : "default" }
+  ];
+}
+
 function getSummaryItems(tab: StatsTab, workspace: WorkspacePayload | null, t: (key: string, fallback?: string) => string): StatSummaryItem[] {
   if (!workspace) {
     return [];
@@ -714,7 +732,7 @@ function getSummaryItems(tab: StatsTab, workspace: WorkspacePayload | null, t: (
   if (tab === "payments") {
     return summarizePayments(workspace.stats.payments, t);
   }
-  return summarizeFines(workspace.stats.fines, t);
+  return summarizeFinesCorrected(workspace.stats.fines, t);
 }
 
 function normalizeBranchLabel(value: string) {

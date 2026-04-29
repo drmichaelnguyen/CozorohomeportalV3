@@ -607,7 +607,7 @@ const translations: Record<string, { en: string; vi: string }> = {
   noPaymentsYet: { en: "No payments yet", vi: "Chưa có thanh toán" },
   fineCount: { en: "Fine count", vi: "Số lượt phạt" },
   unpaidFines: { en: "Unpaid fines", vi: "Tiền phạt chưa đóng" },
-  totalFineValue: { en: "Total fine value", vi: "Tổng giá trị phạt" },
+  totalFineValue: { en: "Unpaid fine value", vi: "Giá trị phạt chưa đóng" },
   nearestDueDate: { en: "Nearest due date", vi: "Hạn đóng gần nhất" },
   noDueDate: { en: "No due date", vi: "Không có hạn đóng" },
   unassigned: { en: "Unassigned", vi: "Chưa phân bổ" },
