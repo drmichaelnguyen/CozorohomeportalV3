@@ -196,6 +196,7 @@ type PricingSettingsSectionKey =
 type ManagerSettingsMainSection = "pricing" | "resident_guides" | "tools";
 type PricingSettingsSubTab = "long_term" | "short_term" | "referral" | "staff";
 type ClientSubTab = "list" | "details" | "analytics";
+type ClientPaymentTableColumn = "name" | "paid" | "totalPaid" | "plan" | "nextPayment";
 type PaymentAnalyticsChartView = "bar" | "donut";
 type PaymentAnalyticsDimension = "all" | "receiver" | "branch" | "category" | "bed" | "year" | "month";
 type PaymentAnalyticsPathItem = { dimension: PaymentAnalyticsDimension; value: string };
@@ -205,6 +206,14 @@ type PaymentAnalyticsGroup = {
   total: number;
   count: number;
   rows: Record<string, string>[];
+};
+type ClientPaymentTableRow = {
+  client: ManagerClientRecord;
+  isPaid: boolean;
+  totalPaid: number;
+  planLabel: string;
+  nextPaymentDate: Date;
+  nextPaymentLabel: string;
 };
 
 function CollapsibleSettingsSection({
@@ -613,6 +622,14 @@ function getPaymentAnalyticsAmount(row: Record<string, string>) {
   );
 }
 
+function getPaymentAnalyticsEmail(row: Record<string, string>) {
+  return (
+    String(row.EMAIL ?? row["Äá»‹a chá»‰ email"] ?? "").trim() ||
+    findRowValue(row, ["diachiemail"]) ||
+    findRowValue(row, ["email"])
+  ).toLowerCase();
+}
+
 function filterPaymentRowsByPath(rows: Record<string, string>[], path: PaymentAnalyticsPathItem[]) {
   return rows.filter((row) =>
     path.every((item) => getPaymentAnalyticsField(row, item.dimension) === item.value)
@@ -642,6 +659,14 @@ function describePaymentAnalyticsDimension(dimension: PaymentAnalyticsDimension)
 
 function parseLooseDate(value: string | null | undefined): Date | null {
   return parseVietnamDate(String(value ?? ""));
+}
+
+function isSameCalendarMonth(date: Date, reference: Date) {
+  return date.getFullYear() === reference.getFullYear() && date.getMonth() === reference.getMonth();
+}
+
+function formatShortDate(date: Date) {
+  return date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
 function getAutomaticFeatureLockStatus(client: ManagerClientRecord | null) {
@@ -1056,10 +1081,12 @@ function PaymentAnalyticsDashboard({
                   key={group.key}
                   type="button"
                   onClick={() => handleGroupClick(group)}
-                  className="group grid w-full grid-cols-[minmax(7rem,12rem)_1fr] items-center gap-3 text-left"
+                  className="group w-full text-left"
                 >
-                  <span className="truncate text-sm font-medium text-slate-700" title={group.label}>{group.label}</span>
-                  <span className="relative h-11 overflow-hidden rounded-xl bg-slate-100">
+                  <span className="mb-1 block max-w-full truncate text-[10px] font-semibold uppercase leading-tight tracking-wide text-slate-500 sm:text-xs" title={group.label}>
+                    {group.label}
+                  </span>
+                  <span className="relative block h-11 overflow-hidden rounded-xl bg-slate-100">
                     <span
                       className="absolute inset-y-0 left-0 rounded-xl bg-sky-500 transition-all group-hover:bg-sky-600"
                       style={{ width: `${Math.max(4, (group.total / maxGroupTotal) * 100)}%` }}
@@ -1774,6 +1801,17 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   // New subtab states
   const [schedulingTab, setSchedulingTab] = useState<"cleaning" | "laundry">("cleaning");
   const [clientListMode, setClientListMode] = useState<"diagram" | "table">("diagram");
+  const [clientPaymentTableFilters, setClientPaymentTableFilters] = useState<Record<ClientPaymentTableColumn, string>>({
+    name: "",
+    paid: "",
+    totalPaid: "",
+    plan: "",
+    nextPayment: ""
+  });
+  const [clientPaymentTableSort, setClientPaymentTableSort] = useState<{
+    column: ClientPaymentTableColumn;
+    direction: "asc" | "desc";
+  }>({ column: "name", direction: "asc" });
   /** Long-term diagram: quick sheet after tapping an occupied bed */
   const [diagramBedQuickSheet, setDiagramBedQuickSheet] = useState<{
     client: ManagerClientRecord;
@@ -2163,6 +2201,86 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }
     return availableOptions.filter((option) => option.toLowerCase().includes(keyword));
   }, [paymentPurposeInput, paymentPurposeSelections, paymentPurposeSuggestions]);
+  const currentMonthPaidTotalsByEmail = useMemo(() => {
+    const now = new Date();
+    const totals: Record<string, number> = {};
+    for (const row of paymentPurposeRows) {
+      const email = getPaymentAnalyticsEmail(row);
+      if (!email) {
+        continue;
+      }
+      const paidAt = parseLooseDate(getPaymentAnalyticsTimestamp(row));
+      if (!paidAt || !isSameCalendarMonth(paidAt, now)) {
+        continue;
+      }
+      totals[email] = (totals[email] ?? 0) + getPaymentAnalyticsAmount(row);
+    }
+    return totals;
+  }, [paymentPurposeRows]);
+  const clientPaymentTableColumns: Array<{ key: ClientPaymentTableColumn; label: string; placeholder: string }> = [
+    { key: "name", label: "Name", placeholder: "Search name" },
+    { key: "paid", label: "Paid?", placeholder: "Paid / not paid" },
+    { key: "totalPaid", label: "Total paid this month", placeholder: "Amount" },
+    { key: "plan", label: "Payment plan", placeholder: "Monthly / 3-month" },
+    { key: "nextPayment", label: "Next payment date", placeholder: "Date" }
+  ];
+  const clientPaymentTableRows = useMemo(() => {
+    const cellText = (row: ClientPaymentTableRow, column: ClientPaymentTableColumn) => {
+      if (column === "name") return `${row.client.name} ${row.client.email}`;
+      if (column === "paid") return row.isPaid ? "paid yes" : "not paid unpaid no";
+      if (column === "totalPaid") return `${row.totalPaid} ${formatCurrency(row.totalPaid)}`;
+      if (column === "plan") return row.planLabel;
+      return row.nextPaymentLabel;
+    };
+    const sortValue = (row: ClientPaymentTableRow, column: ClientPaymentTableColumn) => {
+      if (column === "name") return (row.client.name || row.client.email).toLowerCase();
+      if (column === "paid") return row.isPaid ? 1 : 0;
+      if (column === "totalPaid") return row.totalPaid;
+      if (column === "plan") return row.planLabel.toLowerCase();
+      return row.nextPaymentDate.getTime();
+    };
+
+    return filteredClients
+      .filter((client) => !selectedBranch || normalizeBranchLabel(client.branch) === selectedBranch)
+      .map((client): ClientPaymentTableRow => {
+        const normalizedClientEmail = client.email.trim().toLowerCase();
+        const isPaid = monthlyRentPaidByEmail[normalizedClientEmail] === true;
+        const plan = derivePaymentPlanSummary(client.row ?? {}, isPaid);
+        return {
+          client,
+          isPaid,
+          totalPaid: currentMonthPaidTotalsByEmail[normalizedClientEmail] ?? 0,
+          planLabel: plan.planLabel,
+          nextPaymentDate: plan.nextPaymentDate,
+          nextPaymentLabel: formatShortDate(plan.nextPaymentDate)
+        };
+      })
+      .filter((row) =>
+        clientPaymentTableColumns.every((column) => {
+          const filter = clientPaymentTableFilters[column.key].trim().toLowerCase();
+          return !filter || cellText(row, column.key).toLowerCase().includes(filter);
+        })
+      )
+      .sort((left, right) => {
+        const leftValue = sortValue(left, clientPaymentTableSort.column);
+        const rightValue = sortValue(right, clientPaymentTableSort.column);
+        let result = 0;
+        if (typeof leftValue === "number" && typeof rightValue === "number") {
+          result = leftValue - rightValue;
+        } else {
+          result = String(leftValue).localeCompare(String(rightValue), undefined, { numeric: true, sensitivity: "base" });
+        }
+        return clientPaymentTableSort.direction === "asc" ? result : -result;
+      });
+  }, [
+    clientPaymentTableColumns,
+    clientPaymentTableFilters,
+    clientPaymentTableSort,
+    currentMonthPaidTotalsByEmail,
+    filteredClients,
+    monthlyRentPaidByEmail,
+    selectedBranch
+  ]);
   const selectedBranchRooms = quickNav.find((entry) => entry.branch === selectedBranch)?.rooms ?? [];
   const branchOverviewGroups = useMemo(() => {
     const branchLayouts =
@@ -4029,17 +4147,45 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 <table className="min-w-full divide-y divide-slate-200">
                   <thead className="bg-slate-50">
                     <tr>
-                      {[t("tableHeaderName"), t("branch"), t("roomLabel"), t("bedLabel"), t("tableHeaderContract"), t("tableHeaderPhone"), t("coins"), t("tableHeaderStatus")].map((header) => (
-                        <th key={header} className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
-                          {header}
+                      {clientPaymentTableColumns.map((column) => (
+                        <th key={column.key} className="min-w-[11rem] px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setClientPaymentTableSort((current) =>
+                                current.column === column.key
+                                  ? { column: column.key, direction: current.direction === "asc" ? "desc" : "asc" }
+                                  : { column: column.key, direction: "asc" }
+                              )
+                            }
+                            className="flex w-full items-center justify-between gap-2 text-left font-semibold uppercase tracking-wider text-slate-500"
+                          >
+                            <span>{column.label}</span>
+                            <span className="text-[10px] text-slate-400">
+                              {clientPaymentTableSort.column === column.key ? (clientPaymentTableSort.direction === "asc" ? "^" : "v") : "-"}
+                            </span>
+                          </button>
+                          <input
+                            value={clientPaymentTableFilters[column.key]}
+                            onChange={(event) =>
+                              setClientPaymentTableFilters((current) => ({
+                                ...current,
+                                [column.key]: event.target.value
+                              }))
+                            }
+                            onClick={(event) => event.stopPropagation()}
+                            placeholder={column.placeholder}
+                            className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none transition focus:border-sky-400 focus:ring-1 focus:ring-sky-200"
+                          />
                         </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 bg-white">
-                    {filteredClients
-                      .filter(c => !selectedBranch || normalizeBranchLabel(c.branch) === selectedBranch)
-                      .map((client) => (
+                    {clientPaymentTableRows.length ? (
+                      clientPaymentTableRows.map((row) => {
+                        const client = row.client;
+                        return (
                         <tr
                           key={client.maHd}
                           onClick={() => {
@@ -4060,17 +4206,28 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               ) : null}
                             </span>
                           </td>
-                          <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{client.branch}</td>
-                          <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{resolveClientRoom(client)}</td>
-                          <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{client.bed}</td>
-                          <td className="whitespace-nowrap px-6 py-4 text-xs font-mono text-slate-500">{client.maHd}</td>
-                          <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{getClientPhone(client)}</td>
-                          <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-emerald-600">{client.currentCoins}</td>
                           <td className="whitespace-nowrap px-6 py-4 text-xs">
-                             <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700 font-medium">{t("activeStatus")}</span>
+                            <span className={`rounded-full px-2.5 py-1 font-semibold ${
+                              row.isPaid ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                            }`}>
+                              {row.isPaid ? "Paid" : "Not paid"}
+                            </span>
                           </td>
+                          <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-slate-800">
+                            {formatCurrency(row.totalPaid)}
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{row.planLabel}</td>
+                          <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{row.nextPaymentLabel}</td>
                         </tr>
-                      ))}
+                        );
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan={clientPaymentTableColumns.length} className="px-6 py-8 text-center text-sm text-slate-500">
+                          No clients match the current table filters.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
