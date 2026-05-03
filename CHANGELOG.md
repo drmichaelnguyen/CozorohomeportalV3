@@ -1,5 +1,9 @@
 # Changelog
 
+## [3.8.36] - 2026-05-03
+- **Contract extension (resident)**: Residents can choose a **custom contract end date** (within 36 months of the new term start) in addition to 1/3/6/12-month presets. Submissions send `newContractEndDate` (`dd/mm/yyyy`) to the API; sheet duration and coin tiers follow the same rules as before (`extendClientContract` in `google-sheets.ts`).
+- **Contract approvals queue (manager workspace)**: **Owners**, **app admins**, and **managers** can open the queue; only **owners** and **app admins** may approve or reject. The API returns **pending** and **rejected** items (approved rows are omitted). Extension requests include a snapshot (previous end, new start/end, branch, bed, Mã HĐ, resident name) so staff see full details before approval. Rejected items remain visible with reason and reviewer.
+
 ## [3.8.34] - 2026-04-30
 - **Manager client payment table**: Reworked the client table into a payment-focused view with per-column filters, sortable headers, paid status, current-month payment totals, payment plan labels, and next payment dates.
 

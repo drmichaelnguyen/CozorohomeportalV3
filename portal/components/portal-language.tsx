@@ -827,6 +827,16 @@ const translations: Record<string, { en: string; vi: string }> = {
   },
   extendNow: { en: "Extend Now", vi: "Gia hạn ngay" },
   selectExtensionDuration: { en: "Select Duration", vi: "Chọn thời hạn" },
+  extensionCustomEndDate: { en: "Or choose contract end date", vi: "Hoặc chọn ngày kết thúc hợp đồng" },
+  extensionEndDatePicker: { en: "Contract end date", vi: "Ngày kết thúc hợp đồng" },
+  extensionSummaryLine: {
+    en: "New term ends on {date} (~{months} mo).",
+    vi: "Kỳ mới kết thúc vào {date} (~{months} tháng)."
+  },
+  extensionInvalidDate: {
+    en: "Please choose an end date on or after your new term start, within 36 months.",
+    vi: "Vui lòng chọn ngày kết thúc từ ngày bắt đầu kỳ mới trở đi, tối đa 36 tháng."
+  },
   extensionUnderOneMonth: { en: "< 1 month", vi: "Dưới 1 tháng" },
   hostelBooking: { en: "Hostel booking", vi: "Đặt phòng hostel" },
   extensionDuration1m: { en: "1 Month", vi: "1 tháng" },
@@ -862,8 +872,8 @@ const translations: Record<string, { en: string; vi: string }> = {
   clearSignature: { en: "Clear", vi: "Xóa" },
   signHere: { en: "Sign here...", vi: "Ký tại đây..." },
   contractAgreeTermsFormal: {
-    en: "By signing this, I agree to extend my contract by the selected duration and explicitly accept the current internal rules and policies of Cozoro Home.",
-    vi: "Bằng việc ký tên, tôi đồng ý gia hạn hợp đồng theo thời hạn đã chọn và chấp nhận rõ ràng các nội quy và chính sách nội bộ hiện hành của Cozoro Home."
+    en: "By signing this, I agree to extend my contract until the selected end date and explicitly accept the current internal rules and policies of Cozoro Home.",
+    vi: "Bằng việc ký tên, tôi đồng ý gia hạn hợp đồng đến ngày kết thúc đã chọn và chấp nhận rõ ràng các nội quy và chính sách nội bộ hiện hành của Cozoro Home."
   },
   confirmExtension: { en: "Confirm & Sign Extension", vi: "Xác nhận & ký gia hạn" },
   processing: { en: "Processing...", vi: "Đang xử lý..." },

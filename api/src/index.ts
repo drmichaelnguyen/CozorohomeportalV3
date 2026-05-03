@@ -126,8 +126,12 @@ import {
   syncMaintenanceFromSheet,
   updateMaintenanceTicket,
   extendClientContract,
+  resolveContractExtensionSubmission,
   CLIENT_BED_COLUMN,
   CLIENT_BRANCH_COLUMN,
+  CLIENT_CONTRACT_END_COLUMN,
+  CLIENT_NAME_COLUMN,
+  CONTRACT_CODE_COLUMN,
   normalizeClientBranch,
   MAINTENANCE_STATUS_COLUMN,
   MAINTENANCE_MECHANIC_EMAIL_COLUMN,
@@ -311,6 +315,14 @@ type PendingContractApproval = {
   extension?: {
     email: string;
     extensionMonths: number;
+    newContractEndDate?: string;
+    newContractStartDate?: string;
+    /** Sheet contract end date before this extension (dd/mm/yyyy). */
+    previousContractEndDate?: string;
+    branchId?: string;
+    bedNumber?: number | null;
+    residentName?: string;
+    contractCode?: string;
   };
 };
 type ContractApprovalsFile = { approvals: PendingContractApproval[] };
@@ -333,6 +345,7 @@ async function writeContractApprovals(file: ContractApprovalsFile): Promise<void
 function publicApprovalSummary(item: PendingContractApproval) {
   const registration = (item.registration ?? {}) as Record<string, any>;
   const extension = (item.extension ?? {}) as Record<string, any>;
+  const isExtension = item.type === "extension";
   return {
     id: item.id,
     type: item.type,
@@ -342,13 +355,27 @@ function publicApprovalSummary(item: PendingContractApproval) {
     reviewedBy: item.reviewedBy,
     rejectionReason: item.rejectionReason,
     clientSignatureTimestamp: item.clientSignatureTimestamp,
-    fullName: String(registration.fullName ?? ""),
+    fullName: isExtension
+      ? String(extension.residentName ?? "").trim() || String(registration.fullName ?? "")
+      : String(registration.fullName ?? ""),
     email: String(registration.email ?? extension.email ?? ""),
-    branchId: String(registration.branchId ?? ""),
-    bedNumber: registration.bedNumber ?? null,
-    contractMonths: registration.contractMonths ?? extension.extensionMonths ?? null,
-    contractStartDate: String(registration.contractStartDate ?? ""),
-    contractEndDate: String(registration.contractEndDate ?? "")
+    branchId: isExtension
+      ? String(extension.branchId ?? "")
+      : String(registration.branchId ?? ""),
+    bedNumber: isExtension ? (extension.bedNumber ?? null) : (registration.bedNumber ?? null),
+    contractMonths: isExtension
+      ? (extension.extensionMonths ?? null)
+      : (registration.contractMonths ?? null),
+    contractStartDate: isExtension
+      ? String(extension.newContractStartDate ?? "")
+      : String(registration.contractStartDate ?? ""),
+    contractEndDate: isExtension
+      ? String(extension.newContractEndDate ?? "")
+      : String(registration.contractEndDate ?? ""),
+    previousContractEndDate: isExtension ? String(extension.previousContractEndDate ?? "") : "",
+    contractCode: isExtension
+      ? String(extension.contractCode ?? "")
+      : String(registration.contractCode ?? registration.maHd ?? "")
   };
 }
 const SENSITIVE_CLIENT_FIELD_PATTERNS = [
@@ -1292,12 +1319,19 @@ app.post("/clients/sync", async (_request, response) => {
 });
 
 app.post("/clients/contracts/extend", async (request, response) => {
-  const parsed = z.object({
-    email: z.string().email(),
-    extensionMonths: z.number().int().positive(),
-    clientSignatureDataUrl: z.string().trim().optional(),
-    clientSignatureTimestamp: z.string().trim().optional()
-  }).safeParse(request.body);
+  const parsed = z
+    .object({
+      email: z.string().email(),
+      extensionMonths: z.number().int().positive().max(36).optional(),
+      newContractEndDate: z.string().trim().optional(),
+      clientSignatureDataUrl: z.string().trim().optional(),
+      clientSignatureTimestamp: z.string().trim().optional()
+    })
+    .refine((d) => Boolean(d.newContractEndDate) || d.extensionMonths != null, {
+      message: "Provide newContractEndDate or extensionMonths",
+      path: ["newContractEndDate"]
+    })
+    .safeParse(request.body);
 
   if (!parsed.success) {
     return response.status(400).json({ error: "Invalid contract extension payload" });
@@ -1308,8 +1342,21 @@ app.post("/clients/contracts/extend", async (request, response) => {
     if (!active) {
       return response.status(400).json({ error: "Could not find an active client record to extend." });
     }
+    const oldEnd = String(active[CLIENT_CONTRACT_END_COLUMN] ?? "");
+    let resolved: { newContractEndDate: string; newContractStartDate: string; extensionMonths: number };
+    try {
+      resolved = resolveContractExtensionSubmission(oldEnd, {
+        extensionMonths: parsed.data.extensionMonths,
+        newContractEndDate: parsed.data.newContractEndDate
+      });
+    } catch (err) {
+      return response.status(400).json({
+        error: err instanceof Error ? err.message : "Invalid extension dates."
+      });
+    }
+
     const item = await runWithWriteGuard({
-      key: createWriteGuardKey("/clients/contracts/extend", parsed.data),
+      key: createWriteGuardKey("/clients/contracts/extend", { ...parsed.data, ...resolved }),
       duplicateMessage: "This contract extension request was just submitted. Please wait a few seconds.",
       cooldownMs: 15000,
       action: async () => {
@@ -1321,6 +1368,8 @@ app.post("/clients/contracts/extend", async (request, response) => {
             entry.extension?.email.trim().toLowerCase() === parsed.data.email.trim().toLowerCase()
         );
         if (duplicate) return duplicate;
+        const branchId = normalizeClientBranch(String(active[CLIENT_BRANCH_COLUMN] ?? ""));
+        const bedParsed = Number.parseInt(String(active[CLIENT_BED_COLUMN] ?? "").replace(/[^0-9]/g, ""), 10);
         const next: PendingContractApproval = {
           id: randomUUID(),
           type: "extension",
@@ -1330,7 +1379,14 @@ app.post("/clients/contracts/extend", async (request, response) => {
           clientSignatureTimestamp: parsed.data.clientSignatureTimestamp,
           extension: {
             email: parsed.data.email.trim().toLowerCase(),
-            extensionMonths: parsed.data.extensionMonths
+            extensionMonths: resolved.extensionMonths,
+            newContractEndDate: resolved.newContractEndDate,
+            newContractStartDate: resolved.newContractStartDate,
+            previousContractEndDate: oldEnd.trim(),
+            branchId,
+            bedNumber: Number.isFinite(bedParsed) ? bedParsed : null,
+            residentName: String(active[CLIENT_NAME_COLUMN] ?? "").trim(),
+            contractCode: String(active[CONTRACT_CODE_COLUMN] ?? "").trim()
           }
         };
         file.approvals.unshift(next);
@@ -6717,10 +6773,11 @@ app.post("/api/public/register", async (request, response) => {
 app.get("/manager/contract-approvals", async (request, response) => {
   const actorEmail = String(request.query.actorEmail ?? "").trim();
   try {
-    await requirePortalRole(actorEmail, ["owner", "app_admin"], "Only owners can review contract approvals.");
+    await requirePortalRole(actorEmail, ["owner", "app_admin", "manager"], "Only staff can view contract approvals.");
     const file = await readContractApprovals();
+    const visible = file.approvals.filter((a) => a.status === "pending" || a.status === "rejected");
     return response.json({
-      approvals: file.approvals.map(publicApprovalSummary)
+      approvals: visible.map(publicApprovalSummary)
     });
   } catch (error) {
     return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to load contract approvals" });
@@ -6812,7 +6869,11 @@ app.post("/manager/contract-approvals/:id/approve", async (request, response) =>
           listPricing = { listMonthlyPriceVnd: monthlyPrice };
         }
       }
-      await extendClientContract(extension.email, extension.extensionMonths, listPricing, {
+      const term =
+        extension.newContractEndDate?.trim().length
+          ? { newContractEndDate: extension.newContractEndDate.trim() }
+          : { extensionMonths: extension.extensionMonths };
+      await extendClientContract(extension.email, term, listPricing, {
         clientSignatureDataUrl: item.clientSignatureDataUrl,
         clientSignatureTimestamp: item.clientSignatureTimestamp,
         ownerApprovedBy: parsed.data.actorEmail.trim().toLowerCase(),

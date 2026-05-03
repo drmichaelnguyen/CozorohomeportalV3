@@ -4,6 +4,60 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 
+const EXTENSION_MAX_MONTHS = 36;
+
+function parsePortalEndDateStr(endDateStr: string): Date | null {
+  if (!endDateStr) return null;
+  let end: Date;
+  if (endDateStr.includes("/")) {
+    const [d, m, y] = endDateStr.split("/");
+    end = new Date(Number(y), Number(m) - 1, Number(d));
+  } else {
+    end = new Date(endDateStr);
+  }
+  return Number.isNaN(end.getTime()) ? null : end;
+}
+
+function addCalendarMonthsClamped(d: Date, months: number): Date {
+  const out = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  out.setMonth(out.getMonth() + months);
+  return out;
+}
+
+function formatDdMmYyyy(d: Date): string {
+  return `${d.getDate().toString().padStart(2, "0")}/${(d.getMonth() + 1).toString().padStart(2, "0")}/${d.getFullYear()}`;
+}
+
+function toIsoDateOnly(d: Date): string {
+  const y = d.getFullYear();
+  const m = (d.getMonth() + 1).toString().padStart(2, "0");
+  const day = d.getDate().toString().padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function parseIsoLocalYmd(ymd: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd.trim());
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const dt = new Date(y, mo - 1, d);
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+  return dt;
+}
+
+function compareLocalDay(a: Date, b: Date): number {
+  const da = new Date(a.getFullYear(), a.getMonth(), a.getDate()).getTime();
+  const db = new Date(b.getFullYear(), b.getMonth(), b.getDate()).getTime();
+  return da - db;
+}
+
+function calendarMonthsBetween(newStart: Date, newEnd: Date): number {
+  let months = (newEnd.getFullYear() - newStart.getFullYear()) * 12 + (newEnd.getMonth() - newStart.getMonth());
+  if (newEnd.getDate() < newStart.getDate()) months -= 1;
+  return Math.max(1, months);
+}
+
 export function ContractExtension({
   email,
   endDateStr,
@@ -18,7 +72,8 @@ export function ContractExtension({
   const { t, language } = usePortalLanguage();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [duration, setDuration] = useState<number | "hostel">(6);
+  const [duration, setDuration] = useState<number | "hostel" | "custom">(6);
+  const [customEndYmd, setCustomEndYmd] = useState("");
   const [agreed, setAgreed] = useState(false);
   const [fullName, setFullName] = useState("");
   const [isExpanded, setIsExpanded] = useState(forceExpand);
@@ -82,23 +137,38 @@ export function ContractExtension({
   };
 
   const isNearingEnd = useMemo(() => {
-    if (!endDateStr) return false;
-    let end: Date;
-    if (endDateStr.includes("/")) {
-      const [d, m, y] = endDateStr.split("/");
-      end = new Date(Number(y), Number(m) - 1, Number(d));
-    } else {
-      end = new Date(endDateStr);
-    }
-    
-    if (Number.isNaN(end.getTime())) return false;
-    
+    const end = parsePortalEndDateStr(endDateStr);
+    if (!end) return false;
     const now = new Date();
     const diffTime = end.getTime() - now.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    
-    return diffDays <= 30; // Show if nearing end or already expired
+    return diffDays <= 30;
   }, [endDateStr]);
+
+  const termBounds = useMemo(() => {
+    const oldEnd = parsePortalEndDateStr(endDateStr);
+    if (!oldEnd) return null;
+    const newStart = new Date(oldEnd.getFullYear(), oldEnd.getMonth(), oldEnd.getDate());
+    newStart.setDate(newStart.getDate() + 1);
+    const maxEnd = addCalendarMonthsClamped(newStart, EXTENSION_MAX_MONTHS);
+    return { oldEnd, newStart, maxEnd };
+  }, [endDateStr]);
+
+  const effectiveEndDate = useMemo(() => {
+    if (!termBounds || duration === "hostel") return null;
+    if (duration === "custom") {
+      return customEndYmd ? parseIsoLocalYmd(customEndYmd) : null;
+    }
+    if (typeof duration === "number") {
+      return addCalendarMonthsClamped(termBounds.oldEnd, duration);
+    }
+    return null;
+  }, [termBounds, duration, customEndYmd]);
+
+  const effectiveExtensionMonths = useMemo(() => {
+    if (!termBounds || !effectiveEndDate) return 0;
+    return calendarMonthsBetween(termBounds.newStart, effectiveEndDate);
+  }, [termBounds, effectiveEndDate]);
 
   // Countdown logic for success state - MUST BE ABOVE EARLY RETURN
   useEffect(() => {
@@ -117,14 +187,27 @@ export function ContractExtension({
     return null;
   }
 
-  // Short-stay surcharge rate for the selected extension duration
-  const extensionSurchargeRate = typeof duration === "number"
-    ? (duration >= 1 && duration <= 3 ? 0.12 : duration >= 4 && duration <= 5 ? 0.08 : 0)
-    : 0;
+  const extensionSurchargeRate =
+    duration !== "hostel" && effectiveExtensionMonths >= 1 && effectiveExtensionMonths <= 3
+      ? 0.12
+      : duration !== "hostel" && effectiveExtensionMonths >= 4 && effectiveExtensionMonths <= 5
+        ? 0.08
+        : 0;
 
   async function handleExtend() {
     if (duration === "hostel") {
       window.open("https://hostel.cozorohome.com", "_blank");
+      return;
+    }
+    if (!termBounds || !effectiveEndDate) {
+      setError(t("extensionInvalidDate"));
+      return;
+    }
+    if (
+      compareLocalDay(effectiveEndDate, termBounds.newStart) < 0 ||
+      compareLocalDay(effectiveEndDate, termBounds.maxEnd) > 0
+    ) {
+      setError(t("extensionInvalidDate"));
       return;
     }
     if (!agreed || !hasSignature || !fullName.trim()) {
@@ -142,7 +225,7 @@ export function ContractExtension({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email,
-          extensionMonths: duration,
+          newContractEndDate: formatDdMmYyyy(effectiveEndDate),
           clientSignatureDataUrl: canvasRef.current?.toDataURL("image/png"),
           clientSignatureTimestamp: signatureTimestamp
         })
@@ -260,7 +343,10 @@ export function ContractExtension({
                     key={opt.months}
                     type="button"
                     disabled={loading}
-                    onClick={() => setDuration(opt.months)}
+                    onClick={() => {
+                      setDuration(opt.months);
+                      setCustomEndYmd("");
+                    }}
                     className={`rounded-2xl border-2 p-3 text-left transition-all ${
                       duration === opt.months
                         ? "border-amber-500 bg-amber-100 shadow-md"
@@ -284,7 +370,50 @@ export function ContractExtension({
                     )}
                   </button>
                 ))}
+                <button
+                  type="button"
+                  disabled={loading || !termBounds}
+                  onClick={() => {
+                    if (!termBounds) return;
+                    setDuration("custom");
+                    setCustomEndYmd(toIsoDateOnly(addCalendarMonthsClamped(termBounds.oldEnd, 6)));
+                  }}
+                  className={`rounded-2xl border-2 p-3 text-left transition-all sm:col-span-2 ${
+                    duration === "custom"
+                      ? "border-amber-500 bg-amber-100 shadow-md"
+                      : "border-amber-200 bg-white hover:border-amber-400"
+                  }`}
+                >
+                  <p className="text-sm font-bold text-amber-900">{t("extensionCustomEndDate")}</p>
+                  <p className="mt-1.5 text-xs text-slate-600">
+                    {termBounds ? `${formatDdMmYyyy(termBounds.newStart)} → …` : "—"}
+                  </p>
+                </button>
               </div>
+              {duration === "custom" && termBounds && (
+                <div className="mt-3">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-amber-700 mb-2">
+                    {t("extensionEndDatePicker")}
+                  </label>
+                  <input
+                    type="date"
+                    value={customEndYmd}
+                    min={toIsoDateOnly(termBounds.newStart)}
+                    max={toIsoDateOnly(termBounds.maxEnd)}
+                    onChange={(e) => setCustomEndYmd(e.target.value)}
+                    disabled={loading}
+                    className="w-full max-w-xs rounded-2xl border border-amber-300 bg-white px-4 py-3 text-sm outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-200/50"
+                  />
+                </div>
+              )}
+              {duration !== "hostel" && effectiveEndDate && effectiveExtensionMonths > 0 && (
+                <p className="mt-3 text-sm font-semibold text-amber-900">
+                  {t("extensionSummaryLine", {
+                    date: formatDdMmYyyy(effectiveEndDate),
+                    months: String(effectiveExtensionMonths)
+                  })}
+                </p>
+              )}
               {/* Hostel redirect notice */}
               {duration === "hostel" && (
                 <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 flex items-start gap-3">

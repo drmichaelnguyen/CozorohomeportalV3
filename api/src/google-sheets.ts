@@ -5439,9 +5439,109 @@ export type ContractExtensionListPricing = {
   listMonthlyPriceVnd: number;
 };
 
+const CONTRACT_EXTENSION_MAX_EXTRA_MONTHS = 36;
+
+function parseDdMmYyyySheet(value: string): Date | null {
+  const s = String(value ?? "").trim();
+  if (!s.includes("/")) return null;
+  const parts = s.split("/");
+  if (parts.length < 3) return null;
+  const d = Number.parseInt(parts[0]!.trim(), 10);
+  const m = Number.parseInt(parts[1]!.trim(), 10);
+  const y = Number.parseInt(parts[2]!.trim(), 10);
+  if (![d, m, y].every((n) => Number.isFinite(n))) return null;
+  const dt = new Date(y, m - 1, d);
+  if (Number.isNaN(dt.getTime())) return null;
+  if (dt.getDate() !== d || dt.getMonth() !== m - 1) return null;
+  return dt;
+}
+
+function formatDdMmYyyySheet(d: Date): string {
+  return `${d.getDate().toString().padStart(2, "0")}/${(d.getMonth() + 1).toString().padStart(2, "0")}/${d.getFullYear()}`;
+}
+
+function startOfLocalDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function compareLocalDay(a: Date, b: Date): number {
+  return startOfLocalDay(a).getTime() - startOfLocalDay(b).getTime();
+}
+
+function addCalendarMonthsClamped(d: Date, months: number): Date {
+  const out = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  out.setMonth(out.getMonth() + months);
+  return out;
+}
+
+function calendarMonthsBetweenContractStartAndEnd(newStart: Date, newEnd: Date): number {
+  let months = (newEnd.getFullYear() - newStart.getFullYear()) * 12 + (newEnd.getMonth() - newStart.getMonth());
+  if (newEnd.getDate() < newStart.getDate()) months -= 1;
+  return Math.max(1, months);
+}
+
+export function extensionCoinRewardTier(extensionMonths: number): number {
+  if (extensionMonths >= 12) return 50000;
+  if (extensionMonths >= 6) return 25000;
+  if (extensionMonths >= 3) return 10000;
+  return 0;
+}
+
+/** How the new row end date is chosen: fixed month count from current sheet end, or an explicit dd/mm/yyyy end date. */
+export type ContractExtensionTerm = { extensionMonths: number } | { newContractEndDate: string };
+
+export function resolveContractExtensionSubmission(
+  currentContractEndStr: string,
+  body: { extensionMonths?: number; newContractEndDate?: string }
+): { newContractEndDate: string; newContractStartDate: string; extensionMonths: number } {
+  const trimmedEnd = body.newContractEndDate?.trim();
+  let oldEnd = parseDdMmYyyySheet(currentContractEndStr);
+  if (!oldEnd || Number.isNaN(oldEnd.getTime())) {
+    oldEnd = new Date();
+  }
+
+  const newContractStart = new Date(oldEnd.getFullYear(), oldEnd.getMonth(), oldEnd.getDate());
+  newContractStart.setDate(newContractStart.getDate() + 1);
+
+  if (trimmedEnd) {
+    const newEnd = parseDdMmYyyySheet(trimmedEnd);
+    if (!newEnd) {
+      throw new Error("Invalid new contract end date. Use dd/mm/yyyy.");
+    }
+    const maxEnd = addCalendarMonthsClamped(newContractStart, CONTRACT_EXTENSION_MAX_EXTRA_MONTHS);
+    if (compareLocalDay(newEnd, newContractStart) < 0) {
+      throw new Error("New contract end must be on or after the first day of your extended term.");
+    }
+    if (compareLocalDay(newEnd, maxEnd) > 0) {
+      throw new Error(`Contract extension cannot exceed ${CONTRACT_EXTENSION_MAX_EXTRA_MONTHS} months.`);
+    }
+    const extensionMonths = calendarMonthsBetweenContractStartAndEnd(newContractStart, newEnd);
+    return {
+      newContractEndDate: formatDdMmYyyySheet(newEnd),
+      newContractStartDate: formatDdMmYyyySheet(newContractStart),
+      extensionMonths
+    };
+  }
+
+  const monthsIn = body.extensionMonths;
+  if (monthsIn != null && monthsIn > 0) {
+    if (monthsIn > CONTRACT_EXTENSION_MAX_EXTRA_MONTHS) {
+      throw new Error(`Extension cannot exceed ${CONTRACT_EXTENSION_MAX_EXTRA_MONTHS} months.`);
+    }
+    const newEnd = addCalendarMonthsClamped(oldEnd, monthsIn);
+    return {
+      newContractEndDate: formatDdMmYyyySheet(newEnd),
+      newContractStartDate: formatDdMmYyyySheet(newContractStart),
+      extensionMonths: monthsIn
+    };
+  }
+
+  throw new Error("Provide newContractEndDate or extensionMonths.");
+}
+
 export async function extendClientContract(
   email: string,
-  extensionMonths: number,
+  term: ContractExtensionTerm,
   listPricing?: ContractExtensionListPricing | null,
   approval?: {
     clientSignatureDataUrl?: string;
@@ -5532,13 +5632,36 @@ export async function extendClientContract(
   if (Number.isNaN(oldEndDate.getTime())) {
     oldEndDate = new Date();
   }
-  
-  const newEndDate = new Date(oldEndDate);
-  newEndDate.setMonth(newEndDate.getMonth() + extensionMonths);
-  
-  const newStartDate = new Date(oldEndDate);
+
+  let newEndDate: Date;
+  let durationMonthsForSheet: number;
+
+  if ("extensionMonths" in term && term.extensionMonths > 0) {
+    durationMonthsForSheet = term.extensionMonths;
+    newEndDate = addCalendarMonthsClamped(oldEndDate, term.extensionMonths);
+  } else if ("newContractEndDate" in term && term.newContractEndDate.trim()) {
+    const parsedEnd = parseDdMmYyyySheet(term.newContractEndDate.trim());
+    if (!parsedEnd) {
+      throw new Error("Invalid new contract end date.");
+    }
+    const newContractStart = new Date(oldEndDate.getFullYear(), oldEndDate.getMonth(), oldEndDate.getDate());
+    newContractStart.setDate(newContractStart.getDate() + 1);
+    const maxEnd = addCalendarMonthsClamped(newContractStart, CONTRACT_EXTENSION_MAX_EXTRA_MONTHS);
+    if (compareLocalDay(parsedEnd, newContractStart) < 0) {
+      throw new Error("New contract end date must be on or after the first day of the extended term.");
+    }
+    if (compareLocalDay(parsedEnd, maxEnd) > 0) {
+      throw new Error(`Contract extension cannot exceed ${CONTRACT_EXTENSION_MAX_EXTRA_MONTHS} months.`);
+    }
+    newEndDate = parsedEnd;
+    durationMonthsForSheet = calendarMonthsBetweenContractStartAndEnd(newContractStart, newEndDate);
+  } else {
+    throw new Error("Invalid contract extension term.");
+  }
+
+  const newStartDate = new Date(oldEndDate.getFullYear(), oldEndDate.getMonth(), oldEndDate.getDate());
   newStartDate.setDate(newStartDate.getDate() + 1);
-  
+
   const formatDate = (date: Date) => {
     return `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()}`;
   };
@@ -5585,7 +5708,7 @@ export async function extendClientContract(
     } else if (index === endColIndex) {
       value = formatDate(newEndDate);
     } else if (index === durationColIndex) {
-      value = String(extensionMonths);
+      value = String(durationMonthsForSheet);
     } else if (header === normalizeHeader("Tôi đã đọc, đồng ý và tuân thủ nội quy cozoro dorm")) {
       value = "Có";
     }
@@ -5652,9 +5775,8 @@ export async function extendClientContract(
     throw new Error("Could not connect to contract generation service.");
   }
 
-  // Award coins for contract extension
-  const EXTENSION_COIN_REWARDS: Record<number, number> = { 1: 0, 3: 10000, 6: 25000, 12: 50000 };
-  const coinReward = EXTENSION_COIN_REWARDS[extensionMonths] ?? 0;
+  // Award coins for contract extension (tiered by nominal extension length)
+  const coinReward = extensionCoinRewardTier(durationMonthsForSheet);
   if (coinReward > 0) {
     try {
       const coinsColIndex = headers.indexOf(normalizeHeader(CLIENT_CURRENT_COINS_COLUMN));
@@ -5679,11 +5801,11 @@ export async function extendClientContract(
         [CLIENT_NAME_COLUMN]: nameVal,
         [CLIENT_BED_COLUMN]: bedVal,
         [COINS_BALANCE_COLUMN]: String(coinReward),
-        [COINS_EVENT_COLUMN]: `Gia hạn hợp đồng ${extensionMonths} tháng`,
+        [COINS_EVENT_COLUMN]: `Gia hạn hợp đồng đến ${formatDate(newEndDate)} (${durationMonthsForSheet} tháng)`,
         [COINS_OPERATOR_COLUMN]: "system",
         [COINS_MEMBER_COLUMN]: memberVal,
         [COINS_CURRENT_BALANCE_COLUMN]: String(newBalance),
-        [COINS_TRANSACTION_CODE_COLUMN]: `ContractExt${extensionMonths}m${Date.now()}`
+        [COINS_TRANSACTION_CODE_COLUMN]: `ContractExt${durationMonthsForSheet}m${Date.now()}`
       });
 
       if (contractCodeVal) {
@@ -5692,7 +5814,7 @@ export async function extendClientContract(
         });
       }
 
-      console.log(`[ContractExtension] Awarded ${coinReward} coins to ${email} for ${extensionMonths}-month extension. New balance: ${newBalance}`);
+      console.log(`[ContractExtension] Awarded ${coinReward} coins to ${email} for ${durationMonthsForSheet}-month extension. New balance: ${newBalance}`);
     } catch (coinErr) {
       console.error(`[ContractExtension] Failed to award coins for ${email}:`, coinErr);
       // Don't throw — coin award failure should not block the extension itself
