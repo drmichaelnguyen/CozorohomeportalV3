@@ -79,6 +79,8 @@ type ContractApprovalSummary = {
   contractMonths: number | null;
   contractStartDate: string;
   contractEndDate: string;
+  previousContractEndDate?: string;
+  contractCode?: string;
 };
 
 type SmartDevice = {
@@ -2658,6 +2660,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const isStaffSession = Boolean(sessionRole && sessionRole !== "user" && normalizedEmail);
   const isOwnerSession = sessionRole === "owner";
   const isAppAdminSession = sessionRole === "app_admin";
+  const canViewContractApprovals =
+    sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin";
+  const canReviewContractApprovals = sessionRole === "owner" || sessionRole === "app_admin";
   const canManageOwnersEmployees = isOwnerSession || isAppAdminSession;
   const canCreatePaymentReceipt =
     sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin";
@@ -2678,6 +2683,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [contractApprovals, setContractApprovals] = useState<ContractApprovalSummary[]>([]);
   const [contractApprovalsLoading, setContractApprovalsLoading] = useState(false);
   const [contractApprovalActionId, setContractApprovalActionId] = useState<string | null>(null);
+  const [expandedContractApprovals, setExpandedContractApprovals] = useState<Record<string, boolean>>({});
   const [settingInactive, setSettingInactive] = useState<Record<string, boolean>>({});
   const [inactiveBranchFilter, setInactiveBranchFilter] = useState("");
   const [inactiveYearFilter, setInactiveYearFilter] = useState("");
@@ -3605,12 +3611,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   }
 
   async function loadContractApprovals() {
-    if (!isOwnerSession && !isAppAdminSession) return;
+    if (!canViewContractApprovals) return;
     setContractApprovalsLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/manager/contract-approvals?actorEmail=${encodeURIComponent(normalizedEmail)}`);
       const data = (await res.json()) as { approvals?: ContractApprovalSummary[] };
-      setContractApprovals((data.approvals ?? []).filter((entry) => entry.status === "pending"));
+      setContractApprovals(data.approvals ?? []);
     } catch {
       setContractApprovals([]);
     } finally {
@@ -3640,6 +3646,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     } finally {
       setContractApprovalActionId(null);
     }
+  }
+
+  function toggleContractApprovalDetails(id: string) {
+    setExpandedContractApprovals((current) => ({
+      ...current,
+      [id]: !current[id]
+    }));
   }
 
   async function markContractInactive(args: { maHd: string; rowNumber?: number; email?: string; key: string }) {
@@ -3679,12 +3692,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   }
 
   useEffect(() => {
-    if (isOwnerSession || isAppAdminSession) {
+    if (canViewContractApprovals) {
       void loadContractApprovals();
     } else {
       setContractApprovals([]);
     }
-  }, [isOwnerSession, isAppAdminSession, normalizedEmail]);
+  }, [canViewContractApprovals, normalizedEmail]);
 
   async function loadPaymentPurposeRows() {
     if (!isStaffSession) {
@@ -5022,6 +5035,103 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             </button>
           </div>
           {clientTermTab === "long_term" && (<>
+          {canViewContractApprovals && contractApprovals.some((item) => item.status === "pending") ? (
+            <section className="rounded-2xl border-2 border-amber-300 bg-gradient-to-r from-amber-50 to-rose-50 p-4 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-bold uppercase tracking-wide text-amber-900">
+                    {t("pendingContractApprovals")} ({contractApprovals.filter((item) => item.status === "pending").length})
+                  </h3>
+                  <p className="mt-1 text-sm text-amber-800">
+                    {t("pendingContractApprovalsDesc")}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void loadContractApprovals()}
+                    disabled={contractApprovalsLoading}
+                    className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-800 disabled:opacity-50"
+                  >
+                    {contractApprovalsLoading ? "Loading..." : "Refresh"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setClientSubTab("details")}
+                    className="rounded-lg bg-amber-700 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-800"
+                  >
+                    Open full approvals view
+                  </button>
+                </div>
+              </div>
+              <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                {contractApprovals
+                  .filter((item) => item.status === "pending")
+                  .slice(0, 4)
+                  .map((item) => {
+                    const isExpanded = Boolean(expandedContractApprovals[item.id]);
+                    return (
+                      <div key={item.id} className="rounded-xl border border-amber-200 bg-white p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900">
+                              {item.type === "registration" ? "New registration" : "Contract extension"}
+                            </div>
+                            <div className="text-xs text-slate-600">{item.fullName || item.email}</div>
+                          </div>
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                            {item.contractMonths ?? "-"} mo
+                          </span>
+                        </div>
+                        <div className="mt-2 text-xs text-slate-500">
+                          Signed: {item.clientSignatureTimestamp ? formatCozoroDateTime(item.clientSignatureTimestamp) : "-"}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => toggleContractApprovalDetails(item.id)}
+                          className="mt-2 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          {isExpanded ? "Hide details" : "View details before approve"}
+                        </button>
+                        {isExpanded ? (
+                          <div className="mt-2 grid gap-1 text-xs text-slate-600 sm:grid-cols-2">
+                            <div>Branch: {item.branchId || "-"}</div>
+                            <div>Bed: {item.bedNumber ?? "-"}</div>
+                            <div>Start: {item.contractStartDate || "-"}</div>
+                            <div>End: {item.contractEndDate || "-"}</div>
+                            <div>Submitted: {formatCozoroDateTime(item.submittedAt)}</div>
+                            <div>Email: {item.email}</div>
+                            {item.type === "extension" ? (
+                              <div className="sm:col-span-2">Previous end: {item.previousContractEndDate || "-"}</div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {canReviewContractApprovals ? (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void reviewContractApproval(item.id, "approve")}
+                              disabled={contractApprovalActionId === item.id}
+                              className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                            >
+                              {contractApprovalActionId === item.id ? "Working..." : "Approve and send"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void reviewContractApproval(item.id, "reject")}
+                              disabled={contractApprovalActionId === item.id}
+                              className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+              </div>
+            </section>
+          ) : null}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap gap-2">
               <button
@@ -5911,7 +6021,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         ) : (
           <div ref={managerClientWorkspaceRef} className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
             {false ? <section /> : null}
-            {(isOwnerSession || isAppAdminSession) && contractApprovals.length > 0 ? (
+            {canViewContractApprovals && contractApprovals.length > 0 ? (
               <section className="rounded-3xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -5928,7 +6038,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   </button>
                 </div>
                 <div className="mt-4 grid gap-3 lg:grid-cols-2">
-                  {contractApprovals.map((item) => (
+                  {contractApprovals.map((item) => {
+                    const isExpanded = Boolean(expandedContractApprovals[item.id]);
+                    return (
                     <div key={item.id} className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
                       <div className="flex items-start justify-between gap-3">
                         <div>
@@ -5938,38 +6050,70 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           <div className="mt-1 text-sm text-slate-700">{item.fullName || item.email}</div>
                           <div className="mt-1 text-xs text-slate-500">{item.email}</div>
                         </div>
-                        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">
-                          {item.contractMonths ?? "-"} mo
-                        </span>
+                        <div className="flex shrink-0 flex-col items-end gap-1.5">
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                              item.status === "pending" ? "bg-amber-100 text-amber-900" : "bg-rose-100 text-rose-800"
+                            }`}
+                          >
+                            {item.status === "pending" ? "Pending" : "Rejected"}
+                          </span>
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                            {item.contractMonths ?? "-"} mo
+                          </span>
+                        </div>
                       </div>
-                      <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
-                        <div>Branch: {item.branchId || "-"}</div>
-                        <div>Bed: {item.bedNumber ?? "-"}</div>
-                        <div>Start: {item.contractStartDate || "-"}</div>
-                        <div>End: {item.contractEndDate || "-"}</div>
-                        <div>Signed: {item.clientSignatureTimestamp ? formatCozoroDateTime(item.clientSignatureTimestamp) : "-"}</div>
-                        <div>Submitted: {formatCozoroDateTime(item.submittedAt)}</div>
-                      </div>
-                      <div className="mt-4 flex flex-wrap gap-2">
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => void reviewContractApproval(item.id, "approve")}
-                          disabled={contractApprovalActionId === item.id}
-                          className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                          onClick={() => toggleContractApprovalDetails(item.id)}
+                          className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                         >
-                          {contractApprovalActionId === item.id ? "Working..." : "Approve and send"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void reviewContractApproval(item.id, "reject")}
-                          disabled={contractApprovalActionId === item.id}
-                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50"
-                        >
-                          Reject
+                          {isExpanded ? "Hide details" : "View details before approve"}
                         </button>
                       </div>
+                      {isExpanded ? (
+                        <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
+                          <div>Branch: {item.branchId || "-"}</div>
+                          <div>Bed: {item.bedNumber ?? "-"}</div>
+                          <div>Start: {item.contractStartDate || "-"}</div>
+                          <div>End: {item.contractEndDate || "-"}</div>
+                          <div>Signed: {item.clientSignatureTimestamp ? formatCozoroDateTime(item.clientSignatureTimestamp) : "-"}</div>
+                          <div>Submitted: {formatCozoroDateTime(item.submittedAt)}</div>
+                          {item.type === "extension" ? (
+                            <>
+                              <div className="sm:col-span-2">Previous contract end: {item.previousContractEndDate || "-"}</div>
+                              <div className="sm:col-span-2">Contract code: {item.contractCode || "-"}</div>
+                            </>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {canReviewContractApprovals && item.status === "pending" ? (
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void reviewContractApproval(item.id, "approve")}
+                            disabled={contractApprovalActionId === item.id}
+                            className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                          >
+                            {contractApprovalActionId === item.id ? "Working..." : "Approve and send"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void reviewContractApproval(item.id, "reject")}
+                            disabled={contractApprovalActionId === item.id}
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      ) : item.status === "pending" && !canReviewContractApprovals ? (
+                        <p className="mt-4 text-xs font-medium text-slate-600">
+                          Only an owner or app admin can approve or reject this request.
+                        </p>
+                      ) : null}
                     </div>
-                  ))}
+                  )})}
                 </div>
               </section>
             ) : null}
