@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
+import { formatCozoroDateTime } from "../lib/date-format";
 import { InlineHelp } from "./inline-help";
 
 export type ManagerSettingsToolsClient = {
@@ -570,8 +571,7 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
                   <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">{t("toolsFridgeDrainOffNote")}</p>
                   {row.offAt && row.onAt ? (
                     <p className="mt-2 text-xs text-slate-500">
-                      OFF: {new Date(row.offAt).toLocaleString(undefined, { timeZone: "Asia/Ho_Chi_Minh" })} · ON:{" "}
-                      {new Date(row.onAt).toLocaleString(undefined, { timeZone: "Asia/Ho_Chi_Minh" })}
+                      OFF: {formatCozoroDateTime(row.offAt)} · ON: {formatCozoroDateTime(row.onAt)}
                     </p>
                   ) : null}
                   {row.message ? <p className="mt-2 text-sm text-emerald-800">{row.message}</p> : null}

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
+import { formatCozoroDateTime } from "../lib/date-format";
 
 type LaundryBooking = {
   id: string;
@@ -87,12 +88,7 @@ export function LaundryController({ email, bookings }: LaundryControllerProps) {
   };
 
   const formatDateTime = (dateStr: string) => {
-    return new Date(dateStr).toLocaleString("en-GB", {
-      day: "2-digit",
-      month: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit"
-    });
+    return formatCozoroDateTime(dateStr, { dateStyle: "short", timeStyle: "short" });
   };
 
   const iconColor = activeMachine ? "bg-sky-500 animate-pulse" : "bg-slate-300";
@@ -173,4 +169,3 @@ export function LaundryController({ email, bookings }: LaundryControllerProps) {
     </div>
   );
 }
-

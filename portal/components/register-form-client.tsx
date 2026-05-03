@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
+import { formatCozoroDateTime } from "../lib/date-format";
 
 type Sex = "male" | "female";
 type BranchId = "D2" | "D7";
@@ -1230,7 +1231,7 @@ export function RegisterFormClient() {
                 <div className="space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-sm font-medium text-slate-700">{t.bedsFound(availability.availableBeds)}</p>
-                    <p className="text-xs text-slate-400">{t.synced} {new Date(availability.syncedAt).toLocaleString()}</p>
+                    <p className="text-xs text-slate-400">{t.synced} {formatCozoroDateTime(availability.syncedAt)}</p>
                   </div>
                   {availability.rooms.map((room) => (
                     <div key={`${room.floor}-${room.room}`} className="rounded-[1.25rem] border border-slate-200 bg-white p-4">

@@ -95,12 +95,12 @@ export type RentPaidStatusPayload = {
   blockingRentDuePopupEnabled?: boolean;
 };
 
-export function formatBillingMonthLabel(month: string, language: "en" | "vi"): string {
+export function formatBillingMonthLabel(month: string, _language: "en" | "vi"): string {
   const [y, m] = month.split("-").map((p) => Number.parseInt(p, 10));
   if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) {
     return month;
   }
-  return new Date(y, m - 1, 1).toLocaleDateString(language === "vi" ? "vi-VN" : "en-US", {
+  return new Date(y, m - 1, 1).toLocaleDateString("vi-VN", {
     month: "long",
     year: "numeric"
   });

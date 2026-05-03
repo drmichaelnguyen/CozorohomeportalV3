@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
+import { formatCozoroDate } from "../lib/date-format";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 
@@ -116,7 +117,7 @@ export function MechanicClient() {
                 </span>
                 <h3 className="mt-1 font-semibold text-slate-900">{ticket.category}</h3>
               </div>
-              <span className="text-xs text-slate-500">{new Date(ticket.reportedAt).toLocaleDateString()}</span>
+              <span className="text-xs text-slate-500">{formatCozoroDate(ticket.reportedAt)}</span>
             </div>
 
             <div className="space-y-1 text-sm">

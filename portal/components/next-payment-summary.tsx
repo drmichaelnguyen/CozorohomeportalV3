@@ -10,6 +10,7 @@ import type {
   RentPaidStatusPayload
 } from "../lib/rent-paid-status";
 import { formatBillingMonthLabel, prepaidAverageMonthlyAfterFeesVnd } from "../lib/rent-paid-status";
+import { formatCozoroDate, formatCozoroDateTime } from "../lib/date-format";
 import { usePortalLanguage } from "./portal-language";
 
 /** Show prepaid “next package” info when renewal is this soon, or when mid-cycle payables exist. */
@@ -418,7 +419,7 @@ export function NextPaymentSummary({
             <div className="mt-2 h-9 w-48 animate-pulse rounded-lg bg-amber-100/80" />
           ) : nextPaymentDate ? (
             <div className={`mt-1 font-semibold text-slate-900 ${isDashboard ? "text-2xl" : "text-2xl"}`}>
-              {nextPaymentDate.toLocaleDateString(language === "vi" ? "vi-VN" : undefined)}
+              {formatCozoroDate(nextPaymentDate)}
             </div>
           ) : (
             <p className="mt-2 text-sm text-amber-900/80">{t("nextPaymentUnavailable", "Next payment date is not available yet.")}</p>
@@ -573,10 +574,7 @@ export function NextPaymentSummary({
             <p className="rounded-xl border border-emerald-200/80 bg-emerald-50/80 p-3 text-xs font-medium text-emerald-900">
               {t("rentCoinExchangeDone", undefined, {
                 when: rentPaidStatus.rentCoinRedeemAt
-                  ? new Date(rentPaidStatus.rentCoinRedeemAt).toLocaleString(
-                      language === "vi" ? "vi-VN" : "en-GB",
-                      { dateStyle: "short", timeStyle: "short" }
-                    )
+                  ? formatCozoroDateTime(rentPaidStatus.rentCoinRedeemAt)
                   : "—",
                 coins: String(rentPaidStatus.rentCoinRedeemCoins ?? 0),
                 vnd: new Intl.NumberFormat("vi-VN").format(rentPaidStatus.rentCoinRedeemValueVnd ?? 0)

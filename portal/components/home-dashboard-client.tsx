@@ -10,6 +10,7 @@ import { InlineHelp } from "./inline-help";
 import { NextPaymentSummary } from "./next-payment-summary";
 import { isContractExpired, daysUntilContractEnd } from "../lib/contract-utils";
 import type { RentPaidStatusPayload } from "../lib/rent-paid-status";
+import { formatCozoroDate, formatCozoroDateTime, formatCozoroMonth } from "../lib/date-format";
 
 type ClientRecord = Record<string, string>;
 
@@ -438,7 +439,7 @@ export function HomeDashboardClient() {
         label:
           key === "Unknown month"
             ? key
-            : new Date(`${key}-01T00:00:00`).toLocaleDateString(undefined, { month: "short", year: "numeric" }),
+            : formatCozoroMonth(`${key}-01T00:00:00`, { month: "short" }),
         value
       }));
 
@@ -624,7 +625,7 @@ export function HomeDashboardClient() {
                   <div className="mt-5 space-y-3">
                     <div className="text-sm font-semibold uppercase tracking-[0.24em] text-sky-700">{t("today", "Today")}</div>
                     <div className="text-xl font-semibold text-slate-900">
-                      {new Date(nextLaundry.start).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+                      {formatCozoroDate(nextLaundry.start, { weekday: "long", month: "long", day: "numeric" })}
                     </div>
                     <div className="text-base font-semibold text-slate-900">{nextLaundry.summary || nextLaundry.calendarSummary}</div>
                     <div className="text-sm text-slate-600">
@@ -657,7 +658,7 @@ export function HomeDashboardClient() {
                         : t("scheduled", "Scheduled")}
                   </div>
                   <div className="text-xl font-semibold text-slate-900">
-                    {new Date(nextCleaning.scheduledDate).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+                    {formatCozoroDate(nextCleaning.scheduledDate, { weekday: "long", month: "long", day: "numeric" })}
                   </div>
                   <div className="text-base font-semibold text-slate-900">{prettyTaskType(nextCleaning.type)}</div>
                   <div className="text-sm text-slate-600">
@@ -691,7 +692,7 @@ export function HomeDashboardClient() {
                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
                   <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">{t("nextPayment", "Next Payment")}</div>
                   <div className="mt-3 text-2xl font-semibold text-slate-900">
-                    {nextPaymentDate ? nextPaymentDate.toLocaleDateString() : "-"}
+                    {nextPaymentDate ? formatCozoroDate(nextPaymentDate) : "-"}
                   </div>
                 </div>
 
@@ -718,7 +719,7 @@ export function HomeDashboardClient() {
               <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">{t("nextCleaning", "Next Cleaning")}</div>
               <div className="mt-3 text-lg font-semibold text-slate-900">
                 {nextCleaning
-                  ? new Date(nextCleaning.scheduledDate).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })
+                  ? formatCozoroDate(nextCleaning.scheduledDate, { weekday: "long", month: "long", day: "numeric" })
                   : t("noUpcomingTask", "No upcoming task")}
               </div>
               <div className="mt-2 text-sm text-slate-600">
@@ -789,7 +790,7 @@ export function HomeDashboardClient() {
                     <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                       <div className="text-base font-semibold text-slate-900">{nextLaundry.summary || nextLaundry.calendarSummary}</div>
                       <div className="mt-2 text-sm text-slate-600">
-                        {new Date(nextLaundry.start).toLocaleString()} to {new Date(nextLaundry.end).toLocaleString()}
+                        {formatCozoroDateTime(nextLaundry.start)} to {formatCozoroDateTime(nextLaundry.end)}
                       </div>
                       <div className="mt-2 text-sm text-slate-500">{t("status", "Status")}: {nextLaundry.status}</div>
                     </div>

@@ -6,6 +6,7 @@
 
 ## [3.8.34] - 2026-04-30
 - **Manager client payment table**: Reworked the client table into a payment-focused view with per-column filters, sortable headers, paid status, current-month payment totals, payment plan labels, and next payment dates.
+- **Owner analytics localization and grouping UX**: Owner analytics received Vietnamese localization updates and expanded grouping/drilldown behavior for payments, coins, fines, laundry, cleaning, and airfryer analytics.
 
 ## [3.8.33] - 2026-04-29
 - **Owner payment analytics**: Added an owner-only Client -> Analytics dashboard with bar and donut revenue views, configurable grouping order, click-through drilldowns, and a final payment receipt entry table.

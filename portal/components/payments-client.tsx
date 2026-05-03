@@ -7,6 +7,7 @@ import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 import { NextPaymentSummary } from "./next-payment-summary";
 import type { RentPaidStatusPayload } from "../lib/rent-paid-status";
+import { formatCozoroDateTime } from "../lib/date-format";
 const TIMESTAMP_COLUMN = "DẤU THỜI GIAN";
 const EMAIL_COLUMN = "Địa chỉ email";
 const AMOUNT_COLUMN = "SỐ TIỀN";
@@ -174,7 +175,7 @@ export function PaymentsClient() {
         setPurposeFilter("all");
         setSortDirection("desc");
         setVisibleEntriesCount(DEFAULT_VISIBLE_ENTRIES);
-        setMessage(`Payment history loaded from local storage. Last saved ${new Date(cached.savedAt).toLocaleString()}.`);
+        setMessage(`Payment history loaded from local storage. Last saved ${formatCozoroDateTime(cached.savedAt)}.`);
       } else {
         const response = await fetch(`${API_BASE_URL}/payments?email=${encodeURIComponent(activeEmail)}`);
         const data = await readJsonSafely<{ entries?: PaymentEntry[]; error?: string }>(response);
@@ -506,7 +507,7 @@ export function PaymentsClient() {
                     {visibleEntries.map((entry, index) => (
                       <tr key={`${entry.row[EMAIL_COLUMN]}-${entry.parsedTimestamp ?? index}`} className="align-top">
                         <td className="px-4 py-3 whitespace-nowrap text-slate-900">
-                          {parseDisplayDate(entry.parsedTimestamp)?.toLocaleString() ?? entry.row[TIMESTAMP_COLUMN] ?? "No timestamp"}
+                          {entry.parsedTimestamp ? formatCozoroDateTime(entry.parsedTimestamp) : entry.row[TIMESTAMP_COLUMN] ?? "No timestamp"}
                         </td>
                         <td className="px-4 py-3 text-slate-900">{entry.row[PURPOSE_COLUMN] || "Payment receipt"}</td>
                         <td className="px-4 py-3 font-medium text-slate-900">{entry.row[AMOUNT_COLUMN] || "-"}</td>
@@ -543,4 +544,3 @@ export function PaymentsClient() {
     </div>
   );
 }
-
