@@ -133,6 +133,7 @@ import {
   CLIENT_NAME_COLUMN,
   CONTRACT_CODE_COLUMN,
   normalizeClientBranch,
+  getClientBranchValue,
   MAINTENANCE_STATUS_COLUMN,
   MAINTENANCE_MECHANIC_EMAIL_COLUMN,
   MAINTENANCE_SOLVED_AT_COLUMN,
@@ -376,6 +377,70 @@ function publicApprovalSummary(item: PendingContractApproval) {
     contractCode: isExtension
       ? String(extension.contractCode ?? "")
       : String(registration.contractCode ?? registration.maHd ?? "")
+  };
+}
+
+type PublicContractApprovalSummary = ReturnType<typeof publicApprovalSummary>;
+
+function extensionSnapshotLooksIncomplete(ext: PendingContractApproval["extension"]): boolean {
+  if (!ext?.email?.trim()) return false;
+  const branch = String(ext.branchId ?? "").trim();
+  const prev = String(ext.previousContractEndDate ?? "").trim();
+  const start = String(ext.newContractStartDate ?? "").trim();
+  const end = String(ext.newContractEndDate ?? "").trim();
+  const code = String(ext.contractCode ?? "").trim();
+  const bedMissing = ext.bedNumber === undefined || ext.bedNumber === null;
+  return !branch || bedMissing || !prev || !start || !end || !code;
+}
+
+async function enrichPublicApprovalSummary(item: PendingContractApproval): Promise<PublicContractApprovalSummary> {
+  const base = publicApprovalSummary(item);
+  if (item.type !== "extension" || !extensionSnapshotLooksIncomplete(item.extension)) {
+    return base;
+  }
+  const email = String(item.extension!.email ?? "")
+    .trim()
+    .toLowerCase();
+  if (!email) return base;
+
+  const active = await getActiveClientByEmail(email);
+  if (!active) return base;
+
+  const branchId = normalizeClientBranch(getClientBranchValue(active));
+  const bedParsed = Number.parseInt(String(active[CLIENT_BED_COLUMN] ?? "").replace(/[^0-9]/g, ""), 10);
+  const bedNumber = Number.isFinite(bedParsed) ? bedParsed : null;
+  const oldEnd = String(active[CLIENT_CONTRACT_END_COLUMN] ?? "").trim();
+  const residentName = String(active[CLIENT_NAME_COLUMN] ?? "").trim();
+  const contractCode = String(active[CONTRACT_CODE_COLUMN] ?? "").trim();
+
+  let newContractStartDate = String(item.extension!.newContractStartDate ?? "").trim();
+  let newContractEndDate = String(item.extension!.newContractEndDate ?? "").trim();
+  let extensionMonths = item.extension!.extensionMonths ?? null;
+
+  try {
+    if (!newContractStartDate || !newContractEndDate || extensionMonths == null) {
+      const resolved = resolveContractExtensionSubmission(oldEnd, {
+        extensionMonths: item.extension!.extensionMonths ?? undefined,
+        newContractEndDate: item.extension!.newContractEndDate ?? undefined
+      });
+      newContractStartDate = newContractStartDate || resolved.newContractStartDate;
+      newContractEndDate = newContractEndDate || resolved.newContractEndDate;
+      extensionMonths = extensionMonths ?? resolved.extensionMonths;
+    }
+  } catch {
+    // Keep whatever snapshot / partial recompute we already have.
+  }
+
+  return {
+    ...base,
+    fullName: base.fullName.trim() ? base.fullName : residentName,
+    branchId: base.branchId.trim() ? base.branchId : branchId,
+    bedNumber: base.bedNumber != null ? base.bedNumber : bedNumber,
+    contractMonths: base.contractMonths != null ? base.contractMonths : extensionMonths,
+    contractStartDate: base.contractStartDate.trim() ? base.contractStartDate : newContractStartDate,
+    contractEndDate: base.contractEndDate.trim() ? base.contractEndDate : newContractEndDate,
+    previousContractEndDate: base.previousContractEndDate.trim() ? base.previousContractEndDate : oldEnd,
+    contractCode: base.contractCode.trim() ? base.contractCode : contractCode
   };
 }
 const SENSITIVE_CLIENT_FIELD_PATTERNS = [
@@ -6776,8 +6841,9 @@ app.get("/manager/contract-approvals", async (request, response) => {
     await requirePortalRole(actorEmail, ["owner", "app_admin", "manager"], "Only staff can view contract approvals.");
     const file = await readContractApprovals();
     const visible = file.approvals.filter((a) => a.status === "pending" || a.status === "rejected");
+    const approvals = await Promise.all(visible.map((a) => enrichPublicApprovalSummary(a)));
     return response.json({
-      approvals: visible.map(publicApprovalSummary)
+      approvals
     });
   } catch (error) {
     return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to load contract approvals" });
