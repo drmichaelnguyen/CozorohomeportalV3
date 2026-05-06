@@ -6316,7 +6316,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     🧰 Tools
                   </button>
                   {clientActionMenuOpen ? (
-                    <div className="absolute right-0 z-20 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                    <div className="absolute left-0 z-20 mt-2 w-[min(16rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] rounded-xl border border-slate-200 bg-white p-2 shadow-xl sm:left-auto sm:right-0 sm:w-64 sm:max-w-none">
                       {(() => {
                         const autoLock = selectedClient ? getAutomaticFeatureLockStatus(selectedClient) : null;
                         const isUnlocked = accountLockOverride?.unlocked === true;
@@ -6389,7 +6389,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         ["message", `💬 ${t("openChat")}`],
                         ["call", `📞 ${t("callClient")}`],
                         ["email", `✉️ ${t("emailClient")}`],
-                        ["remove", `🛑 ${t("terminateContractBtn")}`],
                         ["fine", `🧾 ${t("newFineTicket")}`],
                         ["coins", `🪙 ${t("newCoinsEntry")}`],
                         ["password", `🔐 ${t("changePassword", "Change password")}`],
@@ -6851,6 +6850,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           type="button"
                           disabled={terminateLoading}
                           onClick={async () => {
+                            const secondConfirm = window.confirm(
+                              "Final confirmation: terminate this contract now? This action is hard to undo."
+                            );
+                            if (!secondConfirm) {
+                              return;
+                            }
                             setTerminateLoading(true);
                             try {
                               const res = await fetch(`${API_BASE_URL}/manager/terminate-contract`, {

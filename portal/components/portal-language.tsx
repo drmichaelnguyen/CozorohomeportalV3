@@ -2064,6 +2064,7 @@ const translations: Record<string, { en: string; vi: string }> = {
   featureLockOn: { en: "Feature Lock: On", vi: "Khóa tính năng: Bật" },
   manualUnlockNote: { en: "Manual unlock for overdue rent or expired contract restrictions.", vi: "Mở khóa thủ công cho các hạn chế nợ tiền thuê hoặc hết hạn hợp đồng." },
   accountUnlockedSuccess: { en: "Account functions unlocked.", vi: "Đã mở khóa các tính năng tài khoản." },
+  featureLockEnabledSuccess: { en: "Account functions locked manually.", vi: "Đã khóa thủ công các tính năng tài khoản." },
   accountLockedResetSuccess: { en: "Account returned to automatic lock rules.", vi: "Tài khoản đã trở lại quy tắc khóa tự động." },
   overrideByLabel: { en: "Override by {manager}", vi: "Ghi đè bởi {manager}" },
   normalAutomaticRulesDesc: { en: "Laundry booking and controller access follow the normal automatic rules.", vi: "Việc đặt lịch giặt và điều khiển thiết bị tuân theo các quy tắc tự động thông thường." },

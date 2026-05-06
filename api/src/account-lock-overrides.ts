@@ -8,6 +8,7 @@ const overrideFilePath = path.join(process.cwd(), "data", "account-lock-override
 type AccountLockOverrideEntry = {
   email: string;
   unlocked: boolean;
+  forceLocked?: boolean;
   note: string;
   updatedAt: string;
   updatedBy: string;
@@ -54,7 +55,8 @@ export async function getAccountLockOverride(email: string) {
 export async function setAccountLockOverride(input: {
   actorEmail: string;
   targetEmail: string;
-  unlocked: boolean;
+  unlocked?: boolean;
+  forceLocked?: boolean;
   note?: string;
 }) {
   const actor = await requirePortalRole(
@@ -72,7 +74,8 @@ export async function setAccountLockOverride(input: {
   const existingIndex = file.entries.findIndex((entry) => normalizeEmail(entry.email) === targetEmail);
   const nextEntry: AccountLockOverrideEntry = {
     email: targetEmail,
-    unlocked: input.unlocked,
+    unlocked: input.unlocked === true,
+    forceLocked: input.forceLocked === true,
     note: input.note?.trim() ?? "",
     updatedAt: new Date().toISOString(),
     updatedBy: actor.email

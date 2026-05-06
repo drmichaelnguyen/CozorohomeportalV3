@@ -873,7 +873,8 @@ const portalPasswordAdminSetSchema = z.object({
 const accountLockOverrideSchema = z.object({
   actorEmail: z.string().email(),
   targetEmail: z.string().email(),
-  unlocked: z.boolean(),
+  unlocked: z.boolean().optional(),
+  forceLocked: z.boolean().optional(),
   note: z.string().trim().optional()
 });
 const googlePortalLoginSchema = z.object({
@@ -1035,17 +1036,22 @@ const residentBroadcastReadSchema = z.object({
 const managerPaymentReminderSendSchema = z
   .object({
     actorEmail: z.string().email(),
-    mode: z.enum(["single", "batch_unpaid"]),
+    mode: z.enum(["single", "batch_unpaid", "batch_selected"]),
     email: z.string().email().optional(),
+    emails: z.array(z.string().email()).optional(),
     title: z.string().trim().min(1).max(120).optional(),
     body: z.string().trim().min(1).max(4000),
     sendPopup: z.boolean().optional(),
     sendInAppMessage: z.boolean().optional(),
-    sendEmail: z.boolean().optional()
+    sendEmail: z.boolean().optional(),
+    includeEnglishCopy: z.boolean().optional()
   })
   .superRefine((data, ctx) => {
     if (data.mode === "single" && !data.email) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "email is required for single mode." });
+    }
+    if (data.mode === "batch_selected" && (!data.emails || data.emails.length === 0)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "emails is required for batch_selected mode." });
     }
     if (!data.sendPopup && !data.sendInAppMessage && !data.sendEmail) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Select at least one channel." });
@@ -1924,7 +1930,7 @@ app.post("/manager/account-lock-override", async (request, response) => {
 
   if (!parsed.success) {
     return response.status(400).json({
-      error: "A valid actor email, target email, and unlocked flag are required."
+      error: "A valid actor email, target email, and lock override payload are required."
     });
   }
 
@@ -3712,7 +3718,6 @@ app.post("/manager/payments/create-manual", async (request, response) => {
       ["manager", "owner", "app_admin"],
       "Only managers and owners can create payment receipts."
     );
-
     let receiver = parsed.data.receiver?.trim();
     if (!receiver) {
       const staffName = await getStaffName(parsed.data.actorEmail);
@@ -5579,6 +5584,33 @@ app.post("/push/unsubscribe", async (req, res) => {
   }
 });
 
+async function syncRentPaidColumnToSheetFromAppTruth(input: {
+  email: string;
+  month: string;
+  isPaid: boolean;
+}) {
+  // Sheet column "Đã đóng phí tháng" is a single current-state cell, so only sync for current month.
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  if (input.month !== currentMonth) {
+    return;
+  }
+
+  const client = await getActiveClientByEmail(input.email);
+  if (!client) {
+    throw new Error("Active client not found for sheet sync.");
+  }
+
+  const maHd = String(client[CONTRACT_CODE_COLUMN] ?? "").trim();
+  if (!maHd) {
+    throw new Error("Missing contract code for sheet sync.");
+  }
+
+  await updateClientColumns(maHd, {
+    ["Đã đóng phí tháng"]: input.isPaid ? "TRUE" : "FALSE"
+  });
+}
+
 // GET /manager/rent-paid-status — manager reads monthly rent paid flag for a client
 app.get("/manager/rent-paid-status", async (req, res) => {
   const actorEmail = String(req.query.actorEmail ?? "").trim();
@@ -5644,6 +5676,16 @@ app.post("/manager/rent-paid-status", async (req, res) => {
     entityLabel: email,
     details: `isPaid=${isPaid}`
   });
+  try {
+    await syncRentPaidColumnToSheetFromAppTruth({ email, month, isPaid });
+  } catch (error) {
+    return res.status(500).json({
+      error:
+        error instanceof Error
+          ? `Rent status saved in app, but failed to sync Google Sheet column "Đã đóng phí tháng": ${error.message}`
+          : "Rent status saved in app, but failed to sync Google Sheet column \"Đã đóng phí tháng\"."
+    });
+  }
   return res.json({ email: record.email, month: record.month, isPaid: record.isPaid });
 });
 
@@ -6644,6 +6686,145 @@ app.post("/clients/branch-broadcasts/:id/read", async (request, response) => {
   }
 });
 
+function formatVndForReminder(value: number | null | undefined) {
+  const amount = Number.isFinite(value) ? Number(value) : 0;
+  return `${Math.round(amount).toLocaleString("vi-VN")} ₫`;
+}
+
+function pickClientString(client: Record<string, string> | null, keys: string[]) {
+  if (!client) return "";
+  for (const key of keys) {
+    const value = String(client[key] ?? "").trim();
+    if (value) return value;
+  }
+  return "";
+}
+
+async function buildPaymentReminderEmailBody(input: {
+  email: string;
+  month: string;
+  managerNote: string;
+  includeEnglishCopy?: boolean;
+}) {
+  const email = input.email.trim().toLowerCase();
+  const client = await getActiveClientByEmail(email);
+  const now = new Date();
+  const dueDate =
+    pickClientString(client, ["Ngày hết hạn gói đã thanh toán", "ngày hết hạn gói đã thanh toán"]) ||
+    "Vui lòng xem trên cổng cư dân";
+
+  let totalDueVnd: number | null = null;
+  let breakdownLines: string[] = [];
+
+  if (client) {
+    const paymentPlan = String(client["Bạn muốn thanh toán chi phí như thế nào?"] ?? "");
+    const onPrepaidPlan = paymentPlan.includes("03 tháng") || paymentPlan.includes("06 tháng");
+    if (onPrepaidPlan) {
+      const estimate = await computePrepaidNextPaymentEstimate(client, input.month);
+      if (estimate) {
+        totalDueVnd = estimate.estimatedTotalVnd;
+        breakdownLines = [
+          `Tổng gói ước tính: ${formatVndForReminder(estimate.estimatedTotalVnd)}`,
+          `Phí theo gói (chu kỳ): ${formatVndForReminder(estimate.packageRecurringSubtotalVnd)}`,
+          `Khoản phát sinh giữa kỳ (nếu có): ${formatVndForReminder(estimate.midCyclePayablesVnd)}`
+        ];
+      }
+    } else {
+      const { breakdown } = await calculateRentBreakdownForBillingMonth(client, input.month, {
+        managerDiscountVnd: 0
+      });
+      totalDueVnd = breakdown.finalTotalVnd;
+      breakdownLines = [
+        `Tiền phòng cơ bản: ${formatVndForReminder(breakdown.baseRent)}`,
+        `Phụ phí thời hạn: ${formatVndForReminder(breakdown.tenureSurchargeVnd)}`,
+        `Điều chỉnh tháng: ${formatVndForReminder(breakdown.monthlyAdjustmentVnd)}`,
+        `Phí gửi xe: ${formatVndForReminder(breakdown.parkingFeeVnd + breakdown.gateParkingFeeVnd)}`,
+        `Phí giặt tiền mặt: ${formatVndForReminder(breakdown.laundryFeeVnd)}`,
+        `Tiền phạt chưa thanh toán: ${formatVndForReminder(breakdown.finesVnd)}`,
+        `Khuyến mãi/giảm trừ: -${formatVndForReminder(
+          breakdown.professionalDiscountVnd + breakdown.planDiscountVnd + breakdown.managerDiscountVnd
+        )}`,
+        `Quy đổi coins: -${formatVndForReminder(breakdown.recommendedCoinValueVnd)} (${breakdown.recommendedCoinUsage} coins)`
+      ];
+    }
+  }
+
+  const greetingName = pickClientString(client, ["Họ và tên", "HỌ VÀ TÊN", "Tên", "TÊN"]) || email;
+  const detailedTotal = totalDueVnd != null ? formatVndForReminder(totalDueVnd) : "Vui lòng kiểm tra trong portal";
+  const detailBlock = breakdownLines.length
+    ? breakdownLines.map((line) => `- ${line}`).join("\n")
+    : "- Hiện chưa đọc được bảng chi tiết tự động. Vui lòng mở Resident Portal > Payments để xem đầy đủ.";
+  const managerNote = input.managerNote.trim();
+  const englishHeader = totalDueVnd != null ? formatVndForReminder(totalDueVnd) : "Please check in Resident Portal";
+  const englishBreakdown = breakdownLines.length
+    ? breakdownLines
+        .map((line) =>
+          line
+            .replace("Tổng gói ước tính", "Estimated package total")
+            .replace("Phí theo gói (chu kỳ)", "Package recurring subtotal")
+            .replace("Khoản phát sinh giữa kỳ (nếu có)", "Mid-cycle payable items")
+            .replace("Tiền phòng cơ bản", "Base rent")
+            .replace("Phụ phí thời hạn", "Tenure surcharge")
+            .replace("Điều chỉnh tháng", "Monthly adjustment")
+            .replace("Phí gửi xe", "Parking fees")
+            .replace("Phí giặt tiền mặt", "Cash laundry fee")
+            .replace("Tiền phạt chưa thanh toán", "Unpaid fines")
+            .replace("Khuyến mãi/giảm trừ", "Discounts")
+            .replace("Quy đổi coins", "Coin redemption")
+        )
+        .map((line) => `- ${line}`)
+        .join("\n")
+    : "- Automated detail breakdown is not available yet. Please open Resident Portal > Payments.";
+
+  const vietnameseBody = [
+    `Chào bạn ${greetingName},`,
+    "",
+    "Cozoro gửi bạn nhắc thanh toán kỳ hiện tại.",
+    `- Hạn thanh toán: ${dueDate}`,
+    `- Tổng cần thanh toán tạm tính: ${detailedTotal}`,
+    "",
+    "Chi tiết khoản cần thanh toán:",
+    detailBlock,
+    "",
+    managerNote ? `Ghi chú từ quản lý: ${managerNote}` : "Nếu bạn đã thanh toán gần đây, bạn có thể bỏ qua email này.",
+    "",
+    "Bạn vui lòng mở Resident Portal để xác nhận chi tiết và hoàn tất thanh toán sớm để tránh gián đoạn tính năng.",
+    "",
+    `Thời điểm gửi: ${now.toLocaleString("vi-VN")}`,
+    "",
+    "Cảm ơn bạn."
+  ].join("\n");
+
+  if (!input.includeEnglishCopy) {
+    return vietnameseBody;
+  }
+
+  const englishBody = [
+    "",
+    "----- English copy -----",
+    `Hello ${greetingName},`,
+    "",
+    "This is a friendly reminder for your current payment cycle.",
+    `- Due date: ${dueDate}`,
+    `- Estimated total due: ${englishHeader}`,
+    "",
+    "Payment breakdown:",
+    englishBreakdown,
+    "",
+    managerNote
+      ? `Manager note: ${managerNote}`
+      : "If you have already completed payment recently, please ignore this reminder.",
+    "",
+    "Please open Resident Portal to review details and complete payment to avoid feature interruption.",
+    "",
+    `Sent at: ${now.toLocaleString("en-US")}`,
+    "",
+    "Thank you."
+  ].join("\n");
+
+  return `${vietnameseBody}\n${englishBody}`;
+}
+
 app.post("/manager/payment-reminders/send", async (request, response) => {
   const parsed = managerPaymentReminderSendSchema.safeParse(request.body);
   if (!parsed.success) {
@@ -6673,13 +6854,15 @@ app.post("/manager/payment-reminders/send", async (request, response) => {
     const recipientEmails =
       parsed.data.mode === "single"
         ? [String(parsed.data.email ?? "").trim().toLowerCase()].filter(Boolean)
-        : unpaidEmails;
+        : parsed.data.mode === "batch_selected"
+          ? Array.from(new Set((parsed.data.emails ?? []).map((email) => email.trim().toLowerCase()).filter(Boolean)))
+          : unpaidEmails;
 
     if (!recipientEmails.length) {
-      return response.status(400).json({ error: "No unpaid recipients were found." });
+      return response.status(400).json({ error: "No recipients were found." });
     }
 
-    const title = parsed.data.title?.trim() || "Payment required";
+    const title = parsed.data.title?.trim() || "Nhắc thanh toán tiền phòng";
     const body = parsed.data.body.trim();
     const results: Array<{ email: string; popup?: boolean; inApp?: boolean; emailSent?: boolean; error?: string }> = [];
 
@@ -6709,10 +6892,16 @@ app.post("/manager/payment-reminders/send", async (request, response) => {
           result.inApp = true;
         }
         if (parsed.data.sendEmail) {
+          const emailBody = await buildPaymentReminderEmailBody({
+            email,
+            month,
+            managerNote: body,
+            includeEnglishCopy: parsed.data.includeEnglishCopy === true
+          });
           await sendGmailReceipt({
             to: email,
             subject: title,
-            body
+            body: emailBody
           });
           result.emailSent = true;
         }

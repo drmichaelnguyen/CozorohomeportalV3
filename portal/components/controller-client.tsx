@@ -77,6 +77,7 @@ type MicrowaveContext = AirFryerContext;
 
 type AccountLockOverride = {
   unlocked?: boolean;
+  forceLocked?: boolean;
   updatedBy?: string;
   updatedAt?: string;
   note?: string;
@@ -161,6 +162,18 @@ function getAccountStatus(client: Record<string, string> | null, override: Accou
       warnings.push(`Gói thanh toán sắp hết hạn vào ngày ${paymentExpiry.toLocaleDateString("vi-VN")}.`);
     }
   }
+  if (override?.forceLocked) {
+    const manualReason = override.note?.trim();
+    return {
+      isBlocked: true,
+      blockReason:
+        manualReason && manualReason.length > 0
+          ? `Tài khoản đang bị khoá thủ công: ${manualReason}`
+          : "Tài khoản đang bị khoá thủ công bởi quản lý.",
+      warnings
+    };
+  }
+
   if (blockReason && override?.unlocked) {
     warnings.unshift(
       override.updatedBy

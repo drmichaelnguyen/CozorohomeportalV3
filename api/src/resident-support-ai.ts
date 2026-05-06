@@ -17,7 +17,13 @@ import {
   tryVentHammerHateReply,
   tryVentHammerPendingRefusalReply
 } from "./cozoro-vent-hammer-easter-egg.js";
-import { getActiveClientByEmail } from "./google-sheets.js";
+import {
+  getActiveClientByEmail,
+  getCoinsForEmail,
+  getFinesForEmail,
+  getLaundryBookingContextForEmail,
+  getPaymentsForEmail
+} from "./google-sheets.js";
 import { geminiCapacityReply, isGeminiCapacityOrRateLimit } from "./gemini-capacity-reply.js";
 import { prisma } from "./prisma.js";
 
@@ -126,6 +132,94 @@ function buildResidentContextBlock(email: string, client: Record<string, string>
     .join("\n");
 }
 
+function clipJson(value: unknown, maxLen: number): string {
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized.length <= maxLen) return serialized;
+    return `${serialized.slice(0, maxLen)}\n...(truncated)`;
+  } catch {
+    return "(unserializable)";
+  }
+}
+
+function parseNumericVnd(raw: unknown): number {
+  const normalized = String(raw ?? "")
+    .replace(/[^\d-]/g, "")
+    .trim();
+  if (!normalized) return 0;
+  const parsed = Number.parseInt(normalized, 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function executeGetResidentFinancialOverview(email: string): Promise<Record<string, unknown>> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const [client, coins, fines, payments, laundryCtx, rentStatus] = await Promise.all([
+    getActiveClientByEmail(normalizedEmail),
+    getCoinsForEmail(normalizedEmail),
+    getFinesForEmail(normalizedEmail),
+    getPaymentsForEmail(normalizedEmail),
+    getLaundryBookingContextForEmail(normalizedEmail),
+    prisma.monthlyRentStatus.findFirst({
+      where: { email: normalizedEmail },
+      orderBy: { month: "desc" }
+    })
+  ]);
+
+  const unpaidFines = fines
+    .filter((entry) => !entry.coinPayment.isPaid)
+    .map((entry) => ({
+      recordedAt: entry.parsedTimestamp,
+      reason: String(entry.row["NỘI DUNG VI PHẠM"] ?? "").trim(),
+      amountVnd: parseNumericVnd(entry.row["CHI PHÍ THANH TOÁN CHO VI PHẠM"]),
+      coinCostIfPayingByCoins: entry.coinPayment.coinCost
+    }));
+
+  const unpaidFineTotalVnd = unpaidFines.reduce((sum, entry) => sum + entry.amountVnd, 0);
+  const latestPayment = payments[0]
+    ? {
+        recordedAt: payments[0].parsedTimestamp,
+        rowJson: clipJson(
+          Object.fromEntries(
+            Object.entries(payments[0].row).filter(([, value]) => String(value ?? "").trim())
+          ),
+          4000
+        )
+      }
+    : null;
+
+  const latestCoinEntries = coins.slice(0, 5).map((entry) => ({
+    recordedAt: entry.parsedTimestamp,
+    deltaCoins: String(entry.row["COINS"] ?? "").trim(),
+    event: String(entry.row["Sự kiện"] ?? "").trim(),
+    balanceAfter: String(entry.row["Số Coins hiện có"] ?? "").trim(),
+    operator: String(entry.row["Người thao tác"] ?? "").trim()
+  }));
+
+  return {
+    ok: true,
+    email: normalizedEmail,
+    paymentDueDate: String(client?.["Ngày hết hạn gói đã thanh toán"] ?? "").trim() || null,
+    paymentStatusCell: String(client?.["Đã đóng phí tháng"] ?? "").trim() || null,
+    contractCoinsBalance: parseNumericVnd(client?.["Cozoro coins hiện có"]),
+    laundryCoinBalance: laundryCtx?.allowance.currentCoinsBalance ?? null,
+    laundryAvailableCoinBalance: laundryCtx?.allowance.availableCoinBalance ?? null,
+    rentStatus: rentStatus
+      ? {
+          month: rentStatus.month,
+          isPaid: rentStatus.isPaid,
+          applyCoinsTowardRent: rentStatus.applyCoinsTowardRent,
+          rentCoinRedeemCoins: rentStatus.rentCoinRedeemCoins,
+          rentCoinRedeemValueVnd: rentStatus.rentCoinRedeemValueVnd
+        }
+      : null,
+    unpaidFineCount: unpaidFines.length,
+    unpaidFineTotalVnd,
+    unpaidFineItems: unpaidFines.slice(0, 10),
+    latestPayment,
+    recentCoinEntries: latestCoinEntries
+  };
+}
+
 async function executeSaveResidentContact(
   conversationId: string,
   args: Record<string, unknown>
@@ -179,9 +273,11 @@ ${input.contactBlock}
 - Be concise and friendly. You are not a lawyer; give practical dorm guidance (laundry, cleaning, policies, how to reach staff).
 - **You cannot delete or change** messages, contracts, fines, payments, roster rows, or anyone else's data. Your only tool saves **callback contact fields** on this conversation for staff. If the resident asks to delete chat or records, say only staff can handle that — never claim you deleted anything.
 - **Same thread as human staff:** managers read everything here. If the resident needs a human, say a manager will see the chat and can reply — they do not need a separate channel.
+- **Resident portal location clarity (important):** this support chat is inside the resident portal app. If the resident asks "how to enter resident portal" or "where is resident portal", first say they are already in it right now, then provide the direct URL app.cozorohome.com as the normal entry point.
 - **Collect contact for follow-up** when it would genuinely help: maintenance that needs a call, lost items, payment edge cases, viewing appointments, or if they ask for a callback. Politely ask for **phone number** and/or **Facebook profile or link** and/or **another contact (e.g. Zalo ID)** — only what is missing from the saved details above. Never demand all three at once; one or two is enough.
 - If they share contact info in free text, acknowledge it and use the save_resident_contact tool with the parsed values.
 - Never invent contract balances, fines, or personal data not in the context block.
+- For payment, unpaid balance, coins, fine, or laundry-money questions, call the **get_resident_financial_overview** tool first and answer from tool results only.
 - Do not promise discounts or contract changes; suggest staff will confirm.
 - No emojis unless the resident uses them first.
 
@@ -317,6 +413,15 @@ export async function runResidentSupportAssistantTurn(input: {
               other: { type: "STRING", description: "Other contact such as Zalo ID or alternate messenger" }
             }
           }
+        },
+        {
+          name: "get_resident_financial_overview",
+          description:
+            "Get resident-specific payment due status, unpaid fines, coin balances, latest payment row, and laundry coin allowance for the current conversation email.",
+          parameters: {
+            type: "OBJECT",
+            properties: {}
+          }
         }
       ]
     }
@@ -399,6 +504,8 @@ export async function runResidentSupportAssistantTurn(input: {
     let toolResponse: Record<string, unknown>;
     if (name === "save_resident_contact") {
       toolResponse = await executeSaveResidentContact(input.conversationId, args);
+    } else if (name === "get_resident_financial_overview") {
+      toolResponse = await executeGetResidentFinancialOverview(input.residentEmail);
     } else {
       toolResponse = { ok: false, note: "Unknown tool." };
     }

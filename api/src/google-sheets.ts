@@ -4138,7 +4138,6 @@ export async function managerCreateManualPaymentReceipt(input: {
     ["Số tiền hưởng ưu đãi"]: input.discountAmount != null ? String(input.discountAmount) : "",
     ["Điều kiện hưởng ưu đãi"]: input.discountCondition?.trim() ?? ""
   });
-
   return { ok: true, contractCode };
 }
 
