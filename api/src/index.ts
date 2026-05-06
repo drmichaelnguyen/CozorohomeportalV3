@@ -79,6 +79,7 @@ import {
   createAuthUrl,
   exchangeCodeForTokens,
   getActiveClientByEmail,
+  getLatestClientRowForContractApprovalEnrichment,
   getLaundryAvailabilityForMachine,
   getLaundryBookingContextForEmail,
   getCoinsForEmail,
@@ -436,6 +437,16 @@ function publicApprovalSummary(item: PendingContractApproval) {
 
 type PublicContractApprovalSummary = ReturnType<typeof publicApprovalSummary>;
 
+function extensionSnapshotBedMissing(ext: PendingContractApproval["extension"]): boolean {
+  if (!ext) return true;
+  const raw = ext.bedNumber as unknown;
+  if (raw === undefined || raw === null) return true;
+  if (typeof raw === "string" && !raw.trim()) return true;
+  if (typeof raw === "number" && !Number.isFinite(raw)) return true;
+  const parsed = Number.parseInt(String(raw).replace(/[^0-9]/g, ""), 10);
+  return !Number.isFinite(parsed);
+}
+
 function extensionSnapshotLooksIncomplete(ext: PendingContractApproval["extension"]): boolean {
   if (!ext?.email?.trim()) return false;
   const branch = String(ext.branchId ?? "").trim();
@@ -443,8 +454,7 @@ function extensionSnapshotLooksIncomplete(ext: PendingContractApproval["extensio
   const start = String(ext.newContractStartDate ?? "").trim();
   const end = String(ext.newContractEndDate ?? "").trim();
   const code = String(ext.contractCode ?? "").trim();
-  const bedMissing = ext.bedNumber === undefined || ext.bedNumber === null;
-  return !branch || bedMissing || !prev || !start || !end || !code;
+  return !branch || extensionSnapshotBedMissing(ext) || !prev || !start || !end || !code;
 }
 
 async function enrichPublicApprovalSummary(item: PendingContractApproval): Promise<PublicContractApprovalSummary> {
@@ -457,15 +467,15 @@ async function enrichPublicApprovalSummary(item: PendingContractApproval): Promi
     .toLowerCase();
   if (!email) return base;
 
-  const active = await getActiveClientByEmail(email);
-  if (!active) return base;
+  const row = await getLatestClientRowForContractApprovalEnrichment(email);
+  if (!row) return base;
 
-  const branchId = normalizeClientBranch(getClientBranchValue(active));
-  const bedParsed = Number.parseInt(String(active[CLIENT_BED_COLUMN] ?? "").replace(/[^0-9]/g, ""), 10);
+  const branchId = normalizeClientBranch(getClientBranchValue(row));
+  const bedParsed = Number.parseInt(String(row[CLIENT_BED_COLUMN] ?? "").replace(/[^0-9]/g, ""), 10);
   const bedNumber = Number.isFinite(bedParsed) ? bedParsed : null;
-  const oldEnd = String(active[CLIENT_CONTRACT_END_COLUMN] ?? "").trim();
-  const residentName = String(active[CLIENT_NAME_COLUMN] ?? "").trim();
-  const contractCode = String(active[CONTRACT_CODE_COLUMN] ?? "").trim();
+  const oldEnd = String(row[CLIENT_CONTRACT_END_COLUMN] ?? "").trim();
+  const residentName = String(row[CLIENT_NAME_COLUMN] ?? "").trim();
+  const contractCode = String(row[CONTRACT_CODE_COLUMN] ?? "").trim();
 
   let newContractStartDate = String(item.extension!.newContractStartDate ?? "").trim();
   let newContractEndDate = String(item.extension!.newContractEndDate ?? "").trim();
@@ -485,11 +495,20 @@ async function enrichPublicApprovalSummary(item: PendingContractApproval): Promi
     // Keep whatever snapshot / partial recompute we already have.
   }
 
+  const baseBedParsed =
+    typeof base.bedNumber === "number" && Number.isFinite(base.bedNumber)
+      ? base.bedNumber
+      : typeof base.bedNumber === "string" && String(base.bedNumber).trim().length > 0
+        ? Number.parseInt(String(base.bedNumber).replace(/[^0-9]/g, ""), 10)
+        : NaN;
+  const mergedBed =
+    Number.isFinite(baseBedParsed) && !Number.isNaN(baseBedParsed) ? baseBedParsed : bedNumber;
+
   return {
     ...base,
     fullName: base.fullName.trim() ? base.fullName : residentName,
     branchId: base.branchId.trim() ? base.branchId : branchId,
-    bedNumber: base.bedNumber != null ? base.bedNumber : bedNumber,
+    bedNumber: mergedBed,
     contractMonths: base.contractMonths != null ? base.contractMonths : extensionMonths,
     contractStartDate: base.contractStartDate.trim() ? base.contractStartDate : newContractStartDate,
     contractEndDate: base.contractEndDate.trim() ? base.contractEndDate : newContractEndDate,

@@ -5456,7 +5456,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               ))}
             </section>
           ) : (
-
+            <div className="space-y-3">
             <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
               <button
                 type="button"
@@ -5478,12 +5478,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 disabled={
                   loading ||
                   !paymentReminderBody.trim() ||
-                  clientPaymentTableRows.filter((row) => !row.isPaid).length === 0 ||
+                  filteredClients.filter((row) => showUnpaidRentMarker(row)).length === 0 ||
                   (!sendReminderPopup && !sendReminderInApp && !sendReminderEmail)
                 }
                 className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 disabled:opacity-60"
               >
-                Send unpaid batch reminder ({clientPaymentTableRows.filter((row) => !row.isPaid).length})
+                Send unpaid batch reminder ({filteredClients.filter((row) => showUnpaidRentMarker(row)).length})
               </button>
             </div>
             <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
@@ -5537,6 +5537,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 </table>
               </div>
             </section>
+          </div>
           )}
           </>)}
           {clientTermTab === "inactive" && (

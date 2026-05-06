@@ -3590,6 +3590,45 @@ export async function getActiveClientByEmail(email: string) {
   });
 }
 
+/**
+ * Prefer {@link getActiveClientByEmail}; if none (e.g. moved out / inactive), use the latest
+ * sheet row for this email (any stay status) so manager contract-approval details can still show.
+ */
+export async function getLatestClientRowForContractApprovalEnrichment(email: string): Promise<ClientRow | null> {
+  const normalized = email.trim().toLowerCase();
+  const active = await getActiveClientByEmail(normalized);
+  if (active) return active;
+
+  if (!spreadsheetId) return null;
+  const sheets = await getAuthorizedSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetName}!A:AMJ`
+  });
+  const values = response.data.values ?? [];
+  if (values.length === 0) return null;
+  const headers = (values[0] ?? []).map((value) => normalizeHeader(String(value)));
+  const matches = values
+    .slice(1)
+    .map((row) => mapRow(headers, row.map((value) => String(value))))
+    .filter(
+      (row) =>
+        row[EMAIL_COLUMN]?.trim().toLowerCase() === normalized &&
+        String(row[CONTRACT_CODE_COLUMN] ?? "").trim().length > 0
+    );
+
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0]!;
+
+  return matches.reduce((best, row) => {
+    const bestDate = parseSubmissionTimestamp(best[COINS_TIMESTAMP_COLUMN] ?? "");
+    const rowDate = parseSubmissionTimestamp(row[COINS_TIMESTAMP_COLUMN] ?? "");
+    if (!bestDate) return row;
+    if (!rowDate) return best;
+    return rowDate > bestDate ? row : best;
+  });
+}
+
 // Parses "dd/mm/yyyy hh:mm:ss" (the DẤU THỜI GIAN column format)
 function parseSubmissionTimestamp(value: string): Date | null {
   const trimmed = value.trim();
