@@ -167,6 +167,7 @@ type StaffEntry = {
 type AccountLockOverride = {
   email: string;
   unlocked: boolean;
+  forceLocked?: boolean;
   note?: string;
   updatedAt: string;
   updatedBy: string;
@@ -2686,13 +2687,17 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [contractApprovalActionId, setContractApprovalActionId] = useState<string | null>(null);
   const [expandedContractApprovals, setExpandedContractApprovals] = useState<Record<string, boolean>>({});
   const [branchToolsOpen, setBranchToolsOpen] = useState(false);
-  const [branchToolsTab, setBranchToolsTab] = useState<"manual_receipt" | "branch_broadcast">("manual_receipt");
+  const [branchToolsTab, setBranchToolsTab] = useState<"manual_receipt" | "branch_broadcast" | "unpaid_reminder">("manual_receipt");
   const [manualReceiptName, setManualReceiptName] = useState("");
   const [manualReceiptEmail, setManualReceiptEmail] = useState("");
   const [manualReceiptPurpose, setManualReceiptPurpose] = useState("");
   const [manualReceiptAmount, setManualReceiptAmount] = useState("");
   const [manualReceiptDetails, setManualReceiptDetails] = useState("");
-  const [manualReceiptPayer, setManualReceiptPayer] = useState("");
+  const [manualReceiptReceiver, setManualReceiptReceiver] = useState("");
+  const [manualReceiptMemberTier, setManualReceiptMemberTier] = useState("");
+  const [manualReceiptCurrentCoins, setManualReceiptCurrentCoins] = useState("");
+  const [manualReceiptDiscountAmount, setManualReceiptDiscountAmount] = useState("");
+  const [manualReceiptDiscountCondition, setManualReceiptDiscountCondition] = useState("");
   const [manualReceiptContractCode, setManualReceiptContractCode] = useState("");
   const [manualReceiptBed, setManualReceiptBed] = useState("");
   const [branchBroadcastTitle, setBranchBroadcastTitle] = useState("CozoroHome Notice");
@@ -2963,13 +2968,16 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [activeAction, setActiveAction] = useState<ClientAction>("");
   const [clientActionMenuOpen, setClientActionMenuOpen] = useState(false);
   const clientToolsMenuRef = useRef<HTMLDivElement | null>(null);
-  const [paymentReminderTitle, setPaymentReminderTitle] = useState("Payment required");
+  const [paymentReminderTitle, setPaymentReminderTitle] = useState("Nhắc thanh toán tiền phòng");
   const [paymentReminderBody, setPaymentReminderBody] = useState(
-    "Your payment is currently unpaid. Please complete payment as soon as possible to avoid feature lock."
+    "Chào bạn, hiện hệ thống ghi nhận kỳ thanh toán này chưa hoàn tất. Vui lòng thanh toán sớm để tránh gián đoạn tính năng; email sẽ kèm tổng tiền, chi tiết các khoản và hạn thanh toán."
   );
   const [sendReminderPopup, setSendReminderPopup] = useState(true);
   const [sendReminderInApp, setSendReminderInApp] = useState(true);
   const [sendReminderEmail, setSendReminderEmail] = useState(true);
+  const [sendReminderEnglishCopy, setSendReminderEnglishCopy] = useState(false);
+  const [unpaidReminderMode, setUnpaidReminderMode] = useState<"all_unpaid" | "selected">("all_unpaid");
+  const [selectedUnpaidReminderEmails, setSelectedUnpaidReminderEmails] = useState<string[]>([]);
   const [showAllStatsEntries, setShowAllStatsEntries] = useState(false);
   const [showClientDetails, setShowClientDetails] = useState(false);
   const [activeManagerView, setActiveManagerView] = useState<ManagerView>(initialView);
@@ -3417,6 +3425,36 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }
     return availableOptions.filter((option) => option.toLowerCase().includes(keyword));
   }, [paymentPurposeInput, paymentPurposeSelections, paymentPurposeSuggestions]);
+  const manualReceiptReceiverSuggestions = useMemo(() => {
+    const receivers =
+      paymentPurposeRows
+        .map(
+          (row) =>
+            String(
+              (
+                row["NGƯỜI NHẬN TIỀN"] ??
+                row["NGUOI NHAN TIEN"] ??
+                row["Người nhận tiền"] ??
+                row["receiver"] ??
+                findRowValue(row, ["nguoinhantien", "receiver"])
+              ) || ""
+            ).trim()
+        )
+        .filter(Boolean) ?? [];
+
+    return Array.from(new Set(receivers)).sort((left, right) =>
+      left.localeCompare(right, undefined, { sensitivity: "base" })
+    );
+  }, [paymentPurposeRows]);
+  const unpaidReminderCandidates = useMemo(
+    () =>
+      filteredClients.filter(
+        (row) =>
+          showUnpaidRentMarker(row) &&
+          (!selectedBranch || normalizeBranchLabel(row.branch) === selectedBranch)
+      ),
+    [filteredClients, selectedBranch, monthlyRentPaidByEmail]
+  );
   const selectedBranchRooms = quickNav.find((entry) => entry.branch === selectedBranch)?.rooms ?? [];
   const branchOverviewGroups = useMemo(() => {
     const branchLayouts =
@@ -3683,14 +3721,16 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   }
 
   function openBranchToolsModal(tab: "manual_receipt" | "branch_broadcast") {
-    if (selectedBranch !== "D2" && selectedBranch !== "D7") {
-      setStatus("Please select D2 or D7 first.");
-      return;
-    }
+    const resolvedBranch =
+      selectedBranch === "D2" || selectedBranch === "D7"
+        ? selectedBranch
+        : selectedClient
+          ? normalizeBranchLabel(selectedClient.branch)
+          : "D2";
+    setSelectedBranch(resolvedBranch === "D7" ? "D7" : "D2");
     setBranchToolsTab(tab);
     setBranchToolsOpen(true);
     if (!manualReceiptPurpose) setManualReceiptPurpose("Rent");
-    if (!manualReceiptPayer) setManualReceiptPayer("Resident");
   }
 
   async function submitManualReceiptForNewClient() {
@@ -3711,7 +3751,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         purpose: manualReceiptPurpose.trim(),
         amount: Number(manualReceiptAmount),
         details: manualReceiptDetails.trim() || undefined,
-        payer: manualReceiptPayer.trim() || undefined,
+        payer: manualReceiptName.trim(),
+        receiver: manualReceiptReceiver.trim() || undefined,
+        memberTier: manualReceiptMemberTier.trim() || undefined,
+        currentCoins: manualReceiptCurrentCoins.trim() || undefined,
+        discountAmount: manualReceiptDiscountAmount.trim() ? Number(manualReceiptDiscountAmount) : undefined,
+        discountCondition: manualReceiptDiscountCondition.trim() || undefined,
         branch: selectedBranch,
         contractCode: manualReceiptContractCode.trim() || undefined,
         bed: manualReceiptBed.trim() || undefined
@@ -3724,7 +3769,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         setManualReceiptPurpose("Rent");
         setManualReceiptAmount("");
         setManualReceiptDetails("");
-        setManualReceiptPayer("");
         setManualReceiptContractCode("");
         setManualReceiptBed("");
       }
@@ -5291,8 +5335,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               <button
                 type="button"
                 onClick={() => openBranchToolsModal("manual_receipt")}
-                disabled={selectedBranch !== "D2" && selectedBranch !== "D7"}
-                className="rounded-full border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 transition-all hover:bg-amber-100 disabled:opacity-50"
+                className="rounded-full border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 transition-all hover:bg-amber-100"
               >
                 Branch Tools
               </button>
@@ -5479,35 +5522,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             </section>
           ) : (
             <div className="space-y-3">
-            <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() =>
-                  void postJson(
-                    `${API_BASE_URL}/manager/payment-reminders/send`,
-                    {
-                      actorEmail: normalizedEmail,
-                      mode: "batch_unpaid",
-                      title: paymentReminderTitle.trim() || "Payment required",
-                      body: paymentReminderBody.trim(),
-                      sendPopup: sendReminderPopup,
-                      sendInAppMessage: sendReminderInApp,
-                      sendEmail: sendReminderEmail
-                    },
-                    "Batch reminders sent to unpaid clients."
-                  )
-                }
-                disabled={
-                  loading ||
-                  !paymentReminderBody.trim() ||
-                  filteredClients.filter((row) => showUnpaidRentMarker(row)).length === 0 ||
-                  (!sendReminderPopup && !sendReminderInApp && !sendReminderEmail)
-                }
-                className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 disabled:opacity-60"
-              >
-                Send unpaid batch reminder ({filteredClients.filter((row) => showUnpaidRentMarker(row)).length})
-              </button>
-            </div>
             <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-slate-200">
@@ -6299,67 +6313,88 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     disabled={!selectedClient}
                     className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60"
                   >
-                    Tools
+                    🧰 Tools
                   </button>
                   {clientActionMenuOpen ? (
                     <div className="absolute right-0 z-20 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
                       {(() => {
                         const autoLock = selectedClient ? getAutomaticFeatureLockStatus(selectedClient) : null;
                         const isUnlocked = accountLockOverride?.unlocked === true;
+                        const isManuallyLocked = accountLockOverride?.forceLocked === true;
+                        const isCurrentlyLocked = isManuallyLocked || (Boolean(autoLock?.isBlocked) && !isUnlocked);
                         const canToggle =
                           !!selectedClient?.email && (sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin");
-                        const isUnavailable = !autoLock || (!autoLock.isBlocked && !isUnlocked);
                         const lockLabel = accountLockOverrideLoading
                           ? t("loadingLabel")
-                          : isUnlocked
+                          : isCurrentlyLocked
+                            ? t("featureLockOn")
+                            : isUnlocked
                             ? t("featureLockOff")
-                            : autoLock?.isBlocked
-                              ? t("featureLockOn")
-                              : t("featureLockTitle");
+                            : t("featureLockOff");
                         return (
                           <button
                             type="button"
                             onClick={() => {
-                              if (!selectedClient?.email || !autoLock || isUnavailable) return;
+                              if (!selectedClient?.email) return;
+                              const nextForceLocked = !isCurrentlyLocked;
+                              const nextUnlocked = !nextForceLocked;
+                              let note = nextUnlocked ? t("manualUnlockNote") : "";
+                              if (nextForceLocked) {
+                                const reason = window.prompt("Reason for lock:");
+                                if (reason == null) return;
+                                if (!reason.trim()) {
+                                  setStatus("Please enter a reason for lock.");
+                                  return;
+                                }
+                                note = reason.trim();
+                              }
                               void postJson(
                                 `${API_BASE_URL}/manager/account-lock-override`,
                                 {
                                   actorEmail: normalizedEmail,
                                   targetEmail: selectedClient.email,
-                                  unlocked: !isUnlocked,
-                                  note: !isUnlocked ? t("manualUnlockNote") : ""
+                                  unlocked: nextUnlocked,
+                                  forceLocked: nextForceLocked,
+                                  note
                                 },
-                                !isUnlocked ? t("accountUnlockedSuccess") : t("accountLockedResetSuccess"),
+                                nextUnlocked ? t("accountUnlockedSuccess") : t("featureLockEnabledSuccess"),
                                 async () => {
                                   await loadAccountLockOverride(selectedClient.email);
                                 }
                               );
                               setClientActionMenuOpen(false);
                             }}
-                            disabled={!canToggle || accountLockOverrideLoading || !selectedClient?.email || isUnavailable}
+                            disabled={!canToggle || accountLockOverrideLoading || !selectedClient?.email}
                             title={
-                              autoLock?.isBlocked
-                                ? isUnlocked
+                              isManuallyLocked
+                                ? accountLockOverride?.note || t("featureLockTitle")
+                                : autoLock?.isBlocked
+                                  ? isUnlocked
                                   ? t("overrideByLabel", { manager: accountLockOverride?.updatedBy ?? t("manager") })
                                   : autoLock.reason
-                                : t("normalAutomaticRulesDesc")
+                                  : t("normalAutomaticRulesDesc")
                             }
-                            className="mb-1 block w-full rounded-lg border border-slate-200 px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+                            className={`mb-1 block w-full rounded-lg border px-3 py-2 text-left text-sm font-medium disabled:opacity-60 ${
+                              isCurrentlyLocked
+                                ? "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                                : "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                            }`}
                           >
                             {t("featureLockTitle")}: {lockLabel}
                           </button>
                         );
                       })()}
                       {[
-                        ["reminder", "Send notification to client"],
-                        ["message", t("openChat")],
-                        ["call", t("callClient")],
-                        ["email", t("emailClient")],
-                        ["fine", t("newFineTicket")],
-                        ["coins", t("newCoinsEntry")],
-                        ["password", t("changePassword", "Change password")],
-                        ["gateParking", t("gateParkingTickets")],
-                        ...(canCreatePaymentReceipt ? ([["payment", t("newPaymentReceipt")]] as const) : [])
+                        ["reminder", "🔔 Send notification to client"],
+                        ["message", `💬 ${t("openChat")}`],
+                        ["call", `📞 ${t("callClient")}`],
+                        ["email", `✉️ ${t("emailClient")}`],
+                        ["remove", `🛑 ${t("terminateContractBtn")}`],
+                        ["fine", `🧾 ${t("newFineTicket")}`],
+                        ["coins", `🪙 ${t("newCoinsEntry")}`],
+                        ["password", `🔐 ${t("changePassword", "Change password")}`],
+                        ["gateParking", `🚦 ${t("gateParkingTickets")}`],
+                        ...(canCreatePaymentReceipt ? ([[ "payment", `💵 ${t("newPaymentReceipt")}` ]] as const) : [])
                       ].map(([value, label]) => (
                         <button
                           key={value}
@@ -7898,7 +7933,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
                       />
                     </label>
-                    <div className="grid gap-2 sm:grid-cols-3">
+                    <div className="grid gap-2 sm:grid-cols-4">
                       <label className="flex items-center gap-2 text-sm text-slate-700">
                         <input type="checkbox" checked={sendReminderPopup} onChange={(event) => setSendReminderPopup(event.target.checked)} />
                         Popup
@@ -7911,6 +7946,15 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         <input type="checkbox" checked={sendReminderEmail} onChange={(event) => setSendReminderEmail(event.target.checked)} />
                         Email
                       </label>
+                      <label className="flex items-center gap-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={sendReminderEnglishCopy}
+                          onChange={(event) => setSendReminderEnglishCopy(event.target.checked)}
+                          disabled={!sendReminderEmail}
+                        />
+                        English copy (email)
+                      </label>
                     </div>
                     <button
                       type="button"
@@ -7921,11 +7965,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             actorEmail: normalizedEmail,
                             mode: "single",
                             email: selectedClient?.email ?? "",
-                            title: paymentReminderTitle.trim() || "Payment required",
+                            title: paymentReminderTitle.trim() || "Nhắc thanh toán tiền phòng",
                             body: paymentReminderBody.trim(),
                             sendPopup: sendReminderPopup,
                             sendInAppMessage: sendReminderInApp,
-                            sendEmail: sendReminderEmail
+                            sendEmail: sendReminderEmail,
+                            includeEnglishCopy: sendReminderEnglishCopy
                           },
                           "Payment reminder sent."
                         )
@@ -10967,108 +11012,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             )}
           </div>
 
-          {branchToolsOpen && (selectedBranch === "D2" || selectedBranch === "D7") ? (
-            <div className="fixed inset-0 z-[170] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
-              <div className="w-full max-w-2xl rounded-t-3xl bg-white shadow-xl sm:rounded-3xl">
-                <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4 sm:px-6">
-                  <div>
-                    <h3 className="text-base font-semibold text-slate-900">Branch Tools — {selectedBranch}</h3>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Quick tools for this branch: manual receipt + branch-wide notifications.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setBranchToolsOpen(false)}
-                    className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700"
-                  >
-                    Close
-                  </button>
-                </div>
-                <div className="space-y-4 p-5 sm:p-6">
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setBranchToolsTab("manual_receipt")}
-                      className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
-                        branchToolsTab === "manual_receipt"
-                          ? "bg-slate-900 text-white"
-                          : "border border-slate-300 text-slate-700"
-                      }`}
-                    >
-                      New-client receipt
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setBranchToolsTab("branch_broadcast")}
-                      className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
-                        branchToolsTab === "branch_broadcast"
-                          ? "bg-slate-900 text-white"
-                          : "border border-slate-300 text-slate-700"
-                      }`}
-                    >
-                      Branch notification
-                    </button>
-                  </div>
-
-                  {branchToolsTab === "manual_receipt" ? (
-                    <div className="space-y-3">
-                      <p className="text-xs text-slate-600">
-                        Create a payment receipt for a person who is not in the current client database.
-                        Branch is pre-filled from your selected branch.
-                      </p>
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <input value={manualReceiptName} onChange={(e) => setManualReceiptName(e.target.value)} placeholder="Full name *" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-                        <input value={manualReceiptEmail} onChange={(e) => setManualReceiptEmail(e.target.value)} placeholder="Email *" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-                        <input value={manualReceiptPurpose} onChange={(e) => setManualReceiptPurpose(e.target.value)} placeholder="Purpose *" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-                        <input type="number" min="0" value={manualReceiptAmount} onChange={(e) => setManualReceiptAmount(e.target.value)} placeholder="Amount (VND) *" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-                        <input value={manualReceiptPayer} onChange={(e) => setManualReceiptPayer(e.target.value)} placeholder="Payer (optional)" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-                        <input value={manualReceiptBed} onChange={(e) => setManualReceiptBed(e.target.value)} placeholder="Bed (optional, default 0)" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-                        <input value={manualReceiptContractCode} onChange={(e) => setManualReceiptContractCode(e.target.value)} placeholder="Contract code override (optional)" className="rounded-lg border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
-                        <textarea value={manualReceiptDetails} onChange={(e) => setManualReceiptDetails(e.target.value)} placeholder="Details (optional)" rows={3} className="rounded-lg border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void submitManualReceiptForNewClient()}
-                        disabled={loading}
-                        className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-                      >
-                        Create Manual Receipt
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      <p className="text-xs text-slate-600">
-                        Sends web push to all active clients in {selectedBranch}, and stores a first-open in-app prompt per resident.
-                      </p>
-                      <input
-                        value={branchBroadcastTitle}
-                        onChange={(e) => setBranchBroadcastTitle(e.target.value)}
-                        placeholder="Notification title *"
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                      />
-                      <textarea
-                        value={branchBroadcastMessage}
-                        onChange={(e) => setBranchBroadcastMessage(e.target.value)}
-                        placeholder="Message *"
-                        rows={5}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => void submitBranchBroadcast()}
-                        disabled={loading}
-                        className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-                      >
-                        Send Branch Notification
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          ) : null}
-
           {/* Remove confirmation dialog */}
           {removeConfirmEntry && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -11919,6 +11862,282 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         </section>
       ) : null}
 
+      {branchToolsOpen && (selectedBranch === "D2" || selectedBranch === "D7") ? (
+        <div className="fixed inset-0 z-[170] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
+          <div className="w-full max-w-2xl rounded-t-3xl bg-white shadow-xl sm:rounded-3xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4 sm:px-6">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">Branch Tools — {selectedBranch}</h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  Quick tools for this branch: manual receipt, branch-wide notifications, and unpaid reminders.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBranchToolsOpen(false)}
+                className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700"
+              >
+                Close
+              </button>
+            </div>
+            <div className="space-y-4 p-5 sm:p-6">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBranchToolsTab("manual_receipt")}
+                  className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                    branchToolsTab === "manual_receipt"
+                      ? "bg-slate-900 text-white"
+                      : "border border-slate-300 text-slate-700"
+                  }`}
+                >
+                  New-client receipt
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBranchToolsTab("branch_broadcast")}
+                  className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                    branchToolsTab === "branch_broadcast"
+                      ? "bg-slate-900 text-white"
+                      : "border border-slate-300 text-slate-700"
+                  }`}
+                >
+                  Branch notification
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBranchToolsTab("unpaid_reminder")}
+                  className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                    branchToolsTab === "unpaid_reminder"
+                      ? "bg-slate-900 text-white"
+                      : "border border-slate-300 text-slate-700"
+                  }`}
+                >
+                  Unpaid reminder
+                </button>
+              </div>
+
+              {branchToolsTab === "manual_receipt" ? (
+                <div className="space-y-3">
+                  <p className="text-xs text-slate-600">
+                    Create a payment receipt for a person who is not in the current client database.
+                    Branch is pre-filled from your selected branch.
+                  </p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <input value={manualReceiptName} onChange={(e) => setManualReceiptName(e.target.value)} placeholder="Full name *" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    <input value={manualReceiptEmail} onChange={(e) => setManualReceiptEmail(e.target.value)} placeholder="Email *" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    <input value={manualReceiptPurpose} onChange={(e) => setManualReceiptPurpose(e.target.value)} placeholder="Purpose *" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    <input type="number" min="0" value={manualReceiptAmount} onChange={(e) => setManualReceiptAmount(e.target.value)} placeholder="Amount (VND) *" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    <input
+                      value={manualReceiptReceiver}
+                      onChange={(e) => setManualReceiptReceiver(e.target.value)}
+                      list="manual-receipt-receiver-options"
+                      placeholder="Receiver / Người nhận tiền"
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    />
+                    <input value={manualReceiptMemberTier} onChange={(e) => setManualReceiptMemberTier(e.target.value)} placeholder="Member tier (optional)" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    <input value={manualReceiptCurrentCoins} onChange={(e) => setManualReceiptCurrentCoins(e.target.value)} placeholder="Current coins (optional)" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    <input type="number" min="0" value={manualReceiptDiscountAmount} onChange={(e) => setManualReceiptDiscountAmount(e.target.value)} placeholder="Discount amount (optional)" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    <input value={manualReceiptDiscountCondition} onChange={(e) => setManualReceiptDiscountCondition(e.target.value)} placeholder="Discount condition (optional)" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    <input value={manualReceiptBed} onChange={(e) => setManualReceiptBed(e.target.value)} placeholder="Bed (optional, default 0)" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    <input value={manualReceiptContractCode} onChange={(e) => setManualReceiptContractCode(e.target.value)} placeholder="Contract code override (optional)" className="rounded-lg border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
+                    <textarea value={manualReceiptDetails} onChange={(e) => setManualReceiptDetails(e.target.value)} placeholder="Details (optional)" rows={3} className="rounded-lg border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
+                    <datalist id="manual-receipt-receiver-options">
+                      {manualReceiptReceiverSuggestions.map((option) => (
+                        <option key={option} value={option} />
+                      ))}
+                    </datalist>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void submitManualReceiptForNewClient()}
+                    disabled={loading}
+                    className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                  >
+                    Create Manual Receipt
+                  </button>
+                </div>
+              ) : branchToolsTab === "branch_broadcast" ? (
+                <div className="space-y-3">
+                  <p className="text-xs text-slate-600">
+                    Sends web push to all active clients in {selectedBranch}, and stores a first-open in-app prompt per resident.
+                  </p>
+                  <input
+                    value={branchBroadcastTitle}
+                    onChange={(e) => setBranchBroadcastTitle(e.target.value)}
+                    placeholder="Notification title *"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                  <textarea
+                    value={branchBroadcastMessage}
+                    onChange={(e) => setBranchBroadcastMessage(e.target.value)}
+                    placeholder="Message *"
+                    rows={5}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void submitBranchBroadcast()}
+                    disabled={loading}
+                    className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                  >
+                    Send Branch Notification
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-xs text-slate-600">
+                    Send reminder to unpaid clients. Channels can be combined (popup, in-app message, email).
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setUnpaidReminderMode("all_unpaid")}
+                      className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                        unpaidReminderMode === "all_unpaid"
+                          ? "bg-slate-900 text-white"
+                          : "border border-slate-300 text-slate-700"
+                      }`}
+                    >
+                      All unpaid
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setUnpaidReminderMode("selected")}
+                      className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                        unpaidReminderMode === "selected"
+                          ? "bg-slate-900 text-white"
+                          : "border border-slate-300 text-slate-700"
+                      }`}
+                    >
+                      Selected users
+                    </button>
+                  </div>
+                  {unpaidReminderMode === "selected" ? (
+                    <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs font-semibold text-slate-700">
+                          Choose recipients ({selectedUnpaidReminderEmails.length})
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedUnpaidReminderEmails(unpaidReminderCandidates.map((row) => row.email.trim().toLowerCase()))}
+                            className="rounded border border-slate-300 px-2 py-0.5 text-[11px] font-medium text-slate-700"
+                          >
+                            Select all
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedUnpaidReminderEmails([])}
+                            className="rounded border border-slate-300 px-2 py-0.5 text-[11px] font-medium text-slate-700"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </div>
+                      <div className="max-h-40 space-y-1 overflow-y-auto pr-1">
+                        {unpaidReminderCandidates.map((row) => {
+                          const email = row.email.trim().toLowerCase();
+                          const checked = selectedUnpaidReminderEmails.includes(email);
+                          return (
+                            <label key={row.maHd} className="flex items-center gap-2 text-xs text-slate-700">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(event) => {
+                                  setSelectedUnpaidReminderEmails((current) =>
+                                    event.target.checked ? [...current, email] : current.filter((entry) => entry !== email)
+                                  );
+                                }}
+                              />
+                              <span>{row.name || row.email}</span>
+                              <span className="text-slate-400">({row.email})</span>
+                            </label>
+                          );
+                        })}
+                        {!unpaidReminderCandidates.length ? (
+                          <div className="text-xs text-slate-500">No unpaid users in current list.</div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+                  <input
+                    value={paymentReminderTitle}
+                    onChange={(e) => setPaymentReminderTitle(e.target.value)}
+                    placeholder="Reminder title"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                  <textarea
+                    value={paymentReminderBody}
+                    onChange={(e) => setPaymentReminderBody(e.target.value)}
+                    placeholder="Reminder message *"
+                    rows={4}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <label className="flex items-center gap-2 text-sm text-slate-700">
+                      <input type="checkbox" checked={sendReminderPopup} onChange={(event) => setSendReminderPopup(event.target.checked)} />
+                      Popup
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-slate-700">
+                      <input type="checkbox" checked={sendReminderInApp} onChange={(event) => setSendReminderInApp(event.target.checked)} />
+                      In-app message
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-slate-700">
+                      <input type="checkbox" checked={sendReminderEmail} onChange={(event) => setSendReminderEmail(event.target.checked)} />
+                      Email
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={sendReminderEnglishCopy}
+                        disabled={!sendReminderEmail}
+                        onChange={(event) => setSendReminderEnglishCopy(event.target.checked)}
+                      />
+                      Include English email copy
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void postJson(
+                        `${API_BASE_URL}/manager/payment-reminders/send`,
+                        {
+                          actorEmail: normalizedEmail,
+                          mode: unpaidReminderMode === "selected" ? "batch_selected" : "batch_unpaid",
+                          emails: unpaidReminderMode === "selected" ? selectedUnpaidReminderEmails : undefined,
+                          title: paymentReminderTitle.trim() || "Nhắc thanh toán tiền phòng",
+                          body: paymentReminderBody.trim(),
+                          sendPopup: sendReminderPopup,
+                          sendInAppMessage: sendReminderInApp,
+                          sendEmail: sendReminderEmail,
+                          includeEnglishCopy: sendReminderEnglishCopy
+                        },
+                        "Batch reminders sent to unpaid clients."
+                      )
+                    }
+                    disabled={
+                      loading ||
+                      !paymentReminderBody.trim() ||
+                      (unpaidReminderMode === "selected"
+                        ? selectedUnpaidReminderEmails.length === 0
+                        : unpaidReminderCandidates.length === 0) ||
+                      (!sendReminderPopup && !sendReminderInApp && !sendReminderEmail)
+                    }
+                    className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                  >
+                    {unpaidReminderMode === "selected"
+                      ? `Send reminder to selected users (${selectedUnpaidReminderEmails.length})`
+                      : `Send unpaid batch reminder (${unpaidReminderCandidates.length})`}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {/* Short-term booking confirm & import dialog */}
       {stConfirmDialog && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center p-0 sm:p-4">
@@ -12182,6 +12401,22 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               <div>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{t("diagramQuickActionsTitle")}</p>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setClientSubTab("details");
+                      setShowClientDetails(false);
+                      setActiveAction("");
+                      setClientActionMenuOpen(true);
+                      setDiagramBedQuickSheet(null);
+                      window.setTimeout(() => {
+                        managerClientWorkspaceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }, 80);
+                    }}
+                    className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-center text-xs font-semibold text-slate-800 hover:bg-slate-100"
+                  >
+                    🧰 Tools
+                  </button>
                   {canCreatePaymentReceipt ? (
                     <button
                       type="button"

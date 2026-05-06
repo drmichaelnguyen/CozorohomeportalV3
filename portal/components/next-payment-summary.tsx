@@ -35,7 +35,7 @@ function prepaidRentDueForDisplay(
   return diffDays <= PREPAID_INFO_WINDOW_DAYS;
 }
 
-function BreakdownRows({
+export function BreakdownRows({
   breakdown,
   billMonthLabel,
   language,

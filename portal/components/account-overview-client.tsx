@@ -1077,36 +1077,6 @@ export function AccountOverviewClient() {
         )}
       </section>
 
-      {checkoutBanner?.eligible && !checkoutBanner.completed && client && client["Hiện còn ở"] !== "-1" ? (
-        <section
-          className={`rounded-2xl border p-6 shadow-sm ${
-            checkoutBanner.kind === "termination"
-              ? "border-rose-300 bg-rose-50"
-              : "border-amber-300 bg-amber-50"
-          }`}
-        >
-          <h2 className="text-lg font-semibold text-slate-900">
-            {checkoutBanner.kind === "termination" ? "Check-out bắt buộc" : "Quy trình trả phòng"}
-          </h2>
-          <p className="mt-2 text-sm text-slate-700">
-            {checkoutBanner.kind === "termination"
-              ? "Hợp đồng đã được chấm dứt. Vui lòng hoàn tất các bước check-out trước khi rời đi."
-              : "Hợp đồng của bạn đang trong kỳ trả phòng (trong vòng 7 ngày trước ngày hết hạn). Hoàn tất check-out theo từng bước và ảnh minh chứng."}
-          </p>
-          {checkoutBanner.depositNote ? (
-            <p className="mt-2 text-xs font-medium text-amber-900">⚠️ {checkoutBanner.depositNote}</p>
-          ) : null}
-          <Link
-            href="/check-out"
-            className={`mt-4 inline-flex rounded-xl px-5 py-2.5 text-sm font-semibold text-white ${
-              checkoutBanner.kind === "termination" ? "bg-rose-700 hover:bg-rose-800" : "bg-amber-800 hover:bg-amber-900"
-            }`}
-          >
-            {language === "vi" ? "Mở Check-out →" : "Open check-out →"}
-          </Link>
-        </section>
-      ) : null}
-
       {client?.["Ng\u00e0y h\u1ebft h\u1ea1n h\u1ee3p \u0111\u1ed3ng"] && (
         <ContractExtension
           email={sessionEmail}
