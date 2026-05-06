@@ -19,8 +19,10 @@ export function RentDueBlockingOverlay() {
   const { sessionEmail, sessionRole, isLoggedIn, isSessionLoaded } = usePortalSession();
   const [rentPaidStatus, setRentPaidStatus] = useState<RentPaidStatusPayload | null>(null);
   const [clientRemoved, setClientRemoved] = useState(false);
+  const [clientPaymentDueRaw, setClientPaymentDueRaw] = useState("");
   const [loading, setLoading] = useState(false);
   const [localDismissed, setLocalDismissed] = useState(false);
+  const [hideCountdownSeconds, setHideCountdownSeconds] = useState(0);
 
   const isResidentSession =
     isSessionLoaded &&
@@ -45,12 +47,24 @@ export function RentDueBlockingOverlay() {
       if (clientRes.ok) {
         const client = (await clientRes.json()) as Record<string, string> | { error?: string };
         if (client && typeof client === "object" && !("error" in client)) {
-          setClientRemoved(String((client as Record<string, string>)["Hiện còn ở"] ?? "").trim() === "-1");
+          const clientRow = client as Record<string, string>;
+          setClientRemoved(String(clientRow["Hiện còn ở"] ?? "").trim() === "-1");
+          setClientPaymentDueRaw(
+            String(
+              clientRow["Ngày hết hạn gói đã thanh toán"] ??
+                clientRow["ngày hết hạn gói đã thanh toán"] ??
+                clientRow["hết hạn"] ??
+                clientRow["het han"] ??
+                ""
+            ).trim()
+          );
         } else {
           setClientRemoved(false);
+          setClientPaymentDueRaw("");
         }
       } else {
         setClientRemoved(false);
+        setClientPaymentDueRaw("");
       }
 
       if (rentRes.ok) {
@@ -77,6 +91,31 @@ export function RentDueBlockingOverlay() {
     setLocalDismissed(false);
   }, [rentPaidStatus?.month, sessionEmail]);
 
+  const overdueDays = useMemo(() => {
+    const raw = clientPaymentDueRaw.trim();
+    if (!raw) return 0;
+    const direct = new Date(raw);
+    let due = Number.isNaN(direct.getTime()) ? null : direct;
+    if (!due) {
+      const match = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+      if (!match) return 0;
+      const day = Number.parseInt(match[1] ?? "0", 10);
+      const month = Number.parseInt(match[2] ?? "0", 10) - 1;
+      const yearRaw = Number.parseInt(match[3] ?? "0", 10);
+      const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
+      const parsed = new Date(year, month, day);
+      if (Number.isNaN(parsed.getTime())) return 0;
+      due = parsed;
+    }
+    due.setHours(0, 0, 0, 0);
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const diffDays = Math.floor((now.getTime() - due.getTime()) / (24 * 60 * 60 * 1000));
+    return Math.max(0, diffDays);
+  }, [clientPaymentDueRaw]);
+
+  const hideDelaySeconds = useMemo(() => 5 + overdueDays * 10, [overdueDays]);
+
   const shouldBlock = useMemo(() => {
     if (localDismissed) {
       return false;
@@ -101,6 +140,9 @@ export function RentDueBlockingOverlay() {
   }, [localDismissed, isResidentSession, rentPaidStatus, clientRemoved, sessionEmail]);
 
   function handleHide() {
+    if (hideCountdownSeconds > 0) {
+      return;
+    }
     if (!rentPaidStatus) {
       return;
     }
@@ -109,6 +151,24 @@ export function RentDueBlockingOverlay() {
     }
     setLocalDismissed(true);
   }
+
+  useEffect(() => {
+    if (!shouldBlock) {
+      setHideCountdownSeconds(0);
+      return;
+    }
+    setHideCountdownSeconds(hideDelaySeconds);
+  }, [shouldBlock, hideDelaySeconds, rentPaidStatus?.month]);
+
+  useEffect(() => {
+    if (!shouldBlock || hideCountdownSeconds <= 0) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setHideCountdownSeconds((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [shouldBlock, hideCountdownSeconds]);
 
   if (!shouldBlock || !rentPaidStatus?.breakdown) {
     return null;
@@ -135,14 +195,20 @@ export function RentDueBlockingOverlay() {
         <button
           type="button"
           onClick={handleHide}
-          className="rounded-full bg-amber-900 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-amber-950"
+          disabled={hideCountdownSeconds > 0}
+          className="rounded-full bg-amber-900 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-amber-950 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {t("hideNotice", "Hide")}
+          {hideCountdownSeconds > 0 ? `${t("hideNotice", "Hide")} (${hideCountdownSeconds}s)` : t("hideNotice", "Hide")}
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
         <div className="mx-auto max-w-lg space-y-4">
           <p className="text-center text-sm text-white/95">{t("rentBlockingSub")}</p>
+          {overdueDays >= 5 ? (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800">
+              You are 5+ days late. Warning: your account features can be locked until payment is completed.
+            </div>
+          ) : null}
           <div className="rounded-2xl bg-white p-1 shadow-xl">
             <NextPaymentSummary
               nextPaymentDate={cycleDate}

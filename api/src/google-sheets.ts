@@ -4048,6 +4048,61 @@ export async function managerCreatePaymentReceipt(input: {
   };
 }
 
+export async function managerCreateManualPaymentReceipt(input: {
+  amount: number;
+  purpose: string;
+  fullName: string;
+  recipientEmail: string;
+  branch: string;
+  payer?: string;
+  receiver?: string;
+  details?: string;
+  memberTier?: string;
+  currentCoins?: string;
+  discountAmount?: number;
+  discountCondition?: string;
+  contractCode?: string;
+  bed?: string;
+  allowZeroAmount?: boolean;
+}) {
+  if (!spreadsheetId) {
+    throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
+  }
+
+  const amount = Math.max(0, Math.trunc(input.amount));
+  if (!input.allowZeroAmount && !amount) {
+    throw new Error("Payment amount must be greater than 0.");
+  }
+
+  const normalizedBranch = normalizeClientBranch(input.branch?.trim() ?? "");
+  const generatedContractCode = `MANUAL-${normalizedBranch || "D?"}-${Date.now()}`;
+  const contractCode = input.contractCode?.trim() || generatedContractCode;
+  const fullName = input.fullName.trim();
+  const email = input.recipientEmail.trim().toLowerCase();
+  const bed = input.bed?.trim() ?? "0";
+
+  await appendPaymentSheetRow({
+    [PAYMENT_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(new Date()),
+    [CONTRACT_CODE_COLUMN]: contractCode,
+    [EMAIL_COLUMN]: email,
+    [CLIENT_NAME_COLUMN]: fullName,
+    [CLIENT_BED_COLUMN]: bed,
+    [PAYMENT_AMOUNT_COLUMN]: String(amount),
+    [PAYMENT_PURPOSE_COLUMN]: input.purpose.trim(),
+    [PAYMENT_DETAILS_COLUMN]: input.details?.trim() ?? "",
+    [PAYMENT_PAYER_COLUMN]: input.payer?.trim() || fullName || email,
+    [PAYMENT_RECEIVER_COLUMN]: input.receiver?.trim() ?? "",
+    ["Chi nhánh Dorm"]: normalizedBranch.replace("D", ""),
+    ["Địa chỉ email người nhận"]: email,
+    ["Cozoro Member"]: input.memberTier?.trim() ?? "",
+    ["Số Coins hiện có"]: input.currentCoins?.trim() ?? "",
+    ["Số tiền hưởng ưu đãi"]: input.discountAmount != null ? String(input.discountAmount) : "",
+    ["Điều kiện hưởng ưu đãi"]: input.discountCondition?.trim() ?? ""
+  });
+
+  return { ok: true, contractCode };
+}
+
 export async function upgradeCozoroMemberByCoins(input: {
   email: string;
   targetMember: string;

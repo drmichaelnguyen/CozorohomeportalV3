@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.8.37] - 2026-05-06
+- **Client tab branch tools**: Added a `Branch Tools` button (D2/D7) with a modal that includes:
+  - **Manual receipt for non-database clients** (`POST /manager/payments/create-manual`) where staff enters resident fields manually while branch and receiver are pre-filled by the system.
+  - **Branch-wide notification send** (`POST /manager/branch-broadcast`) to all active clients in the selected branch.
+- **Resident first-open prompt after branch push**: Added a branch broadcast queue persisted in `api/data/branch-broadcasts.json` and resident prompt APIs (`GET /clients/branch-broadcasts/pending`, `POST /clients/branch-broadcasts/:id/read`). Residents now see a popup on next app open after a branch notice is sent, until acknowledged.
+
 ## [3.8.36] - 2026-05-03
 - **Contract extension (resident)**: Residents can choose a **custom contract end date** (within 36 months of the new term start) in addition to 1/3/6/12-month presets. Submissions send `newContractEndDate` (`dd/mm/yyyy`) to the API; sheet duration and coin tiers follow the same rules as before (`extendClientContract` in `google-sheets.ts`).
 - **Contract approvals queue (manager workspace)**: **Owners**, **app admins**, and **managers** can open the queue; only **owners** and **app admins** may approve or reject. The API returns **pending** and **rejected** items (approved rows are omitted). Extension requests include a snapshot (previous end, new start/end, branch, bed, Mã HĐ, resident name) so staff see full details before approval. Rejected items remain visible with reason and reviewer.

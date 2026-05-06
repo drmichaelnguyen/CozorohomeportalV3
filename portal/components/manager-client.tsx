@@ -37,6 +37,7 @@ type ClientAction =
   | "fine"
   | "coins"
   | "payment"
+  | "reminder"
   | "password"
   | "gateParking"
   | "remove"
@@ -2684,6 +2685,18 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [contractApprovalsLoading, setContractApprovalsLoading] = useState(false);
   const [contractApprovalActionId, setContractApprovalActionId] = useState<string | null>(null);
   const [expandedContractApprovals, setExpandedContractApprovals] = useState<Record<string, boolean>>({});
+  const [branchToolsOpen, setBranchToolsOpen] = useState(false);
+  const [branchToolsTab, setBranchToolsTab] = useState<"manual_receipt" | "branch_broadcast">("manual_receipt");
+  const [manualReceiptName, setManualReceiptName] = useState("");
+  const [manualReceiptEmail, setManualReceiptEmail] = useState("");
+  const [manualReceiptPurpose, setManualReceiptPurpose] = useState("");
+  const [manualReceiptAmount, setManualReceiptAmount] = useState("");
+  const [manualReceiptDetails, setManualReceiptDetails] = useState("");
+  const [manualReceiptPayer, setManualReceiptPayer] = useState("");
+  const [manualReceiptContractCode, setManualReceiptContractCode] = useState("");
+  const [manualReceiptBed, setManualReceiptBed] = useState("");
+  const [branchBroadcastTitle, setBranchBroadcastTitle] = useState("CozoroHome Notice");
+  const [branchBroadcastMessage, setBranchBroadcastMessage] = useState("");
   const [settingInactive, setSettingInactive] = useState<Record<string, boolean>>({});
   const [inactiveBranchFilter, setInactiveBranchFilter] = useState("");
   const [inactiveYearFilter, setInactiveYearFilter] = useState("");
@@ -2948,6 +2961,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState("");
   const [activeAction, setActiveAction] = useState<ClientAction>("");
+  const [clientActionMenuOpen, setClientActionMenuOpen] = useState(false);
+  const [paymentReminderTitle, setPaymentReminderTitle] = useState("Payment required");
+  const [paymentReminderBody, setPaymentReminderBody] = useState(
+    "Your payment is currently unpaid. Please complete payment as soon as possible to avoid feature lock."
+  );
+  const [sendReminderPopup, setSendReminderPopup] = useState(true);
+  const [sendReminderInApp, setSendReminderInApp] = useState(true);
+  const [sendReminderEmail, setSendReminderEmail] = useState(true);
   const [showAllStatsEntries, setShowAllStatsEntries] = useState(false);
   const [showClientDetails, setShowClientDetails] = useState(false);
   const [activeManagerView, setActiveManagerView] = useState<ManagerView>(initialView);
@@ -3653,6 +3674,79 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       ...current,
       [id]: !current[id]
     }));
+  }
+
+  function openBranchToolsModal(tab: "manual_receipt" | "branch_broadcast") {
+    if (selectedBranch !== "D2" && selectedBranch !== "D7") {
+      setStatus("Please select D2 or D7 first.");
+      return;
+    }
+    setBranchToolsTab(tab);
+    setBranchToolsOpen(true);
+    if (!manualReceiptPurpose) setManualReceiptPurpose("Rent");
+    if (!manualReceiptPayer) setManualReceiptPayer("Resident");
+  }
+
+  async function submitManualReceiptForNewClient() {
+    if (selectedBranch !== "D2" && selectedBranch !== "D7") {
+      setStatus("Please select D2 or D7 first.");
+      return;
+    }
+    if (!manualReceiptName.trim() || !manualReceiptEmail.trim() || !manualReceiptPurpose.trim() || !Number(manualReceiptAmount)) {
+      setStatus("Name, email, purpose, and amount are required.");
+      return;
+    }
+    await postJson(
+      `${API_BASE_URL}/manager/payments/create-manual`,
+      {
+        actorEmail: normalizedEmail,
+        fullName: manualReceiptName.trim(),
+        recipientEmail: manualReceiptEmail.trim(),
+        purpose: manualReceiptPurpose.trim(),
+        amount: Number(manualReceiptAmount),
+        details: manualReceiptDetails.trim() || undefined,
+        payer: manualReceiptPayer.trim() || undefined,
+        branch: selectedBranch,
+        contractCode: manualReceiptContractCode.trim() || undefined,
+        bed: manualReceiptBed.trim() || undefined
+      },
+      "Manual receipt created successfully.",
+      async () => {
+        await loadPaymentPurposeRows();
+        setManualReceiptName("");
+        setManualReceiptEmail("");
+        setManualReceiptPurpose("Rent");
+        setManualReceiptAmount("");
+        setManualReceiptDetails("");
+        setManualReceiptPayer("");
+        setManualReceiptContractCode("");
+        setManualReceiptBed("");
+      }
+    );
+  }
+
+  async function submitBranchBroadcast() {
+    if (selectedBranch !== "D2" && selectedBranch !== "D7") {
+      setStatus("Please select D2 or D7 first.");
+      return;
+    }
+    if (!branchBroadcastTitle.trim() || !branchBroadcastMessage.trim()) {
+      setStatus("Broadcast title and message are required.");
+      return;
+    }
+    await postJson(
+      `${API_BASE_URL}/manager/branch-broadcast`,
+      {
+        actorEmail: normalizedEmail,
+        branch: selectedBranch,
+        title: branchBroadcastTitle.trim(),
+        body: branchBroadcastMessage.trim()
+      },
+      `Broadcast sent to ${selectedBranch}. Push + first-open prompt queued.`,
+      async () => {
+        setBranchBroadcastMessage("");
+      }
+    );
   }
 
   async function markContractInactive(args: { maHd: string; rowNumber?: number; email?: string; key: string }) {
@@ -5172,6 +5266,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               >
                 {t("newGroupMessage")}
               </Link>
+              <button
+                type="button"
+                onClick={() => openBranchToolsModal("manual_receipt")}
+                disabled={selectedBranch !== "D2" && selectedBranch !== "D7"}
+                className="rounded-full border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 transition-all hover:bg-amber-100 disabled:opacity-50"
+              >
+                Branch Tools
+              </button>
             </div>
             {selectedBranch !== "inactive" && (
               <div className="flex rounded-xl bg-slate-100 p-1 shadow-inner">
@@ -5355,6 +5457,35 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             </section>
           ) : (
 
+            <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  void postJson(
+                    `${API_BASE_URL}/manager/payment-reminders/send`,
+                    {
+                      actorEmail: normalizedEmail,
+                      mode: "batch_unpaid",
+                      title: paymentReminderTitle.trim() || "Payment required",
+                      body: paymentReminderBody.trim(),
+                      sendPopup: sendReminderPopup,
+                      sendInAppMessage: sendReminderInApp,
+                      sendEmail: sendReminderEmail
+                    },
+                    "Batch reminders sent to unpaid clients."
+                  )
+                }
+                disabled={
+                  loading ||
+                  !paymentReminderBody.trim() ||
+                  clientPaymentTableRows.filter((row) => !row.isPaid).length === 0 ||
+                  (!sendReminderPopup && !sendReminderInApp && !sendReminderEmail)
+                }
+                className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 disabled:opacity-60"
+              >
+                Send unpaid batch reminder ({clientPaymentTableRows.filter((row) => !row.isPaid).length})
+              </button>
+            </div>
             <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-slate-200">
@@ -7511,31 +7642,43 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       </div>
                     );
                   })()}
-                  {[
-                    ["call", t("callClient")],
-                    ["sms", t("textClient")],
-                    ["email", t("emailClient")],
-                    ["message", t("openChat")],
-                    ["fine", t("newFineTicket")],
-                  ["coins", t("newCoinsEntry")],
-                  ["password", t("changePassword", "Change password")],
-                  ["gateParking", t("gateParkingTickets")],
-                  ...(canCreatePaymentReceipt ? ([["payment", t("newPaymentReceipt")]] as const) : [])
-                ].map(([value, label]) => (
-                  <button
-                  key={value}
-                  type="button"
-                  onClick={() => setActiveAction((current) => (current === value ? "" : (value as ClientAction)))}
-                  disabled={!selectedClient}
-                  className={`rounded-lg px-4 py-2 text-sm font-medium ${
-                    activeAction === value
-                      ? "bg-slate-900 text-white"
-                      : "border border-slate-300 text-slate-700"
-                  } disabled:opacity-60`}
-                >
-                  {label}
-                </button>
-              ))}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setClientActionMenuOpen((v) => !v)}
+                      disabled={!selectedClient}
+                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-60"
+                    >
+                      Call Tool
+                    </button>
+                    {clientActionMenuOpen ? (
+                      <div className="absolute z-20 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                        {[
+                          ["message", t("openChat")],
+                          ["call", t("callClient")],
+                          ["email", t("emailClient")],
+                          ["fine", t("newFineTicket")],
+                          ["coins", t("newCoinsEntry")],
+                          ["password", t("changePassword", "Change password")],
+                          ["gateParking", t("gateParkingTickets")],
+                          ["reminder", "Payment reminder"],
+                          ...(canCreatePaymentReceipt ? ([["payment", t("newPaymentReceipt")]] as const) : [])
+                        ].map(([value, label]) => (
+                          <button
+                            key={value}
+                            type="button"
+                            onClick={() => {
+                              setActiveAction(value as ClientAction);
+                              setClientActionMenuOpen(false);
+                            }}
+                            className="block w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100"
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
             </div>
 
             {activeAction ? (
@@ -7551,6 +7694,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             ? t("emailClient")
                             : activeAction === "message"
                               ? t("clientChatTitle")
+                              : activeAction === "reminder"
+                                ? "Payment reminder"
                               : activeAction === "payment"
                                   ? t("createPaymentReceipt")
                                 : activeAction === "fine"
@@ -7740,6 +7885,71 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
                     >
                       Send reply
+                    </button>
+                  </div>
+                ) : null}
+
+                {activeAction === "reminder" ? (
+                  <div className="mt-4 space-y-3">
+                    <label className="block text-sm font-medium text-slate-700">
+                      Title
+                      <input
+                        type="text"
+                        value={paymentReminderTitle}
+                        onChange={(event) => setPaymentReminderTitle(event.target.value)}
+                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <label className="block text-sm font-medium text-slate-700">
+                      Reminder message
+                      <textarea
+                        value={paymentReminderBody}
+                        onChange={(event) => setPaymentReminderBody(event.target.value)}
+                        rows={4}
+                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      <label className="flex items-center gap-2 text-sm text-slate-700">
+                        <input type="checkbox" checked={sendReminderPopup} onChange={(event) => setSendReminderPopup(event.target.checked)} />
+                        Popup
+                      </label>
+                      <label className="flex items-center gap-2 text-sm text-slate-700">
+                        <input type="checkbox" checked={sendReminderInApp} onChange={(event) => setSendReminderInApp(event.target.checked)} />
+                        In-app message
+                      </label>
+                      <label className="flex items-center gap-2 text-sm text-slate-700">
+                        <input type="checkbox" checked={sendReminderEmail} onChange={(event) => setSendReminderEmail(event.target.checked)} />
+                        Email
+                      </label>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void postJson(
+                          `${API_BASE_URL}/manager/payment-reminders/send`,
+                          {
+                            actorEmail: normalizedEmail,
+                            mode: "single",
+                            email: selectedClient?.email ?? "",
+                            title: paymentReminderTitle.trim() || "Payment required",
+                            body: paymentReminderBody.trim(),
+                            sendPopup: sendReminderPopup,
+                            sendInAppMessage: sendReminderInApp,
+                            sendEmail: sendReminderEmail
+                          },
+                          "Payment reminder sent."
+                        )
+                      }
+                      disabled={
+                        loading ||
+                        !selectedClient ||
+                        !paymentReminderBody.trim() ||
+                        (!sendReminderPopup && !sendReminderInApp && !sendReminderEmail)
+                      }
+                      className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+                    >
+                      Send reminder
                     </button>
                   </div>
                 ) : null}
@@ -10767,6 +10977,108 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               </div>
             )}
           </div>
+
+          {branchToolsOpen && (selectedBranch === "D2" || selectedBranch === "D7") ? (
+            <div className="fixed inset-0 z-[170] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
+              <div className="w-full max-w-2xl rounded-t-3xl bg-white shadow-xl sm:rounded-3xl">
+                <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4 sm:px-6">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900">Branch Tools — {selectedBranch}</h3>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Quick tools for this branch: manual receipt + branch-wide notifications.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setBranchToolsOpen(false)}
+                    className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700"
+                  >
+                    Close
+                  </button>
+                </div>
+                <div className="space-y-4 p-5 sm:p-6">
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setBranchToolsTab("manual_receipt")}
+                      className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                        branchToolsTab === "manual_receipt"
+                          ? "bg-slate-900 text-white"
+                          : "border border-slate-300 text-slate-700"
+                      }`}
+                    >
+                      New-client receipt
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBranchToolsTab("branch_broadcast")}
+                      className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                        branchToolsTab === "branch_broadcast"
+                          ? "bg-slate-900 text-white"
+                          : "border border-slate-300 text-slate-700"
+                      }`}
+                    >
+                      Branch notification
+                    </button>
+                  </div>
+
+                  {branchToolsTab === "manual_receipt" ? (
+                    <div className="space-y-3">
+                      <p className="text-xs text-slate-600">
+                        Create a payment receipt for a person who is not in the current client database.
+                        Branch is pre-filled from your selected branch.
+                      </p>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <input value={manualReceiptName} onChange={(e) => setManualReceiptName(e.target.value)} placeholder="Full name *" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                        <input value={manualReceiptEmail} onChange={(e) => setManualReceiptEmail(e.target.value)} placeholder="Email *" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                        <input value={manualReceiptPurpose} onChange={(e) => setManualReceiptPurpose(e.target.value)} placeholder="Purpose *" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                        <input type="number" min="0" value={manualReceiptAmount} onChange={(e) => setManualReceiptAmount(e.target.value)} placeholder="Amount (VND) *" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                        <input value={manualReceiptPayer} onChange={(e) => setManualReceiptPayer(e.target.value)} placeholder="Payer (optional)" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                        <input value={manualReceiptBed} onChange={(e) => setManualReceiptBed(e.target.value)} placeholder="Bed (optional, default 0)" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                        <input value={manualReceiptContractCode} onChange={(e) => setManualReceiptContractCode(e.target.value)} placeholder="Contract code override (optional)" className="rounded-lg border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
+                        <textarea value={manualReceiptDetails} onChange={(e) => setManualReceiptDetails(e.target.value)} placeholder="Details (optional)" rows={3} className="rounded-lg border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void submitManualReceiptForNewClient()}
+                        disabled={loading}
+                        className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                      >
+                        Create Manual Receipt
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <p className="text-xs text-slate-600">
+                        Sends web push to all active clients in {selectedBranch}, and stores a first-open in-app prompt per resident.
+                      </p>
+                      <input
+                        value={branchBroadcastTitle}
+                        onChange={(e) => setBranchBroadcastTitle(e.target.value)}
+                        placeholder="Notification title *"
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      />
+                      <textarea
+                        value={branchBroadcastMessage}
+                        onChange={(e) => setBranchBroadcastMessage(e.target.value)}
+                        placeholder="Message *"
+                        rows={5}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void submitBranchBroadcast()}
+                        disabled={loading}
+                        className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                      >
+                        Send Branch Notification
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           {/* Remove confirmation dialog */}
           {removeConfirmEntry && (

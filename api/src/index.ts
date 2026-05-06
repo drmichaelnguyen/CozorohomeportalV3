@@ -89,6 +89,7 @@ import {
   disputeFine,
   managerAdjustCoins,
   managerCreatePaymentReceipt,
+  managerCreateManualPaymentReceipt,
   managerCreateFine,
   managerResolveFineDispute,
   payFineByCoins,
@@ -280,6 +281,8 @@ const app = express();
 const port = Number(process.env.PORT) || 4000; // AntiGravity: Use env PORT if available, default to 4000
 const GUEST_AUTH_RATE_PATH = path.join(process.cwd(), "data", "guest-auth-rate.json");
 const CONTRACT_APPROVALS_PATH = path.join(process.cwd(), "data", "contract-approvals.json");
+const BRANCH_BROADCASTS_PATH = path.join(process.cwd(), "data", "branch-broadcasts.json");
+const PAYMENT_REQUIREMENT_NOTICES_PATH = path.join(process.cwd(), "data", "payment-requirement-notices.json");
 const GUEST_AUTH_MIN_INTERVAL_MS = 60 * 1000;
 const GUEST_AUTH_MAX_PER_EMAIL_PER_HOUR = 3;
 const GUEST_AUTH_MAX_PER_EMAIL_PER_DAY = 10;
@@ -327,6 +330,27 @@ type PendingContractApproval = {
   };
 };
 type ContractApprovalsFile = { approvals: PendingContractApproval[] };
+type BranchBroadcastNotice = {
+  id: string;
+  branch: "D2" | "D7";
+  title: string;
+  body: string;
+  sentAt: string;
+  sentBy: string;
+  recipientEmails: string[];
+  readBy: string[];
+};
+type BranchBroadcastsFile = { notices: BranchBroadcastNotice[] };
+type PaymentRequirementNotice = {
+  id: string;
+  title: string;
+  body: string;
+  sentAt: string;
+  sentBy: string;
+  recipientEmails: string[];
+  readBy: string[];
+};
+type PaymentRequirementNoticesFile = { notices: PaymentRequirementNotice[] };
 
 async function readContractApprovals(): Promise<ContractApprovalsFile> {
   try {
@@ -341,6 +365,36 @@ async function readContractApprovals(): Promise<ContractApprovalsFile> {
 async function writeContractApprovals(file: ContractApprovalsFile): Promise<void> {
   await mkdir(path.dirname(CONTRACT_APPROVALS_PATH), { recursive: true });
   await writeFile(CONTRACT_APPROVALS_PATH, JSON.stringify(file, null, 2), "utf8");
+}
+
+async function readBranchBroadcasts(): Promise<BranchBroadcastsFile> {
+  try {
+    const raw = await readFile(BRANCH_BROADCASTS_PATH, "utf8");
+    const parsed = JSON.parse(raw) as BranchBroadcastsFile;
+    return { notices: Array.isArray(parsed.notices) ? parsed.notices : [] };
+  } catch {
+    return { notices: [] };
+  }
+}
+
+async function writeBranchBroadcasts(file: BranchBroadcastsFile): Promise<void> {
+  await mkdir(path.dirname(BRANCH_BROADCASTS_PATH), { recursive: true });
+  await writeFile(BRANCH_BROADCASTS_PATH, JSON.stringify(file, null, 2), "utf8");
+}
+
+async function readPaymentRequirementNotices(): Promise<PaymentRequirementNoticesFile> {
+  try {
+    const raw = await readFile(PAYMENT_REQUIREMENT_NOTICES_PATH, "utf8");
+    const parsed = JSON.parse(raw) as PaymentRequirementNoticesFile;
+    return { notices: Array.isArray(parsed.notices) ? parsed.notices : [] };
+  } catch {
+    return { notices: [] };
+  }
+}
+
+async function writePaymentRequirementNotices(file: PaymentRequirementNoticesFile): Promise<void> {
+  await mkdir(path.dirname(PAYMENT_REQUIREMENT_NOTICES_PATH), { recursive: true });
+  await writeFile(PAYMENT_REQUIREMENT_NOTICES_PATH, JSON.stringify(file, null, 2), "utf8");
 }
 
 function publicApprovalSummary(item: PendingContractApproval) {
@@ -932,6 +986,54 @@ const managerPaymentReceiptCreateSchema = z.object({
   currentCoins: z.string().trim().optional(),
   discountAmount: z.coerce.number().int().nonnegative().optional(),
   discountCondition: z.string().trim().optional()
+});
+const managerManualPaymentReceiptCreateSchema = z.object({
+  actorEmail: z.string().email(),
+  amount: z.coerce.number().int().positive(),
+  purpose: z.string().trim().min(1),
+  fullName: z.string().trim().min(1).max(200),
+  recipientEmail: z.string().email(),
+  branch: z.enum(["D2", "D7"]),
+  payer: z.string().trim().optional(),
+  receiver: z.string().trim().optional(),
+  details: z.string().trim().optional(),
+  memberTier: z.string().trim().optional(),
+  currentCoins: z.string().trim().optional(),
+  discountAmount: z.coerce.number().int().nonnegative().optional(),
+  discountCondition: z.string().trim().optional(),
+  contractCode: z.string().trim().max(120).optional(),
+  bed: z.string().trim().max(20).optional()
+});
+const managerBranchBroadcastSchema = z.object({
+  actorEmail: z.string().email(),
+  branch: z.enum(["D2", "D7"]),
+  title: z.string().trim().min(1).max(120),
+  body: z.string().trim().min(1).max(2000)
+});
+const residentBroadcastReadSchema = z.object({
+  email: z.string().email()
+});
+const managerPaymentReminderSendSchema = z
+  .object({
+    actorEmail: z.string().email(),
+    mode: z.enum(["single", "batch_unpaid"]),
+    email: z.string().email().optional(),
+    title: z.string().trim().min(1).max(120).optional(),
+    body: z.string().trim().min(1).max(4000),
+    sendPopup: z.boolean().optional(),
+    sendInAppMessage: z.boolean().optional(),
+    sendEmail: z.boolean().optional()
+  })
+  .superRefine((data, ctx) => {
+    if (data.mode === "single" && !data.email) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "email is required for single mode." });
+    }
+    if (!data.sendPopup && !data.sendInAppMessage && !data.sendEmail) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Select at least one channel." });
+    }
+  });
+const residentPaymentRequirementReadSchema = z.object({
+  email: z.string().email()
 });
 const cozoroMemberUpgradeSchema = z.object({
   email: z.string().email(),
@@ -3578,6 +3680,57 @@ app.post("/manager/payments/create", async (request, response) => {
       });
     }
   });
+
+app.post("/manager/payments/create-manual", async (request, response) => {
+  const parsed = managerManualPaymentReceiptCreateSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid manual payment receipt payload" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only managers and owners can create payment receipts."
+    );
+
+    let receiver = parsed.data.receiver?.trim();
+    if (!receiver) {
+      const staffName = await getStaffName(parsed.data.actorEmail);
+      receiver = staffName?.trim() || parsed.data.actorEmail;
+    }
+
+    const result = await runWithWriteGuard({
+      key: createWriteGuardKey("/manager/payments/create-manual", {
+        ...parsed.data,
+        receiver
+      }),
+      duplicateMessage: "This payment receipt was just submitted. Please wait a few seconds.",
+      action: () =>
+        managerCreateManualPaymentReceipt({
+          amount: parsed.data.amount,
+          purpose: parsed.data.purpose,
+          fullName: parsed.data.fullName,
+          recipientEmail: parsed.data.recipientEmail,
+          branch: parsed.data.branch,
+          payer: parsed.data.payer,
+          receiver,
+          details: parsed.data.details,
+          memberTier: parsed.data.memberTier,
+          currentCoins: parsed.data.currentCoins,
+          discountAmount: parsed.data.discountAmount,
+          discountCondition: parsed.data.discountCondition,
+          contractCode: parsed.data.contractCode,
+          bed: parsed.data.bed
+        })
+    });
+    return response.status(201).json(result);
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
+      error: error instanceof Error ? error.message : "Unable to create manual payment receipt"
+    });
+  }
+});
 
 app.post("/cozoro-member/upgrade", async (request, response) => {
   const parsed = cozoroMemberUpgradeSchema.safeParse(request.body);
@@ -6363,6 +6516,258 @@ app.post("/manager/bulk/push", async (request, response) => {
     return response.json({ ok: true, attempted: emails.length });
   } catch (error) {
     return response.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+// POST /manager/branch-broadcast — push to all active clients in a branch and queue first-open prompt
+app.post("/manager/branch-broadcast", async (request, response) => {
+  const parsed = managerBranchBroadcastSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({
+      error: parsed.error.issues[0]?.message ?? "Invalid branch broadcast payload"
+    });
+  }
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail.trim(),
+      ["manager", "owner", "app_admin"],
+      "Only managers or owners can send branch notifications."
+    );
+    const allClients = await getManagerClients();
+    const recipientEmails = [...new Set(
+      allClients
+        .filter((c) => normalizeClientBranch(c.branch) === parsed.data.branch)
+        .map((c) => c.email.trim().toLowerCase())
+        .filter(Boolean)
+    )];
+    if (!recipientEmails.length) {
+      return response.status(400).json({ error: "No active clients found for this branch." });
+    }
+
+    for (const email of recipientEmails) {
+      await sendPushToEmail(email, parsed.data.title.trim(), parsed.data.body.trim(), "/");
+    }
+
+    const file = await readBranchBroadcasts();
+    file.notices.unshift({
+      id: randomUUID(),
+      branch: parsed.data.branch,
+      title: parsed.data.title.trim(),
+      body: parsed.data.body.trim(),
+      sentAt: new Date().toISOString(),
+      sentBy: parsed.data.actorEmail.trim().toLowerCase(),
+      recipientEmails,
+      readBy: []
+    });
+    if (file.notices.length > 200) {
+      file.notices = file.notices.slice(0, 200);
+    }
+    await writeBranchBroadcasts(file);
+
+    return response.json({ ok: true, attempted: recipientEmails.length });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+// GET /clients/branch-broadcasts/pending?email=... — first-open prompt queue for residents
+app.get("/clients/branch-broadcasts/pending", async (request, response) => {
+  const email = String(request.query.email ?? "").trim().toLowerCase();
+  const emailCheck = z.string().email().safeParse(email);
+  if (!emailCheck.success) {
+    return response.status(400).json({ error: "Invalid email" });
+  }
+  try {
+    const matched = await getActiveClientByEmail(email);
+    if (!matched) {
+      return response.json({ notices: [] });
+    }
+    const branch = normalizeClientBranch(String(matched[CLIENT_BRANCH_COLUMN] ?? ""));
+    const file = await readBranchBroadcasts();
+    const notices = file.notices
+      .filter((n) => n.branch === branch && n.recipientEmails.includes(email) && !n.readBy.includes(email))
+      .slice(0, 3)
+      .map((n) => ({
+        id: n.id,
+        title: n.title,
+        body: n.body,
+        sentAt: n.sentAt,
+        branch: n.branch
+      }));
+    return response.json({ notices });
+  } catch (error) {
+    return response.status(500).json({ error: error instanceof Error ? error.message : "Unable to load notices" });
+  }
+});
+
+app.post("/clients/branch-broadcasts/:id/read", async (request, response) => {
+  const parsed = residentBroadcastReadSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid read payload" });
+  }
+  try {
+    const email = parsed.data.email.trim().toLowerCase();
+    const file = await readBranchBroadcasts();
+    const notice = file.notices.find((n) => n.id === request.params.id);
+    if (!notice) {
+      return response.status(404).json({ error: "Notice not found" });
+    }
+    if (!notice.recipientEmails.includes(email)) {
+      return response.status(403).json({ error: "This notice is not available for this account." });
+    }
+    if (!notice.readBy.includes(email)) {
+      notice.readBy.push(email);
+      await writeBranchBroadcasts(file);
+    }
+    return response.json({ ok: true });
+  } catch (error) {
+    return response.status(500).json({ error: error instanceof Error ? error.message : "Unable to mark notice as read" });
+  }
+});
+
+app.post("/manager/payment-reminders/send", async (request, response) => {
+  const parsed = managerPaymentReminderSendSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid payment reminder payload" });
+  }
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail.trim(),
+      ["manager", "owner", "app_admin"],
+      "Only managers or owners can send payment reminders."
+    );
+    const now = new Date();
+    const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const allClients = await getManagerClients();
+    const paidRows = await prisma.monthlyRentStatus.findMany({
+      where: { month, isPaid: true },
+      select: { email: true }
+    });
+    const paidEmailSet = new Set(paidRows.map((row) => row.email.trim().toLowerCase()));
+    const unpaidEmails = Array.from(
+      new Set(
+        allClients
+          .map((client) => client.email.trim().toLowerCase())
+          .filter((email) => email && !paidEmailSet.has(email))
+      )
+    );
+    const recipientEmails =
+      parsed.data.mode === "single"
+        ? [String(parsed.data.email ?? "").trim().toLowerCase()].filter(Boolean)
+        : unpaidEmails;
+
+    if (!recipientEmails.length) {
+      return response.status(400).json({ error: "No unpaid recipients were found." });
+    }
+
+    const title = parsed.data.title?.trim() || "Payment required";
+    const body = parsed.data.body.trim();
+    const results: Array<{ email: string; popup?: boolean; inApp?: boolean; emailSent?: boolean; error?: string }> = [];
+
+    const popupFile = parsed.data.sendPopup ? await readPaymentRequirementNotices() : null;
+
+    for (const email of recipientEmails) {
+      const result: { email: string; popup?: boolean; inApp?: boolean; emailSent?: boolean; error?: string } = { email };
+      try {
+        if (parsed.data.sendPopup && popupFile) {
+          popupFile.notices.unshift({
+            id: randomUUID(),
+            title,
+            body,
+            sentAt: now.toISOString(),
+            sentBy: parsed.data.actorEmail.trim().toLowerCase(),
+            recipientEmails: [email],
+            readBy: []
+          });
+          result.popup = true;
+        }
+        if (parsed.data.sendInAppMessage) {
+          await postOperatorSupportMessageToResident({
+            operatorEmail: parsed.data.actorEmail,
+            residentEmail: email,
+            body: `${title}\n\n${body}`
+          });
+          result.inApp = true;
+        }
+        if (parsed.data.sendEmail) {
+          await sendGmailReceipt({
+            to: email,
+            subject: title,
+            body
+          });
+          result.emailSent = true;
+        }
+      } catch (error) {
+        result.error = error instanceof Error ? error.message : "Send failed";
+      }
+      results.push(result);
+    }
+
+    if (popupFile) {
+      if (popupFile.notices.length > 500) {
+        popupFile.notices = popupFile.notices.slice(0, 500);
+      }
+      await writePaymentRequirementNotices(popupFile);
+    }
+
+    return response.json({
+      ok: true,
+      month,
+      mode: parsed.data.mode,
+      attempted: recipientEmails.length,
+      unpaidCount: unpaidEmails.length,
+      results
+    });
+  } catch (error) {
+    return response.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+app.get("/clients/payment-requirement-notices/pending", async (request, response) => {
+  const email = String(request.query.email ?? "").trim().toLowerCase();
+  const emailCheck = z.string().email().safeParse(email);
+  if (!emailCheck.success) {
+    return response.status(400).json({ error: "Invalid email" });
+  }
+  try {
+    const file = await readPaymentRequirementNotices();
+    const notices = file.notices
+      .filter((notice) => notice.recipientEmails.includes(email) && !notice.readBy.includes(email))
+      .slice(0, 3)
+      .map((notice) => ({
+        id: notice.id,
+        title: notice.title,
+        body: notice.body,
+        sentAt: notice.sentAt
+      }));
+    return response.json({ notices });
+  } catch (error) {
+    return response.status(500).json({ error: error instanceof Error ? error.message : "Unable to load notices" });
+  }
+});
+
+app.post("/clients/payment-requirement-notices/:id/read", async (request, response) => {
+  const parsed = residentPaymentRequirementReadSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid read payload" });
+  }
+  try {
+    const email = parsed.data.email.trim().toLowerCase();
+    const file = await readPaymentRequirementNotices();
+    const notice = file.notices.find((entry) => entry.id === request.params.id);
+    if (!notice) {
+      return response.status(404).json({ error: "Notice not found" });
+    }
+    if (!notice.recipientEmails.includes(email)) {
+      return response.status(403).json({ error: "This notice is not available for this account." });
+    }
+    if (!notice.readBy.includes(email)) {
+      notice.readBy.push(email);
+      await writePaymentRequirementNotices(file);
+    }
+    return response.json({ ok: true });
+  } catch (error) {
+    return response.status(500).json({ error: error instanceof Error ? error.message : "Unable to mark notice as read" });
   }
 });
 

@@ -187,6 +187,10 @@ const nextConfig: NextConfig = {
 | `GET /manager/contract-approvals?actorEmail=` | **Owner, app_admin, manager** â€” list **pending** and **rejected** registration/extension approvals (approved excluded). |
 | `POST /manager/contract-approvals/:id/approve` | **Owner, app_admin** â€” run sheet/bridge workflow; marks approved. |
 | `POST /manager/contract-approvals/:id/reject` | **Owner, app_admin** â€” marks rejected (stays in queue for visibility). |
+| `POST /manager/payments/create-manual` | **Manager, owner, app_admin** â€” create payment receipt for a person not in current client DB; branch/receiver can be prefilled by UI branch tools. |
+| `POST /manager/branch-broadcast` | **Manager, owner, app_admin** â€” push a branch-wide message to all active clients in D2/D7 and queue first-open prompt notices. |
+| `GET /clients/branch-broadcasts/pending?email=` | Resident fetches unread branch prompts queued after branch broadcasts. |
+| `POST /clients/branch-broadcasts/:id/read` | Resident acknowledges a branch prompt so it no longer appears on next app open. |
 
 **Contract approvals queue:** Shown at the top of the manager **Client list** workspace when `manager-client.tsx` loads items from `GET /manager/contract-approvals`. Managers see extension details and registration summary but cannot approve/reject. Rejected rows remain in the list so any owner can see history; residents must submit a new request after rejection if they still want to extend.
 
@@ -230,6 +234,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.8.37 | Client tab **Branch Tools** (D2/D7): manual receipt creation for non-database clients (`/manager/payments/create-manual`) with branch/receiver prefill, plus branch-wide notifications (`/manager/branch-broadcast`). Added resident first-open popup queue for branch notices (`/clients/branch-broadcasts/pending`, `/:id/read`) backed by `data/branch-broadcasts.json`. |
 | 3.8.36 | Resident contract extension: optional **custom end date** (max 36 months from new term start) plus presets; API `newContractEndDate` + `extendClientContract` term union; tiered extension coins. **Contract approvals queue**: owners, app admins, and **managers** can view pending/rejected registrations and extensions (snapshot for extensions); only owners/app admins approve or reject; rejected items stay visible. |
 | 3.8.33 | Owner-only Client -> Analytics payment dashboard: native bar/donut revenue charts, configurable grouping order (all payments, receiver, branch, category, bed, year, month), click/tap drilldown through each grouping level, and final payment receipt entry table |
 | 3.8.29 | Cleaning swap requests: residents can offer coins (up to task reward) to another available resident to take over their cleaning slot; resident-to-resident coin transfer via Google Sheets on accept; `CleaningSwapRequest` DB table + migration; 6 new API routes (`swap-candidates`, `swap-requests` CRUD); inline swap flow UI in task card with candidate list and coin offer input; Swap Requests inbox section (received + sent, accept/decline/cancel); bilingual EN/VI `?` help panels for removal rules (with swap tip), auto-scheduling (4-step fairness algorithm), and swap flow |
