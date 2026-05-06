@@ -2962,6 +2962,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [confirmDeleteId, setConfirmDeleteId] = useState("");
   const [activeAction, setActiveAction] = useState<ClientAction>("");
   const [clientActionMenuOpen, setClientActionMenuOpen] = useState(false);
+  const clientToolsMenuRef = useRef<HTMLDivElement | null>(null);
   const [paymentReminderTitle, setPaymentReminderTitle] = useState("Payment required");
   const [paymentReminderBody, setPaymentReminderBody] = useState(
     "Your payment is currently unpaid. Please complete payment as soon as possible to avoid feature lock."
@@ -3254,6 +3255,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       ?? null,
     [clients, inactiveClients, selectedMaHd]
   );
+  const selectedClientContractApprovals = useMemo(() => {
+    const selectedEmail = selectedClient?.email?.trim().toLowerCase();
+    if (!selectedEmail) return [];
+    return contractApprovals.filter((item) => item.email.trim().toLowerCase() === selectedEmail);
+  }, [contractApprovals, selectedClient?.email]);
   const fineLabels = fineFieldLabels(t);
   const fineUiText = {
     suggestionPlaceholder: t("suggestionPlaceholder", "Search previous entries or type a new value"),
@@ -4503,6 +4509,22 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       void loadClientChat(selectedClient.email);
     }
   }, [activeAction, selectedClient?.email]);
+
+  useEffect(() => {
+    if (!clientActionMenuOpen) return;
+    const handleOutside = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (clientToolsMenuRef.current?.contains(target)) return;
+      setClientActionMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handleOutside);
+    document.addEventListener("touchstart", handleOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("touchstart", handleOutside);
+    };
+  }, [clientActionMenuOpen]);
 
   useEffect(() => {
     setRentSectionCollapsed(true);
@@ -6153,7 +6175,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         ) : (
           <div ref={managerClientWorkspaceRef} className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
             {false ? <section /> : null}
-            {canViewContractApprovals && contractApprovals.length > 0 ? (
+            {canViewContractApprovals && selectedClientContractApprovals.length > 0 ? (
               <section className="rounded-3xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -6170,7 +6192,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   </button>
                 </div>
                 <div className="mt-4 grid gap-3 lg:grid-cols-2">
-                  {contractApprovals.map((item) => {
+                  {selectedClientContractApprovals.map((item) => {
                     const isExpanded = Boolean(expandedContractApprovals[item.id]);
                     return (
                     <div key={item.id} className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
@@ -6270,6 +6292,90 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 </p>
               </div>
               <div className="flex flex-wrap gap-3">
+                <div className="relative" ref={clientToolsMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => setClientActionMenuOpen((v) => !v)}
+                    disabled={!selectedClient}
+                    className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60"
+                  >
+                    Tools
+                  </button>
+                  {clientActionMenuOpen ? (
+                    <div className="absolute right-0 z-20 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                      {(() => {
+                        const autoLock = selectedClient ? getAutomaticFeatureLockStatus(selectedClient) : null;
+                        const isUnlocked = accountLockOverride?.unlocked === true;
+                        const canToggle =
+                          !!selectedClient?.email && (sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin");
+                        const isUnavailable = !autoLock || (!autoLock.isBlocked && !isUnlocked);
+                        const lockLabel = accountLockOverrideLoading
+                          ? t("loadingLabel")
+                          : isUnlocked
+                            ? t("featureLockOff")
+                            : autoLock?.isBlocked
+                              ? t("featureLockOn")
+                              : t("featureLockTitle");
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!selectedClient?.email || !autoLock || isUnavailable) return;
+                              void postJson(
+                                `${API_BASE_URL}/manager/account-lock-override`,
+                                {
+                                  actorEmail: normalizedEmail,
+                                  targetEmail: selectedClient.email,
+                                  unlocked: !isUnlocked,
+                                  note: !isUnlocked ? t("manualUnlockNote") : ""
+                                },
+                                !isUnlocked ? t("accountUnlockedSuccess") : t("accountLockedResetSuccess"),
+                                async () => {
+                                  await loadAccountLockOverride(selectedClient.email);
+                                }
+                              );
+                              setClientActionMenuOpen(false);
+                            }}
+                            disabled={!canToggle || accountLockOverrideLoading || !selectedClient?.email || isUnavailable}
+                            title={
+                              autoLock?.isBlocked
+                                ? isUnlocked
+                                  ? t("overrideByLabel", { manager: accountLockOverride?.updatedBy ?? t("manager") })
+                                  : autoLock.reason
+                                : t("normalAutomaticRulesDesc")
+                            }
+                            className="mb-1 block w-full rounded-lg border border-slate-200 px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+                          >
+                            {t("featureLockTitle")}: {lockLabel}
+                          </button>
+                        );
+                      })()}
+                      {[
+                        ["reminder", "Send notification to client"],
+                        ["message", t("openChat")],
+                        ["call", t("callClient")],
+                        ["email", t("emailClient")],
+                        ["fine", t("newFineTicket")],
+                        ["coins", t("newCoinsEntry")],
+                        ["password", t("changePassword", "Change password")],
+                        ["gateParking", t("gateParkingTickets")],
+                        ...(canCreatePaymentReceipt ? ([["payment", t("newPaymentReceipt")]] as const) : [])
+                      ].map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => {
+                            setActiveAction(value as ClientAction);
+                            setClientActionMenuOpen(false);
+                          }}
+                          className="block w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100"
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
                 <button
                   type="button"
                   onClick={() => setShowClientDetails((current) => !current)}
@@ -7563,126 +7669,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             ) : null}
           </section>
 
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-lg font-semibold text-slate-900">{t("clientActions")}</h2>
-                  <InlineHelp
-                    label={t("howClientActionsWork")}
-                    title={t("clientActionsTitle")}
-                    body={t(MANAGER_FUNCTION_HELP.clientActions)}
-                  />
-                </div>
-                <p className="mt-1 text-sm text-slate-600">
-                  {t("chooseActionPrompt")}
-                </p>
-              </div>
-              <div className="text-sm text-slate-600">
-                <div>{t("emailLabel")}: {selectedClient?.email || "-"}</div>
-                <div>{t("phoneLabel")}: {selectedClientPhone || "-"}</div>
-              </div>
-	            </div>
-	              <div className="mt-4 flex flex-wrap gap-3">
-                  {(() => {
-                    const autoLock = selectedClient ? getAutomaticFeatureLockStatus(selectedClient) : null;
-                    const isUnlocked = accountLockOverride?.unlocked === true;
-                    const canToggle = !!selectedClient?.email && (sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin");
-                    const isUnavailable = !autoLock || (!autoLock.isBlocked && !isUnlocked);
-                    const label = accountLockOverrideLoading
-                      ? t("loadingLabel")
-                      : isUnlocked
-                        ? t("featureLockOff")
-                        : autoLock?.isBlocked
-                          ? t("featureLockOn")
-                          : t("featureLockTitle");
-
-                    return (
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!selectedClient?.email || !autoLock || isUnavailable) return;
-                            void postJson(
-                              `${API_BASE_URL}/manager/account-lock-override`,
-                              {
-                                actorEmail: normalizedEmail,
-                                targetEmail: selectedClient.email,
-                                unlocked: !isUnlocked,
-                                note: !isUnlocked ? t("manualUnlockNote") : ""
-                              },
-                              !isUnlocked ? t("accountUnlockedSuccess") : t("accountLockedResetSuccess"),
-                              async () => {
-                                await loadAccountLockOverride(selectedClient.email);
-                              }
-                            );
-                          }}
-                          disabled={!canToggle || accountLockOverrideLoading || !selectedClient?.email || isUnavailable}
-                          className={`rounded-lg px-4 py-2 text-sm font-medium ${
-                            isUnlocked
-                              ? "border border-amber-300 text-amber-700"
-                              : autoLock?.isBlocked
-                                ? "bg-rose-600 text-white"
-                                : "border border-slate-300 text-slate-400"
-                          } disabled:opacity-60`}
-                          title={
-                            autoLock?.isBlocked
-                              ? isUnlocked
-                                ? t("overrideByLabel", { manager: accountLockOverride?.updatedBy ?? t("manager") })
-                                : autoLock.reason
-                              : t("normalAutomaticRulesDesc")
-                          }
-                        >
-                          {label}
-                        </button>
-                        <InlineHelp
-                          label={t("howFeatureLockWorks")}
-                          title={t("featureLockTitle")}
-                          body={t(MANAGER_FUNCTION_HELP.featureLock)}
-                        />
-                      </div>
-                    );
-                  })()}
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setClientActionMenuOpen((v) => !v)}
-                      disabled={!selectedClient}
-                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-60"
-                    >
-                      Call Tool
-                    </button>
-                    {clientActionMenuOpen ? (
-                      <div className="absolute z-20 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
-                        {[
-                          ["message", t("openChat")],
-                          ["call", t("callClient")],
-                          ["email", t("emailClient")],
-                          ["fine", t("newFineTicket")],
-                          ["coins", t("newCoinsEntry")],
-                          ["password", t("changePassword", "Change password")],
-                          ["gateParking", t("gateParkingTickets")],
-                          ["reminder", "Payment reminder"],
-                          ...(canCreatePaymentReceipt ? ([["payment", t("newPaymentReceipt")]] as const) : [])
-                        ].map(([value, label]) => (
-                          <button
-                            key={value}
-                            type="button"
-                            onClick={() => {
-                              setActiveAction(value as ClientAction);
-                              setClientActionMenuOpen(false);
-                            }}
-                            className="block w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100"
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-            </div>
-
-            {activeAction ? (
+          {activeAction ? (
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="mt-5 rounded-3xl border border-slate-200 bg-slate-50 p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
@@ -7696,7 +7684,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             : activeAction === "message"
                               ? t("clientChatTitle")
                               : activeAction === "reminder"
-                                ? "Payment reminder"
+                                ? "Send notification"
                               : activeAction === "payment"
                                   ? t("createPaymentReceipt")
                                 : activeAction === "fine"
@@ -7950,7 +7938,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       }
                       className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
                     >
-                      Send reminder
+                      Send notification
                     </button>
                   </div>
                 ) : null}
@@ -8929,8 +8917,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 </div>
               ) : null}
             </div>
+            </section>
           ) : null}
-          </section>
 
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3">
