@@ -3744,6 +3744,25 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }));
   }
 
+  function openFullApprovalsView() {
+    const pendingApprovals = contractApprovals.filter((item) => item.status === "pending");
+    const pendingEmailSet = new Set(
+      pendingApprovals
+        .map((item) => item.email.trim().toLowerCase())
+        .filter(Boolean)
+    );
+    const firstMatch =
+      clients.find((client) => pendingEmailSet.has(client.email.trim().toLowerCase())) ??
+      inactiveClients.find((client) => pendingEmailSet.has(client.email.trim().toLowerCase())) ??
+      null;
+
+    if (firstMatch) {
+      setSelectedMaHd(firstMatch.maHd);
+      fillClientForm(firstMatch);
+    }
+    setClientSubTab("details");
+  }
+
   function formatContractApprovalDetailValue(label: string, value: string): string {
     const trimmed = value.trim();
     if (!trimmed) return "-";
@@ -5280,7 +5299,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                   </button>
                   <button
                     type="button"
-                    onClick={() => setClientSubTab("details")}
+                    onClick={() => openFullApprovalsView()}
                     className="rounded-lg bg-amber-700 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-800"
                   >
                     Open full approvals view

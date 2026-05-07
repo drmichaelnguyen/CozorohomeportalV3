@@ -404,17 +404,14 @@ function publicApprovalSummary(item: PendingContractApproval) {
   const isExtension = item.type === "extension";
   const details: Array<{ label: string; value: string }> = isExtension
     ? [
-        { label: "Resident name", value: String(extension.residentName ?? registration.fullName ?? "") },
+        { label: "Resident", value: String(extension.residentName ?? registration.fullName ?? "") },
         { label: "Email", value: String(extension.email ?? registration.email ?? "") },
         { label: "Branch", value: String(extension.branchId ?? "") },
-        { label: "Bed number", value: String(extension.bedNumber ?? "") },
-        { label: "Contract months", value: String(extension.extensionMonths ?? "") },
-        { label: "Previous contract end", value: String(extension.previousContractEndDate ?? "") },
-        { label: "New contract start", value: String(extension.newContractStartDate ?? "") },
-        { label: "New contract end", value: String(extension.newContractEndDate ?? "") },
-        { label: "Contract code", value: String(extension.contractCode ?? "") },
-        { label: "Client signed at", value: String(item.clientSignatureTimestamp ?? "") },
-        { label: "Submitted at", value: String(item.submittedAt ?? "") }
+        { label: "Bed", value: String(extension.bedNumber ?? "") },
+        { label: "Months", value: String(extension.extensionMonths ?? "") },
+        { label: "Code", value: String(extension.contractCode ?? "") },
+        { label: "Signed", value: String(item.clientSignatureTimestamp ?? "") },
+        { label: "Submitted", value: String(item.submittedAt ?? "") }
       ]
     : [
         { label: "Full name", value: String(registration.fullName ?? "") },
@@ -488,29 +485,53 @@ function publicApprovalSummary(item: PendingContractApproval) {
 
 type PublicContractApprovalSummary = ReturnType<typeof publicApprovalSummary>;
 
-function extensionSnapshotBedMissing(ext: PendingContractApproval["extension"]): boolean {
-  if (!ext) return true;
-  const raw = ext.bedNumber as unknown;
-  if (raw === undefined || raw === null) return true;
-  if (typeof raw === "string" && !raw.trim()) return true;
-  if (typeof raw === "number" && !Number.isFinite(raw)) return true;
-  const parsed = Number.parseInt(String(raw).replace(/[^0-9]/g, ""), 10);
-  return !Number.isFinite(parsed);
+function pickFirstFilledString(values: unknown[]): string {
+  for (const value of values) {
+    const text = String(value ?? "").trim();
+    if (text) return text;
+  }
+  return "";
 }
 
-function extensionSnapshotLooksIncomplete(ext: PendingContractApproval["extension"]): boolean {
-  if (!ext?.email?.trim()) return false;
-  const branch = String(ext.branchId ?? "").trim();
-  const prev = String(ext.previousContractEndDate ?? "").trim();
-  const start = String(ext.newContractStartDate ?? "").trim();
-  const end = String(ext.newContractEndDate ?? "").trim();
-  const code = String(ext.contractCode ?? "").trim();
-  return !branch || extensionSnapshotBedMissing(ext) || !prev || !start || !end || !code;
+function buildExtensionApprovalDetails(
+  item: PendingContractApproval,
+  summary: PublicContractApprovalSummary,
+  row?: Record<string, string> | null
+): Array<{ label: string; value: string }> {
+  const rentMonthly = pickFirstFilledString([
+    row?.["Số tiền chia sẻ mỗi tháng"],
+    row?.["Phí ở đóng mỗi tháng"]
+  ]);
+  const parkingFee = pickFirstFilledString([row?.["Phí gởi xe"]]);
+  const totalMonthly = pickFirstFilledString([row?.["Tổng tiền thanh toán tháng"]]);
+  const deposit = pickFirstFilledString([row?.["Số tiền cọc"]]);
+  const paymentPlan = pickFirstFilledString([row?.["Bạn muốn thanh toán chi phí như thế nào?"]]);
+  const extraTerms = pickFirstFilledString([
+    row?.["Khoản ưu đãi và chi phí tăng thêm nếu có"],
+    row?.["Khoản ưu đãi và chi phí tăng thêm"]
+  ]);
+
+  return [
+    { label: "Resident", value: summary.fullName },
+    { label: "Email", value: summary.email },
+    { label: "Branch", value: summary.branchId },
+    { label: "Bed", value: summary.bedNumber == null ? "" : String(summary.bedNumber) },
+    { label: "Months", value: summary.contractMonths == null ? "" : String(summary.contractMonths) },
+    { label: "Rent/mo", value: rentMonthly },
+    { label: "Parking", value: parkingFee },
+    { label: "Total/mo", value: totalMonthly },
+    { label: "Deposit", value: deposit },
+    { label: "Plan", value: paymentPlan },
+    { label: "Extras", value: extraTerms },
+    { label: "Code", value: summary.contractCode },
+    { label: "Signed", value: String(item.clientSignatureTimestamp ?? "") },
+    { label: "Submitted", value: String(item.submittedAt ?? "") }
+  ].filter((entry) => entry.value.trim().length > 0);
 }
 
 async function enrichPublicApprovalSummary(item: PendingContractApproval): Promise<PublicContractApprovalSummary> {
   const base = publicApprovalSummary(item);
-  if (item.type !== "extension" || !extensionSnapshotLooksIncomplete(item.extension)) {
+  if (item.type !== "extension") {
     return base;
   }
   const email = String(item.extension!.email ?? "")
@@ -519,7 +540,12 @@ async function enrichPublicApprovalSummary(item: PendingContractApproval): Promi
   if (!email) return base;
 
   const row = await getLatestClientRowForContractApprovalEnrichment(email);
-  if (!row) return base;
+  if (!row) {
+    return {
+      ...base,
+      details: buildExtensionApprovalDetails(item, base, null)
+    };
+  }
 
   const branchId = normalizeClientBranch(getClientBranchValue(row));
   const bedParsed = Number.parseInt(String(row[CLIENT_BED_COLUMN] ?? "").replace(/[^0-9]/g, ""), 10);
@@ -555,7 +581,7 @@ async function enrichPublicApprovalSummary(item: PendingContractApproval): Promi
   const mergedBed =
     Number.isFinite(baseBedParsed) && !Number.isNaN(baseBedParsed) ? baseBedParsed : bedNumber;
 
-  return {
+  const merged = {
     ...base,
     fullName: base.fullName.trim() ? base.fullName : residentName,
     branchId: base.branchId.trim() ? base.branchId : branchId,
@@ -565,6 +591,11 @@ async function enrichPublicApprovalSummary(item: PendingContractApproval): Promi
     contractEndDate: base.contractEndDate.trim() ? base.contractEndDate : newContractEndDate,
     previousContractEndDate: base.previousContractEndDate.trim() ? base.previousContractEndDate : oldEnd,
     contractCode: base.contractCode.trim() ? base.contractCode : contractCode
+  };
+
+  return {
+    ...merged,
+    details: buildExtensionApprovalDetails(item, merged, row)
   };
 }
 const SENSITIVE_CLIENT_FIELD_PATTERNS = [
