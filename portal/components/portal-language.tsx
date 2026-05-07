@@ -1976,6 +1976,7 @@ const translations: Record<string, { en: string; vi: string }> = {
   stayStatusLabel: { en: "Stay Status", vi: "Tình trạng lưu trú" },
   depositRefundEmailLabel: { en: "Deposit refund (email)", vi: "Hoàn tiền cọc (email)" },
   contractStatusLabel: { en: "Contract Status", vi: "Tình trạng hợp đồng" },
+  contractTerminationBtn: { en: "Contract termination", vi: "Chấm dứt hợp đồng" },
   terminateContractQuestion: { en: "Terminate contract?", vi: "Chấm dứt hợp đồng?" },
   terminateContractWarning: { en: "The client must find a replacement tenant to continue their contract. If they cannot find one, the deposit is not guaranteed to be refunded.", vi: "Khách phải tìm người thay thế để tiếp tục hợp đồng. Nếu không tìm được, tiền cọc không được đảm bảo sẽ được hoàn lại." },
   depositNoteToClient: { en: "Deposit note (shown to client)", vi: "Ghi chú tiền cọc (hiển thị cho khách)" },

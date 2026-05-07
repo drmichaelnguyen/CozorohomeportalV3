@@ -145,14 +145,23 @@ export function getTenureSurchargeRate(durationMonths: number): number {
   return 0;
 }
 
+/** Ignore absurd sheet parses (e.g. digit-stripping long prose). Typical monthly line items stay well under this. */
+const MONTHLY_ADJUSTMENT_VND_ABS_CAP = 1_000_000_000;
+
 function getMonthlyAdjustmentVnd(client: ClientRow): number {
+  // NOTE: Do not read `Khoản ưu đãi và chi phí tăng thêm nếu có` here — registration writes free-text
+  // `additionalTerms` into that column (google-sheets append). `parseVndAmount` would strip all non-digits
+  // from the paragraph and produce a bogus multi-trillion "surcharge".
   const rawValue =
     client["Ưu đãi tháng"] ||
     client["Uu dai thang"] ||
     client["Khoản ưu đãi và chi phí tăng thêm"] ||
-    client["Khoản ưu đãi và chi phí tăng thêm nếu có"] ||
     "";
-  return parseVndAmount(rawValue);
+  const v = parseVndAmount(rawValue);
+  if (!Number.isFinite(v) || Math.abs(v) > MONTHLY_ADJUSTMENT_VND_ABS_CAP) {
+    return 0;
+  }
+  return v;
 }
 
 /**

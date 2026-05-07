@@ -402,6 +402,56 @@ function publicApprovalSummary(item: PendingContractApproval) {
   const registration = (item.registration ?? {}) as Record<string, any>;
   const extension = (item.extension ?? {}) as Record<string, any>;
   const isExtension = item.type === "extension";
+  const details: Array<{ label: string; value: string }> = isExtension
+    ? [
+        { label: "Resident name", value: String(extension.residentName ?? registration.fullName ?? "") },
+        { label: "Email", value: String(extension.email ?? registration.email ?? "") },
+        { label: "Branch", value: String(extension.branchId ?? "") },
+        { label: "Bed number", value: String(extension.bedNumber ?? "") },
+        { label: "Contract months", value: String(extension.extensionMonths ?? "") },
+        { label: "Previous contract end", value: String(extension.previousContractEndDate ?? "") },
+        { label: "New contract start", value: String(extension.newContractStartDate ?? "") },
+        { label: "New contract end", value: String(extension.newContractEndDate ?? "") },
+        { label: "Contract code", value: String(extension.contractCode ?? "") },
+        { label: "Client signed at", value: String(item.clientSignatureTimestamp ?? "") },
+        { label: "Submitted at", value: String(item.submittedAt ?? "") }
+      ]
+    : [
+        { label: "Full name", value: String(registration.fullName ?? "") },
+        { label: "Email", value: String(registration.email ?? "") },
+        { label: "Sex", value: String(registration.sex ?? "") },
+        { label: "Phone", value: String(registration.phone ?? "") },
+        { label: "Date of birth", value: String(registration.dateOfBirth ?? "") },
+        { label: "Permanent address", value: String(registration.permanentAddress ?? "") },
+        { label: "Government ID", value: String(registration.governmentId ?? "") },
+        { label: "ID issued date", value: String(registration.idIssuedDate ?? "") },
+        { label: "ID issued place", value: String(registration.idIssuedPlace ?? "") },
+        { label: "Branch", value: String(registration.branchId ?? "") },
+        { label: "Bed number", value: String(registration.bedNumber ?? "") },
+        { label: "Contract start", value: String(registration.contractStartDate ?? "") },
+        { label: "Contract end", value: String(registration.contractEndDate ?? "") },
+        { label: "Contract months", value: String(registration.contractMonths ?? "") },
+        { label: "Monthly price (VND)", value: String(registration.monthlyPrice ?? "") },
+        { label: "Deposit (VND)", value: String(registration.deposit ?? "") },
+        { label: "Payment frequency", value: String(registration.paymentFrequency ?? "") },
+        { label: "Current status", value: String(registration.currentStatus ?? "") },
+        { label: "School/workplace", value: String(registration.schoolOrWorkplace ?? "") },
+        { label: "Referral source", value: String(registration.referralSource ?? "") },
+        { label: "Referral note", value: String(registration.referralNoteLine ?? "") },
+        { label: "Emergency phone", value: String(registration.emergencyPhone ?? "") },
+        { label: "Additional terms", value: String(registration.additionalTerms ?? "") },
+        { label: "Contract cleaning opt-out", value: registration.contractCleaningOptOut ? "Yes" : "No" },
+        { label: "Cleaning opt-out fee (VND)", value: String(registration.cleaningOptOutFeeVnd ?? "") },
+        { label: "Has motorbike", value: registration.hasMotorbike ? "Yes" : "No" },
+        { label: "Motorbike plate", value: String(registration.motorbikePlate ?? "") },
+        { label: "Parking fee (VND)", value: String(registration.parkingFeeVnd ?? "") },
+        { label: "Parking plan", value: String(registration.parkingPlanSummary ?? "") },
+        { label: "ID scan URL", value: String(registration.idScanUrl ?? "") },
+        { label: "Contract code", value: String(registration.contractCode ?? registration.maHd ?? "") },
+        { label: "Client signed at", value: String(item.clientSignatureTimestamp ?? "") },
+        { label: "Submitted at", value: String(item.submittedAt ?? "") }
+      ]
+          .filter((entry) => entry.value.trim().length > 0 || entry.label === "Contract cleaning opt-out" || entry.label === "Has motorbike");
   return {
     id: item.id,
     type: item.type,
@@ -431,7 +481,8 @@ function publicApprovalSummary(item: PendingContractApproval) {
     previousContractEndDate: isExtension ? String(extension.previousContractEndDate ?? "") : "",
     contractCode: isExtension
       ? String(extension.contractCode ?? "")
-      : String(registration.contractCode ?? registration.maHd ?? "")
+      : String(registration.contractCode ?? registration.maHd ?? ""),
+    details
   };
 }
 
@@ -1039,6 +1090,8 @@ const managerPaymentReminderSendSchema = z
     mode: z.enum(["single", "batch_unpaid", "batch_selected"]),
     email: z.string().email().optional(),
     emails: z.array(z.string().email()).optional(),
+    /** When set (e.g. Branch Tools), batch modes only include active residents in this branch who are unpaid in app DB — same rules as the manager unpaid list. */
+    branch: z.enum(["D2", "D7"]).optional(),
     title: z.string().trim().min(1).max(120).optional(),
     body: z.string().trim().min(1).max(4000),
     sendPopup: z.boolean().optional(),
@@ -6691,6 +6744,50 @@ function formatVndForReminder(value: number | null | undefined) {
   return `${Math.round(amount).toLocaleString("vi-VN")} ₫`;
 }
 
+/** Match portal `normalizeBranchLabel` (manager-client) for Branch Tools scope. */
+function normalizeBranchLabelForUnpaidReminder(value: string): string {
+  const normalized = value.trim().toUpperCase().replace(/\s+/g, "");
+  if (normalized === "7" || normalized === "D7" || normalized.includes("D7")) {
+    return "D7";
+  }
+  if (normalized === "2" || normalized === "D2" || normalized.includes("D2")) {
+    return "D2";
+  }
+  return value.trim() || "Unknown";
+}
+
+function isSheetRowPrepaidPlan(row: Record<string, string>): boolean {
+  const plan = String(row["Bạn muốn thanh toán chi phí như thế nào?"] ?? "");
+  return plan.includes("03 tháng") || plan.includes("06 tháng");
+}
+
+/**
+ * Same eligibility as the manager UI unpaid marker + unpaid reminder list:
+ * active stay "1", not on 3/6-month prepaid sheet plan, not marked paid in DB for the month, optional D2/D7 branch.
+ */
+function collectEligibleUnpaidReminderEmails(
+  clients: Awaited<ReturnType<typeof getManagerClients>>,
+  paidEmailSet: Set<string>,
+  branchFilter?: "D2" | "D7"
+): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const client of clients) {
+    if (String(client.activeStay ?? "").trim() !== "1") continue;
+    if (isSheetRowPrepaidPlan(client.row)) continue;
+    const email = client.email.trim().toLowerCase();
+    if (!email || paidEmailSet.has(email)) continue;
+    if (branchFilter) {
+      const b = normalizeBranchLabelForUnpaidReminder(String(client.branch ?? ""));
+      if (b !== branchFilter) continue;
+    }
+    if (seen.has(email)) continue;
+    seen.add(email);
+    out.push(email);
+  }
+  return out;
+}
+
 function pickClientString(client: Record<string, string> | null, keys: string[]) {
   if (!client) return "";
   for (const key of keys) {
@@ -6844,19 +6941,21 @@ app.post("/manager/payment-reminders/send", async (request, response) => {
       select: { email: true }
     });
     const paidEmailSet = new Set(paidRows.map((row) => row.email.trim().toLowerCase()));
-    const unpaidEmails = Array.from(
-      new Set(
-        allClients
-          .map((client) => client.email.trim().toLowerCase())
-          .filter((email) => email && !paidEmailSet.has(email))
-      )
-    );
+    const branchFilter = parsed.data.branch;
+    const eligibleUnpaidEmails = collectEligibleUnpaidReminderEmails(allClients, paidEmailSet, branchFilter);
+    const eligibleSet = new Set(eligibleUnpaidEmails);
+
     const recipientEmails =
       parsed.data.mode === "single"
         ? [String(parsed.data.email ?? "").trim().toLowerCase()].filter(Boolean)
         : parsed.data.mode === "batch_selected"
-          ? Array.from(new Set((parsed.data.emails ?? []).map((email) => email.trim().toLowerCase()).filter(Boolean)))
-          : unpaidEmails;
+          ? (() => {
+              const wanted = Array.from(
+                new Set((parsed.data.emails ?? []).map((email) => email.trim().toLowerCase()).filter(Boolean))
+              );
+              return branchFilter ? wanted.filter((email) => eligibleSet.has(email)) : wanted;
+            })()
+          : eligibleUnpaidEmails;
 
     if (!recipientEmails.length) {
       return response.status(400).json({ error: "No recipients were found." });
@@ -6884,10 +6983,16 @@ app.post("/manager/payment-reminders/send", async (request, response) => {
           result.popup = true;
         }
         if (parsed.data.sendInAppMessage) {
+          const inAppBody = await buildPaymentReminderEmailBody({
+            email,
+            month,
+            managerNote: body,
+            includeEnglishCopy: false
+          });
           await postOperatorSupportMessageToResident({
             operatorEmail: parsed.data.actorEmail,
             residentEmail: email,
-            body: `${title}\n\n${body}`
+            body: `${title}\n\n${inAppBody}`
           });
           result.inApp = true;
         }
@@ -6923,7 +7028,7 @@ app.post("/manager/payment-reminders/send", async (request, response) => {
       month,
       mode: parsed.data.mode,
       attempted: recipientEmails.length,
-      unpaidCount: unpaidEmails.length,
+      unpaidCount: eligibleUnpaidEmails.length,
       results
     });
   } catch (error) {

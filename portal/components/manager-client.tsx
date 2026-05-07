@@ -82,6 +82,7 @@ type ContractApprovalSummary = {
   contractEndDate: string;
   previousContractEndDate?: string;
   contractCode?: string;
+  details?: Array<{ label: string; value: string }>;
 };
 
 type SmartDevice = {
@@ -2671,6 +2672,29 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const canSendDepositRefundEmail =
     sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin";
 
+  useEffect(() => {
+    // #region agent log
+    fetch("http://127.0.0.1:7334/ingest/99499d10-2452-43bb-b244-1ba866840dd1", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "47d366" },
+      body: JSON.stringify({
+        sessionId: "47d366",
+        runId: "pre-fix",
+        hypothesisId: "H2",
+        location: "portal/components/manager-client.tsx:2674",
+        message: "Manager client mounted",
+        data: {
+          initialView,
+          hasSessionEmail: Boolean(normalizedEmail),
+          sessionRole: sessionRole ?? null,
+          isStaffSession
+        },
+        timestamp: Date.now()
+      })
+    }).catch(() => {});
+    // #endregion
+  }, [initialView, isStaffSession, normalizedEmail, sessionRole]);
+
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
   const [clients, setClients] = useState<ManagerClientRecord[]>([]);
@@ -2687,7 +2711,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [contractApprovalActionId, setContractApprovalActionId] = useState<string | null>(null);
   const [expandedContractApprovals, setExpandedContractApprovals] = useState<Record<string, boolean>>({});
   const [branchToolsOpen, setBranchToolsOpen] = useState(false);
-  const [branchToolsTab, setBranchToolsTab] = useState<"manual_receipt" | "branch_broadcast" | "unpaid_reminder">("manual_receipt");
+  const [branchToolsTab, setBranchToolsTab] = useState<"manual_receipt" | "branch_broadcast" | "unpaid_reminder" | null>(null);
   const [manualReceiptName, setManualReceiptName] = useState("");
   const [manualReceiptEmail, setManualReceiptEmail] = useState("");
   const [manualReceiptPurpose, setManualReceiptPurpose] = useState("");
@@ -3720,7 +3744,46 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }));
   }
 
-  function openBranchToolsModal(tab: "manual_receipt" | "branch_broadcast") {
+  function formatContractApprovalDetailValue(label: string, value: string): string {
+    const trimmed = value.trim();
+    if (!trimmed) return "-";
+    const normalizedLabel = label.toLowerCase();
+    if ((normalizedLabel.includes("submitted") || normalizedLabel.includes("signed")) && !Number.isNaN(Date.parse(trimmed))) {
+      return formatCozoroDateTime(trimmed);
+    }
+    return trimmed;
+  }
+
+  function renderContractApprovalDetails(item: ContractApprovalSummary): ReactNode {
+    if (item.details && item.details.length > 0) {
+      return (
+        <div className="mt-2 grid gap-1.5 text-xs text-slate-600 sm:grid-cols-2">
+          {item.details.map((entry, index) => (
+            <div key={`${item.id}-detail-${index}`} className="rounded-md bg-slate-50 px-2 py-1 sm:col-span-1">
+              <span className="font-semibold text-slate-700">{entry.label}:</span>{" "}
+              <span className="break-all">{formatContractApprovalDetailValue(entry.label, entry.value)}</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    return (
+      <div className="mt-2 grid gap-1 text-xs text-slate-600 sm:grid-cols-2">
+        <div>Branch: {item.branchId || "-"}</div>
+        <div>Bed: {item.bedNumber ?? "-"}</div>
+        <div>Start: {item.contractStartDate || "-"}</div>
+        <div>End: {item.contractEndDate || "-"}</div>
+        <div>Submitted: {formatCozoroDateTime(item.submittedAt)}</div>
+        <div>Email: {item.email}</div>
+        {item.type === "extension" ? (
+          <div className="sm:col-span-2">Previous end: {item.previousContractEndDate || "-"}</div>
+        ) : null}
+      </div>
+    );
+  }
+
+  function openBranchToolsModal() {
     const resolvedBranch =
       selectedBranch === "D2" || selectedBranch === "D7"
         ? selectedBranch
@@ -3728,7 +3791,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           ? normalizeBranchLabel(selectedClient.branch)
           : "D2";
     setSelectedBranch(resolvedBranch === "D7" ? "D7" : "D2");
-    setBranchToolsTab(tab);
+    setBranchToolsTab(null);
     setBranchToolsOpen(true);
     if (!manualReceiptPurpose) setManualReceiptPurpose("Rent");
   }
@@ -5253,19 +5316,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         >
                           {isExpanded ? "Hide details" : "View details before approve"}
                         </button>
-                        {isExpanded ? (
-                          <div className="mt-2 grid gap-1 text-xs text-slate-600 sm:grid-cols-2">
-                            <div>Branch: {item.branchId || "-"}</div>
-                            <div>Bed: {item.bedNumber ?? "-"}</div>
-                            <div>Start: {item.contractStartDate || "-"}</div>
-                            <div>End: {item.contractEndDate || "-"}</div>
-                            <div>Submitted: {formatCozoroDateTime(item.submittedAt)}</div>
-                            <div>Email: {item.email}</div>
-                            {item.type === "extension" ? (
-                              <div className="sm:col-span-2">Previous end: {item.previousContractEndDate || "-"}</div>
-                            ) : null}
-                          </div>
-                        ) : null}
+                        {isExpanded ? renderContractApprovalDetails(item) : null}
                         {canReviewContractApprovals ? (
                           <div className="mt-3 flex flex-wrap gap-2">
                             <button
@@ -5334,7 +5385,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               </Link>
               <button
                 type="button"
-                onClick={() => openBranchToolsModal("manual_receipt")}
+                onClick={() => openBranchToolsModal()}
                 className="rounded-full border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 transition-all hover:bg-amber-100"
               >
                 Branch Tools
@@ -6240,22 +6291,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           {isExpanded ? "Hide details" : "View details before approve"}
                         </button>
                       </div>
-                      {isExpanded ? (
-                        <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
-                          <div>Branch: {item.branchId || "-"}</div>
-                          <div>Bed: {item.bedNumber ?? "-"}</div>
-                          <div>Start: {item.contractStartDate || "-"}</div>
-                          <div>End: {item.contractEndDate || "-"}</div>
-                          <div>Signed: {item.clientSignatureTimestamp ? formatCozoroDateTime(item.clientSignatureTimestamp) : "-"}</div>
-                          <div>Submitted: {formatCozoroDateTime(item.submittedAt)}</div>
-                          {item.type === "extension" ? (
-                            <>
-                              <div className="sm:col-span-2">Previous contract end: {item.previousContractEndDate || "-"}</div>
-                              <div className="sm:col-span-2">Contract code: {item.contractCode || "-"}</div>
-                            </>
-                          ) : null}
-                        </div>
-                      ) : null}
+                      {isExpanded ? renderContractApprovalDetails(item) : null}
                       {canReviewContractApprovals && item.status === "pending" ? (
                         <div className="mt-4 flex flex-wrap gap-2">
                           <button
@@ -6316,7 +6352,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     🧰 Tools
                   </button>
                   {clientActionMenuOpen ? (
-                    <div className="absolute left-0 z-20 mt-2 w-[min(16rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] rounded-xl border border-slate-200 bg-white p-2 shadow-xl sm:left-auto sm:right-0 sm:w-64 sm:max-w-none">
+                    <>
+                      <button
+                        type="button"
+                        aria-label={t("closeLabel")}
+                        onClick={() => setClientActionMenuOpen(false)}
+                        className="fixed inset-0 z-[210] bg-slate-900/20 sm:hidden"
+                      />
+                      <div className="fixed inset-x-3 bottom-3 z-[220] max-h-[80vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl sm:absolute sm:inset-auto sm:right-0 sm:bottom-auto sm:z-20 sm:mt-2 sm:w-64 sm:max-h-none sm:overflow-visible sm:rounded-xl sm:shadow-xl">
                       {(() => {
                         const autoLock = selectedClient ? getAutomaticFeatureLockStatus(selectedClient) : null;
                         const isUnlocked = accountLockOverride?.unlocked === true;
@@ -6407,7 +6450,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           {label}
                         </button>
                       ))}
-                    </div>
+                      </div>
+                    </>
                   ) : null}
                 </div>
                 <button
@@ -11869,7 +11913,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
       {branchToolsOpen && (selectedBranch === "D2" || selectedBranch === "D7") ? (
         <div className="fixed inset-0 z-[170] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
-          <div className="w-full max-w-2xl rounded-t-3xl bg-white shadow-xl sm:rounded-3xl">
+          <div className="flex max-h-[92vh] w-full max-w-2xl flex-col rounded-t-3xl bg-white shadow-xl sm:max-h-[88vh] sm:rounded-3xl">
             <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4 sm:px-6">
               <div>
                 <h3 className="text-base font-semibold text-slate-900">Branch Tools — {selectedBranch}</h3>
@@ -11885,7 +11929,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 Close
               </button>
             </div>
-            <div className="space-y-4 p-5 sm:p-6">
+            <div className="flex-1 space-y-4 overflow-y-auto p-5 pb-8 sm:p-6">
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -11922,7 +11966,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 </button>
               </div>
 
-              {branchToolsTab === "manual_receipt" ? (
+              {branchToolsTab === null ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                  Select a tool above to continue.
+                </div>
+              ) : branchToolsTab === "manual_receipt" ? (
                 <div className="space-y-3">
                   <p className="text-xs text-slate-600">
                     Create a payment receipt for a person who is not in the current client database.
@@ -12112,6 +12160,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           actorEmail: normalizedEmail,
                           mode: unpaidReminderMode === "selected" ? "batch_selected" : "batch_unpaid",
                           emails: unpaidReminderMode === "selected" ? selectedUnpaidReminderEmails : undefined,
+                          branch: selectedBranch === "D2" || selectedBranch === "D7" ? selectedBranch : undefined,
                           title: paymentReminderTitle.trim() || "Nhắc thanh toán tiền phòng",
                           body: paymentReminderBody.trim(),
                           sendPopup: sendReminderPopup,
