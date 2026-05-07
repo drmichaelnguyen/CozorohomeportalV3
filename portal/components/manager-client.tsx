@@ -401,6 +401,38 @@ function normalizeRentBreakdown(input: Partial<RentBreakdown> | null | undefined
   };
 }
 
+function computeEffectiveRentCoinAmounts(args: {
+  breakdown: RentBreakdown;
+  overrideCoinsInput: string;
+  overridesEnabled: boolean;
+}): { coinUsage: number; coinValueVnd: number; finalTotalVnd: number } {
+  const { breakdown, overrideCoinsInput, overridesEnabled } = args;
+  const recommendedCoinUsage = breakdown.recommendedCoinUsage ?? 0;
+  const recommendedCoinValueVnd = breakdown.recommendedCoinValueVnd ?? 0;
+
+  if (!overridesEnabled) {
+    return { coinUsage: recommendedCoinUsage, coinValueVnd: recommendedCoinValueVnd, finalTotalVnd: breakdown.finalTotalVnd ?? 0 };
+  }
+
+  const trimmed = String(overrideCoinsInput ?? "").trim();
+  const rawOverride = trimmed ? parseLooseNumber(trimmed) : NaN;
+
+  const coinRateVndPerCoin = breakdown.coinRateVndPerCoin ?? 0;
+  const maxCoinsByCredit =
+    coinRateVndPerCoin > 0 ? Math.floor((breakdown.maxCoinUsageVnd ?? 0) / coinRateVndPerCoin) : 0;
+  const maxCoinsByBalance = Number.isFinite(breakdown.currentCoinsBalance) ? Math.trunc(breakdown.currentCoinsBalance) : 0;
+  const maxCoinsAllowed = Math.max(0, Math.min(maxCoinsByCredit, maxCoinsByBalance));
+
+  const desiredCoinUsage = Number.isFinite(rawOverride) ? Math.max(0, Math.trunc(rawOverride)) : recommendedCoinUsage;
+  const coinUsage = Math.min(desiredCoinUsage, maxCoinsAllowed);
+
+  const coinValueVnd =
+    coinUsage === recommendedCoinUsage ? recommendedCoinValueVnd : Math.round(coinUsage * coinRateVndPerCoin);
+  const finalTotalVnd = Math.max(0, (breakdown.totalBeforeCoinsVnd ?? 0) - coinValueVnd);
+
+  return { coinUsage, coinValueVnd, finalTotalVnd };
+}
+
 function formatPercentInput(rate: number | null | undefined): string {
   return String(Math.round(Number(rate ?? 0) * 10000) / 100);
 }
@@ -2669,6 +2701,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const canManageOwnersEmployees = isOwnerSession || isAppAdminSession;
   const canCreatePaymentReceipt =
     sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin";
+  const canEditRentCoinUsage = isOwnerSession || isAppAdminSession;
   const canSendDepositRefundEmail =
     sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin";
 
@@ -2749,6 +2782,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [clientPanelSections, setClientPanelSections] = useState(() => ({ ...DEFAULT_MANAGER_CLIENT_PANEL_SECTIONS }));
   const [prepaidPkgBreakdownOpen, setPrepaidPkgBreakdownOpen] = useState(false);
   const [infoRentBreakdown, setInfoRentBreakdown] = useState<RentBreakdown | null>(null);
+  const [infoRentCoinUsageOverrideInput, setInfoRentCoinUsageOverrideInput] = useState<string>("");
   const [infoManagerDiscount, setInfoManagerDiscount] = useState("0");
   const [infoShortTermSurchargeRate, setInfoShortTermSurchargeRate] = useState("0");
   const [infoParkingFee, setInfoParkingFee] = useState("0");
@@ -3046,12 +3080,31 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   // v3.1.0 Rent States
   const [rentPaymentMode, setRentPaymentMode] = useState<"simple" | "rent">("rent");
   const [rentBreakdown, setRentBreakdown] = useState<RentBreakdown | null>(null);
+  const [paymentRentCoinUsageOverrideInput, setPaymentRentCoinUsageOverrideInput] = useState<string>("");
   const [calculatingRent, setCalculatingRent] = useState(false);
   const [managerDiscountInput, setManagerDiscountInput] = useState("0");
   const [shortTermSurchargeRateInput, setShortTermSurchargeRateInput] = useState("0");
   const [parkingFeeInput, setParkingFeeInput] = useState("0");
   const [targetMonthInput, setTargetMonthInput] = useState(new Date().toISOString().slice(0, 7));
-  
+
+  const infoReceiptCoinAmounts = useMemo(() => {
+    if (!infoRentBreakdown) return null;
+    return computeEffectiveRentCoinAmounts({
+      breakdown: infoRentBreakdown,
+      overrideCoinsInput: infoRentCoinUsageOverrideInput,
+      overridesEnabled: canEditRentCoinUsage && (infoRentBreakdown.recommendedCoinValueVnd ?? 0) > 0
+    });
+  }, [infoRentBreakdown, infoRentCoinUsageOverrideInput, canEditRentCoinUsage]);
+
+  const paymentReceiptCoinAmounts = useMemo(() => {
+    if (!rentBreakdown) return null;
+    return computeEffectiveRentCoinAmounts({
+      breakdown: rentBreakdown,
+      overrideCoinsInput: paymentRentCoinUsageOverrideInput,
+      overridesEnabled: canEditRentCoinUsage && (rentBreakdown.recommendedCoinValueVnd ?? 0) > 0
+    });
+  }, [rentBreakdown, paymentRentCoinUsageOverrideInput, canEditRentCoinUsage]);
+
   // New subtab states
   const [schedulingTab, setSchedulingTab] = useState<"cleaning" | "laundry">("cleaning");
   const [clientListMode, setClientListMode] = useState<"diagram" | "table">("diagram");
@@ -4292,6 +4345,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       if (response.ok) {
         const data = normalizeRentBreakdown((await response.json()) as Partial<RentBreakdown>);
         setInfoRentBreakdown(data);
+        setInfoRentCoinUsageOverrideInput("");
         setInfoShortTermSurchargeRate(formatPercentInput(data?.tenureSurchargeRate));
         setInfoParkingFee(String(data?.parkingFeeVnd || 0));
       }
@@ -4332,6 +4386,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     managerDiscount: string;
     shortTermSurchargeRate: string;
     parkingFee: string;
+    coinUsage?: number;
     payerName?: string;
     closePaymentPanel?: boolean;
   }) {
@@ -4348,7 +4403,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
           managerDiscountVnd: Number(options.managerDiscount) || 0,
           shortTermSurchargeRate: (Number(options.shortTermSurchargeRate) || 0) / 100,
           parkingFeeVnd: Number(options.parkingFee) || 0,
-          coinUsage: options.breakdown.recommendedCoinUsage,
+          coinUsage: options.coinUsage ?? options.breakdown.recommendedCoinUsage,
           payerName,
           receiverName: selfDisplayName || normalizedEmail,
           recipientEmail: normalizedEmail,
@@ -7617,7 +7672,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                   }
                                 ] as const)
                               : []),
-                            ...(infoRentBreakdown.recommendedCoinValueVnd > 0
+                            ...((infoReceiptCoinAmounts?.coinValueVnd ?? 0) > 0
                               ? ([
                                   {
                                     label: "Bill before coin credit",
@@ -7625,8 +7680,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                     color: ""
                                   },
                                   {
-                                    label: `Coin credit (${infoRentBreakdown.recommendedCoinUsage} coins)`,
-                                    value: -(infoRentBreakdown.recommendedCoinValueVnd ?? 0),
+                                    label: `Coin credit (${infoReceiptCoinAmounts?.coinUsage ?? 0} coins)`,
+                                    value: -(infoReceiptCoinAmounts?.coinValueVnd ?? 0),
                                     color: "text-emerald-600"
                                   }
                                 ] as const)
@@ -7646,10 +7701,26 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               </span>
                             </div>
                           ))}
+                          {canEditRentCoinUsage && (infoRentBreakdown.recommendedCoinValueVnd ?? 0) > 0 ? (
+                            <div className="flex items-center justify-between border-t border-slate-100 pt-3 gap-3">
+                              <label className="text-xs text-slate-700 font-medium">{t("coinUsageEditLabel")}</label>
+                              <input
+                                type="number"
+                                min="0"
+                                value={
+                                  infoRentCoinUsageOverrideInput !== ""
+                                    ? String(infoReceiptCoinAmounts?.coinUsage ?? 0)
+                                    : String(infoRentBreakdown.recommendedCoinUsage ?? 0)
+                                }
+                                onChange={(e) => setInfoRentCoinUsageOverrideInput(e.target.value)}
+                                className="w-28 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                              />
+                            </div>
+                          ) : null}
                           <div className="flex items-center justify-between border-t border-slate-200 pt-2 gap-2">
                             <span className="font-bold text-slate-900">Total due (cash)</span>
                             <div className="flex items-center gap-2">
-                              <span className="font-bold text-slate-900">{(infoRentBreakdown.finalTotalVnd ?? 0).toLocaleString()} ₫</span>
+                              <span className="font-bold text-slate-900">{(infoReceiptCoinAmounts?.finalTotalVnd ?? infoRentBreakdown.finalTotalVnd ?? 0).toLocaleString()} ₫</span>
                               {canCreatePaymentReceipt && (
                                 <button
                                   type="button"
@@ -7667,6 +7738,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                       managerDiscount: infoManagerDiscount,
                                       shortTermSurchargeRate: infoShortTermSurchargeRate,
                                       parkingFee: infoParkingFee,
+                                      coinUsage: infoReceiptCoinAmounts?.coinUsage ?? infoRentBreakdown.recommendedCoinUsage,
                                       payerName: selectedClient.name
                                     });
                                   }}
@@ -8144,6 +8216,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               if (!response.ok) throw new Error(t("requestFailed"));
                               const data = normalizeRentBreakdown((await response.json()) as Partial<RentBreakdown>);
                               setRentBreakdown(data);
+                              setPaymentRentCoinUsageOverrideInput("");
                             } catch (err) {
                               alert(err instanceof Error ? err.message : t("requestFailed"));
                             } finally {
@@ -8217,13 +8290,34 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               </div>
 
                               <div className="flex justify-between text-sky-600">
-                                <span>{t("coinUsageLabel").replace("{count}", String(rentBreakdown.recommendedCoinUsage ?? 0))}</span>
-                                <span>-{rentBreakdown.recommendedCoinValueVnd.toLocaleString()} VND</span>
+                                <span>
+                                  {t("coinUsageLabel").replace("{count}", String(paymentReceiptCoinAmounts?.coinUsage ?? rentBreakdown.recommendedCoinUsage ?? 0))}
+                                </span>
+                                <span>-{(paymentReceiptCoinAmounts?.coinValueVnd ?? rentBreakdown.recommendedCoinValueVnd ?? 0).toLocaleString()} VND</span>
                               </div>
+
+                              {canEditRentCoinUsage && (rentBreakdown.recommendedCoinValueVnd ?? 0) > 0 ? (
+                                <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                                  <label className="text-xs font-medium text-slate-700">{t("coinUsageEditLabel")}</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    value={
+                                      paymentRentCoinUsageOverrideInput !== ""
+                                        ? String(paymentReceiptCoinAmounts?.coinUsage ?? 0)
+                                        : String(rentBreakdown.recommendedCoinUsage ?? 0)
+                                    }
+                                    onChange={(e) => setPaymentRentCoinUsageOverrideInput(e.target.value)}
+                                    className="w-28 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                                  />
+                                </div>
+                              ) : null}
 
                               <div className="my-2 rounded-xl bg-slate-900 p-4 text-white flex justify-between items-center">
                                 <span className="text-xs uppercase tracking-wider opacity-70 font-bold">{t("totalDue")}</span>
-                                <span className="text-xl font-bold">{rentBreakdown.finalTotalVnd.toLocaleString()} VND</span>
+                                <span className="text-xl font-bold">
+                                  {(paymentReceiptCoinAmounts?.finalTotalVnd ?? rentBreakdown.finalTotalVnd ?? 0).toLocaleString()} VND
+                                </span>
                               </div>
                             </div>
 
@@ -8252,6 +8346,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                     managerDiscount: managerDiscountInput,
                                     shortTermSurchargeRate: shortTermSurchargeRateInput,
                                     parkingFee: parkingFeeInput,
+                                    coinUsage: paymentReceiptCoinAmounts?.coinUsage ?? rentBreakdown.recommendedCoinUsage,
                                     payerName: paymentPayer || selectedClient.name,
                                     closePaymentPanel: true
                                   });

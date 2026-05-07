@@ -5515,22 +5515,36 @@ app.post("/pay-rent", async (req, res) => {
         : breakdown.professionalDiscountVnd + breakdown.planDiscountVnd + (Number(managerDiscountVnd) || 0);
     const coinsAllowedForResident =
       rentPrefRow?.applyCoinsTowardRent === true || (rentPrefRow?.rentCoinRedeemCoins ?? 0) > 0;
-    const resolvedCoinUsage = coinsAllowedForResident
+    const rawResolvedCoinUsage = coinsAllowedForResident
       ? typeof coinUsage === "number" && Number.isFinite(coinUsage)
-        ? coinUsage
-        : breakdown.recommendedCoinUsage
+        ? Math.trunc(coinUsage)
+        : Math.trunc(breakdown.recommendedCoinUsage)
       : 0;
+
+    // Clamp overridden coin usage within (a) the 10% cap and (b) the sheet balance snapshot.
+    const coinRateVndPerCoin = breakdown.coinRateVndPerCoin ?? 0;
+    const maxCoinsByCredit =
+      coinRateVndPerCoin > 0 ? Math.floor((breakdown.maxCoinUsageVnd ?? 0) / coinRateVndPerCoin) : 0;
+    const maxCoinsByBalance = Number.isFinite(breakdown.currentCoinsBalance)
+      ? Math.trunc(breakdown.currentCoinsBalance)
+      : 0;
+    const maxCoinsAllowed = Math.max(0, Math.min(maxCoinsByCredit, maxCoinsByBalance));
+
+    const resolvedCoinUsage = Math.max(0, Math.min(rawResolvedCoinUsage, maxCoinsAllowed));
     const resolvedCoinValue =
       coinsAllowedForResident && resolvedCoinUsage === breakdown.recommendedCoinUsage
         ? breakdown.recommendedCoinValueVnd
         : coinsAllowedForResident
-          ? Math.round(resolvedCoinUsage * breakdown.coinRateVndPerCoin)
+          ? Math.round(resolvedCoinUsage * coinRateVndPerCoin)
           : 0;
+
+    // Final payment amount must reflect the resolved coin credit (not the engine's recommended usage).
+    const resolvedFinalTotalVnd = Math.max(0, breakdown.totalBeforeCoinsVnd - resolvedCoinValue);
 
     // Record to BIEN NHAN sheet using the manager-compatible column mapping
     await managerCreatePaymentReceipt({
       maHd,
-      amount: breakdown.finalTotalVnd,
+      amount: resolvedFinalTotalVnd,
       purpose: `Rent Payment - ${targetMonth}`,
       details: [
         `Base rent: ${breakdown.baseRent.toLocaleString("vi-VN")} VND`,
@@ -5565,7 +5579,7 @@ Cozoro Home đã nhận được thanh toán của bạn cho tháng ${targetMont
 
 Chi tiết biên nhận:
 - Email: ${email}
-- Số tiền: ${breakdown.finalTotalVnd.toLocaleString("vi-VN")} VND
+- Số tiền: ${resolvedFinalTotalVnd.toLocaleString("vi-VN")} VND
 - Hình thức: Thanh toán qua Manager Portal
 - Người nộp: ${payerName}
 - Ngày: ${new Date().toLocaleDateString("vi-VN")}
@@ -5600,7 +5614,7 @@ Cảm ơn bạn đã đồng hành cùng Cozoro Home!
         snapshotGateParkingVnd: breakdown.gateParkingFeeVnd,
         snapshotLaundryVnd: breakdown.laundryFeeVnd,
         snapshotFinesVnd: breakdown.finesVnd,
-        snapshotFinalTotalVnd: breakdown.finalTotalVnd,
+        snapshotFinalTotalVnd: resolvedFinalTotalVnd,
         snapshotCoinValueVnd: resolvedCoinValue
       },
       update: {
@@ -5612,7 +5626,7 @@ Cảm ơn bạn đã đồng hành cùng Cozoro Home!
         snapshotGateParkingVnd: breakdown.gateParkingFeeVnd,
         snapshotLaundryVnd: breakdown.laundryFeeVnd,
         snapshotFinesVnd: breakdown.finesVnd,
-        snapshotFinalTotalVnd: breakdown.finalTotalVnd,
+        snapshotFinalTotalVnd: resolvedFinalTotalVnd,
         snapshotCoinValueVnd: resolvedCoinValue
       }
     });

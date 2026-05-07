@@ -757,6 +757,7 @@ const translations: Record<string, { en: string; vi: string }> = {
   unpaidFinesLabel: { en: "Unpaid Fines", vi: "Tiền phạt chưa đóng" },
   subtotal: { en: "Subtotal", vi: "Tạm tính" },
   coinUsageLabel: { en: "Coin Usage ({count} coins)", vi: "Sử dụng Coin ({count} coin)" },
+  coinUsageEditLabel: { en: "Coin usage to apply (coins)", vi: "Số Coin dùng để khấu trừ (coin)" },
   totalDue: { en: "Total Due", vi: "Tổng tiền cần đóng" },
   payerName: { en: "Payer Name", vi: "Tên người đóng" },
   confirmSendReceipt: { en: "Confirm & Send Receipt", vi: "Xác nhận & Gửi biên lai" },

@@ -1,5 +1,8 @@
 # Changelog
 
+## [3.8.41] - 2026-05-06
+- **Owner coin usage override (rent receipts)**: Owners/app admins can edit the coin credit applied when creating a monthly rent receipt; the backend clamps usage to the 10% cap and coin balance before recording receipt totals.
+
 ## [3.8.37] - 2026-05-06
 - **Client tab branch tools**: Added a `Branch Tools` button (D2/D7) with a modal that includes:
   - **Manual receipt for non-database clients** (`POST /manager/payments/create-manual`) where staff enters resident fields manually while branch and receiver are pre-filled by the system.
