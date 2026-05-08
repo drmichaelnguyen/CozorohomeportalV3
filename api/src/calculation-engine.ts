@@ -73,6 +73,30 @@ export interface RentBreakdown {
     unpaidFinesCount: number;
     /** Calendar month whose cash laundry usage is included in laundryFeeVnd (previous month vs. billing targetMonth). */
     billingPrevMonth: string;
+    manualOverrides?: Partial<{
+      baseRent: number;
+      tenureSurchargeVnd: number;
+      monthlyAdjustmentSurchargeVnd: number;
+      professionalDiscountVnd: number;
+      planDiscountVnd: number;
+      managerDiscountVnd: number;
+      parkingFeeVnd: number;
+      gateParkingFeeVnd: number;
+      laundryFeeVnd: number;
+      finesVnd: number;
+    }>;
+    calculatedLines?: {
+      baseRent: number;
+      tenureSurchargeVnd: number;
+      monthlyAdjustmentSurchargeVnd: number;
+      professionalDiscountVnd: number;
+      planDiscountVnd: number;
+      managerDiscountVnd: number;
+      parkingFeeVnd: number;
+      gateParkingFeeVnd: number;
+      laundryFeeVnd: number;
+      finesVnd: number;
+    };
   };
 }
 
@@ -233,21 +257,15 @@ export async function calculateRentBreakdown(
   }
 
   // 4. Parking Fee
-  // Motorbike: 200k, Bicycle: 100k
-  // We'll look at "Biển số xe máy" or specific parking columns if available.
-  // Many rows have "Phí gởi xe" already. I'll use that if present, otherwise calculate.
+  // Read directly from the client profile ("Phí gởi xe").
+  // Do not auto-default from motorbike plate presence, because manager payment UI
+  // must reflect the stored profile value exactly.
   let parkingFeeVnd =
     typeof options.parkingFeeVnd === "number" && Number.isFinite(options.parkingFeeVnd)
       ? options.parkingFeeVnd
       : parseVndAmount(client["Phí gởi xe"]);
   let motorbikes = 0;
   let bicycles = 0;
-  if (typeof options.parkingFeeVnd !== "number" && parkingFeeVnd === 0) {
-    if (client["Biển số xe máy đăng ký gởi xe"]) {
-      motorbikes = 1;
-      parkingFeeVnd = PARKING_PRICES.MOTORBIKE;
-    }
-  }
 
   const ticketGateVnd = await sumUnpaidGateParkingVndBeforeMonth(email, targetMonth);
   let gateParkingFeeVnd =
@@ -402,10 +420,8 @@ export function computeRecurringMonthlyRentComponentsFromSheet(client: ClientRow
   const monthlyAdjustmentVnd = getMonthlyAdjustmentVnd(client);
   const professionalDiscountVnd = monthlyAdjustmentVnd < 0 ? Math.abs(monthlyAdjustmentVnd) : 0;
   const monthlyAdjustmentSurchargeVnd = monthlyAdjustmentVnd > 0 ? monthlyAdjustmentVnd : 0;
-  let parkingFeeVnd = parseVndAmount(client["Phí gởi xe"]);
-  if (parkingFeeVnd === 0 && client["Biển số xe máy đăng ký gởi xe"]) {
-    parkingFeeVnd = PARKING_PRICES.MOTORBIKE;
-  }
+  // Keep this strictly profile-driven; do not infer a default parking fee from plate data.
+  const parkingFeeVnd = parseVndAmount(client["Phí gởi xe"]);
   const recurringMonthlyVnd = Math.max(
     0,
     baseRentVnd +

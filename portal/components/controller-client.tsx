@@ -140,23 +140,18 @@ function getAccountStatus(client: Record<string, string> | null, override: Accou
   const contractEnd = parseLooseDate(client["Ngày hết hạn hợp đồng"]);
   const paymentExpiry = parseLooseDate(client["Ngày hết hạn gói đã thanh toán"]);
   const warnings: string[] = [];
-  let blockReason: string | null = null;
   if (contractEnd) {
     const diffDays = (now.getTime() - contractEnd.getTime()) / MS_PER_DAY;
-    if (diffDays > BLOCK_GRACE_DAYS) {
-      blockReason = `Hợp đồng đã hết hạn ${Math.floor(diffDays)} ngày. Liên hệ quản lý để gia hạn.`;
-    } else if (diffDays > 0) {
+    if (diffDays > 0) {
       warnings.push(`Hợp đồng đã hết hạn ${Math.floor(diffDays)} ngày — còn ${BLOCK_GRACE_DAYS - Math.floor(diffDays)} ngày ân hạn. Vui lòng gia hạn trên trang chủ.`);
     } else if (-diffDays < WARN_DAYS_AHEAD) {
       const daysLeft = Math.ceil(-diffDays);
       warnings.push(`Hợp đồng sắp hết hạn vào ngày ${contractEnd.toLocaleDateString("vi-VN")} (còn ${daysLeft} ngày). Gia hạn ngay trên trang chủ để nhận Cozoro Coins: 3 tháng +10.000 · 6 tháng +25.000 · 12 tháng +50.000.`);
     }
   }
-  if (!blockReason && paymentExpiry) {
+  if (paymentExpiry) {
     const diffDays = (now.getTime() - paymentExpiry.getTime()) / MS_PER_DAY;
-    if (diffDays > BLOCK_GRACE_DAYS) {
-      blockReason = `Tiền thuê quá hạn ${Math.floor(diffDays)} ngày. Vui lòng thanh toán để tiếp tục sử dụng dịch vụ.`;
-    } else if (diffDays > 0) {
+    if (diffDays > 0) {
       warnings.push(`Tiền thuê quá hạn ${Math.floor(diffDays)} ngày — còn ${BLOCK_GRACE_DAYS - Math.floor(diffDays)} ngày ân hạn.`);
     } else if (-diffDays < WARN_DAYS_AHEAD) {
       warnings.push(`Gói thanh toán sắp hết hạn vào ngày ${paymentExpiry.toLocaleDateString("vi-VN")}.`);
@@ -174,15 +169,7 @@ function getAccountStatus(client: Record<string, string> | null, override: Accou
     };
   }
 
-  if (blockReason && override?.unlocked) {
-    warnings.unshift(
-      override.updatedBy
-        ? `Tài khoản đã được mở khoá thủ công bởi ${override.updatedBy}.`
-        : "Tài khoản đã được mở khoá thủ công bởi quản lý."
-    );
-    return { isBlocked: false, blockReason: null, warnings };
-  }
-  return { isBlocked: blockReason !== null, blockReason, warnings };
+  return { isBlocked: false, blockReason: null, warnings };
 }
 
 function formatTimestamp(value: string | null, language: "en" | "vi") {

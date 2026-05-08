@@ -58,6 +58,13 @@ import {
 import { calculateRentBreakdown, computePrepaidNextPaymentEstimate } from "./calculation-engine.js";
 import { calculateRentBreakdownForBillingMonth } from "./monthly-rent-breakdown.js";
 import {
+  clearRentComponentUnpaid,
+  getRentComponentUnpaid,
+  hasAnyUnpaidComponent,
+  upsertRentComponentUnpaid,
+  type RentComponentUnpaid
+} from "./monthly-rent-component-unpaid.js";
+import {
   managerGetPrepaidPackageBilling,
   managerUpsertPrepaidPackageBilling,
   managerConfirmPrepaidPackageBilling,
@@ -66,6 +73,12 @@ import {
 } from "./manager-prepaid-package.js";
 import { applyPrepaidBreakdownOverridesToEstimate } from "./prepaid-breakdown-overrides.js";
 import type { PrepaidBreakdownOverrides } from "./prepaid-breakdown-overrides.js";
+import {
+  clearMonthlyRentBreakdownOverride,
+  getMonthlyRentBreakdownOverride,
+  sanitizeMonthlyRentBreakdownOverrides,
+  upsertMonthlyRentBreakdownOverride
+} from "./monthly-rent-breakdown-overrides.js";
 import { 
   createAutomaticFineForEmail,
   sendGmailReceipt,
@@ -959,6 +972,19 @@ const accountLockOverrideSchema = z.object({
   forceLocked: z.boolean().optional(),
   note: z.string().trim().optional()
 });
+const accountLockOverrideBatchSchema = z
+  .object({
+    actorEmail: z.string().email(),
+    targetEmails: z.array(z.string().email()).min(1).max(500),
+    forceLocked: z.boolean(),
+    note: z.string().trim().optional()
+  })
+  .superRefine((data, ctx) => {
+    const normalized = data.targetEmails.map((email) => email.trim().toLowerCase());
+    if (new Set(normalized).size !== normalized.length) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Duplicate target emails are not allowed." });
+    }
+  });
 const googlePortalLoginSchema = z.object({
   credential: z.string().min(1)
 });
@@ -1143,6 +1169,18 @@ const managerPaymentReminderSendSchema = z
   });
 const residentPaymentRequirementReadSchema = z.object({
   email: z.string().email()
+});
+const managerRentBreakdownOverrideGetSchema = z.object({
+  actorEmail: z.string().email(),
+  email: z.string().email(),
+  month: z.string().regex(/^\d{4}-\d{2}$/)
+});
+const managerRentBreakdownOverrideUpsertSchema = z.object({
+  actorEmail: z.string().email(),
+  email: z.string().email(),
+  month: z.string().regex(/^\d{4}-\d{2}$/),
+  clear: z.boolean().optional(),
+  overrides: z.record(z.string(), z.unknown()).optional()
 });
 const cozoroMemberUpgradeSchema = z.object({
   email: z.string().email(),
@@ -2024,6 +2062,42 @@ app.post("/manager/account-lock-override", async (request, response) => {
   } catch (error) {
     return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
       error: error instanceof Error ? error.message : "Unable to update account lock override"
+    });
+  }
+});
+
+app.post("/manager/account-lock-override/batch", async (request, response) => {
+  const parsed = accountLockOverrideBatchSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({
+      error: parsed.error.issues[0]?.message ?? "A valid actor email and target email list are required."
+    });
+  }
+
+  try {
+    const results: Array<{ email: string; ok: boolean; error?: string }> = [];
+    for (const targetEmail of parsed.data.targetEmails) {
+      try {
+        await setAccountLockOverride({
+          actorEmail: parsed.data.actorEmail,
+          targetEmail,
+          unlocked: !parsed.data.forceLocked,
+          forceLocked: parsed.data.forceLocked,
+          note: parsed.data.forceLocked ? parsed.data.note : ""
+        });
+        results.push({ email: targetEmail.trim().toLowerCase(), ok: true });
+      } catch (error) {
+        results.push({
+          email: targetEmail.trim().toLowerCase(),
+          ok: false,
+          error: error instanceof Error ? error.message : "Unable to update account lock override"
+        });
+      }
+    }
+    return response.json({ ok: true, attempted: parsed.data.targetEmails.length, results });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to update account lock overrides"
     });
   }
 });
@@ -5513,12 +5587,18 @@ app.post("/pay-rent", async (req, res) => {
       typeof discountAmount === "number" && Number.isFinite(discountAmount)
         ? discountAmount
         : breakdown.professionalDiscountVnd + breakdown.planDiscountVnd + (Number(managerDiscountVnd) || 0);
-    const coinsAllowedForResident =
-      rentPrefRow?.applyCoinsTowardRent === true || (rentPrefRow?.rentCoinRedeemCoins ?? 0) > 0;
-    const rawResolvedCoinUsage = coinsAllowedForResident
-      ? typeof coinUsage === "number" && Number.isFinite(coinUsage)
-        ? Math.trunc(coinUsage)
-        : Math.trunc(breakdown.recommendedCoinUsage)
+    // Receipt coin credit must mirror an already-committed redemption only.
+    // "applyCoinsTowardRent" is just a preference; coins are deducted only by
+    // POST /rent-paid-status/redeem-coins-for-bill.
+    const committedCoinUsageRaw = Number(rentPrefRow?.rentCoinRedeemCoins ?? 0);
+    const committedCoinValueRaw = Number(rentPrefRow?.rentCoinRedeemValueVnd ?? 0);
+    const hasCommittedCoinRedemption =
+      Number.isFinite(committedCoinUsageRaw) &&
+      committedCoinUsageRaw > 0 &&
+      Number.isFinite(committedCoinValueRaw) &&
+      committedCoinValueRaw > 0;
+    const rawResolvedCoinUsage = hasCommittedCoinRedemption
+      ? Math.trunc(committedCoinUsageRaw)
       : 0;
 
     // Clamp overridden coin usage within (a) the 10% cap and (b) the sheet balance snapshot.
@@ -5531,12 +5611,9 @@ app.post("/pay-rent", async (req, res) => {
     const maxCoinsAllowed = Math.max(0, Math.min(maxCoinsByCredit, maxCoinsByBalance));
 
     const resolvedCoinUsage = Math.max(0, Math.min(rawResolvedCoinUsage, maxCoinsAllowed));
-    const resolvedCoinValue =
-      coinsAllowedForResident && resolvedCoinUsage === breakdown.recommendedCoinUsage
-        ? breakdown.recommendedCoinValueVnd
-        : coinsAllowedForResident
-          ? Math.round(resolvedCoinUsage * coinRateVndPerCoin)
-          : 0;
+    const resolvedCoinValue = hasCommittedCoinRedemption
+      ? Math.max(0, Math.trunc(committedCoinValueRaw))
+      : 0;
 
     // Final payment amount must reflect the resolved coin credit (not the engine's recommended usage).
     const resolvedFinalTotalVnd = Math.max(0, breakdown.totalBeforeCoinsVnd - resolvedCoinValue);
@@ -5725,6 +5802,7 @@ app.get("/manager/rent-paid-status", async (req, res) => {
   const record = await prisma.monthlyRentStatus.findUnique({
     where: { email_month: { email, month } }
   });
+  const componentUnpaid = await getRentComponentUnpaid(email, month);
   return res.json({
     email,
     month,
@@ -5739,11 +5817,55 @@ app.get("/manager/rent-paid-status", async (req, res) => {
     snapshotFinesVnd: record?.snapshotFinesVnd ?? null,
     snapshotFinalTotalVnd: record?.snapshotFinalTotalVnd ?? null,
     snapshotCoinValueVnd: record?.snapshotCoinValueVnd ?? null,
+    componentUnpaid,
+    hasUnpaidComponents: hasAnyUnpaidComponent(componentUnpaid),
     applyCoinsTowardRent: record?.applyCoinsTowardRent ?? false,
     rentCoinRedeemCoins: record?.rentCoinRedeemCoins ?? null,
     rentCoinRedeemValueVnd: record?.rentCoinRedeemValueVnd ?? null,
     rentCoinRedeemAt: record?.rentCoinRedeemAt?.toISOString() ?? null
   });
+});
+
+app.get("/manager/rent-breakdown-overrides", async (req, res) => {
+  const parsed = managerRentBreakdownOverrideGetSchema.safeParse({
+    actorEmail: req.query.actorEmail,
+    email: req.query.email,
+    month: req.query.month
+  });
+  if (!parsed.success) {
+    return res.status(400).json({ error: "actorEmail, email, and month (YYYY-MM) are required." });
+  }
+  try {
+    await requirePortalRole(parsed.data.actorEmail, ["owner", "app_admin"], "Only owners can review rent overrides.");
+    const entry = await getMonthlyRentBreakdownOverride(parsed.data.email, parsed.data.month);
+    return res.json({ override: entry ?? null });
+  } catch (error) {
+    return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+app.post("/manager/rent-breakdown-overrides", async (req, res) => {
+  const parsed = managerRentBreakdownOverrideUpsertSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "actorEmail, email, month and overrides payload are required." });
+  }
+  try {
+    const actor = await requirePortalRole(parsed.data.actorEmail, ["owner", "app_admin"], "Only owners can edit rent overrides.");
+    if (parsed.data.clear === true) {
+      await clearMonthlyRentBreakdownOverride(parsed.data.email, parsed.data.month);
+      return res.json({ ok: true, cleared: true });
+    }
+    const sanitized = sanitizeMonthlyRentBreakdownOverrides(parsed.data.overrides ?? {});
+    const saved = await upsertMonthlyRentBreakdownOverride({
+      email: parsed.data.email,
+      month: parsed.data.month,
+      overrides: sanitized,
+      updatedBy: actor.email
+    });
+    return res.json({ ok: true, override: saved });
+  } catch (error) {
+    return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
 });
 
 // POST /manager/rent-paid-status — manager toggles monthly rent paid flag
@@ -5752,6 +5874,7 @@ app.post("/manager/rent-paid-status", async (req, res) => {
   const email = String(req.body.email ?? "").trim().toLowerCase();
   const month = String(req.body.month ?? "").trim();
   const isPaid = req.body.isPaid;
+  const rawComponentUnpaid = req.body.componentUnpaid as Partial<RentComponentUnpaid> | undefined;
 
   if (!actorEmail || !email || !month || typeof isPaid !== "boolean" || !/^\d{4}-\d{2}$/.test(month)) {
     return res.status(400).json({ error: "actorEmail, email, month (YYYY-MM), and isPaid (boolean) are required" });
@@ -5765,6 +5888,13 @@ app.post("/manager/rent-paid-status", async (req, res) => {
     create: { email, month, isPaid, updatedBy: actorEmail },
     update: { isPaid, updatedBy: actorEmail }
   });
+  let componentUnpaid = await getRentComponentUnpaid(email, month);
+  if (rawComponentUnpaid && typeof rawComponentUnpaid === "object") {
+    componentUnpaid = await upsertRentComponentUnpaid(email, month, rawComponentUnpaid);
+  } else if (isPaid) {
+    await clearRentComponentUnpaid(email, month);
+    componentUnpaid = await getRentComponentUnpaid(email, month);
+  }
   await logAction({
     actorEmail,
     actorRole: "manager",
@@ -5772,7 +5902,7 @@ app.post("/manager/rent-paid-status", async (req, res) => {
     entityType: "MonthlyRentStatus",
     entityId: `${email}|${month}`,
     entityLabel: email,
-    details: `isPaid=${isPaid}`
+    details: `isPaid=${isPaid}; hasUnpaidComponents=${hasAnyUnpaidComponent(componentUnpaid)}`
   });
   try {
     await syncRentPaidColumnToSheetFromAppTruth({ email, month, isPaid });
@@ -5784,7 +5914,13 @@ app.post("/manager/rent-paid-status", async (req, res) => {
           : "Rent status saved in app, but failed to sync Google Sheet column \"Đã đóng phí tháng\"."
     });
   }
-  return res.json({ email: record.email, month: record.month, isPaid: record.isPaid });
+  return res.json({
+    email: record.email,
+    month: record.month,
+    isPaid: record.isPaid,
+    componentUnpaid,
+    hasUnpaidComponents: hasAnyUnpaidComponent(componentUnpaid)
+  });
 });
 
 // GET /manager/prepaid-package-billing — engine estimate + saved draft for a prepaid resident
@@ -6130,9 +6266,13 @@ app.get("/manager/monthly-rent-paid-map", async (req, res) => {
       where: { month },
       select: { email: true, isPaid: true }
     });
-    const byEmail: Record<string, { isPaid: boolean }> = {};
+    const byEmail: Record<string, { isPaid: boolean; hasUnpaidComponents: boolean }> = {};
     for (const row of rows) {
-      byEmail[row.email.toLowerCase()] = { isPaid: row.isPaid };
+      const componentUnpaid = await getRentComponentUnpaid(row.email, month);
+      byEmail[row.email.toLowerCase()] = {
+        isPaid: row.isPaid,
+        hasUnpaidComponents: hasAnyUnpaidComponent(componentUnpaid)
+      };
     }
     return res.json({ month, byEmail });
   } catch (error) {
@@ -7001,8 +7141,9 @@ app.post("/manager/payment-reminders/send", async (request, response) => {
               return branchFilter ? wanted.filter((email) => eligibleSet.has(email)) : wanted;
             })()
           : eligibleUnpaidEmails;
+    const filteredRecipientEmails = recipientEmails.filter((email) => eligibleSet.has(email));
 
-    if (!recipientEmails.length) {
+    if (!filteredRecipientEmails.length) {
       return response.status(400).json({ error: "No recipients were found." });
     }
 
@@ -7012,7 +7153,7 @@ app.post("/manager/payment-reminders/send", async (request, response) => {
 
     const popupFile = parsed.data.sendPopup ? await readPaymentRequirementNotices() : null;
 
-    for (const email of recipientEmails) {
+    for (const email of filteredRecipientEmails) {
       const result: { email: string; popup?: boolean; inApp?: boolean; emailSent?: boolean; error?: string } = { email };
       try {
         if (parsed.data.sendPopup && popupFile) {
@@ -7072,7 +7213,7 @@ app.post("/manager/payment-reminders/send", async (request, response) => {
       ok: true,
       month,
       mode: parsed.data.mode,
-      attempted: recipientEmails.length,
+      attempted: filteredRecipientEmails.length,
       unpaidCount: eligibleUnpaidEmails.length,
       results
     });

@@ -307,6 +307,30 @@ type RentBreakdown = {
     laundryCount: { free: number; coins: number; cash: number };
     unpaidFinesCount: number;
     billingPrevMonth: string;
+    manualOverrides?: Partial<{
+      baseRent: number;
+      tenureSurchargeVnd: number;
+      monthlyAdjustmentSurchargeVnd: number;
+      professionalDiscountVnd: number;
+      planDiscountVnd: number;
+      managerDiscountVnd: number;
+      parkingFeeVnd: number;
+      gateParkingFeeVnd: number;
+      laundryFeeVnd: number;
+      finesVnd: number;
+    }>;
+    calculatedLines?: {
+      baseRent: number;
+      tenureSurchargeVnd: number;
+      monthlyAdjustmentSurchargeVnd: number;
+      professionalDiscountVnd: number;
+      planDiscountVnd: number;
+      managerDiscountVnd: number;
+      parkingFeeVnd: number;
+      gateParkingFeeVnd: number;
+      laundryFeeVnd: number;
+      finesVnd: number;
+    };
   };
 };
 
@@ -396,10 +420,37 @@ function normalizeRentBreakdown(input: Partial<RentBreakdown> | null | undefined
         cash: Number(input.details?.laundryCount?.cash ?? 0)
       },
       unpaidFinesCount: Number(input.details?.unpaidFinesCount ?? 0),
-      billingPrevMonth: input.details?.billingPrevMonth ?? ""
+      billingPrevMonth: input.details?.billingPrevMonth ?? "",
+      manualOverrides: input.details?.manualOverrides ?? {},
+      calculatedLines: input.details?.calculatedLines
+        ? {
+            baseRent: Number(input.details.calculatedLines.baseRent ?? 0),
+            tenureSurchargeVnd: Number(input.details.calculatedLines.tenureSurchargeVnd ?? 0),
+            monthlyAdjustmentSurchargeVnd: Number(input.details.calculatedLines.monthlyAdjustmentSurchargeVnd ?? 0),
+            professionalDiscountVnd: Number(input.details.calculatedLines.professionalDiscountVnd ?? 0),
+            planDiscountVnd: Number(input.details.calculatedLines.planDiscountVnd ?? 0),
+            managerDiscountVnd: Number(input.details.calculatedLines.managerDiscountVnd ?? 0),
+            parkingFeeVnd: Number(input.details.calculatedLines.parkingFeeVnd ?? 0),
+            gateParkingFeeVnd: Number(input.details.calculatedLines.gateParkingFeeVnd ?? 0),
+            laundryFeeVnd: Number(input.details.calculatedLines.laundryFeeVnd ?? 0),
+            finesVnd: Number(input.details.calculatedLines.finesVnd ?? 0)
+          }
+        : undefined
     }
   };
 }
+
+type RentLineOverrideKey =
+  | "baseRent"
+  | "tenureSurchargeVnd"
+  | "monthlyAdjustmentSurchargeVnd"
+  | "professionalDiscountVnd"
+  | "planDiscountVnd"
+  | "managerDiscountVnd"
+  | "parkingFeeVnd"
+  | "gateParkingFeeVnd"
+  | "laundryFeeVnd"
+  | "finesVnd";
 
 function computeEffectiveRentCoinAmounts(args: {
   breakdown: RentBreakdown;
@@ -689,42 +740,6 @@ function parseLooseDate(value: string | null | undefined): Date | null {
   return parseVietnamDate(String(value ?? ""));
 }
 
-function getAutomaticFeatureLockStatus(client: ManagerClientRecord | null) {
-  if (!client) {
-    return { isBlocked: false, reason: "", kind: "" as "" | "contract" | "rent" };
-  }
-
-  const now = new Date();
-  const msPerDay = 86400000;
-  const blockGraceDays = 5;
-  const contractEnd = parseLooseDate(client.row?.["Ngày hết hạn hợp đồng"]);
-  const paymentExpiry = parseLooseDate(client.row?.["Ngày hết hạn gói đã thanh toán"]);
-
-  if (contractEnd) {
-    const diffDays = (now.getTime() - contractEnd.getTime()) / msPerDay;
-    if (diffDays > blockGraceDays) {
-      return {
-        isBlocked: true,
-        reason: `Contract expired ${Math.floor(diffDays)} days ago`,
-        kind: "contract" as const
-      };
-    }
-  }
-
-  if (paymentExpiry) {
-    const diffDays = (now.getTime() - paymentExpiry.getTime()) / msPerDay;
-    if (diffDays > blockGraceDays) {
-      return {
-        isBlocked: true,
-        reason: `Rent overdue ${Math.floor(diffDays)} days`,
-        kind: "rent" as const
-      };
-    }
-  }
-
-  return { isBlocked: false, reason: "", kind: "" as const };
-}
-
 type DataCategory = "clients" | "fines" | "payments" | "cleaning" | "laundry" | "support" | "coins" | "stats";
 
 type ManagerPermissionsState = {
@@ -837,9 +852,17 @@ function summarizeCoins(entries: CoinEntry[], client: ManagerClientRecord | null
   );
   const earned = deltas.filter((value) => value > 0).reduce((sum, value) => sum + value, 0);
   const spent = Math.abs(deltas.filter((value) => value < 0).reduce((sum, value) => sum + value, 0));
+  const profileCurrentBalance = parseLooseNumber(client?.currentCoins != null ? String(client.currentCoins) : null);
+  const derivedBalanceFromEntries = Math.max(0, earned - spent);
+  // Some legacy rows have stale/blank "current coins" on the profile row while
+  // coin history is accurate; use history-derived balance as fallback.
+  const resolvedCurrentBalance =
+    profileCurrentBalance > 0 || derivedBalanceFromEntries <= 0
+      ? profileCurrentBalance
+      : derivedBalanceFromEntries;
 
   return [
-    { label: t("currentBalance", "Current balance"), value: formatNumber(parseLooseNumber(client?.currentCoins != null ? String(client.currentCoins) : null)), tone: "positive" },
+    { label: t("currentBalance", "Current balance"), value: formatNumber(resolvedCurrentBalance), tone: "positive" },
     { label: t("lifetimeCoins", "Lifetime coins"), value: formatNumber(parseLooseNumber(client?.totalCoins != null ? String(client.totalCoins) : null)) },
     { label: t("coinsAdded", "Coins added"), value: formatNumber(earned) },
     { label: t("coinsUsed", "Coins used"), value: formatNumber(spent), tone: spent > 0 ? "warning" : "default" }
@@ -2771,6 +2794,19 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [finePaidSavingKey, setFinePaidSavingKey] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<StatsTab>("laundry");
   const [rentPaidStatus, setRentPaidStatus] = useState<boolean | null>(null);
+  const [rentComponentUnpaid, setRentComponentUnpaid] = useState<{
+    rentSubtotal: boolean;
+    parking: boolean;
+    gateParking: boolean;
+    laundry: boolean;
+    fines: boolean;
+  }>({
+    rentSubtotal: false,
+    parking: false,
+    gateParking: false,
+    laundry: false,
+    fines: false
+  });
   const [rentCoinRedeemInfo, setRentCoinRedeemInfo] = useState<{
     coins: number;
     valueVnd: number;
@@ -2825,7 +2861,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }
     return mergePrepaidEstimateWithOverrides(eng, buildPrepaidOwnerLinesDiff(eng, prepaidOwnerLineValues));
   }, [prepaidPkgEngineEstimate, prepaidOwnerLineValues, prepaidPkgBilling?.breakdownOverrides]);
-  const [monthlyRentPaidByEmail, setMonthlyRentPaidByEmail] = useState<Record<string, boolean>>({});
+  const [monthlyRentPaidByEmail, setMonthlyRentPaidByEmail] = useState<
+    Record<string, { isPaid: boolean; hasUnpaidComponents: boolean }>
+  >({});
   const [monthlyRentPaidMapLoaded, setMonthlyRentPaidMapLoaded] = useState(false);
   const [clientNewPassword, setClientNewPassword] = useState("");
   const [clientPasswordLoading, setClientPasswordLoading] = useState(false);
@@ -3036,6 +3074,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [sendReminderEnglishCopy, setSendReminderEnglishCopy] = useState(false);
   const [unpaidReminderMode, setUnpaidReminderMode] = useState<"all_unpaid" | "selected">("all_unpaid");
   const [selectedUnpaidReminderEmails, setSelectedUnpaidReminderEmails] = useState<string[]>([]);
+  const [batchLockNote, setBatchLockNote] = useState("");
   const [showAllStatsEntries, setShowAllStatsEntries] = useState(false);
   const [showClientDetails, setShowClientDetails] = useState(false);
   const [activeManagerView, setActiveManagerView] = useState<ManagerView>(initialView);
@@ -3220,8 +3259,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     (client: ManagerClientRecord | null | undefined) => {
       if (!client || !monthlyRentPaidMapLoaded) return false;
       if (String(client.activeStay ?? "").trim() !== "1") return false;
-      if (isClientOnPrepaidPlan(client.row)) return false;
-      return monthlyRentPaidByEmail[client.email.trim().toLowerCase()] !== true;
+      const marker = monthlyRentPaidByEmail[client.email.trim().toLowerCase()];
+      if (!marker) return true;
+      return marker.isPaid !== true || marker.hasUnpaidComponents === true;
     },
     [monthlyRentPaidByEmail, monthlyRentPaidMapLoaded]
   );
@@ -3669,14 +3709,20 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       const res = await fetch(
         `${API_BASE_URL}/manager/monthly-rent-paid-map?actorEmail=${encodeURIComponent(normalizedEmail)}&month=${encodeURIComponent(month)}`
       );
-      const data = (await res.json()) as { byEmail?: Record<string, { isPaid: boolean }>; error?: string };
+      const data = (await res.json()) as {
+        byEmail?: Record<string, { isPaid: boolean; hasUnpaidComponents?: boolean }>;
+        error?: string;
+      };
       if (!res.ok) {
         setMonthlyRentPaidByEmail({});
         return;
       }
-      const map: Record<string, boolean> = {};
+      const map: Record<string, { isPaid: boolean; hasUnpaidComponents: boolean }> = {};
       for (const [em, row] of Object.entries(data.byEmail ?? {})) {
-        map[em.trim().toLowerCase()] = row.isPaid === true;
+        map[em.trim().toLowerCase()] = {
+          isPaid: row.isPaid === true,
+          hasUnpaidComponents: row.hasUnpaidComponents === true
+        };
       }
       setMonthlyRentPaidByEmail(map);
     } catch {
@@ -3934,6 +3980,39 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     );
   }
 
+  async function submitBatchAccountLock(forceLocked: boolean) {
+    const targetEmails =
+      unpaidReminderMode === "selected"
+        ? selectedUnpaidReminderEmails
+        : unpaidReminderCandidates.map((row) => row.email.trim().toLowerCase());
+    const dedupedEmails = Array.from(new Set(targetEmails.filter(Boolean)));
+    if (!dedupedEmails.length) {
+      setStatus("No clients selected for batch lock update.");
+      return;
+    }
+    if (forceLocked && !batchLockNote.trim()) {
+      setStatus("Please enter a lock reason for batch lock.");
+      return;
+    }
+    await postJson(
+      `${API_BASE_URL}/manager/account-lock-override/batch`,
+      {
+        actorEmail: normalizedEmail,
+        targetEmails: dedupedEmails,
+        forceLocked,
+        note: forceLocked ? batchLockNote.trim() : ""
+      },
+      forceLocked
+        ? `Locked ${dedupedEmails.length} unpaid account(s).`
+        : `Unlocked ${dedupedEmails.length} account(s).`,
+      async () => {
+        if (selectedClient?.email) {
+          await loadAccountLockOverride(selectedClient.email);
+        }
+      }
+    );
+  }
+
   async function markContractInactive(args: { maHd: string; rowNumber?: number; email?: string; key: string }) {
     const { maHd, rowNumber, email, key } = args;
     setSettingInactive((prev) => ({ ...prev, [key]: true }));
@@ -4111,11 +4190,25 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       if (statusResponse.ok) {
         const data = (await statusResponse.json()) as {
           isPaid: boolean;
+          componentUnpaid?: {
+            rentSubtotal?: boolean;
+            parking?: boolean;
+            gateParking?: boolean;
+            laundry?: boolean;
+            fines?: boolean;
+          };
           rentCoinRedeemCoins?: number | null;
           rentCoinRedeemValueVnd?: number | null;
           rentCoinRedeemAt?: string | null;
         };
         setRentPaidStatus(data.isPaid);
+        setRentComponentUnpaid({
+          rentSubtotal: data.componentUnpaid?.rentSubtotal === true,
+          parking: data.componentUnpaid?.parking === true,
+          gateParking: data.componentUnpaid?.gateParking === true,
+          laundry: data.componentUnpaid?.laundry === true,
+          fines: data.componentUnpaid?.fines === true
+        });
         if (data.rentCoinRedeemCoins != null && data.rentCoinRedeemCoins > 0) {
           setRentCoinRedeemInfo({
             coins: data.rentCoinRedeemCoins,
@@ -4356,6 +4449,63 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }
   }
 
+  async function editRentLineOverride(lineKey: RentLineOverrideKey, label: string, currentValue: number) {
+    if (!selectedClient?.email || !rentPaidMonth || !/^\d{4}-\d{2}$/.test(rentPaidMonth)) return;
+    const currentOverrides =
+      rentBreakdown?.details?.manualOverrides ??
+      infoRentBreakdown?.details?.manualOverrides ??
+      {};
+    const existing = currentOverrides[lineKey];
+    const input = window.prompt(
+      `${label}\nEnter manual value (VND, >= 0).\nLeave empty to remove manual override.`,
+      existing != null ? String(existing) : String(Math.max(0, Math.round(currentValue)))
+    );
+    if (input === null) return;
+    const nextOverrides: Record<string, number> = {};
+    for (const [k, v] of Object.entries(currentOverrides)) {
+      if (typeof v === "number" && Number.isFinite(v)) nextOverrides[k] = Math.max(0, Math.round(v));
+    }
+    if (!input.trim()) {
+      delete nextOverrides[lineKey];
+    } else {
+      const parsed = Math.round(Number(input));
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        setStatus("Please enter a valid non-negative number.");
+        return;
+      }
+      nextOverrides[lineKey] = parsed;
+    }
+    await postJson(
+      `${API_BASE_URL}/manager/rent-breakdown-overrides`,
+      {
+        actorEmail: normalizedEmail,
+        email: selectedClient.email.trim().toLowerCase(),
+        month: rentPaidMonth,
+        clear: Object.keys(nextOverrides).length === 0,
+        overrides: nextOverrides
+      },
+      "Rent manual line override saved.",
+      async () => {
+        await loadRentPaidStatus(selectedClient.email);
+        const response = await fetch(`${API_BASE_URL}/calculate-rent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: selectedClient.email,
+            targetMonth: targetMonthInput,
+            managerDiscountVnd: Number(managerDiscountInput) || 0,
+            shortTermSurchargeRate: (Number(shortTermSurchargeRateInput) || 0) / 100,
+            parkingFeeVnd: Number(parkingFeeInput) || 0
+          })
+        });
+        if (response.ok) {
+          const data = normalizeRentBreakdown((await response.json()) as Partial<RentBreakdown>);
+          setRentBreakdown(data);
+        }
+      }
+    );
+  }
+
   async function toggleRentPaidStatus(clientEmail: string, newValue: boolean) {
     setRentPaidLoading(true);
     try {
@@ -4365,15 +4515,91 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         body: JSON.stringify({ actorEmail: normalizedEmail, email: clientEmail, month: rentPaidMonth, isPaid: newValue })
       });
       if (response.ok) {
-        const data = (await response.json()) as { isPaid: boolean };
+        const data = (await response.json()) as {
+          isPaid: boolean;
+          componentUnpaid?: {
+            rentSubtotal?: boolean;
+            parking?: boolean;
+            gateParking?: boolean;
+            laundry?: boolean;
+            fines?: boolean;
+          };
+          hasUnpaidComponents?: boolean;
+        };
         setRentPaidStatus(data.isPaid);
+        setRentComponentUnpaid({
+          rentSubtotal: data.componentUnpaid?.rentSubtotal === true,
+          parking: data.componentUnpaid?.parking === true,
+          gateParking: data.componentUnpaid?.gateParking === true,
+          laundry: data.componentUnpaid?.laundry === true,
+          fines: data.componentUnpaid?.fines === true
+        });
         setMonthlyRentPaidByEmail((prev) => ({
           ...prev,
-          [clientEmail.trim().toLowerCase()]: data.isPaid
+          [clientEmail.trim().toLowerCase()]: {
+            isPaid: data.isPaid,
+            hasUnpaidComponents: data.hasUnpaidComponents === true
+          }
         }));
       }
     } catch {
       // ignore
+    } finally {
+      setRentPaidLoading(false);
+    }
+  }
+
+  async function setRentComponentUnpaidStatus(
+    clientEmail: string,
+    patch: Partial<{
+      rentSubtotal: boolean;
+      parking: boolean;
+      gateParking: boolean;
+      laundry: boolean;
+      fines: boolean;
+    }>
+  ) {
+    setRentPaidLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/manager/rent-paid-status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actorEmail: normalizedEmail,
+          email: clientEmail,
+          month: rentPaidMonth,
+          isPaid: rentPaidStatus === true,
+          componentUnpaid: patch
+        })
+      });
+      if (response.ok) {
+        const data = (await response.json()) as {
+          isPaid: boolean;
+          componentUnpaid?: {
+            rentSubtotal?: boolean;
+            parking?: boolean;
+            gateParking?: boolean;
+            laundry?: boolean;
+            fines?: boolean;
+          };
+          hasUnpaidComponents?: boolean;
+        };
+        setRentPaidStatus(data.isPaid);
+        setRentComponentUnpaid({
+          rentSubtotal: data.componentUnpaid?.rentSubtotal === true,
+          parking: data.componentUnpaid?.parking === true,
+          gateParking: data.componentUnpaid?.gateParking === true,
+          laundry: data.componentUnpaid?.laundry === true,
+          fines: data.componentUnpaid?.fines === true
+        });
+        setMonthlyRentPaidByEmail((prev) => ({
+          ...prev,
+          [clientEmail.trim().toLowerCase()]: {
+            isPaid: data.isPaid,
+            hasUnpaidComponents: data.hasUnpaidComponents === true
+          }
+        }));
+      }
     } finally {
       setRentPaidLoading(false);
     }
@@ -4448,7 +4674,10 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       await loadWorkspace("payments", options.client.maHd);
       setMonthlyRentPaidByEmail((prev) => ({
         ...prev,
-        [options.client.email.trim().toLowerCase()]: true
+        [options.client.email.trim().toLowerCase()]: {
+          isPaid: true,
+          hasUnpaidComponents: false
+        }
       }));
       void loadGateParkingTickets(options.client.email);
       alert("Payment recorded, receipt sent via Gmail, and monthly rent marked as paid.");
@@ -4760,6 +4989,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       void loadGateParkingTickets(selectedClient.email);
     } else {
       setRentPaidStatus(null);
+      setRentComponentUnpaid({
+        rentSubtotal: false,
+        parking: false,
+        gateParking: false,
+        laundry: false,
+        fines: false
+      });
       setRentPaidMonth("");
       setRentSectionCollapsed(true);
       setInfoRentBreakdown(null);
@@ -6435,18 +6671,14 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       />
                       <div className="fixed inset-x-3 bottom-3 z-[220] max-h-[80vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl sm:absolute sm:inset-auto sm:right-0 sm:bottom-auto sm:z-20 sm:mt-2 sm:w-64 sm:max-h-none sm:overflow-visible sm:rounded-xl sm:shadow-xl">
                       {(() => {
-                        const autoLock = selectedClient ? getAutomaticFeatureLockStatus(selectedClient) : null;
-                        const isUnlocked = accountLockOverride?.unlocked === true;
                         const isManuallyLocked = accountLockOverride?.forceLocked === true;
-                        const isCurrentlyLocked = isManuallyLocked || (Boolean(autoLock?.isBlocked) && !isUnlocked);
+                        const isCurrentlyLocked = isManuallyLocked;
                         const canToggle =
-                          !!selectedClient?.email && (sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin");
+                          !!selectedClient?.email && (sessionRole === "owner" || sessionRole === "app_admin");
                         const lockLabel = accountLockOverrideLoading
                           ? t("loadingLabel")
                           : isCurrentlyLocked
                             ? t("featureLockOn")
-                            : isUnlocked
-                            ? t("featureLockOff")
                             : t("featureLockOff");
                         return (
                           <button
@@ -6454,8 +6686,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             onClick={() => {
                               if (!selectedClient?.email) return;
                               const nextForceLocked = !isCurrentlyLocked;
-                              const nextUnlocked = !nextForceLocked;
-                              let note = nextUnlocked ? t("manualUnlockNote") : "";
+                              let note = "";
                               if (nextForceLocked) {
                                 const reason = window.prompt("Reason for lock:");
                                 if (reason == null) return;
@@ -6470,11 +6701,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 {
                                   actorEmail: normalizedEmail,
                                   targetEmail: selectedClient.email,
-                                  unlocked: nextUnlocked,
+                                  unlocked: !nextForceLocked,
                                   forceLocked: nextForceLocked,
                                   note
                                 },
-                                nextUnlocked ? t("accountUnlockedSuccess") : t("featureLockEnabledSuccess"),
+                                nextForceLocked ? t("featureLockEnabledSuccess") : t("accountUnlockedSuccess"),
                                 async () => {
                                   await loadAccountLockOverride(selectedClient.email);
                                 }
@@ -6485,11 +6716,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             title={
                               isManuallyLocked
                                 ? accountLockOverride?.note || t("featureLockTitle")
-                                : autoLock?.isBlocked
-                                  ? isUnlocked
-                                  ? t("overrideByLabel", { manager: accountLockOverride?.updatedBy ?? t("manager") })
-                                  : autoLock.reason
-                                  : t("normalAutomaticRulesDesc")
+                                : "Feature lock is currently off. Owners/app admins can lock manually."
                             }
                             className={`mb-1 block w-full rounded-lg border px-3 py-2 text-left text-sm font-medium disabled:opacity-60 ${
                               isCurrentlyLocked
@@ -7601,6 +7828,61 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         </div>
                       </div>
 
+                      {(isOwnerSession || isAppAdminSession) && selectedClient ? (
+                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                            Component unpaid control
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {[
+                              { key: "rentSubtotal", label: "Rent", amount: infoRentBreakdown?.baseRent ?? 0 },
+                              { key: "parking", label: "Parking", amount: infoRentBreakdown?.parkingFeeVnd ?? 0 },
+                              { key: "gateParking", label: "Gate", amount: infoRentBreakdown?.gateParkingFeeVnd ?? 0 },
+                              { key: "laundry", label: "Laundry", amount: infoRentBreakdown?.laundryFeeVnd ?? 0 },
+                              { key: "fines", label: "Fines", amount: infoRentBreakdown?.finesVnd ?? 0 }
+                            ].map((item) => {
+                              const active = rentComponentUnpaid[item.key as keyof typeof rentComponentUnpaid] === true;
+                              const hasAmount = Number(item.amount || 0) > 0;
+                              return (
+                                <button
+                                  key={`component-unpaid-${item.key}`}
+                                  type="button"
+                                  disabled={!hasAmount || rentPaidLoading}
+                                  onClick={() =>
+                                    void setRentComponentUnpaidStatus(selectedClient.email, {
+                                      [item.key]: !active
+                                    } as Partial<typeof rentComponentUnpaid>)
+                                  }
+                                  className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                                    active
+                                      ? "border-rose-300 bg-rose-50 text-rose-700"
+                                      : "border-slate-300 bg-slate-50 text-slate-700 hover:bg-white"
+                                  }`}
+                                >
+                                  {item.label}: {active ? "Unpaid" : "Paid"}
+                                </button>
+                              );
+                            })}
+                            <button
+                              type="button"
+                              disabled={rentPaidLoading}
+                              onClick={() =>
+                                void setRentComponentUnpaidStatus(selectedClient.email, {
+                                  rentSubtotal: false,
+                                  parking: false,
+                                  gateParking: false,
+                                  laundry: false,
+                                  fines: false
+                                })
+                              }
+                              className="rounded-full border border-slate-300 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-white disabled:opacity-40"
+                            >
+                              Clear component unpaid
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+
                       {rentSectionCollapsed ? (
                         <p className="text-xs text-slate-500 border-t border-slate-200 pt-3">
                           Expand for fee breakdown (zeros shown), parking override, and laundry from the prior calendar month. Gate parking uses unpaid tickets from Client Actions until rent is paid.
@@ -7686,21 +7968,57 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                   }
                                 ] as const)
                               : [])
-                          ].map((item) => (
-                            <div key={item.label} className={`flex justify-between ${item.color || "text-slate-700"}`}>
-                              <span>{item.label}</span>
-                              <span className="font-medium">
+                          ].map((item) => {
+                            const lineKeyMap: Record<string, RentLineOverrideKey> = {
+                              [t("baseRent")]: "baseRent",
+                              [`${t("tenureSurcharge")} (+${((infoRentBreakdown.tenureSurchargeRate ?? 0) * 100).toFixed(0)}%)`]:
+                                "tenureSurchargeVnd",
+                              [t("monthlyAdjustmentSurcharge")]: "monthlyAdjustmentSurchargeVnd",
+                              [t("monthlyAdjustmentDiscount")]: "professionalDiscountVnd",
+                              [t("planDiscount")]: "planDiscountVnd",
+                              [t("managerDiscount")]: "managerDiscountVnd",
+                              [t("parkingFee")]: "parkingFeeVnd",
+                              [t("gateParkingFeeDetail")]: "gateParkingFeeVnd",
+                              [t("laundryPriorMonthDetail", { month: infoRentBreakdown.details?.billingPrevMonth || "—", count: infoRentBreakdown.details?.laundryCount?.cash ?? 0 })]:
+                                "laundryFeeVnd",
+                              [t("unpaidFinesLabel")]: "finesVnd"
+                            };
+                            const overrideKey = lineKeyMap[item.label];
+                            const manualValue = overrideKey ? infoRentBreakdown.details?.manualOverrides?.[overrideKey] : undefined;
+                            const calculatedValue = overrideKey ? infoRentBreakdown.details?.calculatedLines?.[overrideKey] : undefined;
+                            return (
+                            <div key={item.label} className={`flex justify-between gap-3 ${item.color || "text-slate-700"}`}>
+                              <div className="flex items-center gap-2">
+                                <span>{item.label}</span>
+                                {isOwnerSession && overrideKey ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => void editRentLineOverride(overrideKey, item.label, Math.abs(item.value))}
+                                    className="rounded border border-slate-300 px-1.5 py-0.5 text-[10px] text-slate-600 hover:bg-white"
+                                    title="Edit manual line value"
+                                  >
+                                    ✏️
+                                  </button>
+                                ) : null}
+                              </div>
+                              <span className="font-medium text-right">
                                 {item.value === 0 && item.color === "text-slate-500" ? (
                                   <span className="text-slate-400">—</span>
                                 ) : (
                                   <>
                                     {item.value < 0 ? "−" : ""}
                                     {Math.abs(item.value).toLocaleString()} ₫
+                                    {manualValue != null ? (
+                                      <span className="ml-2 text-[11px] font-normal text-violet-700">
+                                        (manual{calculatedValue != null ? ` / calc ${calculatedValue.toLocaleString()} ₫` : ""})
+                                      </span>
+                                    ) : null}
                                   </>
                                 )}
                               </span>
                             </div>
-                          ))}
+                            );
+                          })}
                           {canEditRentCoinUsage && (infoRentBreakdown.recommendedCoinValueVnd ?? 0) > 0 ? (
                             <div className="flex items-center justify-between border-t border-slate-100 pt-3 gap-3">
                               <label className="text-xs text-slate-700 font-medium">{t("coinUsageEditLabel")}</label>
@@ -8265,7 +8583,25 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                   tone: "neutral" as const
                                 },
                                 { label: t("unpaidFinesLabel"), value: rentBreakdown.finesVnd, tone: "neutral" as const }
-                              ].map((row) => (
+                              ].map((row) => {
+                                const lineKeyMap: Record<string, RentLineOverrideKey> = {
+                                  [t("baseRent")]: "baseRent",
+                                  [`${t("tenureSurcharge")} (${(rentBreakdown.tenureSurchargeRate * 100).toFixed(0)}%)`]:
+                                    "tenureSurchargeVnd",
+                                  [t("monthlyAdjustmentSurcharge")]: "monthlyAdjustmentSurchargeVnd",
+                                  [t("monthlyAdjustmentDiscount")]: "professionalDiscountVnd",
+                                  [t("planDiscount")]: "planDiscountVnd",
+                                  [t("managerDiscount")]: "managerDiscountVnd",
+                                  [t("parkingFee")]: "parkingFeeVnd",
+                                  [t("gateParkingFeeDetail")]: "gateParkingFeeVnd",
+                                  [t("laundryPriorMonthDetail", { month: rentBreakdown.details?.billingPrevMonth || "—", count: rentBreakdown.details?.laundryCount?.cash ?? 0 })]:
+                                    "laundryFeeVnd",
+                                  [t("unpaidFinesLabel")]: "finesVnd"
+                                };
+                                const overrideKey = lineKeyMap[row.label];
+                                const manualValue = overrideKey ? rentBreakdown.details?.manualOverrides?.[overrideKey] : undefined;
+                                const calculatedValue = overrideKey ? rentBreakdown.details?.calculatedLines?.[overrideKey] : undefined;
+                                return (
                                 <div
                                   key={row.label}
                                   className={`flex justify-between ${
@@ -8276,13 +8612,31 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                         : ""
                                   }`}
                                 >
-                                  <span className={row.tone === "neutral" ? "text-slate-600" : ""}>{row.label}</span>
+                                  <span className={`flex items-center gap-2 ${row.tone === "neutral" ? "text-slate-600" : ""}`}>
+                                    {row.label}
+                                    {isOwnerSession && overrideKey ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => void editRentLineOverride(overrideKey, row.label, Math.abs(row.value))}
+                                        className="rounded border border-slate-300 px-1.5 py-0.5 text-[10px] text-slate-600 hover:bg-white"
+                                        title="Edit manual line value"
+                                      >
+                                        ✏️
+                                      </button>
+                                    ) : null}
+                                  </span>
                                   <span className="font-medium">
                                     {row.value < 0 ? "−" : ""}
                                     {Math.abs(row.value).toLocaleString()} VND
+                                    {manualValue != null ? (
+                                      <span className="ml-2 text-[11px] font-normal text-violet-700">
+                                        (manual{calculatedValue != null ? ` / calc ${calculatedValue.toLocaleString()} VND` : ""})
+                                      </span>
+                                    ) : null}
                                   </span>
                                 </div>
-                              ))}
+                                );
+                              })}
 
                               <div className="my-2 border-t border-slate-100 pt-2 font-bold flex justify-between">
                                 <span>{t("subtotal")}</span>
@@ -12265,6 +12619,48 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       Include English email copy
                     </label>
                   </div>
+                  {sessionRole === "owner" || sessionRole === "app_admin" ? (
+                    <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                      <div className="text-xs font-semibold text-amber-900">
+                        Manual feature lock (owner/app admin)
+                      </div>
+                      <input
+                        value={batchLockNote}
+                        onChange={(e) => setBatchLockNote(e.target.value)}
+                        placeholder="Lock reason (required for lock)"
+                        className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm"
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void submitBatchAccountLock(true)}
+                          disabled={
+                            loading ||
+                            (unpaidReminderMode === "selected"
+                              ? selectedUnpaidReminderEmails.length === 0
+                              : unpaidReminderCandidates.length === 0) ||
+                            !batchLockNote.trim()
+                          }
+                          className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
+                        >
+                          Batch lock unpaid users
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void submitBatchAccountLock(false)}
+                          disabled={
+                            loading ||
+                            (unpaidReminderMode === "selected"
+                              ? selectedUnpaidReminderEmails.length === 0
+                              : unpaidReminderCandidates.length === 0)
+                          }
+                          className="rounded-lg border border-emerald-400 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 disabled:opacity-60"
+                        >
+                          Batch unlock users
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() =>

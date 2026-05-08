@@ -61,8 +61,8 @@ export async function setAccountLockOverride(input: {
 }) {
   const actor = await requirePortalRole(
     input.actorEmail,
-    ["manager", "owner", "app_admin"],
-    "Only managers, owners, or app admins can change account unlock overrides."
+    ["owner", "app_admin"],
+    "Only owners or app admins can change account lock overrides."
   );
 
   const targetEmail = normalizeEmail(input.targetEmail);

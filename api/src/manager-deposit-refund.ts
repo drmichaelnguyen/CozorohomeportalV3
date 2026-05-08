@@ -3,8 +3,10 @@ import {
   CLIENT_CONTRACT_END_COLUMN,
   CLIENT_NAME_COLUMN,
   CONTRACT_CODE_COLUMN,
+  EMAIL_COLUMN,
   getFineAmountVndFromEntry,
   getFinesForEmail,
+  readCachedPayments,
   readCachedClients,
   sendGmailReceipt,
   type ClientRow
@@ -26,10 +28,55 @@ function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
 }
 
+function normalizeContractCode(raw: unknown): string {
+  return String(raw ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "");
+}
+
+function contractDigits(raw: unknown): string {
+  return String(raw ?? "").replace(/\D/g, "");
+}
+
 async function getClientRowByMaHd(maHd: string): Promise<ClientRow | null> {
   const cache = await readCachedClients();
-  const row = cache?.rows.find((r) => String(r[CONTRACT_CODE_COLUMN] ?? "").trim() === maHd.trim());
-  return (row as ClientRow) ?? null;
+  const rows = cache?.rows ?? [];
+  const wanted = normalizeContractCode(maHd);
+  const wantedDigits = contractDigits(maHd);
+
+  const exact =
+    rows.find((r) => normalizeContractCode(r[CONTRACT_CODE_COLUMN]) === wanted) ??
+    rows.find((r) => {
+      const digits = contractDigits(r[CONTRACT_CODE_COLUMN]);
+      return Boolean(wantedDigits) && digits === wantedDigits;
+    });
+  if (exact) return exact as ClientRow;
+
+  // Fallback for historical contracts no longer present as a standalone row:
+  // use termination record email and resolve the latest available client row.
+  let email = "";
+  const term = await getTerminationByMaHd(maHd.trim());
+  if (term?.email) {
+    email = normalizeEmail(term.email);
+  }
+  if (!email) {
+    const paymentsCache = await readCachedPayments();
+    const paymentMatch = (paymentsCache?.rows ?? []).find((row) => {
+      const contract = normalizeContractCode(row[CONTRACT_CODE_COLUMN]);
+      const digits = contractDigits(row[CONTRACT_CODE_COLUMN]);
+      return contract === wanted || (Boolean(wantedDigits) && digits === wantedDigits);
+    });
+    if (paymentMatch) {
+      email = normalizeEmail(String(paymentMatch[EMAIL_COLUMN] ?? paymentMatch["Địa chỉ email"] ?? ""));
+    }
+  }
+  if (!email) return null;
+  const sameEmailRows = rows.filter(
+    (r) => normalizeEmail(String(r[EMAIL_COLUMN] ?? r["Địa chỉ email"] ?? "")) === email
+  );
+  if (sameEmailRows.length === 0) return null;
+  return sameEmailRows[sameEmailRows.length - 1] as ClientRow;
 }
 
 export type DepositRefundEligibilityReason = "inactive" | "terminated" | "contract_due";

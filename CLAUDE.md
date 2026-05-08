@@ -187,10 +187,28 @@ const nextConfig: NextConfig = {
 | `GET /manager/contract-approvals?actorEmail=` | **Owner, app_admin, manager** â€” list **pending** and **rejected** registration/extension approvals (approved excluded). |
 | `POST /manager/contract-approvals/:id/approve` | **Owner, app_admin** â€” run sheet/bridge workflow; marks approved. |
 | `POST /manager/contract-approvals/:id/reject` | **Owner, app_admin** â€” marks rejected (stays in queue for visibility). |
+| `POST /manager/rent-paid-status` | Staff rent status toggle now also supports owner/app_admin partial monthly component tracking (`componentUnpaid`) for rent/parking/gate/laundry/fines. |
 | `POST /manager/payments/create-manual` | **Manager, owner, app_admin** â€” create payment receipt for a person not in current client DB; branch/receiver can be prefilled by UI branch tools. |
 | `POST /manager/branch-broadcast` | **Manager, owner, app_admin** â€” push a branch-wide message to all active clients in D2/D7 and queue first-open prompt notices. |
 | `GET /clients/branch-broadcasts/pending?email=` | Resident fetches unread branch prompts queued after branch broadcasts. |
 | `POST /clients/branch-broadcasts/:id/read` | Resident acknowledges a branch prompt so it no longer appears on next app open. |
+
+### Rent coin behavior (source of truth)
+
+- `applyCoinsTowardRent` is only a resident preference toggle. It does not deduct coins by itself.
+- Coins are deducted only when resident confirms `POST /rent-paid-status/redeem-coins-for-bill`.
+- Successful redemption writes a locked snapshot on `MonthlyRentStatus`: `rentCoinRedeemCoins`, `rentCoinRedeemValueVnd`, `rentCoinRedeemAt`.
+- `POST /pay-rent` must use only that locked redemption snapshot for receipt coin lines and coin credit math.
+- If no locked redemption snapshot exists, rent receipts must use `0` coins and `0` coin value.
+
+### Partial unpaid behavior (owner/app_admin)
+
+- The monthly paid toggle still controls whole-month paid/unpaid as before.
+- Owner/app_admin can mark specific monthly components unpaid: `rentSubtotal`, `parking`, `gateParking`, `laundry`, `fines`.
+- Bed/table unpaid markers should stay visible when either:
+  - whole month is unpaid, or
+  - whole month is paid but one or more components remain unpaid.
+- This is especially important for prepaid residents whose rent package is paid but monthly add-ons (for example parking) are still due.
 
 **Contract approvals queue:** Shown at the top of the manager **Client list** workspace when `manager-client.tsx` loads items from `GET /manager/contract-approvals`. Managers see extension details and registration summary but cannot approve/reject. Rejected rows remain in the list so any owner can see history; residents must submit a new request after rejection if they still want to extend.
 
@@ -234,6 +252,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.8.42 | Billing and manager controls hardening: parking fee in rent calculations is now profile-driven (no fallback 200k from plate), manager rent status now supports owner/app_admin component-level unpaid tracking (rent/parking/gate/laundry/fines) so prepaid residents can still show unpaid add-ons, rent receipt coin credit only follows committed redemption records, deposit-refund contract lookup is more resilient for legacy contracts (termination/payment cache fallback), and manager coin summary current balance now falls back to history-derived net when profile balance is stale. |
 | 3.8.39 | Payment reminder flows expanded: resident Notification Center now renders total due + expandable details inside each `PAYMENT_DUE` card, manager tools menu mobile clipping fixed, and contract termination safety tightened (removed quick terminate from tools menu + added final double-confirm). Rent paid/unpaid app truth now syncs back to Google Sheet column `Đã đóng phí tháng` (`TRUE`/`FALSE`) for the current month. |
 | 3.8.38 | Payment reminders now show **total unpaid due** with an expandable **Details** breakdown in Notification Center, aligned with the blocking rent popup summary. Removed standalone termination checkout banner outside tools, and added `🧰 Tools` to the bed-diagram quick actions popup so managers can open the same client tools menu directly from diagram cards. |
 | 3.8.37 | Client tab **Branch Tools** (D2/D7): manual receipt creation for non-database clients (`/manager/payments/create-manual`) with branch/receiver prefill, plus branch-wide notifications (`/manager/branch-broadcast`). Added resident first-open popup queue for branch notices (`/clients/branch-broadcasts/pending`, `/:id/read`) backed by `data/branch-broadcasts.json`. |
