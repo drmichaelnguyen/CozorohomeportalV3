@@ -8,7 +8,9 @@ import Link from "next/link";
 import { ContractExtension } from "./contract-extension";
 import { InlineHelp } from "./inline-help";
 import { NextPaymentSummary } from "./next-payment-summary";
-import { isContractExpired, daysUntilContractEnd } from "../lib/contract-utils";
+import { daysUntilContractEnd } from "../lib/contract-utils";
+import { isContractExpiryAccessLimited } from "../lib/account-lock-status";
+import { useAccountLockOverride } from "../hooks/use-account-lock-override";
 import type { RentPaidStatusPayload } from "../lib/rent-paid-status";
 import { formatCozoroDate, formatCozoroDateTime, formatCozoroMonth } from "../lib/date-format";
 
@@ -221,10 +223,11 @@ export function HomeDashboardClient() {
     completed?: boolean;
   } | null>(null);
   const activeEmail = sessionEmail.trim().toLowerCase();
+  const { override: accountLockOverride } = useAccountLockOverride(activeEmail || null);
 
   const isExpired = useMemo(() => {
-    return isContractExpired(client?.["Ngày hết hạn hợp đồng"]);
-  }, [client]);
+    return isContractExpiryAccessLimited(client?.["Ngày hết hạn hợp đồng"], accountLockOverride);
+  }, [accountLockOverride, client]);
 
   const contractDaysRemaining = useMemo(() => {
     return daysUntilContractEnd(client?.["Ngày hết hạn hợp đồng"]);

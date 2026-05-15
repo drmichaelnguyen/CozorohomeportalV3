@@ -6,7 +6,8 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 import { API_BASE_URL } from "../lib/api-base-url";
-import { isContractExpired } from "../lib/contract-utils";
+import { isContractExpiryAccessLimited, isResidentPortalAccessLimited } from "../lib/account-lock-status";
+import { useAccountLockOverride } from "../hooks/use-account-lock-override";
 
 type NavBadges = {
   laundry: number;   // schedule button top-right
@@ -192,21 +193,35 @@ export function MobileNav() {
   const searchParams = useSearchParams();
   const { t } = usePortalLanguage();
   const { sessionRole, sessionEmail, isLoggedIn } = usePortalSession();
-  const [client, setClient] = useState<any>(null);
+  const [client, setClient] = useState<Record<string, string> | null>(null);
+  const { override: accountLockOverride } = useAccountLockOverride(
+    isLoggedIn && sessionRole === "user" ? sessionEmail : null
+  );
 
   useEffect(() => {
     if (isLoggedIn && sessionEmail && sessionRole === "user") {
       fetch(`${API_BASE_URL}/clients?email=${encodeURIComponent(sessionEmail)}`)
-        .then(res => res.json())
-        .then(data => setClient(data))
+        .then((res) => res.json())
+        .then((data) => setClient(data as Record<string, string>))
         .catch(console.error);
+    } else {
+      setClient(null);
     }
   }, [isLoggedIn, sessionEmail, sessionRole]);
 
   const isExpired = useMemo(() => {
-    if (sessionRole !== "user") return false;
-    return isContractExpired(client?.["Ngày hết hạn hợp đồng"]);
-  }, [client, sessionRole]);
+    if (sessionRole !== "user") {
+      return false;
+    }
+    return isContractExpiryAccessLimited(client?.["Ngày hết hạn hợp đồng"], accountLockOverride);
+  }, [accountLockOverride, client, sessionRole]);
+
+  const isPortalAccessLimited = useMemo(() => {
+    if (sessionRole !== "user") {
+      return false;
+    }
+    return isResidentPortalAccessLimited(client, accountLockOverride);
+  }, [accountLockOverride, client, sessionRole]);
 
   const isRemoved = useMemo(() => {
     if (sessionRole !== "user") return false;
@@ -224,7 +239,7 @@ export function MobileNav() {
     {
       href: "/bookings",
       label: t("booking", "Booking"),
-      disabled: isExpired,
+      disabled: isPortalAccessLimited,
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
           <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
@@ -250,7 +265,7 @@ export function MobileNav() {
     {
       href: "/controller",
       label: t("controller", "Control"),
-      disabled: isExpired || isRemoved,
+      disabled: isPortalAccessLimited || isRemoved,
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
           <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />

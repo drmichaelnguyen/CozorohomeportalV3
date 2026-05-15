@@ -10,7 +10,13 @@ import {
   type PrepaidBreakdownOverridesPayload
 } from "../lib/prepaid-breakdown-overrides";
 import { formatBillingMonthLabel, type PrepaidNextPaymentEstimatePayload } from "../lib/rent-paid-status";
-import { parseVietnamDate } from "../lib/contract-utils";
+import {
+  hasManualUnlockBypass,
+  isContractExpiryAccessLimited,
+  isManuallyForceLocked,
+  type AccountLockOverride
+} from "../lib/account-lock-status";
+import { isContractExpired, parseVietnamDate } from "../lib/contract-utils";
 import { formatCozoroDate, formatCozoroDateTime } from "../lib/date-format";
 import { AdminCleaningClient } from "./admin-cleaning-client";
 import { ManagerAiChat } from "./manager-ai-chat";
@@ -164,14 +170,6 @@ type StaffEntry = {
   name?: string;
   addedBy: string;
   permissions?: ManagerPermissionsState;
-};
-type AccountLockOverride = {
-  email: string;
-  unlocked: boolean;
-  forceLocked?: boolean;
-  note?: string;
-  updatedAt: string;
-  updatedBy: string;
 };
 type FeedbackEntry = {
   fileName: string;
@@ -6671,61 +6669,153 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       />
                       <div className="fixed inset-x-3 bottom-3 z-[220] max-h-[80vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl sm:absolute sm:inset-auto sm:right-0 sm:bottom-auto sm:z-20 sm:mt-2 sm:w-64 sm:max-h-none sm:overflow-visible sm:rounded-xl sm:shadow-xl">
                       {(() => {
-                        const isManuallyLocked = accountLockOverride?.forceLocked === true;
-                        const isCurrentlyLocked = isManuallyLocked;
+                        const contractEndRaw = selectedClient?.row?.["Ngày hết hạn hợp đồng"];
+                        const isManuallyLocked = isManuallyForceLocked(accountLockOverride);
+                        const isAutoRestricted = isContractExpiryAccessLimited(
+                          contractEndRaw,
+                          accountLockOverride
+                        );
+                        const hasUnlockBypass = hasManualUnlockBypass(accountLockOverride);
+                        const sheetContractExpired =
+                          !!contractEndRaw && isContractExpired(contractEndRaw);
                         const canToggle =
                           !!selectedClient?.email && (sessionRole === "owner" || sessionRole === "app_admin");
                         const lockLabel = accountLockOverrideLoading
                           ? t("loadingLabel")
-                          : isCurrentlyLocked
+                          : isManuallyLocked
                             ? t("featureLockOn")
-                            : t("featureLockOff");
+                            : hasUnlockBypass
+                              ? t("manualUnlockActive")
+                              : isAutoRestricted
+                                ? t("autoRestrictContractExpired")
+                                : t("featureLockOff");
+                        const buttonClass = isManuallyLocked
+                          ? "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                          : hasUnlockBypass
+                            ? "border-sky-300 bg-sky-50 text-sky-800 hover:bg-sky-100"
+                            : isAutoRestricted
+                              ? "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
+                              : "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100";
                         return (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (!selectedClient?.email) return;
-                              const nextForceLocked = !isCurrentlyLocked;
-                              let note = "";
-                              if (nextForceLocked) {
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!selectedClient?.email) return;
+
+                                if (isManuallyLocked) {
+                                  void postJson(
+                                    `${API_BASE_URL}/manager/account-lock-override`,
+                                    {
+                                      actorEmail: normalizedEmail,
+                                      targetEmail: selectedClient.email,
+                                      unlocked: true,
+                                      forceLocked: false,
+                                      note: t("manualUnlockNote")
+                                    },
+                                    t("accountUnlockedSuccess"),
+                                    async () => {
+                                      await loadAccountLockOverride(selectedClient.email);
+                                    }
+                                  );
+                                  setClientActionMenuOpen(false);
+                                  return;
+                                }
+
+                                if (hasUnlockBypass) {
+                                  void postJson(
+                                    `${API_BASE_URL}/manager/account-lock-override`,
+                                    {
+                                      actorEmail: normalizedEmail,
+                                      targetEmail: selectedClient.email,
+                                      unlocked: false,
+                                      forceLocked: false,
+                                      note: ""
+                                    },
+                                    t("accountLockedResetSuccess"),
+                                    async () => {
+                                      await loadAccountLockOverride(selectedClient.email);
+                                    }
+                                  );
+                                  setClientActionMenuOpen(false);
+                                  return;
+                                }
+
+                                if (isAutoRestricted) {
+                                  void postJson(
+                                    `${API_BASE_URL}/manager/account-lock-override`,
+                                    {
+                                      actorEmail: normalizedEmail,
+                                      targetEmail: selectedClient.email,
+                                      unlocked: true,
+                                      forceLocked: false,
+                                      note: t("manualUnlockNote")
+                                    },
+                                    t("accountUnlockedSuccess"),
+                                    async () => {
+                                      await loadAccountLockOverride(selectedClient.email);
+                                    }
+                                  );
+                                  setClientActionMenuOpen(false);
+                                  return;
+                                }
+
                                 const reason = window.prompt("Reason for lock:");
                                 if (reason == null) return;
                                 if (!reason.trim()) {
                                   setStatus("Please enter a reason for lock.");
                                   return;
                                 }
-                                note = reason.trim();
+                                void postJson(
+                                  `${API_BASE_URL}/manager/account-lock-override`,
+                                  {
+                                    actorEmail: normalizedEmail,
+                                    targetEmail: selectedClient.email,
+                                    unlocked: false,
+                                    forceLocked: true,
+                                    note: reason.trim()
+                                  },
+                                  t("featureLockEnabledSuccess"),
+                                  async () => {
+                                    await loadAccountLockOverride(selectedClient.email);
+                                  }
+                                );
+                                setClientActionMenuOpen(false);
+                              }}
+                              disabled={!canToggle || accountLockOverrideLoading || !selectedClient?.email}
+                              title={
+                                isManuallyLocked
+                                  ? accountLockOverride?.note || t("featureLockTitle")
+                                  : hasUnlockBypass
+                                    ? t("manualUnlockActive")
+                                    : isAutoRestricted
+                                      ? t("autoRestrictContractExpired")
+                                      : t("featureLockOffHint")
                               }
-                              void postJson(
-                                `${API_BASE_URL}/manager/account-lock-override`,
-                                {
-                                  actorEmail: normalizedEmail,
-                                  targetEmail: selectedClient.email,
-                                  unlocked: !nextForceLocked,
-                                  forceLocked: nextForceLocked,
-                                  note
-                                },
-                                nextForceLocked ? t("featureLockEnabledSuccess") : t("accountUnlockedSuccess"),
-                                async () => {
-                                  await loadAccountLockOverride(selectedClient.email);
-                                }
-                              );
-                              setClientActionMenuOpen(false);
-                            }}
-                            disabled={!canToggle || accountLockOverrideLoading || !selectedClient?.email}
-                            title={
-                              isManuallyLocked
-                                ? accountLockOverride?.note || t("featureLockTitle")
-                                : "Feature lock is currently off. Owners/app admins can lock manually."
-                            }
-                            className={`mb-1 block w-full rounded-lg border px-3 py-2 text-left text-sm font-medium disabled:opacity-60 ${
-                              isCurrentlyLocked
-                                ? "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
-                                : "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                            }`}
-                          >
-                            {t("featureLockTitle")}: {lockLabel}
-                          </button>
+                              className={`mb-1 block w-full rounded-lg border px-3 py-2 text-left text-sm font-medium disabled:opacity-60 ${buttonClass}`}
+                            >
+                              {isManuallyLocked
+                                ? `${t("featureLockTitle")}: ${lockLabel}`
+                                : hasUnlockBypass
+                                  ? t("featureLockRestoreAuto")
+                                  : isAutoRestricted
+                                    ? t("featureLockUnlockAccess")
+                                    : `${t("featureLockTitle")}: ${lockLabel}`}
+                            </button>
+                            {sheetContractExpired && isAutoRestricted ? (
+                              <p className="mb-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
+                                {t("autoRestrictContractExpired")}
+                              </p>
+                            ) : null}
+                            {hasUnlockBypass && sheetContractExpired ? (
+                              <p className="mb-1 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-medium text-sky-900">
+                                {t("manualUnlockActive")}
+                                {accountLockOverride?.updatedBy
+                                  ? ` · ${t("overrideByLabel", undefined, { manager: accountLockOverride.updatedBy })}`
+                                  : ""}
+                              </p>
+                            ) : null}
+                          </>
                         );
                       })()}
                       {[

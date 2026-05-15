@@ -227,6 +227,90 @@ function isTodayOrFuture(date: Date) {
   return startOfDay(date).getTime() >= startOfDay(new Date()).getTime();
 }
 
+type SelfAssignAvailability = {
+  available: boolean;
+  hidden?: boolean;
+  reasonKey?: string;
+  reasonFallback?: string;
+};
+
+function isSlotOccupiedByOther(
+  overview: CleaningOverview,
+  dateStr: string,
+  type: CleaningTask["type"]
+) {
+  return (overview.occupiedSlots ?? []).some(
+    (slot) =>
+      slot.date === dateStr &&
+      slot.type === type &&
+      (type !== "TRASH_D7" || slot.floor === (overview.user?.floor ?? null))
+  );
+}
+
+function getSelfAssignAvailability(
+  date: Date,
+  type: CleaningTask["type"],
+  overview: CleaningOverview | null
+): SelfAssignAvailability {
+  if (!overview) {
+    return { available: false, reasonKey: "cannotSelfAssign", reasonFallback: "This date cannot be self-assigned." };
+  }
+
+  const dateStr = toApiCalendarDate(date);
+  const hasMyTask = (overview.tasks ?? []).some(
+    (task) => sameDay(new Date(task.scheduledDate), date) && task.type === type
+  );
+  if (hasMyTask) {
+    return { available: false, hidden: true };
+  }
+
+  const occupiedByOther = isSlotOccupiedByOther(overview, dateStr, type);
+  const isDateToday = sameDay(date, new Date());
+  const canTakeOver = isDateToday && isAfter8pm() && occupiedByOther;
+
+  if (occupiedByOther && !canTakeOver) {
+    return {
+      available: false,
+      reasonKey: "selfAssignSlotTaken",
+      reasonFallback: "This slot is already assigned to someone else."
+    };
+  }
+
+  if (!isFutureDate(date) && !canTakeOver) {
+    return {
+      available: false,
+      reasonKey: "selfAssignFutureOnly",
+      reasonFallback: "Self-assignment is only available for future dates."
+    };
+  }
+
+  const availability = (overview.availability ?? []).find((entry) => sameDay(new Date(entry.date), date));
+  if (availability?.type === "UNAVAILABLE") {
+    return {
+      available: false,
+      reasonKey: "selfAssignDateUnavailable",
+      reasonFallback: "This date is marked unavailable."
+    };
+  }
+
+  if (overview.contractOptOut) {
+    return {
+      available: false,
+      reasonFallback: "You are opted out of cleaning for this contract."
+    };
+  }
+
+  const selectedMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  if (overview.optOut?.month === selectedMonth) {
+    return {
+      available: false,
+      reasonFallback: "You have opted out of cleaning for this month."
+    };
+  }
+
+  return { available: true };
+}
+
 function isAfter8pm() {
   return new Date().getHours() >= 20;
 }
@@ -333,7 +417,6 @@ export function CleaningScheduleClient() {
   const [swapSubmitting, setSwapSubmitting] = useState(false);
   const [swapRequestsData, setSwapRequestsData] = useState<SwapRequestsData | null>(null);
   const [swapActionLoading, setSwapActionLoading] = useState<string | null>(null);
-  const canSelfAssignSelectedDate = isTodayOrFuture(selectedDate);
   const activeEmail = sessionEmail.trim().toLowerCase();
 
   const currentMonth = (() => {
@@ -558,8 +641,13 @@ export function CleaningScheduleClient() {
       setMessage("Enter your email first.");
       return;
     }
-    if (!canSelfAssignSelectedDate) {
-      setMessage("Self-assignment is only available for today or future dates.");
+    const availability = getSelfAssignAvailability(selectedDate, type, overview);
+    if (!availability.available) {
+      setMessage(
+        availability.reasonKey
+          ? t(availability.reasonKey, availability.reasonFallback ?? t("cannotSelfAssign"))
+          : (availability.reasonFallback ?? t("cannotSelfAssign"))
+      );
       return;
     }
 
@@ -916,6 +1004,19 @@ export function CleaningScheduleClient() {
 
     return overview.user.floor ? (["TRASH_D7", "KITCHEN_D7"] as CleaningTask["type"][]) : (["KITCHEN_D7"] as CleaningTask["type"][]);
   }, [overview]);
+
+  const selectedDateSelfAssignByType = useMemo(() => {
+    const statuses = new Map<CleaningTask["type"], SelfAssignAvailability>();
+    for (const type of allowedTaskTypes) {
+      statuses.set(type, getSelfAssignAvailability(selectedDate, type, overview));
+    }
+    return statuses;
+  }, [allowedTaskTypes, overview, selectedDate]);
+
+  const hasAnySelfAssignOption = useMemo(
+    () => [...selectedDateSelfAssignByType.values()].some((status) => status.available),
+    [selectedDateSelfAssignByType]
+  );
 
   // Upcoming open slots: rest of this month grouped by task type
   const upcomingOpenSlots = useMemo(() => {
@@ -1962,8 +2063,16 @@ export function CleaningScheduleClient() {
                     {t("autoScheduleHelp")}
                   </div>
                 )}
-                {!canSelfAssignSelectedDate ? (
-                  <p className="mt-2 text-sm text-amber-700">You can only assign yourself to today or future dates.</p>
+                {!hasAnySelfAssignOption && allowedTaskTypes.length > 0 ? (
+                  <p className="mt-2 text-sm text-amber-700">
+                    {(() => {
+                      const blocked = [...selectedDateSelfAssignByType.values()].find((status) => !status.available && !status.hidden);
+                      if (blocked?.reasonKey) {
+                        return t(blocked.reasonKey, blocked.reasonFallback ?? t("cannotSelfAssign"));
+                      }
+                      return blocked?.reasonFallback ?? t("cannotSelfAssign");
+                    })()}
+                  </p>
                 ) : null}
                 {selfAssignSuggestions.length > 0 ? (
                   <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
@@ -1987,17 +2096,33 @@ export function CleaningScheduleClient() {
                   </div>
                 ) : null}
                 <div className="mt-3 flex flex-wrap gap-3">
-                  {allowedTaskTypes.map((type) => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => void prepareSelfAssignment(type)}
-                      disabled={loading || !canSelfAssignSelectedDate}
-                      className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-60"
-                    >
-                      {prettyTaskType(type)}
-                    </button>
-                  ))}
+                  {allowedTaskTypes.map((type) => {
+                    const availability = selectedDateSelfAssignByType.get(type) ?? { available: false };
+                    if (availability.hidden) {
+                      return null;
+                    }
+
+                    return (
+                      <button
+                        key={type}
+                        type="button"
+                        onClick={() => void prepareSelfAssignment(type)}
+                        disabled={loading || !availability.available}
+                        className={
+                          availability.available
+                            ? "rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-60"
+                            : "cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 px-4 py-2 text-left text-sm text-slate-400 opacity-60"
+                        }
+                      >
+                        <span className={availability.available ? "" : "text-slate-500"}>{prettyTaskType(type)}</span>
+                        {!availability.available ? (
+                          <span className="mt-0.5 block text-xs font-medium text-slate-400">
+                            {t("notAvailableForSelfAssign", "Not available for self assign")}
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
                 </div>
                 {overview.user?.branchId === "D7" && overview.user.floor ? (
                   <p className="mt-2 text-xs text-slate-500">

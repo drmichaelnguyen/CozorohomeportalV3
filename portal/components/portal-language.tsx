@@ -961,6 +961,10 @@ const translations: Record<string, { en: string; vi: string }> = {
   readyToSubmit: { en: "Ready to submit", vi: "Sẵn sàng gửi" },
   pendingAssignNote: { en: "Nothing will be changed until you confirm and submit this task.", vi: "Không có gì thay đổi cho đến khi bạn xác nhận và gửi lịch trực này." },
   cannotSelfAssign: { en: "This date cannot be self-assigned.", vi: "Ngày này không thể tự đăng ký." },
+  notAvailableForSelfAssign: { en: "Not available for self assign", vi: "Không thể tự đăng ký" },
+  selfAssignFutureOnly: { en: "Self-assignment is only available for future dates.", vi: "Chỉ có thể tự đăng ký cho các ngày trong tương lai." },
+  selfAssignDateUnavailable: { en: "This date is marked unavailable.", vi: "Ngày này đã được đánh dấu là không rảnh." },
+  selfAssignSlotTaken: { en: "This slot is already assigned to someone else.", vi: "Lịch trực này đã có người nhận." },
   confirmAndSubmit: { en: "Confirm and submit", vi: "Xác nhận và gửi" },
   tasksOnDate: { en: "Tasks on this date", vi: "Lịch trực ngày này" },
   noTasksOnDate: { en: "No tasks assigned on this date yet.", vi: "Chưa có lịch trực nào vào ngày này." },
@@ -2068,6 +2072,20 @@ const translations: Record<string, { en: string; vi: string }> = {
   accountUnlockedSuccess: { en: "Account functions unlocked.", vi: "Đã mở khóa các tính năng tài khoản." },
   featureLockEnabledSuccess: { en: "Account functions locked manually.", vi: "Đã khóa thủ công các tính năng tài khoản." },
   accountLockedResetSuccess: { en: "Account returned to automatic lock rules.", vi: "Tài khoản đã trở lại quy tắc khóa tự động." },
+  autoRestrictContractExpired: {
+    en: "Auto-restricted: contract expired (booking & controller disabled)",
+    vi: "Tự động hạn chế: hợp đồng đã hết hạn (khóa đặt giặt & điều khiển)"
+  },
+  manualUnlockActive: {
+    en: "Manual unlock active — bypasses expired-contract restrictions",
+    vi: "Đã mở khóa thủ công — bỏ qua hạn chế do hết hạn hợp đồng"
+  },
+  featureLockOffHint: {
+    en: "Manual lock is off. Expired contracts are still auto-restricted unless you unlock below.",
+    vi: "Khóa thủ công đang tắt. Hợp đồng hết hạn vẫn bị hạn chế tự động trừ khi bạn mở khóa bên dưới."
+  },
+  featureLockUnlockAccess: { en: "Unlock access (override)", vi: "Mở khóa truy cập (ghi đè)" },
+  featureLockRestoreAuto: { en: "Restore automatic rules", vi: "Khôi phục quy tắc tự động" },
   overrideByLabel: { en: "Override by {manager}", vi: "Ghi đè bởi {manager}" },
   normalAutomaticRulesDesc: { en: "Laundry booking and controller access follow the normal automatic rules.", vi: "Việc đặt lịch giặt và điều khiển thiết bị tuân theo các quy tắc tự động thông thường." },
   monthlyRentLabel: { en: "Monthly Rent", vi: "Tiền thuê hàng tháng" },

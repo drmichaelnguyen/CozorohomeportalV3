@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
-import { parseContractEndDate } from "../lib/contract-utils";
+import { getAccountStatus, type AccountLockOverride } from "../lib/account-lock-status";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 const API_TIMEOUT_MS = 6000;
@@ -69,14 +69,6 @@ type LaundryBooking = {
   end: string;
   htmlLink: string;
   syncWarnings?: string[];
-};
-
-type AccountLockOverride = {
-  unlocked?: boolean;
-  forceLocked?: boolean;
-  updatedBy?: string;
-  updatedAt?: string;
-  note?: string;
 };
 
 function getTimeZoneLabel(timeZone: string) {
@@ -205,61 +197,6 @@ function translateLaundryPaymentCode(
     default:
       return code;
   }
-}
-
-function parseLooseDate(value: string | undefined): Date | null {
-  return parseContractEndDate(value);
-}
-
-function getAccountStatus(client: Record<string, string> | null, override: AccountLockOverride | null): {
-  isBlocked: boolean;
-  blockReason: string | null;
-  warnings: string[];
-} {
-  if (!client) return { isBlocked: false, blockReason: null, warnings: [] };
-
-  const now = new Date();
-  const MS_PER_DAY = 86400000;
-  const BLOCK_GRACE_DAYS = 5;
-  const WARN_DAYS_AHEAD = 30;
-
-  const contractEnd = parseLooseDate(client["Ngày hết hạn hợp đồng"]);
-  const paymentExpiry = parseLooseDate(client["Ngày hết hạn gói đã thanh toán"]);
-
-  const warnings: string[] = [];
-
-  if (contractEnd) {
-    const diffDays = (now.getTime() - contractEnd.getTime()) / MS_PER_DAY;
-    if (diffDays > 0) {
-      warnings.push(`Hợp đồng đã hết hạn ${Math.floor(diffDays)} ngày — còn ${BLOCK_GRACE_DAYS - Math.floor(diffDays)} ngày ân hạn. Vui lòng gia hạn trên trang chủ.`);
-    } else if (-diffDays < WARN_DAYS_AHEAD) {
-      const daysLeft = Math.ceil(-diffDays);
-      warnings.push(`Hợp đồng sắp hết hạn vào ngày ${contractEnd.toLocaleDateString("vi-VN")} (còn ${daysLeft} ngày). Gia hạn ngay trên trang chủ để nhận Cozoro Coins: 3 tháng +10.000 · 6 tháng +25.000 · 12 tháng +50.000.`);
-    }
-  }
-
-  if (paymentExpiry) {
-    const diffDays = (now.getTime() - paymentExpiry.getTime()) / MS_PER_DAY;
-    if (diffDays > 0) {
-      warnings.push(`Tiền thuê quá hạn ${Math.floor(diffDays)} ngày — còn ${BLOCK_GRACE_DAYS - Math.floor(diffDays)} ngày ân hạn.`);
-    } else if (-diffDays < WARN_DAYS_AHEAD) {
-      warnings.push(`Gói thanh toán sắp hết hạn vào ngày ${paymentExpiry.toLocaleDateString("vi-VN")}.`);
-    }
-  }
-
-  if (override?.forceLocked) {
-    const manualReason = override.note?.trim();
-    return {
-      isBlocked: true,
-      blockReason:
-        manualReason && manualReason.length > 0
-          ? `Tài khoản đang bị khoá thủ công: ${manualReason}`
-          : "Tài khoản đang bị khoá thủ công bởi quản lý.",
-      warnings
-    };
-  }
-
-  return { isBlocked: false, blockReason: null, warnings };
 }
 
 export function BookingsClient() {
