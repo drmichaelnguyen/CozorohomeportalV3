@@ -65,7 +65,7 @@ import {
   upsertRentComponentUnpaid,
   type RentComponentUnpaid
 } from "./monthly-rent-component-unpaid.js";
-import { isPrepaidPackageCurrentlyActive } from "./prepaid-plan-rent-display.js";
+import { isPrepaidRentCovered } from "./prepaid-plan-rent-display.js";
 import {
   managerGetPrepaidPackageBilling,
   managerUpsertPrepaidPackageBilling,
@@ -6289,7 +6289,7 @@ app.get("/manager/monthly-rent-paid-map", async (req, res) => {
       if (String(client["Hiện còn ở"] ?? "").trim() !== "1") {
         continue;
       }
-      if (!isPrepaidPackageCurrentlyActive(client)) {
+      if (!isPrepaidRentCovered(client)) {
         continue;
       }
       const componentUnpaid = await getRentComponentUnpaid(email, month);

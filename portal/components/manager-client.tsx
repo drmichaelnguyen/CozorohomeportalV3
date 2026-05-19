@@ -9,6 +9,11 @@ import {
   suggestedTotalFromEstimate,
   type PrepaidBreakdownOverridesPayload
 } from "../lib/prepaid-breakdown-overrides";
+import {
+  isOnPrepaidPaymentPlan,
+  isPrepaidRentCovered,
+  prepaidPlanType
+} from "../lib/prepaid-plan-rent-display";
 import { formatBillingMonthLabel, type PrepaidNextPaymentEstimatePayload } from "../lib/rent-paid-status";
 import {
   hasManualUnlockBypass,
@@ -487,8 +492,7 @@ function formatPercentInput(rate: number | null | undefined): string {
 }
 
 function isClientOnPrepaidPlan(row: Record<string, unknown> | undefined): boolean {
-  const plan = String(row?.["Bạn muốn thanh toán chi phí như thế nào?"] ?? "");
-  return plan.includes("03 tháng") || plan.includes("06 tháng");
+  return isOnPrepaidPaymentPlan(row);
 }
 
 type WorkspacePayload = {
@@ -799,30 +803,28 @@ type PaymentPlanSummary = {
 };
 
 function derivePaymentPlanSummary(row: Record<string, string>, rentPaidStatus: boolean | null): PaymentPlanSummary {
-  const planRaw = String(row["Bạn muốn thanh toán chi phí như thế nào?"] ?? "");
   const expiryRaw = row["Ngày hết hạn gói đã thanh toán"] ?? "";
   const packageExpiry = parseLooseDate(expiryRaw);
+  const contractEnd = parseLooseDate(row["Ngày hết hạn hợp đồng"] ?? "");
   const now = new Date();
   now.setHours(0, 0, 0, 0);
 
-  let planType: PaymentPlanSummary["planType"] = "monthly";
-  let planLabel = "Monthly";
-  if (planRaw.includes("06 tháng")) { planType = "6month"; planLabel = "6-month plan"; }
-  else if (planRaw.includes("03 tháng")) { planType = "3month"; planLabel = "3-month plan"; }
+  const planType = prepaidPlanType(row);
+  const planLabel =
+    planType === "6month" ? "6-month plan" : planType === "3month" ? "3-month plan" : "Monthly";
 
   let nextPaymentDate: Date;
-  if (planType !== "monthly" && packageExpiry) {
-    nextPaymentDate = packageExpiry;
+  if (planType !== "monthly") {
+    nextPaymentDate = packageExpiry ?? contractEnd ?? new Date(now.getFullYear(), now.getMonth() + 1, 1);
   } else {
     nextPaymentDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
   }
 
   let isDue = false;
   if (planType === "monthly") {
-    // Due if today is past the 1st and not marked paid
     isDue = rentPaidStatus === false;
-  } else if (packageExpiry) {
-    isDue = packageExpiry.getTime() < now.getTime();
+  } else {
+    isDue = !isPrepaidRentCovered(row, now);
   }
 
   return { planLabel, planType, packageExpiry, nextPaymentDate, isDue };
@@ -3259,9 +3261,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       if (String(client.activeStay ?? "").trim() !== "1") return false;
       const email = client.email.trim().toLowerCase();
       const marker = monthlyRentPaidByEmail[email];
-      const planSummary = derivePaymentPlanSummary(client.row ?? {}, marker?.isPaid ?? null);
       // Active prepaid package covers monthly rent; only show $ for unpaid add-ons (parking, gate, laundry, fines).
-      if (planSummary.planType !== "monthly" && !planSummary.isDue) {
+      if (isPrepaidRentCovered(client.row ?? {})) {
         return marker?.hasUnpaidComponents === true;
       }
       if (!marker) return true;

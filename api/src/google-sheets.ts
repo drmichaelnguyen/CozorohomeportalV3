@@ -582,6 +582,21 @@ function mapRow(headers: string[], row: string[]) {
   return repairUnknownText(mapped) as ClientRow;
 }
 
+/** Match payment/coin row values when sheet header casing differs from entry keys (e.g. `Số giường` vs `số giường`). */
+function valueForSheetHeader(entry: Record<string, string>, header: string): string {
+  const direct = entry[header];
+  if (direct != null && String(direct).trim() !== "") {
+    return String(direct);
+  }
+  const target = header.replace(/\s+/g, " ").toLowerCase();
+  for (const [key, value] of Object.entries(entry)) {
+    if (key.replace(/\s+/g, " ").toLowerCase() === target) {
+      return String(value ?? "");
+    }
+  }
+  return "";
+}
+
 export function isActiveClient(row: Record<string, string>) {
   const status = String(row[ACTIVE_STAYING_COLUMN] || "").trim();
   // Any status is "Active" except for explicitly removed (-1)
@@ -4828,7 +4843,7 @@ async function appendPaymentSheetRow(entry: Record<string, string>) {
   }
 
   const headers = (values[0] ?? []).map((value) => normalizeHeader(String(value)));
-  const row = headers.map((header) => entry[header] ?? "");
+  const row = headers.map((header) => valueForSheetHeader(entry, header));
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: paymentsSpreadsheetId,
