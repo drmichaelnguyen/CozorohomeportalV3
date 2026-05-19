@@ -3257,7 +3257,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     (client: ManagerClientRecord | null | undefined) => {
       if (!client || !monthlyRentPaidMapLoaded) return false;
       if (String(client.activeStay ?? "").trim() !== "1") return false;
-      const marker = monthlyRentPaidByEmail[client.email.trim().toLowerCase()];
+      const email = client.email.trim().toLowerCase();
+      const marker = monthlyRentPaidByEmail[email];
+      const planSummary = derivePaymentPlanSummary(client.row ?? {}, marker?.isPaid ?? null);
+      // Active prepaid package covers monthly rent; only show $ for unpaid add-ons (parking, gate, laundry, fines).
+      if (planSummary.planType !== "monthly" && !planSummary.isDue) {
+        return marker?.hasUnpaidComponents === true;
+      }
       if (!marker) return true;
       return marker.isPaid !== true || marker.hasUnpaidComponents === true;
     },

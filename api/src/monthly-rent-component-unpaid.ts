@@ -115,3 +115,14 @@ export function hasAnyUnpaidComponent(value: RentComponentUnpaid | null | undefi
     value.fines === true
   );
 }
+
+/** Add-ons only (parking, gate, laundry, fines) — excludes rent subtotal covered by an active prepaid package. */
+export function hasUnpaidAddOnComponents(value: RentComponentUnpaid | null | undefined): boolean {
+  if (!value) return false;
+  return (
+    value.parking === true ||
+    value.gateParking === true ||
+    value.laundry === true ||
+    value.fines === true
+  );
+}

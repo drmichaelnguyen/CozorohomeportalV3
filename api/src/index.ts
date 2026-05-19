@@ -61,9 +61,11 @@ import {
   clearRentComponentUnpaid,
   getRentComponentUnpaid,
   hasAnyUnpaidComponent,
+  hasUnpaidAddOnComponents,
   upsertRentComponentUnpaid,
   type RentComponentUnpaid
 } from "./monthly-rent-component-unpaid.js";
+import { isPrepaidPackageCurrentlyActive } from "./prepaid-plan-rent-display.js";
 import {
   managerGetPrepaidPackageBilling,
   managerUpsertPrepaidPackageBilling,
@@ -6268,12 +6270,36 @@ app.get("/manager/monthly-rent-paid-map", async (req, res) => {
     });
     const byEmail: Record<string, { isPaid: boolean; hasUnpaidComponents: boolean }> = {};
     for (const row of rows) {
-      const componentUnpaid = await getRentComponentUnpaid(row.email, month);
-      byEmail[row.email.toLowerCase()] = {
+      const email = row.email.toLowerCase();
+      const componentUnpaid = await getRentComponentUnpaid(email, month);
+      byEmail[email] = {
         isPaid: row.isPaid,
         hasUnpaidComponents: hasAnyUnpaidComponent(componentUnpaid)
       };
     }
+
+    const cache = await readCachedClients();
+    for (const client of cache?.rows ?? []) {
+      const email = String(client["Địa chỉ email"] ?? "")
+        .trim()
+        .toLowerCase();
+      if (!email || !email.includes("@")) {
+        continue;
+      }
+      if (String(client["Hiện còn ở"] ?? "").trim() !== "1") {
+        continue;
+      }
+      if (!isPrepaidPackageCurrentlyActive(client)) {
+        continue;
+      }
+      const componentUnpaid = await getRentComponentUnpaid(email, month);
+      const addOnsDue = hasUnpaidAddOnComponents(componentUnpaid);
+      byEmail[email] = {
+        isPaid: true,
+        hasUnpaidComponents: addOnsDue
+      };
+    }
+
     return res.json({ month, byEmail });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to load rent map" });
