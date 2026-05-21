@@ -160,15 +160,16 @@ export function ContractExtension({
       return customEndYmd ? parseIsoLocalYmd(customEndYmd) : null;
     }
     if (typeof duration === "number") {
-      return addCalendarMonthsClamped(termBounds.oldEnd, duration);
+      return addCalendarMonthsClamped(termBounds.newStart, duration);
     }
     return null;
   }, [termBounds, duration, customEndYmd]);
 
   const effectiveExtensionMonths = useMemo(() => {
     if (!termBounds || !effectiveEndDate) return 0;
+    if (typeof duration === "number") return duration;
     return calendarMonthsBetween(termBounds.newStart, effectiveEndDate);
-  }, [termBounds, effectiveEndDate]);
+  }, [termBounds, effectiveEndDate, duration]);
 
   // Countdown logic for success state - MUST BE ABOVE EARLY RETURN
   useEffect(() => {
@@ -220,15 +221,27 @@ export function ContractExtension({
 
     try {
       const signatureTimestamp = new Date().toISOString();
+      const payload: {
+        email: string;
+        clientSignatureDataUrl?: string;
+        clientSignatureTimestamp: string;
+        extensionMonths?: number;
+        newContractEndDate?: string;
+      } = {
+        email,
+        clientSignatureDataUrl: canvasRef.current?.toDataURL("image/png"),
+        clientSignatureTimestamp: signatureTimestamp
+      };
+      if (typeof duration === "number") {
+        payload.extensionMonths = duration;
+      } else {
+        payload.newContractEndDate = formatDdMmYyyy(effectiveEndDate);
+      }
+
       const response = await fetch(`${API_BASE_URL}/clients/contracts/extend`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          newContractEndDate: formatDdMmYyyy(effectiveEndDate),
-          clientSignatureDataUrl: canvasRef.current?.toDataURL("image/png"),
-          clientSignatureTimestamp: signatureTimestamp
-        })
+        body: JSON.stringify(payload)
       });
 
       const data = await response.json();

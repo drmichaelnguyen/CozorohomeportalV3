@@ -5636,7 +5636,7 @@ export function resolveContractExtensionSubmission(
     if (monthsIn > CONTRACT_EXTENSION_MAX_EXTRA_MONTHS) {
       throw new Error(`Extension cannot exceed ${CONTRACT_EXTENSION_MAX_EXTRA_MONTHS} months.`);
     }
-    const newEnd = addCalendarMonthsClamped(oldEnd, monthsIn);
+    const newEnd = addCalendarMonthsClamped(newContractStart, monthsIn);
     return {
       newContractEndDate: formatDdMmYyyySheet(newEnd),
       newContractStartDate: formatDdMmYyyySheet(newContractStart),
@@ -5741,12 +5741,15 @@ export async function extendClientContract(
     oldEndDate = new Date();
   }
 
+  const newStartDate = new Date(oldEndDate.getFullYear(), oldEndDate.getMonth(), oldEndDate.getDate());
+  newStartDate.setDate(newStartDate.getDate() + 1);
+
   let newEndDate: Date;
   let durationMonthsForSheet: number;
 
   if ("extensionMonths" in term && term.extensionMonths > 0) {
     durationMonthsForSheet = term.extensionMonths;
-    newEndDate = addCalendarMonthsClamped(oldEndDate, term.extensionMonths);
+    newEndDate = addCalendarMonthsClamped(newStartDate, term.extensionMonths);
   } else if ("newContractEndDate" in term && term.newContractEndDate.trim()) {
     const parsedEnd = parseDdMmYyyySheet(term.newContractEndDate.trim());
     if (!parsedEnd) {
@@ -5766,9 +5769,6 @@ export async function extendClientContract(
   } else {
     throw new Error("Invalid contract extension term.");
   }
-
-  const newStartDate = new Date(oldEndDate.getFullYear(), oldEndDate.getMonth(), oldEndDate.getDate());
-  newStartDate.setDate(newStartDate.getDate() + 1);
 
   const formatDate = (date: Date) => {
     return `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()}`;

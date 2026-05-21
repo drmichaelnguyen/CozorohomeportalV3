@@ -7866,9 +7866,11 @@ app.post("/manager/contract-approvals/:id/approve", async (request, response) =>
         }
       }
       const term =
-        extension.newContractEndDate?.trim().length
-          ? { newContractEndDate: extension.newContractEndDate.trim() }
-          : { extensionMonths: extension.extensionMonths };
+        extension.extensionMonths != null && extension.extensionMonths > 0
+          ? { extensionMonths: extension.extensionMonths }
+          : extension.newContractEndDate?.trim().length
+            ? { newContractEndDate: extension.newContractEndDate.trim() }
+            : { extensionMonths: extension.extensionMonths };
       await extendClientContract(extension.email, term, listPricing, {
         clientSignatureDataUrl: item.clientSignatureDataUrl,
         clientSignatureTimestamp: item.clientSignatureTimestamp,
