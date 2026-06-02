@@ -42,6 +42,15 @@ export async function sumAllUnpaidGateParkingVndForEmail(residentEmail: string):
   return agg._sum.amountVnd ?? 0;
 }
 
+/** Unpaid gate parking tickets for deposit-refund and billing breakdowns. */
+export async function listUnpaidGateParkingTicketsForEmail(residentEmail: string) {
+  const email = normalizeEmail(residentEmail);
+  return prisma.gateParkingTicket.findMany({
+    where: { residentEmail: email, paidAt: null },
+    orderBy: [{ periodMonth: "asc" }, { createdAt: "asc" }]
+  });
+}
+
 export async function markGateParkingTicketsPaidForBilling(billingMonth: string, residentEmail: string): Promise<number> {
   const email = normalizeEmail(residentEmail);
   const now = new Date();

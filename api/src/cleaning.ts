@@ -2067,6 +2067,10 @@ export async function releaseCleaningTask(taskId: string, email: string) {
     }
   }
 
+  const releasedAvailabilityNote = task.isSelfAssigned
+    ? "Released self-assigned cleaning task"
+    : "Released cleaning task";
+
   const reassignedTask = await prisma.$transaction(async (tx) => {
     const updatedAvailability = await tx.cleaningAvailability.upsert({
       where: {
@@ -2079,7 +2083,7 @@ export async function releaseCleaningTask(taskId: string, email: string) {
         branchId: task.branchId,
         floor: task.floor,
         type: CleaningAvailabilityType.UNAVAILABLE,
-        note: "Released self-assigned cleaning task"
+        note: releasedAvailabilityNote
       },
       create: {
         userEmail: normalizedEmail,
@@ -2087,7 +2091,7 @@ export async function releaseCleaningTask(taskId: string, email: string) {
         floor: task.floor,
         date: normalizeCalendarDate(task.scheduledDate),
         type: CleaningAvailabilityType.UNAVAILABLE,
-        note: "Released self-assigned cleaning task"
+        note: releasedAvailabilityNote
       }
     });
 
@@ -3581,20 +3585,20 @@ export async function autoScheduleCleaningTasksByJob(
 }
 
 // After a user releases a task, find the next open slot of the same type
-// within the 15-day horizon and assign them to it.
+// within 15 days after the released slot date and assign them to it.
 async function autoReassignReleasedUser(input: {
   email: string;
   releasedDate: Date;
   type: CleaningTaskType;
   floor: number | null;
 }) {
-  const today = normalizeCalendarDate(new Date());
-  const horizon = addDays(today, 15);
+  const normalizedReleasedDate = normalizeCalendarDate(input.releasedDate);
+  const horizon = addDays(normalizedReleasedDate, 15);
   const normalizedEmail = input.email.toLowerCase();
   const user = await getUserCleaningContext(normalizedEmail);
   if (!user || isHostelShortTermCleaningUser(user)) return;
 
-  let cursor = addDays(normalizeCalendarDate(input.releasedDate), 1);
+  let cursor = addDays(normalizedReleasedDate, 1);
 
   while (cursor.getTime() <= horizon.getTime()) {
     const month = `${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}`;
@@ -3649,6 +3653,13 @@ async function autoReassignReleasedUser(input: {
     await invalidateCleaningOverviewCache(normalizedEmail);
     return;
   }
+
+  console.warn("[autoReassignReleasedUser] No open slot found within horizon", {
+    email: normalizedEmail,
+    type: input.type,
+    releasedDate: normalizedReleasedDate.toISOString().slice(0, 10),
+    horizon: horizon.toISOString().slice(0, 10)
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

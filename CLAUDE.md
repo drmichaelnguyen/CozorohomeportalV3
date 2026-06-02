@@ -252,6 +252,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.8.47 | Deposit refund email: bilingual notice now lists deposit, unpaid fines (per line), unpaid gate tickets (per ticket), other deductions when refund is below auto-suggested, and final refund amount. |
 | 3.8.45 | Prepaid rent marker: treat package as paid when contract end or sheet `Đã đóng phí tháng` applies, not only package expiry (fixes false “payment due” when expiry date is stale). Payment receipts: fix empty `Số giường` when writing from manager portal (header casing `Số giường` vs `số giường`). |
 | 3.8.44 | Manager bed diagram / client list: hide red unpaid-rent ($) marker for residents on an active 3/6-month prepaid package (rent covered by package); still show $ when the package expired or add-on components (parking, gate, laundry, fines) are marked unpaid. |
 | 3.8.42 | Billing and manager controls hardening: parking fee in rent calculations is now profile-driven (no fallback 200k from plate), manager rent status now supports owner/app_admin component-level unpaid tracking (rent/parking/gate/laundry/fines) so prepaid residents can still show unpaid add-ons, rent receipt coin credit only follows committed redemption records, deposit-refund contract lookup is more resilient for legacy contracts (termination/payment cache fallback), and manager coin summary current balance now falls back to history-derived net when profile balance is stale. |

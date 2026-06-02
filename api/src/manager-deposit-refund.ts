@@ -16,8 +16,10 @@ import {
   daysUntilContractEnd,
   getTerminationByMaHd
 } from "./checkout.js";
-import { sumAllUnpaidGateParkingVndForEmail } from "./gate-parking-tickets.js";
+import { listUnpaidGateParkingTicketsForEmail } from "./gate-parking-tickets.js";
 import { requirePortalRole } from "./staff-access.js";
+
+const FINE_CONTENT_COLUMN = "NỘI DUNG VI PHẠM";
 
 function parseMoneyVnd(raw: unknown): number {
   const n = Number.parseInt(String(raw ?? "").replace(/[^\d-]/g, ""), 10);
@@ -38,6 +40,38 @@ function normalizeContractCode(raw: unknown): string {
 function contractDigits(raw: unknown): string {
   return String(raw ?? "").replace(/\D/g, "");
 }
+
+function formatVndVi(amountVnd: number) {
+  return `${amountVnd.toLocaleString("vi-VN")} VNĐ`;
+}
+
+function formatVndEn(amountVnd: number) {
+  return `${amountVnd.toLocaleString("en-US")} VND`;
+}
+
+function formatDeductionVi(amountVnd: number) {
+  return `−${formatVndVi(amountVnd)}`;
+}
+
+function formatDeductionEn(amountVnd: number) {
+  return `−${formatVndEn(amountVnd)}`;
+}
+
+export type DepositRefundDeductionLine = {
+  labelVi: string;
+  labelEn: string;
+  amountVnd: number;
+};
+
+export type DepositRefundBreakdown = {
+  depositVnd: number;
+  unpaidFinesVnd: number;
+  unpaidGateVnd: number;
+  otherDeductionsVnd: number;
+  refundAmountVnd: number;
+  unpaidFineLines: DepositRefundDeductionLine[];
+  unpaidGateLines: DepositRefundDeductionLine[];
+};
 
 async function getClientRowByMaHd(maHd: string): Promise<ClientRow | null> {
   const cache = await readCachedClients();
@@ -79,6 +113,53 @@ async function getClientRowByMaHd(maHd: string): Promise<ClientRow | null> {
   return sameEmailRows[sameEmailRows.length - 1] as ClientRow;
 }
 
+export async function buildDepositRefundBreakdown(
+  row: ClientRow,
+  refundAmountVnd: number
+): Promise<DepositRefundBreakdown> {
+  const email = normalizeEmail(String(row["Địa chỉ email"] ?? row.EMAIL ?? ""));
+  const depositVnd = parseMoneyVnd(row["Số tiền cọc"]);
+  const refund = Math.max(0, Math.round(refundAmountVnd));
+
+  const finesEntries = await getFinesForEmail(email);
+  const unpaidFineEntries = finesEntries.filter((entry) => !entry.coinPayment.isPaid);
+  const unpaidFineLines: DepositRefundDeductionLine[] = unpaidFineEntries.map((entry) => {
+    const amountVnd = getFineAmountVndFromEntry(entry);
+    const content = String(entry.row[FINE_CONTENT_COLUMN] ?? "").trim() || "Phạt / Fine";
+    return {
+      labelVi: content,
+      labelEn: content,
+      amountVnd
+    };
+  });
+  const unpaidFinesVnd = unpaidFineLines.reduce((sum, line) => sum + line.amountVnd, 0);
+
+  const gateTickets = await listUnpaidGateParkingTicketsForEmail(email);
+  const unpaidGateLines: DepositRefundDeductionLine[] = gateTickets.map((ticket) => {
+    const period = String(ticket.periodMonth ?? "").trim();
+    const note = String(ticket.note ?? "").trim();
+    const detail = note ? ` — ${note}` : "";
+    return {
+      labelVi: period ? `Vé cổng tháng ${period}${detail}` : `Vé cổng${detail}`,
+      labelEn: period ? `Gate ticket ${period}${detail}` : `Gate ticket${detail}`,
+      amountVnd: ticket.amountVnd
+    };
+  });
+  const unpaidGateVnd = unpaidGateLines.reduce((sum, line) => sum + line.amountVnd, 0);
+
+  const otherDeductionsVnd = Math.max(0, depositVnd - unpaidFinesVnd - unpaidGateVnd - refund);
+
+  return {
+    depositVnd,
+    unpaidFinesVnd,
+    unpaidGateVnd,
+    otherDeductionsVnd,
+    refundAmountVnd: refund,
+    unpaidFineLines,
+    unpaidGateLines
+  };
+}
+
 export type DepositRefundEligibilityReason = "inactive" | "terminated" | "contract_due";
 
 export async function resolveDepositRefundEligibilityAsync(client: ClientRow): Promise<{
@@ -117,32 +198,94 @@ export async function managerGetDepositRefundPreview(input: { actorEmail: string
   if (!email) {
     return { error: "Client email is missing." };
   }
-  const depositVnd = parseMoneyVnd(row["Số tiền cọc"]);
-  const finesEntries = await getFinesForEmail(email);
-  const unpaidFinesVnd = finesEntries
-    .filter((e) => !e.coinPayment.isPaid)
-    .reduce((sum, e) => sum + getFineAmountVndFromEntry(e), 0);
-  const unpaidGateVnd = await sumAllUnpaidGateParkingVndForEmail(email);
-  const suggestedRefundVnd = Math.max(0, depositVnd - unpaidFinesVnd - unpaidGateVnd);
+  const breakdown = await buildDepositRefundBreakdown(row, 0);
+  const suggestedRefundVnd = Math.max(
+    0,
+    breakdown.depositVnd - breakdown.unpaidFinesVnd - breakdown.unpaidGateVnd
+  );
   const name = String(row[CLIENT_NAME_COLUMN] ?? "").trim() || email;
   return {
     eligibilityReason: elig.reason,
     clientEmail: email,
     clientName: name,
     maHd: input.maHd.trim(),
-    depositVnd,
-    unpaidFinesVnd,
-    unpaidGateVnd,
+    depositVnd: breakdown.depositVnd,
+    unpaidFinesVnd: breakdown.unpaidFinesVnd,
+    unpaidGateVnd: breakdown.unpaidGateVnd,
     suggestedRefundVnd
   };
 }
 
+function buildDepositRefundBreakdownLines(
+  breakdown: DepositRefundBreakdown,
+  locale: "vi" | "en"
+): string[] {
+  const lines: string[] = [];
+  const isVi = locale === "vi";
+  const formatAmount = isVi ? formatVndVi : formatVndEn;
+  const formatDeduction = isVi ? formatDeductionVi : formatDeductionEn;
+  const formatDetail = (label: string, amountVnd: number) =>
+    `  · ${label}: ${formatDeduction(amountVnd)}`;
+
+  lines.push(isVi ? "Chi tiết hoàn cọc:" : "Deposit refund breakdown:");
+  lines.push(
+    isVi
+      ? `• Tiền cọc: ${formatAmount(breakdown.depositVnd)}`
+      : `• Deposit on file: ${formatAmount(breakdown.depositVnd)}`
+  );
+
+  const hasDeductions =
+    breakdown.unpaidFinesVnd > 0 ||
+    breakdown.unpaidGateVnd > 0 ||
+    breakdown.otherDeductionsVnd > 0;
+
+  if (hasDeductions) {
+    lines.push(isVi ? "• Các khoản khấu trừ:" : "• Deductions:");
+  }
+
+  if (breakdown.unpaidFinesVnd > 0) {
+    lines.push(
+      isVi
+        ? `  - Phạt chưa thanh toán: ${formatDeduction(breakdown.unpaidFinesVnd)}`
+        : `  - Unpaid fines: ${formatDeduction(breakdown.unpaidFinesVnd)}`
+    );
+    for (const line of breakdown.unpaidFineLines) {
+      lines.push(formatDetail(isVi ? line.labelVi : line.labelEn, line.amountVnd));
+    }
+  }
+
+  if (breakdown.unpaidGateVnd > 0) {
+    lines.push(
+      isVi
+        ? `  - Vé gửi xe cổng chưa thanh toán: ${formatDeduction(breakdown.unpaidGateVnd)}`
+        : `  - Unpaid gate parking tickets: ${formatDeduction(breakdown.unpaidGateVnd)}`
+    );
+    for (const line of breakdown.unpaidGateLines) {
+      lines.push(formatDetail(isVi ? line.labelVi : line.labelEn, line.amountVnd));
+    }
+  }
+
+  if (breakdown.otherDeductionsVnd > 0) {
+    lines.push(
+      isVi
+        ? `  - Khấu trừ khác: ${formatDeduction(breakdown.otherDeductionsVnd)}`
+        : `  - Other deductions: ${formatDeduction(breakdown.otherDeductionsVnd)}`
+    );
+  }
+
+  lines.push(
+    isVi
+      ? `• Số tiền hoàn lại: ${formatAmount(breakdown.refundAmountVnd)}`
+      : `• Refund amount: ${formatAmount(breakdown.refundAmountVnd)}`
+  );
+
+  return lines;
+}
+
 function buildDepositRefundEmailBodies(input: {
   clientName: string;
-  refundAmountVnd: number;
+  breakdown: DepositRefundBreakdown;
 }): { subject: string; body: string } {
-  const amountVi = `${input.refundAmountVnd.toLocaleString("vi-VN")} VNĐ`;
-  const amountEn = `${input.refundAmountVnd.toLocaleString("en-US")} VND`;
   const subject = "Cozoro Home — Thông báo hoàn cọc / Deposit refund notice";
 
   const vi = [
@@ -150,8 +293,8 @@ function buildDepositRefundEmailBodies(input: {
     "",
     "Thời gian vừa qua, quý khách đã có thời gian lưu trú tại một trong những chi nhánh của Cozoro Home và hôm nay Cozoro rất tiếc khi phải nói lời chia tay với quý khách.",
     "",
-    "Cozoro xin trân trọng thông báo số tiền hoàn lại cho quý khách gồm có:",
-    `Tiền cọc: ${amountVi}`,
+    "Cozoro xin trân trọng thông báo chi tiết hoàn cọc như sau:",
+    ...buildDepositRefundBreakdownLines(input.breakdown, "vi"),
     "",
     "Khi nhận được email này, xin quý khách hãy xác nhận đúng thông tin và gửi thông tin tài khoản ngân hàng (tên chủ tài khoản, số tài khoản, tên ngân hàng) để Cozoro hoàn tất thủ tục hoàn cọc bạn nhé.",
     "Sau khi Cozoro nhận được email phản hồi từ quý khách, Cozoro sẽ xử lý hoàn cọc trong vòng 5–10 ngày làm việc.",
@@ -169,8 +312,8 @@ function buildDepositRefundEmailBodies(input: {
     "",
     "Thank you for staying with Cozoro Home. We are sorry to say goodbye today.",
     "",
-    "We are pleased to inform you of the following refund amount:",
-    `Deposit refund: ${amountEn}`,
+    "Please find your deposit refund breakdown below:",
+    ...buildDepositRefundBreakdownLines(input.breakdown, "en"),
     "",
     "When you receive this email, please confirm the details are correct and reply with your bank information (account holder name, account number, bank name) so we can complete your deposit refund.",
     "After we receive your reply, we will process the refund within 5–10 business days.",
@@ -213,7 +356,8 @@ export async function managerSendDepositRefundEmail(input: {
     return { error: "Client email is missing." };
   }
   const name = String(row[CLIENT_NAME_COLUMN] ?? "").trim() || email;
-  const { subject, body } = buildDepositRefundEmailBodies({ clientName: name, refundAmountVnd: refund });
+  const breakdown = await buildDepositRefundBreakdown(row, refund);
+  const { subject, body } = buildDepositRefundEmailBodies({ clientName: name, breakdown });
   await sendGmailReceipt({ to: email, subject, body });
   return { ok: true, sentTo: email };
 }
