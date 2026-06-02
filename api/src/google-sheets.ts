@@ -5958,6 +5958,257 @@ export async function extendClientContract(
   clientsMemoryCache = null;
 }
 
+export type ContractTransferTarget = {
+  newBranchId: "D2" | "D7";
+  newBedNumber: number;
+};
+
+export async function transferClientContract(
+  email: string,
+  target: ContractTransferTarget,
+  listPricing?: ContractExtensionListPricing | null,
+  approval?: {
+    clientSignatureDataUrl?: string;
+    clientSignatureTimestamp?: string;
+    ownerApprovedBy?: string;
+    ownerApprovedAt?: string;
+  } | null
+) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const newBranchId = normalizeClientBranch(target.newBranchId);
+  const newBedNumber = Math.trunc(target.newBedNumber);
+  if (!Number.isFinite(newBedNumber) || newBedNumber <= 0) {
+    throw new Error("A valid target bed number is required.");
+  }
+
+  const sheets = await getAuthorizedSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetName}!A:AMJ`
+  });
+
+  const values = response.data.values ?? [];
+  if (values.length === 0) {
+    throw new Error("Target sheet contains no data.");
+  }
+
+  const rawHeaders = (values[0] ?? []).map((value) => String(value));
+  const headers = rawHeaders.map((value) => normalizeHeader(value));
+  const activeColIndex = headers.indexOf(normalizeHeader(ACTIVE_STAYING_COLUMN));
+  const startColIndex = headers.indexOf(normalizeHeader(CLIENT_CONTRACT_START_COLUMN));
+  const endColIndex = headers.indexOf(normalizeHeader(CLIENT_CONTRACT_END_COLUMN));
+  const timestampColIndex = headers.indexOf(normalizeHeader(COINS_TIMESTAMP_COLUMN));
+  const durationColIndex = headers.indexOf(normalizeHeader("Thời hạn hợp đồng (tháng)"));
+  const branchColIndex = headers.indexOf(normalizeHeader(CLIENT_BRANCH_COLUMN));
+  const bedColIndex = headers.indexOf(normalizeHeader(CLIENT_BED_COLUMN));
+
+  if (
+    activeColIndex === -1 ||
+    startColIndex === -1 ||
+    endColIndex === -1 ||
+    branchColIndex === -1 ||
+    bedColIndex === -1
+  ) {
+    throw new Error("Missing required columns for contract transfer in Google Sheets.");
+  }
+
+  let targetRowIndex = -1;
+  let targetRowData: string[] = [];
+
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] ?? [];
+    const mapped = mapRow(headers, row.map((v) => String(v)));
+    if (mapped[EMAIL_COLUMN]?.trim().toLowerCase() === normalizedEmail && isActiveClient(mapped)) {
+      targetRowIndex = i + 1;
+      targetRowData = row.map((v) => String(v));
+      break;
+    }
+  }
+
+  if (targetRowIndex === -1) {
+    throw new Error("Could not find an active client record to transfer.");
+  }
+
+  const activeColLetter = columnIndexToLetter(activeColIndex);
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${sheetName}!${activeColLetter}${targetRowIndex}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [["-1"]] }
+  });
+
+  await syncClientsFromSheet();
+
+  const autocratColumns = [
+    "Merged Doc ID - HĐ",
+    "Merged Doc URL - HĐ",
+    "Link to merged Doc - HĐ",
+    "Document Merge Status - HĐ",
+    "Client Signature",
+    "Client Signature Timestamp",
+    "Contract Approval Status",
+    "Contract Approved By",
+    "Contract Approved At"
+  ];
+  autocratColumns.forEach((col) => {
+    const idx = headers.indexOf(normalizeHeader(col));
+    if (idx !== -1) targetRowData[idx] = "";
+  });
+
+  const oldEndDateStr = targetRowData[endColIndex] ?? "";
+  let contractEndDate: Date;
+  if (oldEndDateStr.includes("/")) {
+    const [d, m, y] = oldEndDateStr.split("/");
+    contractEndDate = new Date(Number(y), Number(m) - 1, Number(d));
+  } else {
+    contractEndDate = parseDdMmYyyySheet(oldEndDateStr) ?? new Date();
+  }
+  if (Number.isNaN(contractEndDate.getTime())) {
+    throw new Error("Current contract end date is invalid.");
+  }
+
+  const now = new Date();
+  const newStartDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  newStartDate.setDate(newStartDate.getDate() + 1);
+
+  if (compareLocalDay(contractEndDate, newStartDate) < 0) {
+    throw new Error("Your contract has already ended. Please use contract extension instead.");
+  }
+
+  const durationMonthsForSheet = calendarMonthsBetweenContractStartAndEnd(newStartDate, contractEndDate);
+
+  const formatDate = (date: Date) => {
+    return `${date.getDate().toString().padStart(2, "0")}/${(date.getMonth() + 1).toString().padStart(2, "0")}/${date.getFullYear()}`;
+  };
+
+  const formatTimestamp = (date: Date) => {
+    const d = date.getDate().toString().padStart(2, "0");
+    const m = (date.getMonth() + 1).toString().padStart(2, "0");
+    const y = date.getFullYear();
+    const hh = date.getHours().toString().padStart(2, "0");
+    const mm = date.getMinutes().toString().padStart(2, "0");
+    const ss = date.getSeconds().toString().padStart(2, "0");
+    return `${d}/${m}/${y} ${hh}:${mm}:${ss}`;
+  };
+
+  const BRIDGE_URL =
+    "https://script.google.com/macros/s/AKfycbyykY6OqeAaILbv4yiG8y5ZBMV5Z-cwP8Pn2cYAtBd_uvojZoYS4y_uk76UknpX8Bk/exec";
+
+  const newContractCode = createRegistrationContractCode(newBranchId, newBedNumber, now);
+  const contractCodeColIndex = headers.indexOf(normalizeHeader(CONTRACT_CODE_COLUMN));
+  if (contractCodeColIndex !== -1) {
+    targetRowData[contractCodeColIndex] = newContractCode;
+  }
+
+  targetRowData[branchColIndex] = newBranchId.replace("D", "");
+  targetRowData[bedColIndex] = String(newBedNumber);
+
+  const payload: Record<string, any> = {};
+  headers.forEach((header, index) => {
+    const norm = header.toString().toLowerCase().trim().replace(/ /g, "");
+    let value = targetRowData[index] ?? "";
+
+    if (timestampColIndex === index) {
+      value = formatTimestamp(now);
+    } else if (index === activeColIndex) {
+      value = "";
+    } else if (index === startColIndex) {
+      value = formatDate(newStartDate);
+    } else if (index === endColIndex) {
+      value = formatDate(contractEndDate);
+    } else if (index === durationColIndex) {
+      value = String(durationMonthsForSheet);
+    } else if (header === normalizeHeader("Tôi đã đọc, đồng ý và tuân thủ nội quy cozoro dorm")) {
+      value = "Có";
+    }
+
+    payload[norm] = value;
+  });
+
+  payload["clientsignature"] = approval?.clientSignatureDataUrl?.trim() ?? "";
+  payload["clientsignaturetimestamp"] = approval?.clientSignatureTimestamp?.trim() ?? "";
+  payload["contractapprovalstatus"] = "approved";
+  payload["contractapprovedby"] = approval?.ownerApprovedBy?.trim() ?? "";
+  payload["contractapprovedat"] = approval?.ownerApprovedAt?.trim() ?? "";
+
+  if (listPricing?.listMonthlyPriceVnd != null && listPricing.listMonthlyPriceVnd > 0) {
+    const listMonthly = Math.trunc(listPricing.listMonthlyPriceVnd);
+    const shareCol = normalizeHeader("Số tiền chia sẻ mỗi tháng");
+    const feeCol = normalizeHeader("Phí ở đóng mỗi tháng");
+    const totalCol = normalizeHeader("Tổng tiền thanh toán tháng");
+    const cleaningIdx = headers.indexOf(normalizeHeader(CLIENT_CLEANING_FEE_COLUMN));
+    const parkingIdx = headers.indexOf(normalizeHeader("Phí gởi xe"));
+    const parseMoneyCell = (idx: number) => {
+      if (idx < 0) return 0;
+      const raw = String(targetRowData[idx] ?? "").replace(/[^0-9-]/g, "");
+      const n = Number.parseInt(raw, 10);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    const newTotal = listMonthly + parseMoneyCell(cleaningIdx) + parseMoneyCell(parkingIdx);
+    headers.forEach((header, index) => {
+      const norm = header.toString().toLowerCase().trim().replace(/ /g, "");
+      if (header === shareCol || header === feeCol) {
+        payload[norm] = String(listMonthly);
+        targetRowData[index] = String(listMonthly);
+      } else if (header === totalCol) {
+        payload[norm] = String(newTotal);
+        targetRowData[index] = String(newTotal);
+      }
+    });
+  }
+
+  console.log(`[ContractTransfer] Sending data to Bridge Script for ${email}...`);
+
+  let rowIndex: number | null = null;
+  try {
+    const bridgeResponse = await fetch(BRIDGE_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const result = (await bridgeResponse.json()) as { success?: boolean; rowIndex?: number; error?: string };
+    if (result.success) {
+      rowIndex = result.rowIndex ?? null;
+      console.log(`[ContractTransfer] Bridge success! Row ${rowIndex} created for ${email}.`);
+    } else {
+      console.error(`[ContractTransfer] Bridge reported error:`, result.error);
+      throw new Error(result.error || "Bridge script failed");
+    }
+  } catch (err) {
+    console.error(`[ContractTransfer] Failed to communicate with Bridge Script:`, err);
+    throw new Error("Could not connect to contract generation service.");
+  }
+
+  if (rowIndex) {
+    const activationDelayMs = 15 * 1000;
+    setTimeout(async () => {
+      try {
+        const authSheets = await getAuthorizedSheetsClient();
+        const activeIdx = headers.indexOf(normalizeHeader(ACTIVE_STAYING_COLUMN));
+        const activeLetter = columnIndexToLetter(activeIdx);
+
+        await authSheets.spreadsheets.values.update({
+          spreadsheetId,
+          range: `${sheetName}!${activeLetter}${rowIndex}`,
+          valueInputOption: "USER_ENTERED",
+          requestBody: { values: [["1"]] }
+        });
+
+        await syncClientsFromSheet();
+      } catch (err) {
+        console.error(`[ContractTransfer] Error during background activation for ${email}:`, err);
+      }
+    }, activationDelayMs);
+  }
+
+  clientsMemoryCache = null;
+}
+
 export async function logMicrowaveUse(email: string, name: string, inspection = "", check = "") {
   const microwaveSpreadsheetId = process.env.GOOGLE_MICROWAVE_LOG_SPREADSHEET_ID;
   if (!microwaveSpreadsheetId) throw new Error("GOOGLE_MICROWAVE_LOG_SPREADSHEET_ID is not configured");

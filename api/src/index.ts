@@ -143,6 +143,7 @@ import {
   syncMaintenanceFromSheet,
   updateMaintenanceTicket,
   extendClientContract,
+  transferClientContract,
   resolveContractExtensionSubmission,
   CLIENT_BED_COLUMN,
   CLIENT_BRANCH_COLUMN,
@@ -166,8 +167,10 @@ import {
   checkProspectReferralEligibility,
   getProspectAssistantPublicSettings,
   getProspectBedAvailability,
+  getResidentTransferBedOptions,
   resolveLongTermListPriceForBed,
-  updateProspectAssistantSettings
+  updateProspectAssistantSettings,
+  validateContractTransferTarget
 } from "./prospect-assistant.js";
 import type { ReferralProgramSettings } from "./referral-program.js";
 import {
@@ -318,7 +321,7 @@ const writeGuardInFlightKeys = new Set<string>();
 const writeGuardRecentKeys = new Map<string, number>();
 type PendingContractApproval = {
   id: string;
-  type: "registration" | "extension";
+  type: "registration" | "extension" | "transfer";
   status: "pending" | "approved" | "rejected";
   submittedAt: string;
   reviewedAt?: string;
@@ -341,6 +344,16 @@ type PendingContractApproval = {
     previousContractEndDate?: string;
     branchId?: string;
     bedNumber?: number | null;
+    residentName?: string;
+    contractCode?: string;
+  };
+  transfer?: {
+    email: string;
+    previousBranchId: string;
+    previousBedNumber: number | null;
+    newBranchId: string;
+    newBedNumber: number;
+    contractEndDate: string;
     residentName?: string;
     contractCode?: string;
   };
@@ -413,11 +426,47 @@ async function writePaymentRequirementNotices(file: PaymentRequirementNoticesFil
   await writeFile(PAYMENT_REQUIREMENT_NOTICES_PATH, JSON.stringify(file, null, 2), "utf8");
 }
 
+function pendingApprovalEmail(item: PendingContractApproval): string {
+  return String(
+    item.extension?.email ?? item.transfer?.email ?? item.registration?.email ?? ""
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function hasPendingContractApprovalForEmail(
+  approvals: PendingContractApproval[],
+  email: string
+): boolean {
+  const normalized = email.trim().toLowerCase();
+  return approvals.some(
+    (entry) =>
+      entry.status === "pending" &&
+      (entry.type === "extension" || entry.type === "transfer") &&
+      pendingApprovalEmail(entry) === normalized
+  );
+}
+
 function publicApprovalSummary(item: PendingContractApproval) {
   const registration = (item.registration ?? {}) as Record<string, any>;
   const extension = (item.extension ?? {}) as Record<string, any>;
+  const transfer = (item.transfer ?? {}) as Record<string, any>;
   const isExtension = item.type === "extension";
-  const details: Array<{ label: string; value: string }> = isExtension
+  const isTransfer = item.type === "transfer";
+  const details: Array<{ label: string; value: string }> = isTransfer
+    ? [
+        { label: "Resident", value: String(transfer.residentName ?? "") },
+        { label: "Email", value: String(transfer.email ?? "") },
+        { label: "From branch", value: String(transfer.previousBranchId ?? "") },
+        { label: "From bed", value: String(transfer.previousBedNumber ?? "") },
+        { label: "To branch", value: String(transfer.newBranchId ?? "") },
+        { label: "To bed", value: String(transfer.newBedNumber ?? "") },
+        { label: "Contract end", value: String(transfer.contractEndDate ?? "") },
+        { label: "Code", value: String(transfer.contractCode ?? "") },
+        { label: "Signed", value: String(item.clientSignatureTimestamp ?? "") },
+        { label: "Submitted", value: String(item.submittedAt ?? "") }
+      ]
+    : isExtension
     ? [
         { label: "Resident", value: String(extension.residentName ?? registration.fullName ?? "") },
         { label: "Email", value: String(extension.email ?? registration.email ?? "") },
@@ -473,27 +522,43 @@ function publicApprovalSummary(item: PendingContractApproval) {
     reviewedBy: item.reviewedBy,
     rejectionReason: item.rejectionReason,
     clientSignatureTimestamp: item.clientSignatureTimestamp,
-    fullName: isExtension
-      ? String(extension.residentName ?? "").trim() || String(registration.fullName ?? "")
-      : String(registration.fullName ?? ""),
-    email: String(registration.email ?? extension.email ?? ""),
-    branchId: isExtension
-      ? String(extension.branchId ?? "")
-      : String(registration.branchId ?? ""),
-    bedNumber: isExtension ? (extension.bedNumber ?? null) : (registration.bedNumber ?? null),
-    contractMonths: isExtension
-      ? (extension.extensionMonths ?? null)
-      : (registration.contractMonths ?? null),
-    contractStartDate: isExtension
-      ? String(extension.newContractStartDate ?? "")
-      : String(registration.contractStartDate ?? ""),
-    contractEndDate: isExtension
-      ? String(extension.newContractEndDate ?? "")
-      : String(registration.contractEndDate ?? ""),
+    fullName: isTransfer
+      ? String(transfer.residentName ?? "").trim()
+      : isExtension
+        ? String(extension.residentName ?? "").trim() || String(registration.fullName ?? "")
+        : String(registration.fullName ?? ""),
+    email: String(registration.email ?? extension.email ?? transfer.email ?? ""),
+    branchId: isTransfer
+      ? String(transfer.newBranchId ?? "")
+      : isExtension
+        ? String(extension.branchId ?? "")
+        : String(registration.branchId ?? ""),
+    bedNumber: isTransfer
+      ? (transfer.newBedNumber ?? null)
+      : isExtension
+        ? (extension.bedNumber ?? null)
+        : (registration.bedNumber ?? null),
+    contractMonths: isTransfer
+      ? null
+      : isExtension
+        ? (extension.extensionMonths ?? null)
+        : (registration.contractMonths ?? null),
+    contractStartDate: isTransfer
+      ? ""
+      : isExtension
+        ? String(extension.newContractStartDate ?? "")
+        : String(registration.contractStartDate ?? ""),
+    contractEndDate: isTransfer
+      ? String(transfer.contractEndDate ?? "")
+      : isExtension
+        ? String(extension.newContractEndDate ?? "")
+        : String(registration.contractEndDate ?? ""),
     previousContractEndDate: isExtension ? String(extension.previousContractEndDate ?? "") : "",
-    contractCode: isExtension
-      ? String(extension.contractCode ?? "")
-      : String(registration.contractCode ?? registration.maHd ?? ""),
+    contractCode: isTransfer
+      ? String(transfer.contractCode ?? "")
+      : isExtension
+        ? String(extension.contractCode ?? "")
+        : String(registration.contractCode ?? registration.maHd ?? ""),
     details
   };
 }
@@ -546,6 +611,9 @@ function buildExtensionApprovalDetails(
 
 async function enrichPublicApprovalSummary(item: PendingContractApproval): Promise<PublicContractApprovalSummary> {
   const base = publicApprovalSummary(item);
+  if (item.type === "transfer") {
+    return base;
+  }
   if (item.type !== "extension") {
     return base;
   }
@@ -1677,13 +1745,15 @@ app.post("/clients/contracts/extend", async (request, response) => {
       cooldownMs: 15000,
       action: async () => {
         const file = await readContractApprovals();
-        const duplicate = file.approvals.find(
-          (entry) =>
-            entry.status === "pending" &&
-            entry.type === "extension" &&
-            entry.extension?.email.trim().toLowerCase() === parsed.data.email.trim().toLowerCase()
-        );
-        if (duplicate) return duplicate;
+        if (hasPendingContractApprovalForEmail(file.approvals, parsed.data.email)) {
+          const duplicate = file.approvals.find(
+            (entry) =>
+              entry.status === "pending" &&
+              (entry.type === "extension" || entry.type === "transfer") &&
+              pendingApprovalEmail(entry) === parsed.data.email.trim().toLowerCase()
+          );
+          if (duplicate) return duplicate;
+        }
         const branchId = normalizeClientBranch(String(active[CLIENT_BRANCH_COLUMN] ?? ""));
         const bedParsed = Number.parseInt(String(active[CLIENT_BED_COLUMN] ?? "").replace(/[^0-9]/g, ""), 10);
         const next: PendingContractApproval = {
@@ -1714,6 +1784,112 @@ app.post("/clients/contracts/extend", async (request, response) => {
   } catch (error) {
     return response.status((error as Error & { statusCode?: number }).statusCode ?? 500).json({
       error: error instanceof Error ? error.message : "Unable to extend contract."
+    });
+  }
+});
+
+app.get("/clients/contracts/transfer/availability", async (request, response) => {
+  const parsed = z
+    .object({
+      email: z.string().email(),
+      branchId: z.enum(["D2", "D7"])
+    })
+    .safeParse({
+      email: request.query.email,
+      branchId: request.query.branchId
+    });
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "A valid email and branchId (D2 or D7) are required." });
+  }
+
+  try {
+    const availability = await getResidentTransferBedOptions(parsed.data);
+    return response.json(availability);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to load transfer bed availability."
+    });
+  }
+});
+
+app.post("/clients/contracts/transfer", async (request, response) => {
+  const parsed = z
+    .object({
+      email: z.string().email(),
+      newBranchId: z.enum(["D2", "D7"]),
+      newBedNumber: z.number().int().positive(),
+      clientSignatureDataUrl: z.string().trim().optional(),
+      clientSignatureTimestamp: z.string().trim().optional()
+    })
+    .safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid contract transfer payload" });
+  }
+
+  try {
+    const active = await getActiveClientByEmail(parsed.data.email);
+    if (!active) {
+      return response.status(400).json({ error: "Could not find an active client record to transfer." });
+    }
+
+    await validateContractTransferTarget({
+      email: parsed.data.email,
+      branchId: parsed.data.newBranchId,
+      bedNumber: parsed.data.newBedNumber
+    });
+
+    const previousBranchId = normalizeClientBranch(String(active[CLIENT_BRANCH_COLUMN] ?? ""));
+    const previousBedParsed = Number.parseInt(String(active[CLIENT_BED_COLUMN] ?? "").replace(/[^0-9]/g, ""), 10);
+    const contractEndDate = String(active[CLIENT_CONTRACT_END_COLUMN] ?? "").trim();
+    if (!contractEndDate) {
+      return response.status(400).json({ error: "Current contract end date is missing." });
+    }
+
+    const item = await runWithWriteGuard({
+      key: createWriteGuardKey("/clients/contracts/transfer", parsed.data),
+      duplicateMessage: "This contract transfer request was just submitted. Please wait a few seconds.",
+      cooldownMs: 15000,
+      action: async () => {
+        const file = await readContractApprovals();
+        if (hasPendingContractApprovalForEmail(file.approvals, parsed.data.email)) {
+          const duplicate = file.approvals.find(
+            (entry) =>
+              entry.status === "pending" &&
+              (entry.type === "extension" || entry.type === "transfer") &&
+              pendingApprovalEmail(entry) === parsed.data.email.trim().toLowerCase()
+          );
+          if (duplicate) return duplicate;
+        }
+
+        const next: PendingContractApproval = {
+          id: randomUUID(),
+          type: "transfer",
+          status: "pending",
+          submittedAt: new Date().toISOString(),
+          clientSignatureDataUrl: parsed.data.clientSignatureDataUrl,
+          clientSignatureTimestamp: parsed.data.clientSignatureTimestamp,
+          transfer: {
+            email: parsed.data.email.trim().toLowerCase(),
+            previousBranchId,
+            previousBedNumber: Number.isFinite(previousBedParsed) ? previousBedParsed : null,
+            newBranchId: parsed.data.newBranchId,
+            newBedNumber: parsed.data.newBedNumber,
+            contractEndDate,
+            residentName: String(active[CLIENT_NAME_COLUMN] ?? "").trim(),
+            contractCode: String(active[CONTRACT_CODE_COLUMN] ?? "").trim()
+          }
+        };
+        file.approvals.unshift(next);
+        await writeContractApprovals(file);
+        return next;
+      }
+    });
+    return response.json({ ok: true, approvalId: item.id, pendingApproval: true });
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 500).json({
+      error: error instanceof Error ? error.message : "Unable to submit contract transfer."
     });
   }
 });
@@ -7851,6 +8027,38 @@ app.post("/manager/contract-approvals/:id/approve", async (request, response) =>
           referrerCoins: rewards.referrerCoins
         });
       }
+    } else if (item.type === "transfer") {
+      const transfer = item.transfer;
+      if (!transfer) throw new Error("Pending transfer payload is missing.");
+      const active = await getActiveClientByEmail(transfer.email);
+      if (!active) throw new Error("Could not find an active client record to transfer.");
+
+      await validateContractTransferTarget({
+        email: transfer.email,
+        branchId: transfer.newBranchId as "D2" | "D7",
+        bedNumber: transfer.newBedNumber
+      });
+
+      let listPricing: { listMonthlyPriceVnd: number } | undefined;
+      const { monthlyPrice } = await resolveLongTermListPriceForBed(
+        transfer.newBranchId as "D2" | "D7",
+        transfer.newBedNumber
+      );
+      if (monthlyPrice > 0) {
+        listPricing = { listMonthlyPriceVnd: monthlyPrice };
+      }
+
+      await transferClientContract(
+        transfer.email,
+        { newBranchId: transfer.newBranchId as "D2" | "D7", newBedNumber: transfer.newBedNumber },
+        listPricing,
+        {
+          clientSignatureDataUrl: item.clientSignatureDataUrl,
+          clientSignatureTimestamp: item.clientSignatureTimestamp,
+          ownerApprovedBy: parsed.data.actorEmail.trim().toLowerCase(),
+          ownerApprovedAt: approvedAt
+        }
+      );
     } else {
       const extension = item.extension;
       if (!extension) throw new Error("Pending extension payload is missing.");

@@ -1,7 +1,13 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { readCachedClients, syncClientsFromSheet } from "./google-sheets.js";
+import {
+  EMAIL_COLUMN,
+  getActiveClientByEmail,
+  isActiveClient,
+  readCachedClients,
+  syncClientsFromSheet
+} from "./google-sheets.js";
 import { requirePortalRole } from "./staff-access.js";
 import {
   BRANCH_DEFAULT_PARKING_TIER_PREFIX,
@@ -591,6 +597,109 @@ export async function getProspectBedAvailability(input: {
     sex: input.sex,
     availableBeds: rooms.reduce((sum, room) => sum + room.beds.length, 0),
     pricingDefaults: pricing.perBranch[input.branchId],
+    rooms
+  };
+}
+
+export function parseResidentProspectSex(row: Record<string, string>): ProspectSex | null {
+  return normalizeSex(String(row[CLIENT_GENDER_COLUMN] ?? ""));
+}
+
+export async function validateContractTransferTarget(input: {
+  email: string;
+  branchId: BranchId;
+  bedNumber: number;
+}): Promise<void> {
+  const normalizedEmail = input.email.trim().toLowerCase();
+  const bedNumber = Math.trunc(input.bedNumber);
+  if (!Number.isFinite(bedNumber) || bedNumber <= 0) {
+    throw new Error("A valid target bed number is required.");
+  }
+
+  const room = getRoomForBed(input.branchId, bedNumber);
+  if (!room) {
+    throw new Error("Invalid bed number for this branch.");
+  }
+
+  const active = await getActiveClientByEmail(normalizedEmail);
+  if (!active) {
+    throw new Error("Could not find an active client record.");
+  }
+
+  const currentBranch = normalizeClientBranch(getClientBranchValue(active));
+  const currentBed = parseBedNumber(String(active[CLIENT_BED_COLUMN] ?? ""));
+  if (currentBranch === input.branchId && currentBed === bedNumber) {
+    throw new Error("Choose a different branch or bed than your current assignment.");
+  }
+
+  const residentSex = parseResidentProspectSex(active);
+  const cache = await getClientCache();
+
+  for (const row of cache.rows) {
+    if (!isActiveClient(row)) continue;
+    if (row[EMAIL_COLUMN]?.trim().toLowerCase() === normalizedEmail) continue;
+
+    const rowBranch = normalizeClientBranch(getClientBranchValue(row));
+    const rowBed = parseBedNumber(String(row[CLIENT_BED_COLUMN] ?? ""));
+    if (rowBranch !== input.branchId || rowBed !== bedNumber) continue;
+
+    throw new Error("This bed is already occupied. Please choose another bed.");
+  }
+
+  if (residentSex) {
+    const roomBeds = Array.from(
+      { length: room.endBed - room.startBed + 1 },
+      (_, index) => room.startBed + index
+    );
+    for (const row of cache.rows) {
+      if (!isActiveClient(row)) continue;
+      if (row[EMAIL_COLUMN]?.trim().toLowerCase() === normalizedEmail) continue;
+
+      const rowBranch = normalizeClientBranch(getClientBranchValue(row));
+      const rowBed = parseBedNumber(String(row[CLIENT_BED_COLUMN] ?? ""));
+      if (rowBranch !== input.branchId || !rowBed || !roomBeds.includes(rowBed)) continue;
+
+      const occupantSex = parseResidentProspectSex(row);
+      if (occupantSex && occupantSex !== residentSex) {
+        throw new Error("This room is not available for your gender. Please choose another bed.");
+      }
+    }
+  }
+}
+
+export async function getResidentTransferBedOptions(input: { email: string; branchId: BranchId }) {
+  const active = await getActiveClientByEmail(input.email.trim().toLowerCase());
+  if (!active) {
+    throw new Error("Could not find an active client record.");
+  }
+
+  const sex = parseResidentProspectSex(active);
+  if (!sex) {
+    throw new Error("Your profile is missing gender information required to check bed availability.");
+  }
+
+  const availability = await getProspectBedAvailability({ branchId: input.branchId, sex });
+  const currentBranch = normalizeClientBranch(getClientBranchValue(active));
+  const currentBed = parseBedNumber(String(active[CLIENT_BED_COLUMN] ?? ""));
+
+  const rooms = availability.rooms
+    .map((room) => ({
+      ...room,
+      beds: room.beds.filter((bed) => {
+        if (bed.status !== "available_now") return false;
+        if (currentBranch === input.branchId && currentBed === bed.bedNumber) return false;
+        return true;
+      })
+    }))
+    .filter((room) => room.beds.length > 0);
+
+  return {
+    branchId: input.branchId,
+    sex,
+    contractEndDate: String(active[CLIENT_CONTRACT_END_COLUMN] ?? "").trim(),
+    currentBranch,
+    currentBed,
+    availableBeds: rooms.reduce((sum, room) => sum + room.beds.length, 0),
     rooms
   };
 }

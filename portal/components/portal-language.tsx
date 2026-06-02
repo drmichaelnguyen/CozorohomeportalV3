@@ -827,6 +827,31 @@ const translations: Record<string, { en: string; vi: string }> = {
     vi: "Hợp đồng của bạn dự kiến kết thúc vào {date}. Bạn có thể gia hạn ngay tại đây."
   },
   extendNow: { en: "Extend Now", vi: "Gia hạn ngay" },
+
+  contractTransferTitle: { en: "Transfer branch or bed", vi: "Chuyển chi nhánh hoặc giường" },
+  contractTransferDesc: {
+    en: "Current: {branch}, bed {bed}. Contract ends {end}. Request a signed contract update to move.",
+    vi: "Hiện tại: {branch}, giường {bed}. Hợp đồng kết thúc {end}. Gửi yêu cầu ký để chuyển chỗ ở."
+  },
+  contractTransferStart: { en: "Request transfer", vi: "Yêu cầu chuyển" },
+  contractTransferNewBranch: { en: "New branch", vi: "Chi nhánh mới" },
+  contractTransferPickBed: { en: "Choose an available bed", vi: "Chọn giường trống" },
+  contractTransferRefresh: { en: "Refresh beds", vi: "Tải lại giường" },
+  contractTransferRoom: { en: "Room {room} ({floor})", vi: "Phòng {room} ({floor})" },
+  contractTransferNoBeds: {
+    en: "No beds are available now in this branch for your profile. Try the other branch or check again later.",
+    vi: "Hiện không có giường trống ở chi nhánh này phù hợp hồ sơ của bạn. Thử chi nhánh khác hoặc quay lại sau."
+  },
+  contractTransferSummary: {
+    en: "You are requesting: {branch}, bed {bed}. Your contract end date stays {end} until owner approval.",
+    vi: "Bạn yêu cầu: {branch}, giường {bed}. Ngày kết thúc hợp đồng giữ {end} cho đến khi chủ nhà duyệt."
+  },
+  contractTransferSubmit: { en: "Submit signed request", vi: "Gửi yêu cầu đã ký" },
+  contractTransferSubmitted: { en: "Transfer request submitted", vi: "Đã gửi yêu cầu chuyển" },
+  contractTransferPendingApproval: {
+    en: "Your signed transfer is waiting for owner review. A new contract email will be sent after approval.",
+    vi: "Yêu cầu chuyển đã ký đang chờ chủ nhà duyệt. Email hợp đồng mới sẽ gửi sau khi được duyệt."
+  },
   selectExtensionDuration: { en: "Select Duration", vi: "Chọn thời hạn" },
   extensionCustomEndDate: { en: "Or choose contract end date", vi: "Hoặc chọn ngày kết thúc hợp đồng" },
   extensionEndDatePicker: { en: "Contract end date", vi: "Ngày kết thúc hợp đồng" },

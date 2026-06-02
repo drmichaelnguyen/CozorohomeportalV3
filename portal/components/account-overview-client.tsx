@@ -18,6 +18,7 @@ import { usePortalSession } from "./portal-session";
 import { usePortalTheme } from "./portal-theme";
 import { LaundryController } from "./laundry-controller";
 import { ContractExtension } from "./contract-extension";
+import { ContractTransfer } from "./contract-transfer";
 import { NextPaymentSummary } from "./next-payment-summary";
 import { AccountNoonFlappyBee } from "./account-noon-flappy-bee";
 import { ResidentInstructionsPanel } from "./resident-instructions-panel";
@@ -1084,6 +1085,22 @@ export function AccountOverviewClient() {
           onExtended={() => void loadAccountData()}
         />
       )}
+
+      {client && client["Hiện còn ở"] !== "-1" && client["Ngày hết hạn hợp đồng"] ? (
+        <ContractTransfer
+          email={sessionEmail}
+          currentBranch={(() => {
+            const raw = String(client["Chi nhánh Cozoro dorm"] ?? "").trim().toUpperCase();
+            return raw.includes("7") ? "D7" : "D2";
+          })()}
+          currentBed={(() => {
+            const parsed = Number.parseInt(String(client["số giường"] ?? "").replace(/[^0-9]/g, ""), 10);
+            return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+          })()}
+          contractEndDate={client["Ngày hết hạn hợp đồng"]}
+          onSubmitted={() => void loadAccountData()}
+        />
+      ) : null}
 
       {client && client["Hiện còn ở"] !== "-1" ? (
         <NextPaymentSummary

@@ -77,7 +77,7 @@ type ManagerClientRecord = {
 
 type ContractApprovalSummary = {
   id: string;
-  type: "registration" | "extension";
+  type: "registration" | "extension" | "transfer";
   status: "pending" | "approved" | "rejected";
   submittedAt: string;
   reviewedAt?: string;
@@ -3902,6 +3902,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         {item.type === "extension" ? (
           <div className="sm:col-span-2">Previous end: {item.previousContractEndDate || "-"}</div>
         ) : null}
+        {item.type === "transfer" && item.details?.length ? (
+          <div className="sm:col-span-2 text-xs text-slate-500">
+            Use View details for from/to branch and bed.
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -5613,7 +5618,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         <div className="flex items-start justify-between gap-2">
                           <div>
                             <div className="text-sm font-semibold text-slate-900">
-                              {item.type === "registration" ? "New registration" : "Contract extension"}
+                              {item.type === "registration"
+                                ? "New registration"
+                                : item.type === "transfer"
+                                  ? "Contract transfer"
+                                  : "Contract extension"}
                             </div>
                             <div className="text-xs text-slate-600">{item.fullName || item.email}</div>
                           </div>
@@ -6579,7 +6588,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <div className="text-sm font-semibold text-slate-900">
-                            {item.type === "registration" ? "New registration" : "Contract extension"}
+                            {item.type === "registration"
+                              ? "New registration"
+                              : item.type === "transfer"
+                                ? "Contract transfer"
+                                : "Contract extension"}
                           </div>
                           <div className="mt-1 text-sm text-slate-700">{item.fullName || item.email}</div>
                           <div className="mt-1 text-xs text-slate-500">{item.email}</div>
