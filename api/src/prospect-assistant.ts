@@ -17,6 +17,7 @@ import {
   listActiveParkingTiersForBranch,
   resolveLongTermBedPricing
 } from "./pricing-config.js";
+import { BRANCH_LAYOUTS, type BranchLayoutRoom } from "./branch-bed-layout.js";
 
 const cacheDirPath = path.join(process.cwd(), "data");
 const settingsFilePath = path.join(cacheDirPath, "prospect-assistant-settings.json");
@@ -34,13 +35,6 @@ const CLIENT_DEPOSIT_COLUMN = "Số tiền cọc";
 
 type ProspectAssistantSettings = {
   referralDiscountVnd: number;
-};
-
-type BranchLayoutRoom = {
-  room: string;
-  floor: string;
-  startBed: number;
-  endBed: number;
 };
 
 type BranchId = keyof typeof BRANCH_LAYOUTS;
@@ -76,24 +70,6 @@ type PriceStats = {
 
 const DEFAULT_SETTINGS: ProspectAssistantSettings = {
   referralDiscountVnd: 2_000_000
-};
-
-const BRANCH_LAYOUTS: Record<"D2" | "D7", BranchLayoutRoom[]> = {
-  D2: [
-    { room: "1", floor: "D2", startBed: 1, endBed: 9 },
-    { room: "2", floor: "D2", startBed: 10, endBed: 15 },
-    { room: "3", floor: "D2", startBed: 16, endBed: 21 }
-  ],
-  D7: [
-    { room: "1.1", floor: "Floor 1", startBed: 1, endBed: 9 },
-    { room: "1.2", floor: "Floor 1", startBed: 10, endBed: 15 },
-    { room: "1.3", floor: "Floor 1", startBed: 16, endBed: 24 },
-    { room: "2.1", floor: "Floor 2", startBed: 25, endBed: 33 },
-    { room: "2.2", floor: "Floor 2", startBed: 34, endBed: 39 },
-    { room: "2.3", floor: "Floor 2", startBed: 40, endBed: 48 },
-    { room: "3.1", floor: "Floor 3", startBed: 49, endBed: 57 },
-    { room: "3.2", floor: "Floor 3", startBed: 58, endBed: 63 }
-  ]
 };
 
 async function ensureJsonFile<T>(filePath: string, fallback: T) {

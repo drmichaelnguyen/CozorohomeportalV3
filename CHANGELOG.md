@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.8.53] - 2026-06-11
+- **Stripe hostel payments (manager)**: After a guest pays on the hostel booking site, the main API auto-creates a VND payment receipt in the Google Payments sheet (`Phí lưu trú ngắn hạn (Stripe)` or adjustment purpose for date-change top-ups). Receipt creation is idempotent per Stripe payment intent/session and tracked in `api/data/stripe-hostel-payment-receipts.json`.
+- **Stripe payments workspace**: Manager **Client list → Short term → Stripe payments** lists hostel Stripe charges with paid/refunded/receipt status, detail view (Stripe PI/session, refund history), **Create receipt** backfill for older payments, and **full/partial refund** from the portal (`GET/POST /manager/stripe/payments/*`).
+- **API Stripe integration**: Added `stripe` SDK to the main API; set `STRIPE_SECRET_KEY` in `api/.env` (same restricted key as `guest-booking-standalone`). Guest-booking webhook sync now forwards Stripe session/intent/amount metadata to `POST /internal/guest-bookings/import-paid`.
+- **Pending hostel bookings**: Manager **Short term → Pending bookings** now has **Archive** (hide from queue without cancelling) and **Reject** (cancel booking, Stripe refund when paid, deactivate `SHORTTERM-{id}` client row). Archived IDs stored in `api/data/hostel-archived-ids.json` (`POST /manager/short-term/bookings/:id/archive` and `/reject`).
+- **D2 registration closure**: Shared branch-closure helpers across API, portal registration, and guest-booking standalone block new D2 long-term and hostel sign-ups with bilingual notice (permanent closure 2026-07-01).
+
 ## [3.8.41] - 2026-05-06
 - **Owner coin usage override (rent receipts)**: Owners/app admins can edit the coin credit applied when creating a monthly rent receipt; the backend clamps usage to the 10% cap and coin balance before recording receipt totals.
 

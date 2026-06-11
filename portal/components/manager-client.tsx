@@ -4,6 +4,13 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 
 import { API_BASE_URL } from "../lib/api-base-url";
 import {
+  BRANCH_LAYOUTS,
+  getBedTier,
+  getBedTierShortLabel,
+  getBunkBedGroupsTopFirst,
+  type BranchLayoutRoom
+} from "../lib/branch-bed-layout";
+import {
   hasPrepaidBreakdownOverridesPayload,
   mergePrepaidEstimateWithOverrides,
   suggestedTotalFromEstimate,
@@ -115,14 +122,6 @@ type ControllerHistoryEntry = {
   branchId: string;
   action: string;
   details?: string;
-};
-
-type BranchLayoutRoom = {
-  room: string;
-  floor: string;
-  startBed: number;
-  endBed: number;
-  bunkCount: number;
 };
 
 type CoinEntry = { row: Record<string, string>; parsedTimestamp: string | null };
@@ -518,24 +517,6 @@ const COIN_EVENT_OPTIONS = [
   "Manual deduction"
 ];
 
-const BRANCH_LAYOUTS: Record<"D2" | "D7", BranchLayoutRoom[]> = {
-  D2: [
-    { room: "1", floor: "D2", startBed: 1, endBed: 9, bunkCount: 3 },
-    { room: "2", floor: "D2", startBed: 10, endBed: 15, bunkCount: 2 },
-    { room: "3", floor: "D2", startBed: 16, endBed: 21, bunkCount: 2 }
-  ],
-  D7: [
-    { room: "1.1", floor: "Floor 1", startBed: 1, endBed: 9, bunkCount: 3 },
-    { room: "1.2", floor: "Floor 1", startBed: 10, endBed: 15, bunkCount: 2 },
-    { room: "1.3", floor: "Floor 1", startBed: 16, endBed: 24, bunkCount: 3 },
-    { room: "2.1", floor: "Floor 2", startBed: 25, endBed: 33, bunkCount: 3 },
-    { room: "2.2", floor: "Floor 2", startBed: 34, endBed: 39, bunkCount: 2 },
-    { room: "2.3", floor: "Floor 2", startBed: 40, endBed: 48, bunkCount: 3 },
-    { room: "3.1", floor: "Floor 3", startBed: 49, endBed: 57, bunkCount: 3 },
-    { room: "3.2", floor: "Floor 3", startBed: 58, endBed: 63, bunkCount: 2 }
-  ]
-};
-
 function getLastName(fullName: string) {
   const parts = fullName.trim().split(/\s+/);
   return parts[parts.length - 1] || fullName;
@@ -792,6 +773,64 @@ type StandaloneBooking = {
   mainAppBranch?: string;
   mainAppBed?: string;
   createdAt: string;
+};
+
+type StripeHostelPaymentSummary = {
+  bookingId: string;
+  guestName: string;
+  guestEmail: string;
+  guestPhone: string;
+  branchId: string;
+  bedNumber: number;
+  roomCode: string;
+  checkIn: string;
+  checkOut: string;
+  nights: number;
+  totalAmount: number;
+  amountPaid: number;
+  refundedAmount: number;
+  refundableAmount: number;
+  currency: string;
+  paymentStatus: string;
+  bookingStatus: string;
+  stripeSessionId: string | null;
+  stripePaymentIntentId: string | null;
+  refundStatus: string | null;
+  refundedAt: string | null;
+  receiptCreated: boolean;
+  receiptAmount: number | null;
+  receiptCreatedAt: string | null;
+  createdAt: string;
+};
+
+type StripeHostelPaymentDetail = StripeHostelPaymentSummary & {
+  notes: string;
+  cancellationPolicy: string;
+  stripeCharges: Array<{
+    id: string;
+    amount: number;
+    amountRefunded: number;
+    currency: string;
+    status: string;
+    createdAt: string | null;
+    receiptUrl: string | null;
+  }>;
+  stripeRefunds: Array<{
+    id: string;
+    amount: number;
+    currency: string;
+    status: string;
+    reason: string | null;
+    createdAt: string | null;
+  }>;
+  receipts: Array<{
+    bookingId: string;
+    stripeSessionId: string;
+    stripePaymentIntentId: string;
+    amountVnd: number;
+    purpose: string;
+    createdAt: string;
+  }>;
 };
 
 type PaymentPlanSummary = {
@@ -2914,6 +2953,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [stEditBedPricing, setStEditBedPricing] = useState<Record<string, number>>({});
   const [stPendingBookings, setStPendingBookings] = useState<StandaloneBooking[] | null>(null);
   const [stPendingLoading, setStPendingLoading] = useState(false);
+  const [stPendingActionId, setStPendingActionId] = useState<string | null>(null);
   const [stConfirmDialog, setStConfirmDialog] = useState<{ booking: StandaloneBooking; branch: "D2" | "D7"; bed: string; saving: boolean; result: string } | null>(null);
   const [stAddDialog, setStAddDialog] = useState<{
     guestName: string; email: string; phone: string;
@@ -2921,6 +2961,13 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     totalAmount: string; paymentStatus: string; source: string; notes: string;
     saving: boolean; result: string;
   } | null>(null);
+  const [stStripePayments, setStStripePayments] = useState<StripeHostelPaymentSummary[] | null>(null);
+  const [stStripePaymentsLoading, setStStripePaymentsLoading] = useState(false);
+  const [stStripeSelectedId, setStStripeSelectedId] = useState<string | null>(null);
+  const [stStripeDetail, setStStripeDetail] = useState<StripeHostelPaymentDetail | null>(null);
+  const [stStripeDetailLoading, setStStripeDetailLoading] = useState(false);
+  const [stStripeRefundAmount, setStStripeRefundAmount] = useState("");
+  const [stStripeActionSaving, setStStripeActionSaving] = useState(false);
   // Unified pricing state
   type PricingBedOverride = {
     id: number; branchId: string; bedNumber: number; termType: "long_term" | "short_term";
@@ -4843,14 +4890,6 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }
   }
 
-  function getBedTierInLayout(branchId: "D2" | "D7", bedNumber: number): "top" | "middle" | "bottom" {
-    const room = BRANCH_LAYOUTS[branchId].find((r) => bedNumber >= r.startBed && bedNumber <= r.endBed);
-    if (!room) return "top";
-    const tierIdx = (bedNumber - room.startBed) % room.bunkCount;
-    if (room.bunkCount === 3) return (["top", "middle", "bottom"] as const)[tierIdx];
-    return (["top", "bottom"] as const)[tierIdx];
-  }
-
   async function saveBulkTierPrices(branchId: string, floor: string | undefined, room: string | undefined, tier: string, monthlyPrice: number | null) {
     // Collect matching bed numbers
     const allRooms = BRANCH_LAYOUTS[branchId as "D2" | "D7"] ?? [];
@@ -4862,7 +4901,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     const bedNumbers: number[] = [];
     for (const r of targetRooms) {
       for (let b = r.startBed; b <= r.endBed; b++) {
-        const t = getBedTierInLayout(branchId as "D2" | "D7", b);
+        const t = getBedTier(branchId as "D2" | "D7", b);
         if (tier === "all" || t === tier) bedNumbers.push(b);
       }
     }
@@ -6146,14 +6185,149 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 setStGuests(data);
               } catch { /* ignore */ } finally { setStGuestsLoading(false); }
             }
-            async function stLoadPending() {
-              if (stPendingBookings || stPendingLoading) return;
+            async function stLoadPending(force = false) {
+              if (!force && (stPendingBookings || stPendingLoading)) return;
               setStPendingLoading(true);
               try {
                 const res = await fetch(`${API_BASE_URL}/manager/short-term/pending-bookings?actorEmail=${encodeURIComponent(normalizedEmail)}`);
                 const data = (await res.json()) as { bookings: StandaloneBooking[] };
                 setStPendingBookings(data.bookings ?? []);
               } catch { setStPendingBookings([]); } finally { setStPendingLoading(false); }
+            }
+            async function stArchivePendingBooking(booking: StandaloneBooking) {
+              if (!window.confirm(t("archivePendingBookingConfirm", `Archive ${booking.guestName}'s booking? It will be hidden from this pending list.`))) return;
+              setStPendingActionId(booking.id);
+              try {
+                const res = await fetch(`${API_BASE_URL}/manager/short-term/bookings/${encodeURIComponent(booking.id)}/archive`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ actorEmail: normalizedEmail })
+                });
+                const data = (await res.json()) as { error?: string };
+                if (!res.ok) throw new Error(data.error || "Unable to archive booking");
+                setStatus(t("archivePendingBookingDone", "Booking archived."));
+                await stLoadPending(true);
+              } catch (error) {
+                setStatus(error instanceof Error ? error.message : "Unable to archive booking");
+              } finally {
+                setStPendingActionId(null);
+              }
+            }
+            async function stRejectPendingBooking(booking: StandaloneBooking) {
+              const paid = booking.paymentStatus === "paid" || booking.paymentStatus === "partially_refunded";
+              const confirmText = paid
+                ? t("rejectPendingBookingPaidConfirm", `Reject ${booking.guestName}'s booking and refund any remaining Stripe balance?`)
+                : t("rejectPendingBookingConfirm", `Reject ${booking.guestName}'s booking?`);
+              if (!window.confirm(confirmText)) return;
+              setStPendingActionId(booking.id);
+              try {
+                const res = await fetch(`${API_BASE_URL}/manager/short-term/bookings/${encodeURIComponent(booking.id)}/reject`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ actorEmail: normalizedEmail })
+                });
+                const data = (await res.json()) as { error?: string; refund?: { amountVnd: number; status: string } };
+                if (!res.ok) throw new Error(data.error || "Unable to reject booking");
+                if (data.refund?.amountVnd) {
+                  setStatus(t("rejectPendingBookingRefunded", `Booking rejected. Stripe refund started: ${formatCurrency(data.refund.amountVnd)} (${data.refund.status}).`));
+                } else {
+                  setStatus(t("rejectPendingBookingDone", "Booking rejected."));
+                }
+                await stLoadPending(true);
+              } catch (error) {
+                setStatus(error instanceof Error ? error.message : "Unable to reject booking");
+              } finally {
+                setStPendingActionId(null);
+              }
+            }
+            async function stLoadStripePayments(force = false) {
+              if (!force && (stStripePayments || stStripePaymentsLoading)) return;
+              setStStripePaymentsLoading(true);
+              try {
+                const res = await fetch(`${API_BASE_URL}/manager/stripe/payments?actorEmail=${encodeURIComponent(normalizedEmail)}`);
+                const data = (await res.json()) as { payments?: StripeHostelPaymentSummary[]; error?: string };
+                if (!res.ok) throw new Error(data.error || "Unable to load Stripe payments");
+                setStStripePayments(data.payments ?? []);
+              } catch (error) {
+                setStStripePayments([]);
+                setStatus(error instanceof Error ? error.message : "Unable to load Stripe payments");
+              } finally {
+                setStStripePaymentsLoading(false);
+              }
+            }
+            async function stLoadStripeDetail(bookingId: string) {
+              setStStripeSelectedId(bookingId);
+              setStStripeDetailLoading(true);
+              setStStripeRefundAmount("");
+              try {
+                const res = await fetch(`${API_BASE_URL}/manager/stripe/payments/${encodeURIComponent(bookingId)}?actorEmail=${encodeURIComponent(normalizedEmail)}`);
+                const data = (await res.json()) as { payment?: StripeHostelPaymentDetail; error?: string };
+                if (!res.ok) throw new Error(data.error || "Unable to load Stripe payment");
+                setStStripeDetail(data.payment ?? null);
+              } catch (error) {
+                setStStripeDetail(null);
+                setStatus(error instanceof Error ? error.message : "Unable to load Stripe payment");
+              } finally {
+                setStStripeDetailLoading(false);
+              }
+            }
+            async function stCreateStripeReceipt(bookingId: string) {
+              setStStripeActionSaving(true);
+              try {
+                const res = await fetch(`${API_BASE_URL}/manager/stripe/payments/${encodeURIComponent(bookingId)}/create-receipt`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ actorEmail: normalizedEmail })
+                });
+                const data = (await res.json()) as { created?: boolean; error?: string };
+                if (!res.ok) throw new Error(data.error || "Unable to create receipt");
+                setStatus(data.created ? "Stripe payment receipt created." : "Receipt already exists for this Stripe payment.");
+                await stLoadStripePayments(true);
+                await stLoadStripeDetail(bookingId);
+              } catch (error) {
+                setStatus(error instanceof Error ? error.message : "Unable to create receipt");
+              } finally {
+                setStStripeActionSaving(false);
+              }
+            }
+            async function stRefundStripePayment(bookingId: string, fullRefund: boolean) {
+              const detail = stStripeDetail;
+              if (!detail) return;
+              const parsedAmount = Number(String(stStripeRefundAmount).replace(/[^\d]/g, ""));
+              const amountVnd = fullRefund ? undefined : parsedAmount;
+              if (!fullRefund && (!parsedAmount || parsedAmount <= 0)) {
+                setStatus("Enter a valid partial refund amount in VND.");
+                return;
+              }
+              if (!fullRefund && parsedAmount > detail.refundableAmount) {
+                setStatus(`Partial refund cannot exceed ${formatCurrency(detail.refundableAmount)}.`);
+                return;
+              }
+              const confirmLabel = fullRefund
+                ? `Refund the remaining ${formatCurrency(detail.refundableAmount)} to ${detail.guestName}?`
+                : `Refund ${formatCurrency(parsedAmount)} to ${detail.guestName}?`;
+              if (!window.confirm(confirmLabel)) return;
+
+              setStStripeActionSaving(true);
+              try {
+                const res = await fetch(`${API_BASE_URL}/manager/stripe/payments/${encodeURIComponent(bookingId)}/refund`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    actorEmail: normalizedEmail,
+                    ...(amountVnd ? { amountVnd } : {})
+                  })
+                });
+                const data = (await res.json()) as { error?: string; status?: string; amountVnd?: number };
+                if (!res.ok) throw new Error(data.error || "Unable to refund Stripe payment");
+                setStatus(`Stripe refund started: ${formatCurrency(data.amountVnd ?? 0)} (${data.status ?? "pending"}).`);
+                await stLoadStripePayments(true);
+                await stLoadStripeDetail(bookingId);
+              } catch (error) {
+                setStatus(error instanceof Error ? error.message : "Unable to refund Stripe payment");
+              } finally {
+                setStStripeActionSaving(false);
+              }
             }
             async function stSaveConfig(patch: Partial<Omit<ShortTermConfig, "updatedAt" | "updatedBy">>) {
               setStConfigSaving(true);
@@ -6231,16 +6405,223 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                               <div className="text-xs text-slate-500 mt-0.5">{b.checkIn} → {b.checkOut} · {b.pricing.nights} night{b.pricing.nights !== 1 ? "s" : ""}</div>
                               <div className="text-xs text-slate-400">Total: {b.pricing.total.toLocaleString()} · {b.paymentStatus} · {b.status}{b.source ? ` · ${b.source}` : ""}</div>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => setStConfirmDialog({ booking: b, branch: "D2", bed: "1", saving: false, result: "" })}
-                              className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-700 whitespace-nowrap"
-                            >
-                              Confirm &amp; Import
-                            </button>
+                            <div className="flex flex-col items-end gap-1.5">
+                              <button
+                                type="button"
+                                disabled={stPendingActionId === b.id}
+                                onClick={() => setStConfirmDialog({ booking: b, branch: (b.mainAppBranch === "D7" ? "D7" : "D2"), bed: b.mainAppBed || "1", saving: false, result: "" })}
+                                className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-700 whitespace-nowrap disabled:opacity-50"
+                              >
+                                {t("confirmImportLabel")}
+                              </button>
+                              <div className="flex flex-wrap justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  disabled={stPendingActionId === b.id}
+                                  onClick={() => { void stArchivePendingBooking(b); }}
+                                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 whitespace-nowrap disabled:opacity-50"
+                                >
+                                  {t("archiveLabel", "Archive")}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={stPendingActionId === b.id}
+                                  onClick={() => { void stRejectPendingBooking(b); }}
+                                  className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 whitespace-nowrap disabled:opacity-50"
+                                >
+                                  {t("rejectLabel")}
+                                </button>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       ))}
+                    </div>
+                  )}
+                </StSection>
+
+                <StSection
+                  id="stripe_payments"
+                  title="Stripe payments"
+                  badge={stStripePayments?.length ?? undefined}
+                  onOpen={() => { void stLoadStripePayments(); }}
+                >
+                  {stStripePaymentsLoading ? (
+                    <p className="text-sm text-slate-500">{t("loadingGeneral")}</p>
+                  ) : !stStripePayments?.length ? (
+                    <p className="text-sm text-slate-500">No Stripe hostel payments found yet.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="overflow-x-auto rounded-xl border border-slate-200">
+                        <table className="min-w-full text-left text-sm">
+                          <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                            <tr>
+                              <th className="px-3 py-2">Guest</th>
+                              <th className="px-3 py-2">Stay</th>
+                              <th className="px-3 py-2">Paid</th>
+                              <th className="px-3 py-2">Status</th>
+                              <th className="px-3 py-2">Receipt</th>
+                              <th className="px-3 py-2" />
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {stStripePayments.map((payment) => (
+                              <tr key={payment.bookingId} className="border-t border-slate-100">
+                                <td className="px-3 py-2">
+                                  <div className="font-medium text-slate-900">{payment.guestName}</div>
+                                  <div className="text-xs text-slate-500">{payment.guestEmail}</div>
+                                </td>
+                                <td className="px-3 py-2 text-xs text-slate-600">
+                                  {payment.checkIn} → {payment.checkOut}
+                                  <div className="text-slate-400">Branch {payment.branchId} · Bed {payment.bedNumber}</div>
+                                </td>
+                                <td className="px-3 py-2 font-medium text-slate-900">{formatCurrency(payment.amountPaid)}</td>
+                                <td className="px-3 py-2">
+                                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">
+                                    {payment.paymentStatus || payment.bookingStatus}
+                                  </span>
+                                  {payment.refundedAmount > 0 ? (
+                                    <div className="mt-1 text-xs text-rose-600">Refunded {formatCurrency(payment.refundedAmount)}</div>
+                                  ) : null}
+                                </td>
+                                <td className="px-3 py-2 text-xs">
+                                  {payment.receiptCreated ? (
+                                    <span className="font-semibold text-emerald-700">Created</span>
+                                  ) : (
+                                    <span className="text-amber-700">Missing</span>
+                                  )}
+                                </td>
+                                <td className="px-3 py-2 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => { void stLoadStripeDetail(payment.bookingId); }}
+                                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                  >
+                                    Details
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {stStripeSelectedId ? (
+                        <div className="rounded-2xl border border-violet-200 bg-violet-50/40 p-4 space-y-4">
+                          {stStripeDetailLoading || !stStripeDetail ? (
+                            <p className="text-sm text-slate-500">{t("loadingGeneral")}</p>
+                          ) : (
+                            <>
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                  <h3 className="text-base font-semibold text-slate-900">{stStripeDetail.guestName}</h3>
+                                  <p className="text-sm text-slate-600">{stStripeDetail.guestEmail} · {stStripeDetail.guestPhone || "No phone"}</p>
+                                  <p className="text-xs text-slate-500 mt-1">
+                                    Booking {stStripeDetail.bookingId} · {stStripeDetail.checkIn} → {stStripeDetail.checkOut} · {stStripeDetail.nights} night{stStripeDetail.nights === 1 ? "" : "s"}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => { setStStripeSelectedId(null); setStStripeDetail(null); }}
+                                  className="text-xs font-semibold text-slate-500 hover:text-slate-800"
+                                >
+                                  Close
+                                </button>
+                              </div>
+
+                              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                                <div className="rounded-xl bg-white p-3 border border-slate-200">
+                                  <div className="text-xs text-slate-500">Amount paid</div>
+                                  <div className="text-lg font-semibold text-slate-900">{formatCurrency(stStripeDetail.amountPaid)}</div>
+                                </div>
+                                <div className="rounded-xl bg-white p-3 border border-slate-200">
+                                  <div className="text-xs text-slate-500">Refunded</div>
+                                  <div className="text-lg font-semibold text-rose-700">{formatCurrency(stStripeDetail.refundedAmount)}</div>
+                                </div>
+                                <div className="rounded-xl bg-white p-3 border border-slate-200">
+                                  <div className="text-xs text-slate-500">Refundable now</div>
+                                  <div className="text-lg font-semibold text-emerald-700">{formatCurrency(stStripeDetail.refundableAmount)}</div>
+                                </div>
+                                <div className="rounded-xl bg-white p-3 border border-slate-200">
+                                  <div className="text-xs text-slate-500">Receipt</div>
+                                  <div className="text-sm font-semibold text-slate-900">
+                                    {stStripeDetail.receiptCreated
+                                      ? `${formatCurrency(stStripeDetail.receiptAmount ?? 0)} created`
+                                      : "Not created yet"}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="rounded-xl bg-white border border-slate-200 p-3 text-xs text-slate-600 space-y-1">
+                                <div><span className="font-semibold text-slate-800">Stripe PI:</span> {stStripeDetail.stripePaymentIntentId || "—"}</div>
+                                <div><span className="font-semibold text-slate-800">Stripe session:</span> {stStripeDetail.stripeSessionId || "—"}</div>
+                                <div><span className="font-semibold text-slate-800">Cancellation policy:</span> {stStripeDetail.cancellationPolicy || "—"}</div>
+                                {stStripeDetail.notes ? (
+                                  <div><span className="font-semibold text-slate-800">Notes:</span> {stStripeDetail.notes}</div>
+                                ) : null}
+                              </div>
+
+                              {stStripeDetail.stripeRefunds.length > 0 ? (
+                                <div className="rounded-xl bg-white border border-slate-200 p-3">
+                                  <div className="text-sm font-semibold text-slate-900 mb-2">Stripe refunds</div>
+                                  <div className="space-y-2">
+                                    {stStripeDetail.stripeRefunds.map((refund) => (
+                                      <div key={refund.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                                        <span className="font-mono text-slate-600">{refund.id}</span>
+                                        <span className="font-semibold text-slate-900">{formatCurrency(refund.amount)}</span>
+                                        <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-700">{refund.status}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : null}
+
+                              <div className="flex flex-wrap gap-2">
+                                {!stStripeDetail.receiptCreated ? (
+                                  <button
+                                    type="button"
+                                    disabled={stStripeActionSaving}
+                                    onClick={() => { void stCreateStripeReceipt(stStripeDetail.bookingId); }}
+                                    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                                  >
+                                    Create receipt
+                                  </button>
+                                ) : null}
+                                {stStripeDetail.refundableAmount > 0 ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      disabled={stStripeActionSaving}
+                                      onClick={() => { void stRefundStripePayment(stStripeDetail.bookingId, true); }}
+                                      className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+                                    >
+                                      Full refund
+                                    </button>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <input
+                                        type="text"
+                                        inputMode="numeric"
+                                        value={stStripeRefundAmount}
+                                        onChange={(e) => setStStripeRefundAmount(e.target.value)}
+                                        placeholder="Partial amount (VND)"
+                                        className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                                      />
+                                      <button
+                                        type="button"
+                                        disabled={stStripeActionSaving}
+                                        onClick={() => { void stRefundStripePayment(stStripeDetail.bookingId, false); }}
+                                        className="rounded-xl border border-rose-300 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                                      >
+                                        Partial refund
+                                      </button>
+                                    </div>
+                                  </>
+                                ) : null}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      ) : null}
                     </div>
                   )}
                 </StSection>
@@ -6395,10 +6776,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">{floor}</div>
                                 <div className="flex flex-wrap gap-3">
                                   {floorRooms.map((room) => {
-                                    const bunks = Array.from({ length: room.bunkCount }, (_, bi) => {
-                                      const startBed = room.startBed + bi * 3;
-                                      return [startBed, startBed + 1, startBed + 2].filter(b => b <= room.endBed);
-                                    });
+                                    const bunks = getBunkBedGroupsTopFirst(room);
                                     return (
                                       <div key={room.room} className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
                                         <div className="text-[10px] font-semibold text-slate-500 mb-2 text-center">Room {room.room}</div>
@@ -6406,9 +6784,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                           {bunks.map((bunkBeds, bi) => (
                                             <div key={bi} className="flex flex-col gap-1">
                                               {bunkBeds.map((bedNum) => {
-                                                const level = ((bedNum - 1) % 3) + 1;
-                                                const levelLabel = level === 1 ? "T" : level === 2 ? "M" : "B";
-                                                const isTop = level === 1;
+                                                const tier = getBedTier(stPricingBranch, bedNum);
+                                                const levelLabel = tier ? getBedTierShortLabel(tier) : "";
+                                                const isTop = tier === "top";
                                                 const defaultPrice = isTop ? 150000 : 250000;
                                                 const currentVal = stEditBedPricing[String(bedNum)];
                                                 const displayVal = currentVal !== undefined ? currentVal : defaultPrice;
@@ -6452,8 +6830,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             const defaults: Record<string, number> = {};
                             for (const room of BRANCH_LAYOUTS[stPricingBranch]) {
                               for (let b = room.startBed; b <= room.endBed; b++) {
-                                const level = ((b - 1) % 3) + 1;
-                                defaults[String(b)] = level === 1 ? 150000 : 250000;
+                                defaults[String(b)] = getBedTier(stPricingBranch, b) === "top" ? 150000 : 250000;
                               }
                             }
                             setStEditBedPricing(defaults);
@@ -10398,7 +10775,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 const matchingBeds = BRANCH_LAYOUTS[branchId].flatMap((r) => {
                                   const beds = [];
                                   for (let b = r.startBed; b <= r.endBed; b++) {
-                                    if (getBedTierInLayout(branchId, b) === tier) beds.push(b);
+                                    if (getBedTier(branchId, b) === tier) beds.push(b);
                                   }
                                   return beds;
                                 });
@@ -10461,7 +10838,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                 <p className="text-xs text-slate-500 font-medium mb-1.5">{floor}</p>
                                 <div className="flex flex-wrap gap-2">
                                   {BRANCH_LAYOUTS[branchId].filter((r) => r.floor === floor).map((room) => {
-                                    const tiers = room.bunkCount === 3 ? (["top", "middle", "bottom"] as const) : (["top", "bottom"] as const);
+                                    const tiers = ["top", "middle", "bottom"] as const;
                                     return (
                                       <div key={room.room} className="rounded-xl border border-slate-200 p-2.5 space-y-1.5 bg-slate-50">
                                         <p className="text-[10px] font-semibold text-slate-500 text-center">{t("roomLabel")} {room.room}</p>
@@ -10470,7 +10847,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                             const isEditing = bulkTierEdit?.branchId === branchId && bulkTierEdit?.room === room.room && bulkTierEdit?.tier === tier;
                                             const matchingBeds: number[] = [];
                                             for (let b = room.startBed; b <= room.endBed; b++) {
-                                              if (getBedTierInLayout(branchId, b) === tier) matchingBeds.push(b);
+                                              if (getBedTier(branchId, b) === tier) matchingBeds.push(b);
                                             }
                                             const overrideCount = matchingBeds.filter((b) => (pricingData?.bedOverrides ?? []).some((o) => o.termType === "long_term" && o.branchId === branchId && o.bedNumber === b && o.monthlyPrice != null)).length;
                                             return (
@@ -10532,21 +10909,16 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       {pricingConfigLoading ? <p className="text-sm text-slate-500">{t("refreshing")}</p> : (
                         <div className="space-y-4">
                           {BRANCH_LAYOUTS[branchId].map((room) => {
-                            const bedNumbers = Array.from({ length: room.endBed - room.startBed + 1 }, (_, i) => room.startBed + i);
                             const ltOverrides = pricingData?.bedOverrides.filter((b) => b.termType === "long_term" && b.branchId === branchId) ?? [];
-                            // Group beds into bunks (columns of bunkCount tiers each)
-                            const bunks: number[][] = [];
-                            for (let i = 0; i < bedNumbers.length; i += room.bunkCount) {
-                              bunks.push(bedNumbers.slice(i, i + room.bunkCount));
-                            }
-                            const tierLabels = room.bunkCount === 3 ? ["T", "M", "B"] : ["T", "B"];
+                            const bunks = getBunkBedGroupsTopFirst(room);
                             return (
                               <div key={room.room}>
                                 <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">{t("roomLabel")} {room.room} · {t("floorLabel")} {room.floor}</p>
                                 <div className="flex flex-wrap gap-2">
                                   {bunks.map((bunk, bunkIdx) => (
                                     <div key={bunkIdx} className="flex flex-col gap-1">
-                                      {bunk.map((bedNum, tierIdx) => {
+                                      {bunk.map((bedNum) => {
+                                        const bedTier = getBedTier(branchId, bedNum);
                                         const override = ltOverrides.find((b) => b.bedNumber === bedNum);
                                         const hasOverride = override?.monthlyPrice != null;
                                         const isEditing = bedOverrideEdit?.termType === "long_term" && bedOverrideEdit.branchId === branchId && bedOverrideEdit.bedNumber === String(bedNum);
@@ -10558,7 +10930,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                             className={`w-20 rounded-lg border px-1.5 py-1 text-center transition-colors ${isEditing ? "border-teal-500 bg-teal-100 ring-1 ring-teal-400" : hasOverride ? "border-teal-300 bg-teal-50 hover:bg-teal-100" : "border-slate-200 bg-slate-50 hover:bg-slate-100"}`}
                                           >
                                             <div className="flex items-center justify-between">
-                                              <span className="text-[10px] font-bold text-slate-400">{tierLabels[tierIdx]}</span>
+                                              <span className="text-[10px] font-bold text-slate-400">{bedTier ? getBedTierShortLabel(bedTier) : ""}</span>
                                               <span className="text-[10px] font-semibold text-slate-600">#{bedNum}</span>
                                             </div>
                                             <div className="text-[10px] leading-tight mt-0.5 text-center truncate">
@@ -10584,9 +10956,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                                   const bedNum = Number(bedOverrideEdit.bedNumber);
                                   const room = BRANCH_LAYOUTS[branchId].find((r) => bedNum >= r.startBed && bedNum <= r.endBed);
                                   if (!room) return null;
-                                  const posInRoom = bedNum - room.startBed;
-                                  const tierIdx = posInRoom % room.bunkCount;
-                                  const tierLabel = room.bunkCount === 3 ? [t("topBunk"), t("middleBunk"), t("bottomBunk")][tierIdx] : [t("topBunk"), t("bottomBunk")][tierIdx];
+                                  const tier = getBedTier(branchId, bedNum);
+                                  const tierLabel = tier === "top" ? t("topBunk") : tier === "middle" ? t("middleBunk") : tier === "bottom" ? t("bottomBunk") : "";
                                   return <span className="ml-2 font-normal text-teal-700">· {t("roomLabel")} {room.room} · {tierLabel} {t("bedLabel").toLowerCase()}</span>;
                                 })()}
                               </p>

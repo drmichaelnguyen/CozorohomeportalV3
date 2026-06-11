@@ -173,6 +173,7 @@ import {
   validateContractTransferTarget
 } from "./prospect-assistant.js";
 import type { ReferralProgramSettings } from "./referral-program.js";
+import { getBranchRegistrationClosedError } from "./branch-closure.js";
 import {
   computeReferralCodeForEmail,
   getReferralProgramPublicMarketing,
@@ -241,6 +242,18 @@ import {
   verifyCheckoutPhotoAccess
 } from "./checkout.js";
 import { getShortTermConfig, updateShortTermConfig } from "./short-term-config.js";
+import {
+  archiveHostelPendingBooking,
+  getHostelArchivedIds,
+  rejectHostelPendingBooking
+} from "./hostel-pending-bookings.js";
+import {
+  createHostelStripePaymentReceipt,
+  createHostelStripePaymentReceiptFromBooking,
+  getStripeHostelPaymentDetail,
+  listStripeHostelPayments,
+  refundStripeHostelPayment
+} from "./stripe-hostel-payments.js";
 import { handleManagerAiChat, type AiChatMessage } from "./manager-ai-chat.js";
 import { handleResidentPortalAiChat, type ResidentPortalAiMessage } from "./resident-portal-ai-chat.js";
 import { getVentHammerRedeemToday, markVentHammerRedeemedToday } from "./vent-hammer-redeem-guard.js";
@@ -1400,7 +1413,11 @@ const paidGuestBookingSyncSchema = z.object({
   notes: z.string().optional(),
   referralCode: z.string().trim().optional(),
   /** Set false when re-syncing an existing paid booking (e.g. date change) to avoid duplicate coin grants. */
-  applyReferralCoins: z.boolean().optional().default(true)
+  applyReferralCoins: z.boolean().optional().default(true),
+  stripeSessionId: z.string().trim().optional(),
+  stripePaymentIntentId: z.string().trim().optional(),
+  stripeAmountPaid: z.coerce.number().int().nonnegative().optional(),
+  stripePaymentAction: z.enum(["booking_create", "booking_adjustment"]).optional()
 });
 const referralQuoteSchema = z.object({
   code: z.string().trim().min(1),
@@ -1948,6 +1965,39 @@ app.post("/internal/guest-bookings/import-paid", async (request, response) => {
       pricingTotal: parsed.data.pricingTotal,
       notes: mergedNotes
     });
+
+    let stripeReceipt: { created: boolean; amountVnd: number; paymentIntentId: string } | null = null;
+    const stripePaymentIntentId = parsed.data.stripePaymentIntentId?.trim();
+    const stripeSessionId = parsed.data.stripeSessionId?.trim();
+    const stripeAmountPaid = parsed.data.stripeAmountPaid ?? parsed.data.pricingTotal;
+    if ((stripePaymentIntentId || stripeSessionId) && stripeAmountPaid > 0) {
+      try {
+        const checkInMs = new Date(`${parsed.data.checkIn}T12:00:00`).getTime();
+        const checkOutMs = new Date(`${parsed.data.checkOut}T12:00:00`).getTime();
+        const stayNights = Math.max(0, Math.round((checkOutMs - checkInMs) / 86400000));
+        stripeReceipt = await createHostelStripePaymentReceipt({
+          bookingId: parsed.data.bookingId,
+          guestEmail: parsed.data.guestEmail,
+          guestName: parsed.data.guestName,
+          branchId: parsed.data.branchId,
+          bedNumber: parsed.data.bedNumber,
+          checkIn: parsed.data.checkIn,
+          checkOut: parsed.data.checkOut,
+          nights: stayNights,
+          amountVnd: stripeAmountPaid,
+          stripeSessionId: stripeSessionId || undefined,
+          stripePaymentIntentId: stripePaymentIntentId || undefined,
+          paymentAction: parsed.data.stripePaymentAction
+        });
+      } catch (receiptError) {
+        console.error("[internal/guest-bookings/import-paid] Stripe receipt creation failed", receiptError);
+        return response.json({
+          ...cache,
+          stripeReceiptWarning: receiptError instanceof Error ? receiptError.message : "Stripe receipt creation failed"
+        });
+      }
+    }
+
     await logAction({
       actorEmail: "homecozoro@gmail.com",
       actorRole: "manager",
@@ -1980,7 +2030,10 @@ app.post("/internal/guest-bookings/import-paid", async (request, response) => {
       }
     }
 
-    return response.json(cache);
+    return response.json({
+      ...cache,
+      stripeReceipt
+    });
   } catch (error) {
     return response.status(500).json({
       error: error instanceof Error ? error.message : "Unable to import paid guest booking."
@@ -7689,6 +7742,11 @@ app.get("/api/public/register/availability", async (request, response) => {
     return response.status(400).json({ error: "A valid branchId and sex are required" });
   }
 
+  const branchClosedError = getBranchRegistrationClosedError(parsed.data.branchId);
+  if (branchClosedError) {
+    return response.status(400).json({ error: branchClosedError });
+  }
+
   try {
     const availability = await getProspectBedAvailability(parsed.data);
     return response.json(availability);
@@ -7796,6 +7854,11 @@ app.post("/api/public/register", async (request, response) => {
 
   if (!parsed.success) {
     return response.status(400).json({ error: "Invalid register submission payload" });
+  }
+
+  const branchClosedError = getBranchRegistrationClosedError(parsed.data.branchId);
+  if (branchClosedError) {
+    return response.status(400).json({ error: branchClosedError });
   }
 
   try {
@@ -8376,13 +8439,97 @@ app.get("/manager/short-term/pending-bookings", async (request, response) => {
   const actorEmail = String(request.query.actorEmail ?? "");
   try {
     await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
-    const all = await readHostelBookings();
+    const [all, archivedIds] = await Promise.all([readHostelBookings(), getHostelArchivedIds()]);
     const pending = all.filter(
-      (b) => b.status !== "canceled" && b.status !== "CANCELLED" && !b.mainAppImported
+      (b) =>
+        b.status !== "canceled" &&
+        b.status !== "CANCELLED" &&
+        !b.mainAppImported &&
+        !archivedIds.has(b.id)
     );
     return response.json({ bookings: pending });
   } catch (error) {
     return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to load bookings" });
+  }
+});
+
+const hostelPendingDispositionSchema = z.object({
+  actorEmail: z.string().email(),
+  reason: z.string().trim().optional()
+});
+
+app.post("/manager/short-term/bookings/:id/archive", async (request, response) => {
+  const bookingId = String(request.params.id ?? "").trim();
+  const parsed = hostelPendingDispositionSchema.safeParse(request.body);
+  if (!parsed.success || !bookingId) {
+    return response.status(400).json({ error: "Invalid archive payload" });
+  }
+  try {
+    await requirePortalRole(parsed.data.actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const result = await runWithWriteGuard({
+      key: createWriteGuardKey("/manager/short-term/bookings/archive", { bookingId, actorEmail: parsed.data.actorEmail }),
+      duplicateMessage: "This archive action was just submitted. Please wait a few seconds.",
+      action: () =>
+        archiveHostelPendingBooking({
+          bookingId,
+          action: "archive",
+          actorEmail: parsed.data.actorEmail,
+          reason: parsed.data.reason
+        })
+    });
+    await logAction({
+      actorEmail: parsed.data.actorEmail,
+      actorRole: "manager",
+      action: "short_term.booking.archive",
+      entityType: "GuestStayBooking",
+      entityId: bookingId,
+      details: parsed.data.reason?.trim() || ""
+    });
+    return response.json(result);
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
+      error: error instanceof Error ? error.message : "Unable to archive booking"
+    });
+  }
+});
+
+app.post("/manager/short-term/bookings/:id/reject", async (request, response) => {
+  const bookingId = String(request.params.id ?? "").trim();
+  const parsed = hostelPendingDispositionSchema.safeParse(request.body);
+  if (!parsed.success || !bookingId) {
+    return response.status(400).json({ error: "Invalid reject payload" });
+  }
+  try {
+    await requirePortalRole(parsed.data.actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const result = await runWithWriteGuard({
+      key: createWriteGuardKey("/manager/short-term/bookings/reject", { bookingId, actorEmail: parsed.data.actorEmail }),
+      duplicateMessage: "This reject action was just submitted. Please wait a few seconds.",
+      action: () =>
+        rejectHostelPendingBooking({
+          bookingId,
+          action: "reject",
+          actorEmail: parsed.data.actorEmail,
+          reason: parsed.data.reason
+        })
+    });
+    await logAction({
+      actorEmail: parsed.data.actorEmail,
+      actorRole: "manager",
+      action: "short_term.booking.reject",
+      entityType: "GuestStayBooking",
+      entityId: bookingId,
+      details: [
+        parsed.data.reason?.trim(),
+        result.refund ? `refund=${result.refund.amountVnd}; status=${result.refund.status}` : "no_refund"
+      ]
+        .filter(Boolean)
+        .join(" | ")
+    });
+    return response.json(result);
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
+      error: error instanceof Error ? error.message : "Unable to reject booking"
+    });
   }
 });
 
@@ -8468,6 +8615,115 @@ app.post("/manager/short-term/bookings", async (request, response) => {
     return response.json({ ok: true, contractCode: `SHORTTERM-${bookingId}`, initialPassword });
   } catch (error) {
     return response.status(500).json({ error: error instanceof Error ? error.message : "Failed to add hostel guest" });
+  }
+});
+
+const stripeHostelRefundSchema = z.object({
+  actorEmail: z.string().email(),
+  amountVnd: z.coerce.number().int().positive().optional()
+});
+
+app.get("/manager/stripe/payments", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "");
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const payments = await listStripeHostelPayments();
+    return response.json({ payments });
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 403).json({
+      error: error instanceof Error ? error.message : "Unable to load Stripe payments"
+    });
+  }
+});
+
+app.get("/manager/stripe/payments/:bookingId", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "");
+  const bookingId = String(request.params.bookingId ?? "").trim();
+  if (!bookingId) {
+    return response.status(400).json({ error: "bookingId is required" });
+  }
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const payment = await getStripeHostelPaymentDetail(bookingId);
+    if (!payment) {
+      return response.status(404).json({ error: "Stripe payment not found" });
+    }
+    return response.json({ payment });
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 403).json({
+      error: error instanceof Error ? error.message : "Unable to load Stripe payment"
+    });
+  }
+});
+
+app.post("/manager/stripe/payments/:bookingId/create-receipt", async (request, response) => {
+  const bookingId = String(request.params.bookingId ?? "").trim();
+  const actorEmail = String((request.body as { actorEmail?: string }).actorEmail ?? "").trim();
+  if (!bookingId || !actorEmail) {
+    return response.status(400).json({ error: "bookingId and actorEmail are required" });
+  }
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const result = await runWithWriteGuard({
+      key: createWriteGuardKey("/manager/stripe/payments/create-receipt", { bookingId, actorEmail }),
+      duplicateMessage: "This Stripe receipt action was just submitted. Please wait a few seconds.",
+      action: () => createHostelStripePaymentReceiptFromBooking(bookingId)
+    });
+    await logAction({
+      actorEmail,
+      actorRole: "manager",
+      action: "stripe_hostel.create_receipt",
+      entityType: "GuestStayBooking",
+      entityId: bookingId,
+      details: `created=${result.created}; amountVnd=${result.amountVnd}`
+    });
+    return response.status(result.created ? 201 : 200).json(result);
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
+      error: error instanceof Error ? error.message : "Unable to create Stripe payment receipt"
+    });
+  }
+});
+
+app.post("/manager/stripe/payments/:bookingId/refund", async (request, response) => {
+  const bookingId = String(request.params.bookingId ?? "").trim();
+  const parsed = stripeHostelRefundSchema.safeParse(request.body);
+  if (!parsed.success || !bookingId) {
+    return response.status(400).json({ error: "Invalid Stripe refund payload" });
+  }
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only managers and owners can issue Stripe refunds."
+    );
+    const result = await runWithWriteGuard({
+      key: createWriteGuardKey("/manager/stripe/payments/refund", {
+        bookingId,
+        actorEmail: parsed.data.actorEmail,
+        amountVnd: parsed.data.amountVnd ?? "full"
+      }),
+      duplicateMessage: "This Stripe refund was just submitted. Please wait a few seconds.",
+      action: () =>
+        refundStripeHostelPayment({
+          bookingId,
+          amountVnd: parsed.data.amountVnd,
+          actorEmail: parsed.data.actorEmail
+        })
+    });
+    await logAction({
+      actorEmail: parsed.data.actorEmail,
+      actorRole: "manager",
+      action: "stripe_hostel.refund",
+      entityType: "GuestStayBooking",
+      entityId: bookingId,
+      details: `refundId=${result.refundId}; amountVnd=${result.amountVnd}; status=${result.status}`
+    });
+    return response.json(result);
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
+      error: error instanceof Error ? error.message : "Unable to refund Stripe payment"
+    });
   }
 });
 

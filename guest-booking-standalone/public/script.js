@@ -16,6 +16,8 @@ const state = {
   gallery: null,
   galleryIndex: 0,
   galleryBranchId: "D7",
+  closedBranches: [],
+  branchClosureNotice: null,
   recentGuestProfileLoaded: false
 };
 
@@ -78,7 +80,8 @@ const els = {
   bookBtn: document.getElementById("bookBtn"),
   referralCode: document.getElementById("referralCode"),
   referralHostelBanner: document.getElementById("referralHostelBanner"),
-  referralHostelBody: document.getElementById("referralHostelBody")
+  referralHostelBody: document.getElementById("referralHostelBody"),
+  branchClosureBanner: document.getElementById("branchClosureBanner")
 };
 
 function formatDateInput(date) {
@@ -438,19 +441,18 @@ function clearAuthSession() {
 }
 
 function getAllowedBranches() {
+  const closed = new Set(state.closedBranches || []);
+  let branches = [];
+
   if (!state.isVietnamese) {
-    return ["D7"];
+    branches = ["D7"];
+  } else if (els.bioSex.value === "female") {
+    branches = ["D2", "D7"];
+  } else if (els.bioSex.value === "male") {
+    branches = ["D7"];
   }
 
-  if (els.bioSex.value === "female") {
-    return ["D2", "D7"];
-  }
-
-  if (els.bioSex.value === "male") {
-    return ["D7"];
-  }
-
-  return [];
+  return branches.filter((branchId) => !closed.has(branchId));
 }
 
 function updateBranchOptions() {
@@ -504,8 +506,8 @@ function updateWizardUi() {
     } else if (els.isVietnamese.value && !els.bioSex.value) {
       els.profileStatus.textContent = window.t("profileStatusNextSex");
     } else {
-      const femaleVietnamese = els.isVietnamese.value === "yes" && els.bioSex.value === "female";
-      const allowedText = femaleVietnamese ? "D2 / D7" : "D7";
+      const allowedBranches = getAllowedBranches();
+      const allowedText = allowedBranches.length ? allowedBranches.join(" / ") : "D7";
       els.profileStatus.textContent = window.t("profileStatusEligible", { allowedText });
     }
   }
@@ -622,7 +624,9 @@ function renderGallery() {
   els.galleryCaption.textContent = `${branchData.description} Photo ${state.galleryIndex + 1} of ${images.length}.`;
   renderGalleryDots(images, state.galleryIndex);
   if (els.galleryD2Btn && els.galleryD7Btn) {
-    els.galleryD2Btn.classList.toggle("selected", branchData.branchId === "D2");
+    const d2Closed = (state.closedBranches || []).includes("D2");
+    els.galleryD2Btn.classList.toggle("hidden", d2Closed);
+    els.galleryD2Btn.classList.toggle("selected", !d2Closed && branchData.branchId === "D2");
     els.galleryD7Btn.classList.toggle("selected", branchData.branchId === "D7");
   }
 }
@@ -886,6 +890,11 @@ async function loadConfig() {
   state.pricingConfig = data.pricing || null;
   state.cancellationPolicy = normalizeCancellationPolicy(els.cancellationPolicy.value || "cancellable");
   state.stripeConfigured = Boolean(data.stripeConfigured);
+  state.closedBranches = Array.isArray(data.closedBranches) ? data.closedBranches : [];
+  const lang = localStorage.getItem("cozoroGuestLanguage") === "vi" ? "vi" : "en";
+  state.branchClosureNotice =
+    lang === "vi" ? data.branchClosureNoticeVi || data.branchClosureNotice : data.branchClosureNotice;
+  renderBranchClosureBanner();
   els.isVietnamese.value = "";
   els.bioSex.value = "";
   els.cancellationPolicy.value = state.cancellationPolicy;
@@ -895,6 +904,25 @@ async function loadConfig() {
   updateCancellationPolicyNote();
   updatePriceSummary(calculatePricingPreview());
   syncAuthUi();
+}
+
+function renderBranchClosureBanner() {
+  if (!els.branchClosureBanner) {
+    return;
+  }
+
+  const notice = state.branchClosureNotice;
+  if (!notice || !state.closedBranches?.length) {
+    els.branchClosureBanner.classList.add("hidden");
+    els.branchClosureBanner.innerHTML = "";
+    return;
+  }
+
+  els.branchClosureBanner.classList.remove("hidden");
+  els.branchClosureBanner.innerHTML = `
+    <p class="referral-hostel-title">${notice.title || ""}</p>
+    <p class="referral-hostel-body">${notice.body || ""}</p>
+  `;
 }
 
 async function loadGallery() {

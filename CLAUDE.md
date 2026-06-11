@@ -192,6 +192,18 @@ const nextConfig: NextConfig = {
 | `POST /manager/branch-broadcast` | **Manager, owner, app_admin** â€” push a branch-wide message to all active clients in D2/D7 and queue first-open prompt notices. |
 | `GET /clients/branch-broadcasts/pending?email=` | Resident fetches unread branch prompts queued after branch broadcasts. |
 | `POST /clients/branch-broadcasts/:id/read` | Resident acknowledges a branch prompt so it no longer appears on next app open. |
+| `GET /manager/stripe/payments?actorEmail=` | **Manager, owner, app_admin** — list hostel guest Stripe payments (amount, refund status, receipt status). |
+| `GET /manager/stripe/payments/:bookingId?actorEmail=` | **Manager, owner, app_admin** — payment detail with Stripe charge/refund enrichment when `STRIPE_SECRET_KEY` is set. |
+| `POST /manager/stripe/payments/:bookingId/create-receipt` | **Manager, owner, app_admin** — backfill a missing VND payment receipt for a paid Stripe booking. |
+| `POST /manager/stripe/payments/:bookingId/refund` | **Manager, owner, app_admin** — issue a full or partial Stripe refund (`amountVnd` optional; omit for remaining refundable balance). |
+| `POST /manager/short-term/bookings/:id/archive` | **Manager, owner, app_admin** — hide a pending hostel booking from the import queue without cancelling it. |
+| `POST /manager/short-term/bookings/:id/reject` | **Manager, owner, app_admin** — cancel a pending hostel booking; refunds remaining Stripe balance when paid and deactivates `SHORTTERM-{id}` client row. |
+
+### Stripe hostel receipts (short-term)
+
+- Guest-booking-standalone webhook → `POST /internal/guest-bookings/import-paid` with `stripeSessionId`, `stripePaymentIntentId`, `stripeAmountPaid`, and optional `stripePaymentAction` (`booking_create` | `booking_adjustment`).
+- On paid import, the API upserts the `SHORTTERM-{bookingId}` client row, then appends a payments-sheet receipt in VND (receiver `Stripe`). Ledger: `api/data/stripe-hostel-payment-receipts.json` (keyed by payment intent / session).
+- Main API needs `STRIPE_SECRET_KEY` in `api/.env` (same key as guest-booking-standalone) for refunds and live Stripe detail fetches.
 
 ### Rent coin behavior (source of truth)
 
@@ -252,6 +264,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.8.53 | Stripe hostel payments (auto VND receipts, manager list/detail/refund); pending hostel booking **Archive** and **Reject**; D2 new-registration closure shared across portal, API, and guest-booking standalone. |
 | 3.8.47 | Deposit refund email: bilingual notice now lists deposit, unpaid fines (per line), unpaid gate tickets (per ticket), other deductions when refund is below auto-suggested, and final refund amount. |
 | 3.8.45 | Prepaid rent marker: treat package as paid when contract end or sheet `Đã đóng phí tháng` applies, not only package expiry (fixes false “payment due” when expiry date is stale). Payment receipts: fix empty `Số giường` when writing from manager portal (header casing `Số giường` vs `số giường`). |
 | 3.8.44 | Manager bed diagram / client list: hide red unpaid-rent ($) marker for residents on an active 3/6-month prepaid package (rent covered by package); still show $ when the package expired or add-on components (parking, gate, laundry, fines) are marked unpaid. |

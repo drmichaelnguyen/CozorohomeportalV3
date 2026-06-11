@@ -8,6 +8,13 @@ const mysql = require("mysql2/promise");
 const Stripe = require("stripe");
 const heicConvert = require("heic-convert");
 const sharp = require("sharp");
+const {
+  isBranchClosedForNewRegistrations,
+  getBranchRegistrationClosedError,
+  getD2ClosureNotice,
+  D2_NEW_REGISTRATION_CLOSED,
+  D2_PERMANENT_CLOSURE_DATE
+} = require("./branch-closure");
 
 dotenv.config({ path: path.join(__dirname, ".env") });
 
@@ -39,8 +46,8 @@ const BRANCH_LAYOUTS = {
     { roomCode: "3", floorLabel: "D2", startBed: 16, endBed: 21 }
   ],
   D7: [
-    { roomCode: "1.1", floorLabel: "Floor 1", startBed: 1, endBed: 9 },
-    { roomCode: "1.2", floorLabel: "Floor 1", startBed: 10, endBed: 15 },
+    { roomCode: "1.1", floorLabel: "Floor 1", startBed: 1, endBed: 6 },
+    { roomCode: "1.2", floorLabel: "Floor 1", startBed: 7, endBed: 15 },
     { roomCode: "1.3", floorLabel: "Floor 1", startBed: 16, endBed: 24 },
     { roomCode: "2.1", floorLabel: "Floor 2", startBed: 25, endBed: 33 },
     { roomCode: "2.2", floorLabel: "Floor 2", startBed: 34, endBed: 39 },
@@ -1008,13 +1015,14 @@ async function finalizeStripeCheckoutSession(session) {
           UPDATE \`${BOOKING_TABLE_NAME}\`
           SET status = 'CONFIRMED',
               payment_status = 'paid',
+              stripe_session_id = ?,
               stripe_payment_intent_id = ?,
               amount_paid = ?,
               currency = ?,
               updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
         `,
-        [session.payment_intent ? String(session.payment_intent) : null, session.amount_total || 0, (session.currency || pricingConfig.currency).toLowerCase(), bookingId]
+        [session.id, session.payment_intent ? String(session.payment_intent) : null, session.amount_total || 0, (session.currency || pricingConfig.currency).toLowerCase(), bookingId]
       );
     }
   }
@@ -1049,7 +1057,11 @@ async function finalizeStripeCheckoutSession(session) {
         ? path.relative(path.resolve(__dirname, "data"), latestBooking.id_photo_path).replace(/\\/g, "/")
         : latestBooking.id_photo_file_name || "",
       referralCode: latestBooking.referral_code || "",
-      applyReferralCoins: true
+      applyReferralCoins: sessionAction !== "booking_adjustment",
+      stripeSessionId: session.id,
+      stripePaymentIntentId: session.payment_intent ? String(session.payment_intent) : "",
+      stripeAmountPaid: Number(session.amount_total) || 0,
+      stripePaymentAction: sessionAction
     });
   }
 
@@ -1279,6 +1291,13 @@ function ensureValidDateRange(checkIn, checkOut) {
     throw new Error("Invalid check-in/check-out dates.");
   }
   return { start, end };
+}
+
+function assertBranchOpenForRegistration(branchId) {
+  const error = getBranchRegistrationClosedError(branchId);
+  if (error) {
+    throw new Error(error);
+  }
 }
 
 function getRoomLayoutForBed(branchId, bedNumber) {
@@ -1528,7 +1547,14 @@ async function syncPaidGuestBookingToMainApp(input) {
       pricingTotal: Number(input.pricing.total) || 0,
       notes: buildMainAppSyncNotes(input),
       referralCode: input.referralCode ? String(input.referralCode).trim() : undefined,
-      applyReferralCoins: input.applyReferralCoins !== false
+      applyReferralCoins: input.applyReferralCoins !== false,
+      stripeSessionId: input.stripeSessionId ? String(input.stripeSessionId).trim() : undefined,
+      stripePaymentIntentId: input.stripePaymentIntentId ? String(input.stripePaymentIntentId).trim() : undefined,
+      stripeAmountPaid:
+        input.stripeAmountPaid === undefined || input.stripeAmountPaid === null
+          ? undefined
+          : Number(input.stripeAmountPaid) || 0,
+      stripePaymentAction: input.stripePaymentAction || undefined
     })
   });
 
@@ -2015,6 +2041,11 @@ app.get("/api/config", async (_req, res) => {
     defaultBranch: DEFAULT_BRANCH,
     siteUrl: SITE_URL,
     stripeConfigured: Boolean(stripe),
+    d2RegistrationClosed: D2_NEW_REGISTRATION_CLOSED,
+    d2PermanentClosureDate: D2_PERMANENT_CLOSURE_DATE,
+    closedBranches: D2_NEW_REGISTRATION_CLOSED ? ["D2"] : [],
+    branchClosureNotice: getD2ClosureNotice("en"),
+    branchClosureNoticeVi: getD2ClosureNotice("vi"),
     pricing: {
       currency: pricing.currency,
       bedPricing: pricing.bedPricing,
@@ -2150,6 +2181,10 @@ app.get("/api/availability", async (req, res) => {
     return res.status(400).json({ error: "checkIn and checkOut are required." });
   }
 
+  if (isBranchClosedForNewRegistrations(branchId)) {
+    return res.status(400).json({ error: getBranchRegistrationClosedError(branchId) });
+  }
+
   try {
     const pricingConfig = await getShortTermPricingConfig();
     const availability = await buildAvailability(branchId, checkIn, checkOut, bioSex, "", pricingConfig);
@@ -2168,6 +2203,10 @@ app.post("/api/bookings", async (req, res) => {
 
   if (!submission.isVietnamese && submission.branchId === "D2") {
     return res.status(400).json({ error: "Foreign guests can book D7 only." });
+  }
+
+  if (isBranchClosedForNewRegistrations(submission.branchId)) {
+    return res.status(400).json({ error: getBranchRegistrationClosedError(submission.branchId) });
   }
 
   try {
@@ -2270,6 +2309,10 @@ app.post("/api/create-checkout-session", async (req, res) => {
 
   if (!submission.isVietnamese && submission.branchId === "D2") {
     return res.status(400).json({ error: "Foreign guests can book D7 only." });
+  }
+
+  if (isBranchClosedForNewRegistrations(submission.branchId)) {
+    return res.status(400).json({ error: getBranchRegistrationClosedError(submission.branchId) });
   }
 
   try {

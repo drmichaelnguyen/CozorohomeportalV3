@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
+import { getBedTier } from "../lib/branch-bed-layout";
+import { D2_NEW_REGISTRATION_CLOSED, getD2ClosureNotice, isBranchClosedForNewRegistrations } from "../lib/branch-closure";
 import { formatCozoroDateTime } from "../lib/date-format";
 
 type Sex = "male" | "female";
@@ -90,34 +92,6 @@ type FormState = {
   /** Friend's referral code (CZ… or MÃ HD). */
   referralCode: string;
 };
-
-// Minimal layout for bed tier derivation (top/middle/bottom)
-const BRANCH_BED_LAYOUTS: Record<BranchId, Array<{ startBed: number; endBed: number; bunkCount: number }>> = {
-  D2: [
-    { startBed: 1, endBed: 9, bunkCount: 3 },
-    { startBed: 10, endBed: 15, bunkCount: 2 },
-    { startBed: 16, endBed: 21, bunkCount: 2 }
-  ],
-  D7: [
-    { startBed: 1, endBed: 9, bunkCount: 3 },
-    { startBed: 10, endBed: 15, bunkCount: 2 },
-    { startBed: 16, endBed: 24, bunkCount: 3 },
-    { startBed: 25, endBed: 33, bunkCount: 3 },
-    { startBed: 34, endBed: 39, bunkCount: 2 },
-    { startBed: 40, endBed: 48, bunkCount: 3 },
-    { startBed: 49, endBed: 57, bunkCount: 3 },
-    { startBed: 58, endBed: 63, bunkCount: 2 }
-  ]
-};
-
-function getBedTier(branchId: BranchId | "", bedNumber: number): "top" | "middle" | "bottom" | null {
-  if (!branchId) return null;
-  const room = BRANCH_BED_LAYOUTS[branchId].find((r) => bedNumber >= r.startBed && bedNumber <= r.endBed);
-  if (!room) return null;
-  const tierIdx = (bedNumber - room.startBed) % room.bunkCount;
-  if (room.bunkCount === 3) return (["top", "middle", "bottom"] as const)[tierIdx] ?? null;
-  return (["top", "bottom"] as const)[tierIdx] ?? null;
-}
 
 const branchOptions: Array<{ id: BranchId; label: string; address: string }> = [
   { id: "D2", label: "D2", address: "491 Hau Giang, Ward 11, District 6" },
@@ -817,7 +791,7 @@ export function RegisterFormClient() {
     [form.contractStartDate, contractMonths]
   );
   const selectedBedTier = useMemo(
-    () => form.bedNumber ? getBedTier(form.branchId, Number(form.bedNumber)) ?? undefined : undefined,
+    () => (form.bedNumber && form.branchId ? getBedTier(form.branchId, Number(form.bedNumber)) : null) ?? undefined,
     [form.branchId, form.bedNumber]
   );
   // Discounts where auto-rules pass — these are shown as claimable if they have attestation rules
@@ -1215,6 +1189,7 @@ export function RegisterFormClient() {
                 <select value={form.branchId} onChange={(event) => updateForm("branchId", event.target.value as BranchId | "")} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-teal-500 focus:bg-white" required>
                   <option value="">{t.branchPlaceholder}</option>
                   {branchOptions
+                    .filter((branch) => !isBranchClosedForNewRegistrations(branch.id))
                     .filter((branch) => !(form.sex === "male" && branch.id === "D2"))
                     .map((branch) => (
                       <option key={branch.id} value={branch.id}>{branch.label} - {branch.address}</option>
@@ -1240,7 +1215,7 @@ export function RegisterFormClient() {
                       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                         {room.beds.map((bed) => {
                           const isSelected = form.bedNumber === String(bed.bedNumber);
-                          const tier = getBedTier(form.branchId, bed.bedNumber);
+                          const tier = form.branchId ? getBedTier(form.branchId, bed.bedNumber) : null;
                           const tierLabel = tier === "top" ? t.topBunk : tier === "middle" ? t.middleBunk : tier === "bottom" ? t.bottomBunk : null;
                           const tierColor = tier === "top" ? "bg-sky-100 text-sky-700" : tier === "middle" ? "bg-violet-100 text-violet-700" : "bg-slate-100 text-slate-600";
                           return (

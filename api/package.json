@@ -1,6 +1,6 @@
 {
   "name": "cozorohome-api",
-  "version": "3.8.48",
+  "version": "3.8.53",
   "private": true,
   "type": "module",
   "scripts": {
@@ -24,6 +24,7 @@
     "ffmpeg-static": "^5.2.0",
     "googleapis": "^144.0.0",
     "sharp": "^0.34.1",
+    "stripe": "^21.0.1",
     "web-push": "^3.6.7",
     "zod": "latest"
   },

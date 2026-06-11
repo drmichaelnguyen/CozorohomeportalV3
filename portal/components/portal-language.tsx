@@ -1988,6 +1988,25 @@ const translations: Record<string, { en: string; vi: string }> = {
   hostelPortalDesc: { en: "Manage hostel guests (hostel.cozorohome.com, Booking.com, Airbnb, direct), pricing, and discount rules.", vi: "Quản lý khách hostel (từ hostel.cozorohome.com, Booking.com, Airbnb, trực tiếp), giá cả và quy tắc giảm giá." },
   loadingGeneral: { en: "Loading…", vi: "Đang tải…" },
   noPendingBookings: { en: "No pending bookings waiting to be imported.", vi: "Không có đặt phòng chờ nhập." },
+  archiveLabel: { en: "Archive", vi: "Lưu trữ" },
+  archivePendingBookingConfirm: {
+    en: "Archive this booking? It will be hidden from the pending list without cancelling the guest booking.",
+    vi: "Lưu trữ đặt phòng này? Đặt phòng sẽ ẩn khỏi danh sách chờ mà không hủy booking của khách."
+  },
+  archivePendingBookingDone: { en: "Booking archived.", vi: "Đã lưu trữ đặt phòng." },
+  rejectPendingBookingConfirm: {
+    en: "Reject this booking? The booking will be cancelled.",
+    vi: "Từ chối đặt phòng này? Booking sẽ bị hủy."
+  },
+  rejectPendingBookingPaidConfirm: {
+    en: "Reject this booking? It will be cancelled and any remaining Stripe balance will be refunded.",
+    vi: "Từ chối đặt phòng này? Booking sẽ bị hủy và số tiền Stripe còn lại sẽ được hoàn."
+  },
+  rejectPendingBookingDone: { en: "Booking rejected.", vi: "Đã từ chối đặt phòng." },
+  rejectPendingBookingRefunded: {
+    en: "Booking rejected. Stripe refund started: {amount} ({status}).",
+    vi: "Đã từ chối đặt phòng. Hoàn Stripe đã bắt đầu: {amount} ({status})."
+  },
   bookingStatusActive: { en: "Active", vi: "Đang ở" },
   bookingStatusCheckedOut: { en: "Checked out", vi: "Đã trả phòng" },
   noGuestsCheckedIn: { en: "No guests currently checked in.", vi: "Hiện không có khách lưu trú." },
