@@ -46,8 +46,8 @@ const BRANCH_LAYOUTS = {
     { roomCode: "3", floorLabel: "D2", startBed: 16, endBed: 21 }
   ],
   D7: [
-    { roomCode: "1.1", floorLabel: "Floor 1", startBed: 1, endBed: 6 },
-    { roomCode: "1.2", floorLabel: "Floor 1", startBed: 7, endBed: 15 },
+    { roomCode: "1.1", floorLabel: "Floor 1", startBed: 1, endBed: 9 },
+    { roomCode: "1.2", floorLabel: "Floor 1", startBed: 10, endBed: 15 },
     { roomCode: "1.3", floorLabel: "Floor 1", startBed: 16, endBed: 24 },
     { roomCode: "2.1", floorLabel: "Floor 2", startBed: 25, endBed: 33 },
     { roomCode: "2.2", floorLabel: "Floor 2", startBed: 34, endBed: 39 },

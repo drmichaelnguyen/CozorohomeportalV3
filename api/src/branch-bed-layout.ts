@@ -18,8 +18,8 @@ export const BRANCH_LAYOUTS: Record<"D2" | "D7", BranchLayoutRoom[]> = {
     { room: "3", floor: "D2", startBed: 16, endBed: 21, bunkCount: 2 }
   ],
   D7: [
-    { room: "1.1", floor: "Floor 1", startBed: 1, endBed: 6, bunkCount: 2 },
-    { room: "1.2", floor: "Floor 1", startBed: 7, endBed: 15, bunkCount: 3 },
+    { room: "1.1", floor: "Floor 1", startBed: 1, endBed: 9, bunkCount: 3 },
+    { room: "1.2", floor: "Floor 1", startBed: 10, endBed: 15, bunkCount: 2 },
     { room: "1.3", floor: "Floor 1", startBed: 16, endBed: 24, bunkCount: 3 },
     { room: "2.1", floor: "Floor 2", startBed: 25, endBed: 33, bunkCount: 3 },
     { room: "2.2", floor: "Floor 2", startBed: 34, endBed: 39, bunkCount: 2 },

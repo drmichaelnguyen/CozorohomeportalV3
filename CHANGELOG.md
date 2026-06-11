@@ -1,5 +1,8 @@
 # Changelog
 
+## [3.8.54] - 2026-06-11
+- **D7 bed layout fix**: Corrected Floor 1 room mapping so **Room 1.1** is beds **1–9** (3 bunk columns) and **Room 1.2** is beds **10–15** (2 bunk columns). Updates `BRANCH_LAYOUTS` in portal/API, manager bed diagram, registration/pricing diagrams, guest-booking standalone, and `docs/branch-room-bed-layout.md`.
+
 ## [3.8.53] - 2026-06-11
 - **Stripe hostel payments (manager)**: After a guest pays on the hostel booking site, the main API auto-creates a VND payment receipt in the Google Payments sheet (`Phí lưu trú ngắn hạn (Stripe)` or adjustment purpose for date-change top-ups). Receipt creation is idempotent per Stripe payment intent/session and tracked in `api/data/stripe-hostel-payment-receipts.json`.
 - **Stripe payments workspace**: Manager **Client list → Short term → Stripe payments** lists hostel Stripe charges with paid/refunded/receipt status, detail view (Stripe PI/session, refund history), **Create receipt** backfill for older payments, and **full/partial refund** from the portal (`GET/POST /manager/stripe/payments/*`).

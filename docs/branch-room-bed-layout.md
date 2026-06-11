@@ -13,8 +13,8 @@ This layout is the source of truth for branch, floor, room, and bed grouping acr
 ### Floor 1
 
 - Beds 1-24
-- Room 1.1: beds 1-6
-- Room 1.2: beds 7-15
+- Room 1.1: beds 1-9
+- Room 1.2: beds 10-15
 - Room 1.3: beds 16-24
 
 ### Floor 2
@@ -35,7 +35,7 @@ This layout is the source of truth for branch, floor, room, and bed grouping acr
 Rooms with 3 bunk beds (9 beds total):
 
 - D2 room 1
-- D7 room 1.2
+- D7 room 1.1
 - D7 room 1.3
 - D7 room 2.1
 - D7 room 2.3
@@ -45,7 +45,7 @@ Rooms with 2 bunk beds (6 beds total):
 
 - D2 room 2
 - D2 room 3
-- D7 room 1.1
+- D7 room 1.2
 - D7 room 2.2
 - D7 room 3.2
 

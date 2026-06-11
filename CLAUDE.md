@@ -264,6 +264,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.8.54 | D7 bed layout: Room 1.1 beds 1–9 (3 bunks), Room 1.2 beds 10–15 (2 bunks) — fixes manager bed diagram and `BRANCH_LAYOUTS` to match physical floor plan. |
 | 3.8.53 | Stripe hostel payments (auto VND receipts, manager list/detail/refund); pending hostel booking **Archive** and **Reject**; D2 new-registration closure shared across portal, API, and guest-booking standalone. |
 | 3.8.47 | Deposit refund email: bilingual notice now lists deposit, unpaid fines (per line), unpaid gate tickets (per ticket), other deductions when refund is below auto-suggested, and final refund amount. |
 | 3.8.45 | Prepaid rent marker: treat package as paid when contract end or sheet `Đã đóng phí tháng` applies, not only package expiry (fixes false “payment due” when expiry date is stale). Payment receipts: fix empty `Số giường` when writing from manager portal (header casing `Số giường` vs `số giường`). |
