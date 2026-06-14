@@ -5547,6 +5547,203 @@ export type ContractExtensionListPricing = {
   listMonthlyPriceVnd: number;
 };
 
+/** Negotiated contract terms for an extension (baseline vs proposed). */
+export type ContractExtensionTermsSnapshot = {
+  branchId?: string;
+  bedNumber?: number | null;
+  monthlyRentVnd?: number | null;
+  parkingFeeVnd?: number | null;
+  totalMonthlyVnd?: number | null;
+  depositVnd?: number | null;
+  paymentPlan?: string;
+  extraTerms?: string;
+};
+
+export type ContractExtensionNegotiation = {
+  residentAgreedAt?: string;
+  staffAgreedAt?: string;
+  staffAgreedBy?: string;
+  lastEditedBy?: "resident" | "staff";
+  lastEditedAt?: string;
+};
+
+const EXTENSION_RENT_COLUMNS = ["Số tiền chia sẻ mỗi tháng", "Phí ở đóng mỗi tháng"] as const;
+const EXTENSION_EXTRA_TERMS_COLUMNS = [
+  "Khoản ưu đãi và chi phí tăng thêm nếu có",
+  "Khoản ưu đãi và chi phí tăng thêm"
+] as const;
+
+function parseMoneyCellValue(raw: unknown): number | null {
+  const text = String(raw ?? "").replace(/[^0-9-]/g, "");
+  if (!text) return null;
+  const n = Number.parseInt(text, 10);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function pickFirstFilledRowValue(row: Record<string, string>, keys: readonly string[]): string {
+  for (const key of keys) {
+    const text = String(row[key] ?? "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+export function extractContractExtensionTermsFromRow(row: Record<string, string>): ContractExtensionTermsSnapshot {
+  const bedParsed = Number.parseInt(String(row[CLIENT_BED_COLUMN] ?? "").replace(/[^0-9]/g, ""), 10);
+  let monthlyRentVnd: number | null = null;
+  for (const key of EXTENSION_RENT_COLUMNS) {
+    const parsed = parseMoneyCellValue(row[key]);
+    if (parsed != null) {
+      monthlyRentVnd = parsed;
+      break;
+    }
+  }
+  return {
+    branchId: normalizeClientBranch(getClientBranchValue(row)),
+    bedNumber: Number.isFinite(bedParsed) && bedParsed > 0 ? bedParsed : null,
+    monthlyRentVnd,
+    parkingFeeVnd: parseMoneyCellValue(row["Phí gởi xe"]),
+    totalMonthlyVnd: parseMoneyCellValue(row["Tổng tiền thanh toán tháng"]),
+    depositVnd: parseMoneyCellValue(row["Số tiền cọc"]),
+    paymentPlan: String(row["Bạn muốn thanh toán chi phí như thế nào?"] ?? "").trim() || undefined,
+    extraTerms: pickFirstFilledRowValue(row, EXTENSION_EXTRA_TERMS_COLUMNS) || undefined
+  };
+}
+
+export function mergeExtensionTermsSnapshot(
+  baseline: ContractExtensionTermsSnapshot,
+  patch?: Partial<ContractExtensionTermsSnapshot> | null
+): ContractExtensionTermsSnapshot {
+  if (!patch) return { ...baseline };
+  const merged: ContractExtensionTermsSnapshot = { ...baseline };
+  if (patch.branchId != null && String(patch.branchId).trim()) {
+    merged.branchId = normalizeClientBranch(String(patch.branchId));
+  }
+  if (patch.bedNumber != null) {
+    const bed = Math.trunc(Number(patch.bedNumber));
+    merged.bedNumber = Number.isFinite(bed) && bed > 0 ? bed : merged.bedNumber;
+  }
+  if (patch.monthlyRentVnd != null) {
+    const rent = Math.trunc(Number(patch.monthlyRentVnd));
+    merged.monthlyRentVnd = Number.isFinite(rent) && rent >= 0 ? rent : merged.monthlyRentVnd;
+  }
+  if (patch.parkingFeeVnd != null) {
+    const parking = Math.trunc(Number(patch.parkingFeeVnd));
+    merged.parkingFeeVnd = Number.isFinite(parking) && parking >= 0 ? parking : merged.parkingFeeVnd;
+  }
+  if (patch.totalMonthlyVnd != null) {
+    const total = Math.trunc(Number(patch.totalMonthlyVnd));
+    merged.totalMonthlyVnd = Number.isFinite(total) && total >= 0 ? total : merged.totalMonthlyVnd;
+  }
+  if (patch.depositVnd != null) {
+    const deposit = Math.trunc(Number(patch.depositVnd));
+    merged.depositVnd = Number.isFinite(deposit) && deposit >= 0 ? deposit : merged.depositVnd;
+  }
+  if (patch.paymentPlan != null) {
+    merged.paymentPlan = String(patch.paymentPlan).trim() || undefined;
+  }
+  if (patch.extraTerms != null) {
+    merged.extraTerms = String(patch.extraTerms).trim() || undefined;
+  }
+  const rent = merged.monthlyRentVnd ?? 0;
+  const parking = merged.parkingFeeVnd ?? 0;
+  if (merged.totalMonthlyVnd == null && (merged.monthlyRentVnd != null || merged.parkingFeeVnd != null)) {
+    merged.totalMonthlyVnd = rent + parking;
+  }
+  return merged;
+}
+
+export function extensionTermsFieldKeys(): Array<keyof ContractExtensionTermsSnapshot> {
+  return [
+    "branchId",
+    "bedNumber",
+    "monthlyRentVnd",
+    "parkingFeeVnd",
+    "totalMonthlyVnd",
+    "depositVnd",
+    "paymentPlan",
+    "extraTerms"
+  ];
+}
+
+export function listChangedExtensionTermFields(
+  baseline: ContractExtensionTermsSnapshot,
+  proposed: ContractExtensionTermsSnapshot
+): Array<keyof ContractExtensionTermsSnapshot> {
+  const changed: Array<keyof ContractExtensionTermsSnapshot> = [];
+  for (const key of extensionTermsFieldKeys()) {
+    const left = baseline[key];
+    const right = proposed[key];
+    const leftText = left == null ? "" : String(left).trim();
+    const rightText = right == null ? "" : String(right).trim();
+    if (leftText !== rightText) changed.push(key);
+  }
+  return changed;
+}
+
+function setRowAndPayloadValue(
+  headers: string[],
+  targetRowData: string[],
+  payload: Record<string, unknown>,
+  columnName: string,
+  value: string
+) {
+  const idx = headers.indexOf(normalizeHeader(columnName));
+  if (idx === -1) return;
+  targetRowData[idx] = value;
+  const norm = columnName.toString().toLowerCase().trim().replace(/ /g, "");
+  payload[norm] = value;
+}
+
+function applyExtensionTermsToRowData(
+  headers: string[],
+  targetRowData: string[],
+  payload: Record<string, unknown>,
+  terms: ContractExtensionTermsSnapshot
+) {
+  if (terms.branchId) {
+    setRowAndPayloadValue(headers, targetRowData, payload, CLIENT_BRANCH_COLUMN, terms.branchId.replace("D", ""));
+  }
+  if (terms.bedNumber != null && terms.bedNumber > 0) {
+    setRowAndPayloadValue(headers, targetRowData, payload, CLIENT_BED_COLUMN, String(terms.bedNumber));
+  }
+  if (terms.monthlyRentVnd != null) {
+    for (const col of EXTENSION_RENT_COLUMNS) {
+      setRowAndPayloadValue(headers, targetRowData, payload, col, String(terms.monthlyRentVnd));
+    }
+  }
+  if (terms.parkingFeeVnd != null) {
+    setRowAndPayloadValue(headers, targetRowData, payload, "Phí gởi xe", String(terms.parkingFeeVnd));
+  }
+  if (terms.totalMonthlyVnd != null) {
+    setRowAndPayloadValue(headers, targetRowData, payload, "Tổng tiền thanh toán tháng", String(terms.totalMonthlyVnd));
+  } else if (terms.monthlyRentVnd != null || terms.parkingFeeVnd != null) {
+    const total = (terms.monthlyRentVnd ?? 0) + (terms.parkingFeeVnd ?? 0);
+    setRowAndPayloadValue(headers, targetRowData, payload, "Tổng tiền thanh toán tháng", String(total));
+  }
+  if (terms.depositVnd != null) {
+    setRowAndPayloadValue(headers, targetRowData, payload, "Số tiền cọc", String(terms.depositVnd));
+  }
+  if (terms.paymentPlan != null) {
+    setRowAndPayloadValue(
+      headers,
+      targetRowData,
+      payload,
+      "Bạn muốn thanh toán chi phí như thế nào?",
+      terms.paymentPlan
+    );
+  }
+  if (terms.extraTerms != null) {
+    setRowAndPayloadValue(
+      headers,
+      targetRowData,
+      payload,
+      "Khoản ưu đãi và chi phí tăng thêm nếu có",
+      terms.extraTerms
+    );
+  }
+}
+
 const CONTRACT_EXTENSION_MAX_EXTRA_MONTHS = 36;
 
 function parseDdMmYyyySheet(value: string): Date | null {
@@ -5656,7 +5853,8 @@ export async function extendClientContract(
     clientSignatureTimestamp?: string;
     ownerApprovedBy?: string;
     ownerApprovedAt?: string;
-  } | null
+  } | null,
+  fieldOverrides?: ContractExtensionTermsSnapshot | null
 ) {
   const normalizedEmail = email.trim().toLowerCase();
   
@@ -5786,12 +5984,20 @@ export async function extendClientContract(
 
   const BRIDGE_URL = "https://script.google.com/macros/s/AKfycbyykY6OqeAaILbv4yiG8y5ZBMV5Z-cwP8Pn2cYAtBd_uvojZoYS4y_uk76UknpX8Bk/exec";
 
+  const effectiveTerms = fieldOverrides ? mergeExtensionTermsSnapshot({}, fieldOverrides) : null;
+
   // Generate a unique MÃ HD for the new extension row
   const now = new Date();
-  const branchRaw = targetRowData[headers.indexOf(normalizeHeader(CLIENT_BRANCH_COLUMN))] ?? "";
-  const bedRaw = targetRowData[headers.indexOf(normalizeHeader(CLIENT_BED_COLUMN))] ?? "";
+  const branchRaw =
+    effectiveTerms?.branchId ??
+    targetRowData[headers.indexOf(normalizeHeader(CLIENT_BRANCH_COLUMN))] ??
+    "";
+  const bedRaw =
+    effectiveTerms?.bedNumber != null
+      ? String(effectiveTerms.bedNumber)
+      : (targetRowData[headers.indexOf(normalizeHeader(CLIENT_BED_COLUMN))] ?? "");
   const branchId = normalizeClientBranch(branchRaw);
-  const bedNumber = parseInt(bedRaw.replace(/[^0-9]/g, ""), 10) || 0;
+  const bedNumber = parseInt(String(bedRaw).replace(/[^0-9]/g, ""), 10) || 0;
   const newContractCode = createRegistrationContractCode(branchId, bedNumber, now);
   const contractCodeColIndex = headers.indexOf(normalizeHeader(CONTRACT_CODE_COLUMN));
   if (contractCodeColIndex !== -1) {
@@ -5830,8 +6036,11 @@ export async function extendClientContract(
   payload["contractapprovedby"] = approval?.ownerApprovedBy?.trim() ?? "";
   payload["contractapprovedat"] = approval?.ownerApprovedAt?.trim() ?? "";
 
-  // Reset recurring rent to current list price so first-contract-only promos do not carry into the new row.
-  if (listPricing?.listMonthlyPriceVnd != null && listPricing.listMonthlyPriceVnd > 0) {
+  const hasExplicitMonthlyRent =
+    fieldOverrides?.monthlyRentVnd != null && Number.isFinite(fieldOverrides.monthlyRentVnd);
+
+  // Reset recurring rent to current list price unless negotiated terms specify monthly rent.
+  if (!hasExplicitMonthlyRent && listPricing?.listMonthlyPriceVnd != null && listPricing.listMonthlyPriceVnd > 0) {
     const listMonthly = Math.trunc(listPricing.listMonthlyPriceVnd);
     const shareCol = normalizeHeader("Số tiền chia sẻ mỗi tháng");
     const feeCol = normalizeHeader("Phí ở đóng mỗi tháng");
@@ -5855,6 +6064,10 @@ export async function extendClientContract(
         targetRowData[index] = String(newTotal);
       }
     });
+  }
+
+  if (fieldOverrides) {
+    applyExtensionTermsToRowData(headers, targetRowData, payload, mergeExtensionTermsSnapshot({}, fieldOverrides));
   }
 
   console.log(`[ContractExtension] Sending data to Bridge Script for ${email}...`);

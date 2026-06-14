@@ -5,7 +5,7 @@ import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 import Link from "next/link";
-import { ContractExtension } from "./contract-extension";
+import { ContractExtension, parseClientExtensionSnapshot } from "./contract-extension";
 import { InlineHelp } from "./inline-help";
 import { NextPaymentSummary } from "./next-payment-summary";
 import { daysUntilContractEnd } from "../lib/contract-utils";
@@ -502,6 +502,7 @@ export function HomeDashboardClient() {
         <ContractExtension
           email={sessionEmail}
           endDateStr={client["Ngày hết hạn hợp đồng"]}
+          clientSnapshot={parseClientExtensionSnapshot(client)}
           onExtended={() => void loadDashboard()}
         />
       )}

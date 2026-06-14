@@ -145,6 +145,9 @@ import {
   extendClientContract,
   transferClientContract,
   resolveContractExtensionSubmission,
+  extractContractExtensionTermsFromRow,
+  mergeExtensionTermsSnapshot,
+  listChangedExtensionTermFields,
   CLIENT_BED_COLUMN,
   CLIENT_BRANCH_COLUMN,
   CLIENT_CONTRACT_END_COLUMN,
@@ -172,6 +175,10 @@ import {
   updateProspectAssistantSettings,
   validateContractTransferTarget
 } from "./prospect-assistant.js";
+import type {
+  ContractExtensionNegotiation,
+  ContractExtensionTermsSnapshot
+} from "./google-sheets.js";
 import type { ReferralProgramSettings } from "./referral-program.js";
 import { getBranchRegistrationClosedError } from "./branch-closure.js";
 import {
@@ -359,6 +366,9 @@ type PendingContractApproval = {
     bedNumber?: number | null;
     residentName?: string;
     contractCode?: string;
+    baseline?: ContractExtensionTermsSnapshot;
+    proposed?: ContractExtensionTermsSnapshot;
+    negotiation?: ContractExtensionNegotiation;
   };
   transfer?: {
     email: string;
@@ -457,6 +467,132 @@ function hasPendingContractApprovalForEmail(
       entry.status === "pending" &&
       (entry.type === "extension" || entry.type === "transfer") &&
       pendingApprovalEmail(entry) === normalized
+  );
+}
+
+const extensionTermsPatchSchema = z
+  .object({
+    branchId: z.enum(["D2", "D7"]).optional(),
+    bedNumber: z.number().int().positive().optional(),
+    monthlyRentVnd: z.number().int().min(0).optional(),
+    parkingFeeVnd: z.number().int().min(0).optional(),
+    totalMonthlyVnd: z.number().int().min(0).optional(),
+    depositVnd: z.number().int().min(0).optional(),
+    paymentPlan: z.string().trim().optional(),
+    extraTerms: z.string().trim().optional()
+  })
+  .strict();
+
+function extensionNegotiationBothAgreed(negotiation?: ContractExtensionNegotiation): boolean {
+  return Boolean(negotiation?.residentAgreedAt?.trim() && negotiation?.staffAgreedAt?.trim());
+}
+
+function formatExtensionTermFieldLabel(key: keyof ContractExtensionTermsSnapshot): string {
+  switch (key) {
+    case "branchId":
+      return "Branch";
+    case "bedNumber":
+      return "Bed";
+    case "monthlyRentVnd":
+      return "Rent/mo";
+    case "parkingFeeVnd":
+      return "Parking";
+    case "totalMonthlyVnd":
+      return "Total/mo";
+    case "depositVnd":
+      return "Deposit";
+    case "paymentPlan":
+      return "Plan";
+    case "extraTerms":
+      return "Extras";
+    default:
+      return String(key);
+  }
+}
+
+function formatExtensionTermFieldValue(key: keyof ContractExtensionTermsSnapshot, value: unknown): string {
+  if (value == null) return "";
+  if (key === "monthlyRentVnd" || key === "parkingFeeVnd" || key === "totalMonthlyVnd" || key === "depositVnd") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n.toLocaleString("vi-VN") : String(value);
+  }
+  return String(value).trim();
+}
+
+function getExtensionBaselineAndProposed(item: PendingContractApproval): {
+  baseline: ContractExtensionTermsSnapshot;
+  proposed: ContractExtensionTermsSnapshot;
+} {
+  const extension = item.extension;
+  const baseline = extension?.baseline ?? {};
+  const proposed = extension?.proposed ?? baseline;
+  return { baseline, proposed };
+}
+
+function extensionReadyForApproval(item: PendingContractApproval): boolean {
+  if (item.type !== "extension") return true;
+  const negotiation = item.extension?.negotiation;
+  if (!negotiation) return true;
+  return extensionNegotiationBothAgreed(negotiation);
+}
+
+async function validateExtensionBedIfChanged(input: {
+  email: string;
+  baseline: ContractExtensionTermsSnapshot;
+  proposed: ContractExtensionTermsSnapshot;
+}): Promise<void> {
+  const branchId = normalizeClientBranch(String(input.proposed.branchId ?? input.baseline.branchId ?? "D2")) as "D2" | "D7";
+  const bedNumber = input.proposed.bedNumber ?? input.baseline.bedNumber;
+  if (bedNumber == null || bedNumber <= 0) return;
+
+  const baselineBranch = normalizeClientBranch(String(input.baseline.branchId ?? ""));
+  const baselineBed = input.baseline.bedNumber ?? null;
+  if (baselineBranch === branchId && baselineBed === bedNumber) return;
+
+  await validateContractTransferTarget({
+    email: input.email,
+    branchId,
+    bedNumber
+  });
+}
+
+async function executeClientContractTransfer(input: {
+  email: string;
+  newBranchId: "D2" | "D7";
+  newBedNumber: number;
+  ownerApprovedBy: string;
+  clientSignatureDataUrl?: string;
+  clientSignatureTimestamp?: string;
+}) {
+  const normalizedEmail = input.email.trim().toLowerCase();
+  const active = await getActiveClientByEmail(normalizedEmail);
+  if (!active) {
+    throw new Error("Could not find an active client record to transfer.");
+  }
+
+  await validateContractTransferTarget({
+    email: normalizedEmail,
+    branchId: input.newBranchId,
+    bedNumber: input.newBedNumber
+  });
+
+  let listPricing: { listMonthlyPriceVnd: number } | undefined;
+  const { monthlyPrice } = await resolveLongTermListPriceForBed(input.newBranchId, input.newBedNumber);
+  if (monthlyPrice > 0) {
+    listPricing = { listMonthlyPriceVnd: monthlyPrice };
+  }
+
+  const approvedAt = new Date().toISOString();
+  await transferClientContract(
+    normalizedEmail,
+    { newBranchId: input.newBranchId, newBedNumber: input.newBedNumber },
+    listPricing,
+    {
+      clientSignatureDataUrl: input.clientSignatureDataUrl,
+      clientSignatureTimestamp: input.clientSignatureTimestamp,
+      ownerApprovedBy: input.ownerApprovedBy.trim().toLowerCase(),
+      ownerApprovedAt: approvedAt
+    }
   );
 }
 
@@ -576,7 +712,14 @@ function publicApprovalSummary(item: PendingContractApproval) {
   };
 }
 
-type PublicContractApprovalSummary = ReturnType<typeof publicApprovalSummary>;
+type PublicContractApprovalSummary = ReturnType<typeof publicApprovalSummary> & {
+  negotiation?: ReturnType<typeof publicExtensionNegotiationSummary>;
+  extensionTerms?: {
+    baseline: ContractExtensionTermsSnapshot;
+    proposed: ContractExtensionTermsSnapshot;
+  };
+  details?: Array<{ label: string; value: string; baselineValue?: string; changed?: boolean }>;
+};
 
 function pickFirstFilledString(values: unknown[]): string {
   for (const value of values) {
@@ -590,36 +733,59 @@ function buildExtensionApprovalDetails(
   item: PendingContractApproval,
   summary: PublicContractApprovalSummary,
   row?: Record<string, string> | null
-): Array<{ label: string; value: string }> {
-  const rentMonthly = pickFirstFilledString([
-    row?.["Số tiền chia sẻ mỗi tháng"],
-    row?.["Phí ở đóng mỗi tháng"]
-  ]);
-  const parkingFee = pickFirstFilledString([row?.["Phí gởi xe"]]);
-  const totalMonthly = pickFirstFilledString([row?.["Tổng tiền thanh toán tháng"]]);
-  const deposit = pickFirstFilledString([row?.["Số tiền cọc"]]);
-  const paymentPlan = pickFirstFilledString([row?.["Bạn muốn thanh toán chi phí như thế nào?"]]);
-  const extraTerms = pickFirstFilledString([
-    row?.["Khoản ưu đãi và chi phí tăng thêm nếu có"],
-    row?.["Khoản ưu đãi và chi phí tăng thêm"]
-  ]);
+): Array<{ label: string; value: string; baselineValue?: string; changed?: boolean }> {
+  const { baseline, proposed } = getExtensionBaselineAndProposed(item);
+  const rowTerms = row ? extractContractExtensionTermsFromRow(row) : null;
+  const effectiveBaseline = mergeExtensionTermsSnapshot(rowTerms ?? {}, baseline);
+  const effectiveProposed = mergeExtensionTermsSnapshot(effectiveBaseline, proposed);
+  const changedKeys = new Set(listChangedExtensionTermFields(effectiveBaseline, effectiveProposed));
+
+  const detailForField = (key: keyof ContractExtensionTermsSnapshot) => {
+    const label = formatExtensionTermFieldLabel(key);
+    const value = formatExtensionTermFieldValue(key, effectiveProposed[key]);
+    const baselineValue = formatExtensionTermFieldValue(key, effectiveBaseline[key]);
+    return {
+      label,
+      value,
+      baselineValue: changedKeys.has(key) ? baselineValue : undefined,
+      changed: changedKeys.has(key)
+    };
+  };
 
   return [
     { label: "Resident", value: summary.fullName },
     { label: "Email", value: summary.email },
-    { label: "Branch", value: summary.branchId },
-    { label: "Bed", value: summary.bedNumber == null ? "" : String(summary.bedNumber) },
+    detailForField("branchId"),
+    detailForField("bedNumber"),
     { label: "Months", value: summary.contractMonths == null ? "" : String(summary.contractMonths) },
-    { label: "Rent/mo", value: rentMonthly },
-    { label: "Parking", value: parkingFee },
-    { label: "Total/mo", value: totalMonthly },
-    { label: "Deposit", value: deposit },
-    { label: "Plan", value: paymentPlan },
-    { label: "Extras", value: extraTerms },
+    detailForField("monthlyRentVnd"),
+    detailForField("parkingFeeVnd"),
+    detailForField("totalMonthlyVnd"),
+    detailForField("depositVnd"),
+    detailForField("paymentPlan"),
+    detailForField("extraTerms"),
     { label: "Code", value: summary.contractCode },
     { label: "Signed", value: String(item.clientSignatureTimestamp ?? "") },
     { label: "Submitted", value: String(item.submittedAt ?? "") }
-  ].filter((entry) => entry.value.trim().length > 0);
+  ].filter((entry) => entry.value.trim().length > 0 || ("changed" in entry && entry.changed));
+}
+
+function publicExtensionNegotiationSummary(item: PendingContractApproval) {
+  const negotiation = item.extension?.negotiation;
+  return {
+    residentAgreedAt: negotiation?.residentAgreedAt ?? "",
+    staffAgreedAt: negotiation?.staffAgreedAt ?? "",
+    staffAgreedBy: negotiation?.staffAgreedBy ?? "",
+    lastEditedBy: negotiation?.lastEditedBy ?? "",
+    lastEditedAt: negotiation?.lastEditedAt ?? "",
+    bothAgreed: extensionNegotiationBothAgreed(negotiation),
+    changedFields: listChangedExtensionTermFields(
+      ...(() => {
+        const { baseline, proposed } = getExtensionBaselineAndProposed(item);
+        return [baseline, proposed] as const;
+      })()
+    ).map((key) => formatExtensionTermFieldLabel(key))
+  };
 }
 
 async function enrichPublicApprovalSummary(item: PendingContractApproval): Promise<PublicContractApprovalSummary> {
@@ -637,9 +803,18 @@ async function enrichPublicApprovalSummary(item: PendingContractApproval): Promi
 
   const row = await getLatestClientRowForContractApprovalEnrichment(email);
   if (!row) {
+    const { baseline, proposed } = getExtensionBaselineAndProposed(item);
+    const effectiveProposed = mergeExtensionTermsSnapshot(baseline, proposed);
     return {
       ...base,
-      details: buildExtensionApprovalDetails(item, base, null)
+      branchId: effectiveProposed.branchId?.trim() ? effectiveProposed.branchId : base.branchId,
+      bedNumber: effectiveProposed.bedNumber ?? base.bedNumber,
+      details: buildExtensionApprovalDetails(item, base, null),
+      negotiation: publicExtensionNegotiationSummary(item),
+      extensionTerms: {
+        baseline,
+        proposed: effectiveProposed
+      }
     };
   }
 
@@ -677,11 +852,16 @@ async function enrichPublicApprovalSummary(item: PendingContractApproval): Promi
   const mergedBed =
     Number.isFinite(baseBedParsed) && !Number.isNaN(baseBedParsed) ? baseBedParsed : bedNumber;
 
+  const { baseline, proposed } = getExtensionBaselineAndProposed(item);
+  const rowTerms = extractContractExtensionTermsFromRow(row);
+  const effectiveBaseline = mergeExtensionTermsSnapshot(rowTerms, baseline);
+  const effectiveProposed = mergeExtensionTermsSnapshot(effectiveBaseline, proposed);
+
   const merged = {
     ...base,
     fullName: base.fullName.trim() ? base.fullName : residentName,
-    branchId: base.branchId.trim() ? base.branchId : branchId,
-    bedNumber: mergedBed,
+    branchId: effectiveProposed.branchId?.trim() ? effectiveProposed.branchId : base.branchId.trim() ? base.branchId : branchId,
+    bedNumber: effectiveProposed.bedNumber ?? mergedBed,
     contractMonths: base.contractMonths != null ? base.contractMonths : extensionMonths,
     contractStartDate: base.contractStartDate.trim() ? base.contractStartDate : newContractStartDate,
     contractEndDate: base.contractEndDate.trim() ? base.contractEndDate : newContractEndDate,
@@ -691,7 +871,12 @@ async function enrichPublicApprovalSummary(item: PendingContractApproval): Promi
 
   return {
     ...merged,
-    details: buildExtensionApprovalDetails(item, merged, row)
+    details: buildExtensionApprovalDetails(item, merged, row),
+    negotiation: publicExtensionNegotiationSummary(item),
+    extensionTerms: {
+      baseline: effectiveBaseline,
+      proposed: effectiveProposed
+    }
   };
 }
 const SENSITIVE_CLIENT_FIELD_PATTERNS = [
@@ -1726,7 +1911,8 @@ app.post("/clients/contracts/extend", async (request, response) => {
       extensionMonths: z.number().int().positive().max(36).optional(),
       newContractEndDate: z.string().trim().optional(),
       clientSignatureDataUrl: z.string().trim().optional(),
-      clientSignatureTimestamp: z.string().trim().optional()
+      clientSignatureTimestamp: z.string().trim().optional(),
+      proposedChanges: extensionTermsPatchSchema.optional()
     })
     .refine((d) => Boolean(d.newContractEndDate) || d.extensionMonths != null, {
       message: "Provide newContractEndDate or extensionMonths",
@@ -1756,6 +1942,22 @@ app.post("/clients/contracts/extend", async (request, response) => {
       });
     }
 
+    const baseline = extractContractExtensionTermsFromRow(active);
+    const proposed = mergeExtensionTermsSnapshot(baseline, parsed.data.proposedChanges ?? null);
+    try {
+      await validateExtensionBedIfChanged({
+        email: parsed.data.email,
+        baseline,
+        proposed
+      });
+    } catch (err) {
+      return response.status(400).json({
+        error: err instanceof Error ? err.message : "Invalid bed selection."
+      });
+    }
+
+    const submittedAt = new Date().toISOString();
+
     const item = await runWithWriteGuard({
       key: createWriteGuardKey("/clients/contracts/extend", { ...parsed.data, ...resolved }),
       duplicateMessage: "This contract extension request was just submitted. Please wait a few seconds.",
@@ -1777,7 +1979,7 @@ app.post("/clients/contracts/extend", async (request, response) => {
           id: randomUUID(),
           type: "extension",
           status: "pending",
-          submittedAt: new Date().toISOString(),
+          submittedAt,
           clientSignatureDataUrl: parsed.data.clientSignatureDataUrl,
           clientSignatureTimestamp: parsed.data.clientSignatureTimestamp,
           extension: {
@@ -1786,10 +1988,17 @@ app.post("/clients/contracts/extend", async (request, response) => {
             newContractEndDate: resolved.newContractEndDate,
             newContractStartDate: resolved.newContractStartDate,
             previousContractEndDate: oldEnd.trim(),
-            branchId,
-            bedNumber: Number.isFinite(bedParsed) ? bedParsed : null,
+            branchId: proposed.branchId ?? branchId,
+            bedNumber: proposed.bedNumber ?? (Number.isFinite(bedParsed) ? bedParsed : null),
             residentName: String(active[CLIENT_NAME_COLUMN] ?? "").trim(),
-            contractCode: String(active[CONTRACT_CODE_COLUMN] ?? "").trim()
+            contractCode: String(active[CONTRACT_CODE_COLUMN] ?? "").trim(),
+            baseline,
+            proposed,
+            negotiation: {
+              residentAgreedAt: submittedAt,
+              lastEditedBy: "resident",
+              lastEditedAt: submittedAt
+            }
           }
         };
         file.approvals.unshift(next);
@@ -1801,6 +2010,132 @@ app.post("/clients/contracts/extend", async (request, response) => {
   } catch (error) {
     return response.status((error as Error & { statusCode?: number }).statusCode ?? 500).json({
       error: error instanceof Error ? error.message : "Unable to extend contract."
+    });
+  }
+});
+
+app.get("/clients/contracts/extend/pending", async (request, response) => {
+  const email = String(request.query.email ?? "").trim().toLowerCase();
+  if (!email) {
+    return response.status(400).json({ error: "email is required" });
+  }
+
+  try {
+    const file = await readContractApprovals();
+    const item = file.approvals.find(
+      (entry) =>
+        entry.status === "pending" &&
+        entry.type === "extension" &&
+        pendingApprovalEmail(entry) === email
+    );
+    if (!item) {
+      return response.json({ pending: null });
+    }
+    const summary = await enrichPublicApprovalSummary(item);
+    return response.json({
+      pending: {
+        id: item.id,
+        submittedAt: item.submittedAt,
+        extensionMonths: item.extension?.extensionMonths ?? null,
+        contractStartDate: summary.contractStartDate,
+        contractEndDate: summary.contractEndDate,
+        previousContractEndDate: summary.previousContractEndDate,
+        details: summary.details,
+        negotiation: summary.negotiation,
+        extensionTerms: summary.extensionTerms
+      }
+    });
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to load pending extension."
+    });
+  }
+});
+
+app.post("/clients/contracts/extend/pending/:id/agree", async (request, response) => {
+  const parsed = z
+    .object({
+      email: z.string().email()
+    })
+    .safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid agreement payload" });
+  }
+
+  try {
+    const file = await readContractApprovals();
+    const item = file.approvals.find((entry) => entry.id === request.params.id);
+    if (!item || item.type !== "extension" || item.status !== "pending") {
+      return response.status(404).json({ error: "Pending extension not found." });
+    }
+    if (pendingApprovalEmail(item) !== parsed.data.email.trim().toLowerCase()) {
+      return response.status(403).json({ error: "This extension does not belong to your account." });
+    }
+    const now = new Date().toISOString();
+    item.extension!.negotiation = {
+      ...item.extension!.negotiation,
+      residentAgreedAt: now,
+      lastEditedBy: item.extension!.negotiation?.lastEditedBy,
+      lastEditedAt: item.extension!.negotiation?.lastEditedAt
+    };
+    await writeContractApprovals(file);
+    return response.json({ ok: true, bothAgreed: extensionNegotiationBothAgreed(item.extension!.negotiation) });
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to record agreement."
+    });
+  }
+});
+
+app.post("/clients/contracts/extend/pending/:id/update", async (request, response) => {
+  const parsed = z
+    .object({
+      email: z.string().email(),
+      proposedChanges: extensionTermsPatchSchema
+    })
+    .safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid extension update payload" });
+  }
+
+  try {
+    const file = await readContractApprovals();
+    const item = file.approvals.find((entry) => entry.id === request.params.id);
+    if (!item || item.type !== "extension" || item.status !== "pending") {
+      return response.status(404).json({ error: "Pending extension not found." });
+    }
+    if (pendingApprovalEmail(item) !== parsed.data.email.trim().toLowerCase()) {
+      return response.status(403).json({ error: "This extension does not belong to your account." });
+    }
+
+    const { baseline, proposed: currentProposed } = getExtensionBaselineAndProposed(item);
+    const proposed = mergeExtensionTermsSnapshot(
+      mergeExtensionTermsSnapshot(baseline, currentProposed),
+      parsed.data.proposedChanges
+    );
+    await validateExtensionBedIfChanged({
+      email: parsed.data.email,
+      baseline,
+      proposed
+    });
+
+    const now = new Date().toISOString();
+    item.extension!.proposed = proposed;
+    item.extension!.branchId = proposed.branchId ?? item.extension!.branchId;
+    item.extension!.bedNumber = proposed.bedNumber ?? item.extension!.bedNumber;
+    item.extension!.negotiation = {
+      residentAgreedAt: now,
+      staffAgreedAt: undefined,
+      staffAgreedBy: undefined,
+      lastEditedBy: "resident",
+      lastEditedAt: now
+    };
+    await writeContractApprovals(file);
+    const summary = await enrichPublicApprovalSummary(item);
+    return response.json({ ok: true, pending: summary });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to update extension terms."
     });
   }
 });
@@ -8004,6 +8339,76 @@ app.post("/api/public/register", async (request, response) => {
   }
 });
 
+app.get("/manager/clients/transfer/availability", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "").trim();
+  const email = String(request.query.email ?? "").trim().toLowerCase();
+  const branchIdRaw = String(request.query.branchId ?? "").trim().toUpperCase();
+  const branchId = branchIdRaw.includes("7") ? "D7" : branchIdRaw.includes("2") ? "D2" : "";
+
+  if (!email || (branchId !== "D2" && branchId !== "D7")) {
+    return response.status(400).json({ error: "client email and branchId (D2 or D7) are required." });
+  }
+
+  try {
+    await requirePortalRole(actorEmail, ["owner", "app_admin"], "Only owners can transfer clients.");
+    const availability = await getResidentTransferBedOptions({ email, branchId });
+    return response.json(availability);
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
+      error: error instanceof Error ? error.message : "Unable to load transfer bed availability."
+    });
+  }
+});
+
+app.post("/manager/clients/transfer", async (request, response) => {
+  const parsed = z
+    .object({
+      actorEmail: z.string().email(),
+      clientEmail: z.string().email(),
+      newBranchId: z.enum(["D2", "D7"]),
+      newBedNumber: z.number().int().positive()
+    })
+    .safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid manager transfer payload." });
+  }
+
+  try {
+    await requirePortalRole(parsed.data.actorEmail, ["owner", "app_admin"], "Only owners can transfer clients.");
+    const clientEmail = parsed.data.clientEmail.trim().toLowerCase();
+
+    const file = await readContractApprovals();
+    if (hasPendingContractApprovalForEmail(file.approvals, clientEmail)) {
+      return response.status(400).json({
+        error:
+          "This resident already has a pending contract extension or transfer. Resolve it in Pending contract approvals first."
+      });
+    }
+
+    await runWithWriteGuard({
+      key: createWriteGuardKey("/manager/clients/transfer", parsed.data),
+      duplicateMessage: "This transfer was just submitted. Please wait a few seconds.",
+      cooldownMs: 15000,
+      action: async () => {
+        await executeClientContractTransfer({
+          email: clientEmail,
+          newBranchId: parsed.data.newBranchId,
+          newBedNumber: parsed.data.newBedNumber,
+          ownerApprovedBy: parsed.data.actorEmail
+        });
+      }
+    });
+
+    await syncClientsFromSheet();
+    return response.json({ ok: true });
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 500).json({
+      error: error instanceof Error ? error.message : "Unable to transfer client."
+    });
+  }
+});
+
 app.get("/manager/contract-approvals", async (request, response) => {
   const actorEmail = String(request.query.actorEmail ?? "").trim();
   try {
@@ -8016,6 +8421,100 @@ app.get("/manager/contract-approvals", async (request, response) => {
     });
   } catch (error) {
     return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to load contract approvals" });
+  }
+});
+
+app.post("/manager/contract-approvals/:id/update-extension", async (request, response) => {
+  const parsed = z
+    .object({
+      actorEmail: z.string().email(),
+      proposedChanges: extensionTermsPatchSchema
+    })
+    .safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid extension update payload" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["owner", "app_admin", "manager"],
+      "Only staff can edit extension terms."
+    );
+    const file = await readContractApprovals();
+    const item = file.approvals.find((entry) => entry.id === request.params.id);
+    if (!item || item.type !== "extension" || item.status !== "pending") {
+      return response.status(404).json({ error: "Pending extension not found." });
+    }
+
+    const email = pendingApprovalEmail(item);
+    const { baseline, proposed: currentProposed } = getExtensionBaselineAndProposed(item);
+    const proposed = mergeExtensionTermsSnapshot(
+      mergeExtensionTermsSnapshot(baseline, currentProposed),
+      parsed.data.proposedChanges
+    );
+    await validateExtensionBedIfChanged({ email, baseline, proposed });
+
+    const now = new Date().toISOString();
+    item.extension!.proposed = proposed;
+    item.extension!.branchId = proposed.branchId ?? item.extension!.branchId;
+    item.extension!.bedNumber = proposed.bedNumber ?? item.extension!.bedNumber;
+    item.extension!.negotiation = {
+      residentAgreedAt: undefined,
+      staffAgreedAt: undefined,
+      staffAgreedBy: undefined,
+      lastEditedBy: "staff",
+      lastEditedAt: now
+    };
+    await writeContractApprovals(file);
+    const summary = await enrichPublicApprovalSummary(item);
+    return response.json({ ok: true, approval: summary });
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
+      error: error instanceof Error ? error.message : "Unable to update extension terms."
+    });
+  }
+});
+
+app.post("/manager/contract-approvals/:id/agree-staff", async (request, response) => {
+  const parsed = z
+    .object({
+      actorEmail: z.string().email()
+    })
+    .safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid staff agreement payload" });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["owner", "app_admin", "manager"],
+      "Only staff can agree to extension terms."
+    );
+    const file = await readContractApprovals();
+    const item = file.approvals.find((entry) => entry.id === request.params.id);
+    if (!item || item.type !== "extension" || item.status !== "pending") {
+      return response.status(404).json({ error: "Pending extension not found." });
+    }
+
+    const now = new Date().toISOString();
+    item.extension!.negotiation = {
+      ...item.extension!.negotiation,
+      staffAgreedAt: now,
+      staffAgreedBy: parsed.data.actorEmail.trim().toLowerCase(),
+      lastEditedBy: item.extension!.negotiation?.lastEditedBy,
+      lastEditedAt: item.extension!.negotiation?.lastEditedAt
+    };
+    await writeContractApprovals(file);
+    return response.json({
+      ok: true,
+      bothAgreed: extensionNegotiationBothAgreed(item.extension!.negotiation)
+    });
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 500).json({
+      error: error instanceof Error ? error.message : "Unable to record staff agreement."
+    });
   }
 });
 
@@ -8093,44 +8592,36 @@ app.post("/manager/contract-approvals/:id/approve", async (request, response) =>
     } else if (item.type === "transfer") {
       const transfer = item.transfer;
       if (!transfer) throw new Error("Pending transfer payload is missing.");
-      const active = await getActiveClientByEmail(transfer.email);
-      if (!active) throw new Error("Could not find an active client record to transfer.");
-
-      await validateContractTransferTarget({
+      await executeClientContractTransfer({
         email: transfer.email,
-        branchId: transfer.newBranchId as "D2" | "D7",
-        bedNumber: transfer.newBedNumber
+        newBranchId: transfer.newBranchId as "D2" | "D7",
+        newBedNumber: transfer.newBedNumber,
+        ownerApprovedBy: parsed.data.actorEmail,
+        clientSignatureDataUrl: item.clientSignatureDataUrl,
+        clientSignatureTimestamp: item.clientSignatureTimestamp
       });
-
-      let listPricing: { listMonthlyPriceVnd: number } | undefined;
-      const { monthlyPrice } = await resolveLongTermListPriceForBed(
-        transfer.newBranchId as "D2" | "D7",
-        transfer.newBedNumber
-      );
-      if (monthlyPrice > 0) {
-        listPricing = { listMonthlyPriceVnd: monthlyPrice };
-      }
-
-      await transferClientContract(
-        transfer.email,
-        { newBranchId: transfer.newBranchId as "D2" | "D7", newBedNumber: transfer.newBedNumber },
-        listPricing,
-        {
-          clientSignatureDataUrl: item.clientSignatureDataUrl,
-          clientSignatureTimestamp: item.clientSignatureTimestamp,
-          ownerApprovedBy: parsed.data.actorEmail.trim().toLowerCase(),
-          ownerApprovedAt: approvedAt
-        }
-      );
     } else {
       const extension = item.extension;
       if (!extension) throw new Error("Pending extension payload is missing.");
+      if (!extensionReadyForApproval(item)) {
+        return response.status(400).json({
+          error:
+            "Both the resident and staff must agree to the extension terms before the contract can be sent. Use Agree on both sides after any edits."
+        });
+      }
       const active = await getActiveClientByEmail(extension.email);
       if (!active) throw new Error("Could not find an active client record to extend.");
-      const branchId = normalizeClientBranch(String(active[CLIENT_BRANCH_COLUMN] ?? ""));
-      const bedNumber = Number.parseInt(String(active[CLIENT_BED_COLUMN] ?? "").replace(/[^0-9]/g, ""), 10);
+      const { baseline, proposed } = getExtensionBaselineAndProposed(item);
+      const effectiveProposed = mergeExtensionTermsSnapshot(baseline, proposed);
+      const branchId = normalizeClientBranch(
+        String(effectiveProposed.branchId ?? active[CLIENT_BRANCH_COLUMN] ?? "")
+      ) as "D2" | "D7";
+      const bedNumber = Number.parseInt(
+        String(effectiveProposed.bedNumber ?? active[CLIENT_BED_COLUMN] ?? "").replace(/[^0-9]/g, ""),
+        10
+      );
       let listPricing: { listMonthlyPriceVnd: number } | undefined;
-      if (bedNumber > 0) {
+      if (bedNumber > 0 && effectiveProposed.monthlyRentVnd == null) {
         const { monthlyPrice } = await resolveLongTermListPriceForBed(branchId, bedNumber);
         if (monthlyPrice > 0) {
           listPricing = { listMonthlyPriceVnd: monthlyPrice };
@@ -8142,12 +8633,18 @@ app.post("/manager/contract-approvals/:id/approve", async (request, response) =>
           : extension.newContractEndDate?.trim().length
             ? { newContractEndDate: extension.newContractEndDate.trim() }
             : { extensionMonths: extension.extensionMonths };
-      await extendClientContract(extension.email, term, listPricing, {
-        clientSignatureDataUrl: item.clientSignatureDataUrl,
-        clientSignatureTimestamp: item.clientSignatureTimestamp,
-        ownerApprovedBy: parsed.data.actorEmail.trim().toLowerCase(),
-        ownerApprovedAt: approvedAt
-      });
+      await extendClientContract(
+        extension.email,
+        term,
+        listPricing,
+        {
+          clientSignatureDataUrl: item.clientSignatureDataUrl,
+          clientSignatureTimestamp: item.clientSignatureTimestamp,
+          ownerApprovedBy: parsed.data.actorEmail.trim().toLowerCase(),
+          ownerApprovedAt: approvedAt
+        },
+        effectiveProposed
+      );
     }
 
     item.status = "approved";

@@ -100,7 +100,34 @@ type ContractApprovalSummary = {
   contractEndDate: string;
   previousContractEndDate?: string;
   contractCode?: string;
-  details?: Array<{ label: string; value: string }>;
+  details?: Array<{ label: string; value: string; baselineValue?: string; changed?: boolean }>;
+  negotiation?: {
+    residentAgreedAt?: string;
+    staffAgreedAt?: string;
+    staffAgreedBy?: string;
+    bothAgreed?: boolean;
+    changedFields?: string[];
+  };
+  extensionTerms?: {
+    baseline: {
+      branchId?: string;
+      bedNumber?: number | null;
+      monthlyRentVnd?: number | null;
+      parkingFeeVnd?: number | null;
+      depositVnd?: number | null;
+      paymentPlan?: string;
+      extraTerms?: string;
+    };
+    proposed: {
+      branchId?: string;
+      bedNumber?: number | null;
+      monthlyRentVnd?: number | null;
+      parkingFeeVnd?: number | null;
+      depositVnd?: number | null;
+      paymentPlan?: string;
+      extraTerms?: string;
+    };
+  };
 };
 
 type SmartDevice = {
@@ -2685,13 +2712,14 @@ function chatRoleLabel(role: ClientChatMessage["senderRole"]) {
 }
 
 const DEFAULT_MANAGER_CLIENT_PANEL_SECTIONS: Record<
-  "overview" | "paymentPlan" | "duplicates" | "stayStatus" | "contractTermination" | "billing",
+  "overview" | "paymentPlan" | "duplicates" | "stayStatus" | "contractTransfer" | "contractTermination" | "billing",
   boolean
 > = {
   overview: true,
   paymentPlan: false,
   duplicates: false,
   stayStatus: false,
+  contractTransfer: true,
   contractTermination: false,
   billing: false
 };
@@ -2805,6 +2833,26 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [contractApprovalsLoading, setContractApprovalsLoading] = useState(false);
   const [contractApprovalActionId, setContractApprovalActionId] = useState<string | null>(null);
   const [expandedContractApprovals, setExpandedContractApprovals] = useState<Record<string, boolean>>({});
+  const [extensionStaffDrafts, setExtensionStaffDrafts] = useState<
+    Record<
+      string,
+      {
+        bedNumber: string;
+        monthlyRentVnd: string;
+        parkingFeeVnd: string;
+        depositVnd: string;
+        paymentPlan: string;
+        extraTerms: string;
+      }
+    >
+  >({});
+  const [staffTransferBranch, setStaffTransferBranch] = useState<"D2" | "D7">("D7");
+  const [staffTransferBed, setStaffTransferBed] = useState<number | null>(null);
+  const [staffTransferRooms, setStaffTransferRooms] = useState<
+    Array<{ room: string; floor: string; beds: Array<{ bedNumber: number; pricing: { monthlyPrice: number } }> }>
+  >([]);
+  const [staffTransferLoading, setStaffTransferLoading] = useState(false);
+  const [staffTransferBusy, setStaffTransferBusy] = useState(false);
   const [branchToolsOpen, setBranchToolsOpen] = useState(false);
   const [branchToolsTab, setBranchToolsTab] = useState<"manual_receipt" | "branch_broadcast" | "unpaid_reminder" | null>(null);
   const [manualReceiptName, setManualReceiptName] = useState("");
@@ -3868,6 +3916,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     setContractApprovalActionId(id);
     setStatus("");
     try {
+      const item = contractApprovals.find((entry) => entry.id === id);
+      if (decision === "approve" && item?.type === "extension" && item.negotiation && !item.negotiation.bothAgreed) {
+        setStatus(t("extensionApproveBlocked"));
+        return;
+      }
       const res = await fetch(`${API_BASE_URL}/manager/contract-approvals/${encodeURIComponent(id)}/${decision}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3885,6 +3938,137 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       setStatus("Unable to review contract.");
     } finally {
       setContractApprovalActionId(null);
+    }
+  }
+
+  function ensureExtensionStaffDraft(item: ContractApprovalSummary) {
+    if (extensionStaffDrafts[item.id]) return extensionStaffDrafts[item.id];
+    const proposed = item.extensionTerms?.proposed ?? {};
+    return {
+      bedNumber: proposed.bedNumber != null ? String(proposed.bedNumber) : item.bedNumber != null ? String(item.bedNumber) : "",
+      monthlyRentVnd: proposed.monthlyRentVnd != null ? String(proposed.monthlyRentVnd) : "",
+      parkingFeeVnd: proposed.parkingFeeVnd != null ? String(proposed.parkingFeeVnd) : "",
+      depositVnd: proposed.depositVnd != null ? String(proposed.depositVnd) : "",
+      paymentPlan: proposed.paymentPlan ?? "",
+      extraTerms: proposed.extraTerms ?? ""
+    };
+  }
+
+  async function saveExtensionStaffEdits(id: string) {
+    const draft = extensionStaffDrafts[id] ?? ensureExtensionStaffDraft(contractApprovals.find((e) => e.id === id)!);
+    const proposedChanges: Record<string, string | number> = {};
+    const bed = Number.parseInt(draft.bedNumber.replace(/[^0-9]/g, ""), 10);
+    if (Number.isFinite(bed) && bed > 0) proposedChanges.bedNumber = bed;
+    const rent = Number.parseInt(draft.monthlyRentVnd.replace(/[^0-9]/g, ""), 10);
+    if (Number.isFinite(rent) && rent >= 0) proposedChanges.monthlyRentVnd = rent;
+    const parking = Number.parseInt(draft.parkingFeeVnd.replace(/[^0-9]/g, ""), 10);
+    if (Number.isFinite(parking) && parking >= 0) proposedChanges.parkingFeeVnd = parking;
+    const deposit = Number.parseInt(draft.depositVnd.replace(/[^0-9]/g, ""), 10);
+    if (Number.isFinite(deposit) && deposit >= 0) proposedChanges.depositVnd = deposit;
+    if (draft.paymentPlan.trim()) proposedChanges.paymentPlan = draft.paymentPlan.trim();
+    proposedChanges.extraTerms = draft.extraTerms.trim();
+
+    setContractApprovalActionId(id);
+    setStatus("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/manager/contract-approvals/${encodeURIComponent(id)}/update-extension`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorEmail: normalizedEmail, proposedChanges })
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        setStatus(data.error ?? "Unable to save extension edits.");
+        return;
+      }
+      setStatus("Extension terms updated — resident must agree again.");
+      await loadContractApprovals();
+    } catch {
+      setStatus("Unable to save extension edits.");
+    } finally {
+      setContractApprovalActionId(null);
+    }
+  }
+
+  async function agreeStaffExtension(id: string) {
+    setContractApprovalActionId(id);
+    setStatus("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/manager/contract-approvals/${encodeURIComponent(id)}/agree-staff`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorEmail: normalizedEmail })
+      });
+      const data = (await res.json()) as { error?: string; bothAgreed?: boolean };
+      if (!res.ok) {
+        setStatus(data.error ?? "Unable to record staff agreement.");
+        return;
+      }
+      setStatus(data.bothAgreed ? t("extensionBothAgreed") : t("extensionAwaitingResident"));
+      await loadContractApprovals();
+    } catch {
+      setStatus("Unable to record staff agreement.");
+    } finally {
+      setContractApprovalActionId(null);
+    }
+  }
+
+  async function loadStaffTransferAvailability(clientEmail: string, branchId: "D2" | "D7") {
+    setStaffTransferLoading(true);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/manager/clients/transfer/availability?actorEmail=${encodeURIComponent(normalizedEmail)}&email=${encodeURIComponent(clientEmail)}&branchId=${branchId}`
+      );
+      const data = (await res.json()) as {
+        rooms?: Array<{ room: string; floor: string; beds: Array<{ bedNumber: number; pricing: { monthlyPrice: number } }> }>;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error || "Unable to load beds");
+      setStaffTransferRooms(data.rooms ?? []);
+      setStaffTransferBed(null);
+    } catch (err) {
+      setStaffTransferRooms([]);
+      setStatus(err instanceof Error ? err.message : "Unable to load transfer beds.");
+    } finally {
+      setStaffTransferLoading(false);
+    }
+  }
+
+  async function executeStaffTransferForClient() {
+    if (!selectedClient?.email || staffTransferBed == null) return;
+    const branch = staffTransferBranch;
+    const bed = staffTransferBed;
+    const confirmed = window.confirm(
+      t("managerClientTransferConfirm", {
+        name: selectedClient.name || selectedClient.email,
+        branch,
+        bed: String(bed)
+      })
+    );
+    if (!confirmed) return;
+
+    setStaffTransferBusy(true);
+    setStatus("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/manager/clients/transfer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actorEmail: normalizedEmail,
+          clientEmail: selectedClient.email,
+          newBranchId: branch,
+          newBedNumber: bed
+        })
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error || "Transfer failed");
+      setStatus(t("managerClientTransferSuccess"));
+      setStaffTransferBed(null);
+      await loadClients(true);
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Unable to transfer client.");
+    } finally {
+      setStaffTransferBusy(false);
     }
   }
 
@@ -3925,16 +4109,157 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   }
 
   function renderContractApprovalDetails(item: ContractApprovalSummary): ReactNode {
+    const draft =
+      item.type === "extension"
+        ? extensionStaffDrafts[item.id] ?? ensureExtensionStaffDraft(item)
+        : null;
+
     if (item.details && item.details.length > 0) {
       return (
-        <div className="mt-2 grid gap-1.5 text-xs text-slate-600 sm:grid-cols-2">
-          {item.details.map((entry, index) => (
-            <div key={`${item.id}-detail-${index}`} className="rounded-md bg-slate-50 px-2 py-1 sm:col-span-1">
-              <span className="font-semibold text-slate-700">{entry.label}:</span>{" "}
-              <span className="break-all">{formatContractApprovalDetailValue(entry.label, entry.value)}</span>
+        <>
+          {item.type === "extension" && item.negotiation ? (
+            <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-semibold">
+              <span
+                className={`rounded-full px-2 py-0.5 ${item.negotiation.residentAgreedAt ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}
+              >
+                {item.negotiation.residentAgreedAt ? `✓ ${t("extensionResidentAgreed")}` : t("extensionAwaitingResident")}
+              </span>
+              <span
+                className={`rounded-full px-2 py-0.5 ${item.negotiation.staffAgreedAt ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}
+              >
+                {item.negotiation.staffAgreedAt ? `✓ ${t("extensionStaffAgreed")}` : t("extensionAwaitingStaff")}
+              </span>
+              {item.negotiation.bothAgreed ? (
+                <span className="rounded-full bg-emerald-200 px-2 py-0.5 text-emerald-900">{t("extensionBothAgreed")}</span>
+              ) : null}
             </div>
-          ))}
-        </div>
+          ) : null}
+          <div className="mt-2 grid gap-1.5 text-xs text-slate-600 sm:grid-cols-2">
+            {item.details.map((entry, index) => (
+              <div
+                key={`${item.id}-detail-${index}`}
+                className={`rounded-md px-2 py-1 sm:col-span-1 ${entry.changed ? "border-2 border-amber-400 bg-amber-50" : "bg-slate-50"}`}
+              >
+                <span className="font-semibold text-slate-700">{entry.label}:</span>{" "}
+                <span className="break-all">{formatContractApprovalDetailValue(entry.label, entry.value)}</span>
+                {entry.changed && entry.baselineValue ? (
+                  <div className="mt-0.5 text-amber-700">
+                    {t("extensionChangedFrom", { value: entry.baselineValue })}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+          {item.type === "extension" && item.status === "pending" && canViewContractApprovals && draft ? (
+            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-600">{t("extensionTermsOptional")}</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <label className="text-xs">
+                  {t("extensionBedLabel")}
+                  <input
+                    type="number"
+                    value={draft.bedNumber}
+                    onChange={(e) =>
+                      setExtensionStaffDrafts((current) => ({
+                        ...current,
+                        [item.id]: { ...draft, bedNumber: e.target.value }
+                      }))
+                    }
+                    className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                  />
+                </label>
+                <label className="text-xs">
+                  {t("extensionRentLabel")}
+                  <input
+                    type="text"
+                    value={draft.monthlyRentVnd}
+                    onChange={(e) =>
+                      setExtensionStaffDrafts((current) => ({
+                        ...current,
+                        [item.id]: { ...draft, monthlyRentVnd: e.target.value }
+                      }))
+                    }
+                    className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                  />
+                </label>
+                <label className="text-xs">
+                  {t("extensionParkingLabel")}
+                  <input
+                    type="text"
+                    value={draft.parkingFeeVnd}
+                    onChange={(e) =>
+                      setExtensionStaffDrafts((current) => ({
+                        ...current,
+                        [item.id]: { ...draft, parkingFeeVnd: e.target.value }
+                      }))
+                    }
+                    className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                  />
+                </label>
+                <label className="text-xs">
+                  {t("extensionDepositLabel")}
+                  <input
+                    type="text"
+                    value={draft.depositVnd}
+                    onChange={(e) =>
+                      setExtensionStaffDrafts((current) => ({
+                        ...current,
+                        [item.id]: { ...draft, depositVnd: e.target.value }
+                      }))
+                    }
+                    className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                  />
+                </label>
+                <label className="text-xs sm:col-span-2">
+                  {t("paymentPlanLabel")}
+                  <input
+                    type="text"
+                    value={draft.paymentPlan}
+                    onChange={(e) =>
+                      setExtensionStaffDrafts((current) => ({
+                        ...current,
+                        [item.id]: { ...draft, paymentPlan: e.target.value }
+                      }))
+                    }
+                    className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                  />
+                </label>
+                <label className="text-xs sm:col-span-2">
+                  {t("extensionExtrasLabel")}
+                  <textarea
+                    rows={2}
+                    value={draft.extraTerms}
+                    onChange={(e) =>
+                      setExtensionStaffDrafts((current) => ({
+                        ...current,
+                        [item.id]: { ...draft, extraTerms: e.target.value }
+                      }))
+                    }
+                    className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                  />
+                </label>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void saveExtensionStaffEdits(item.id)}
+                  disabled={contractApprovalActionId === item.id}
+                  className="rounded-lg border border-slate-400 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                >
+                  {t("extensionSaveEdits")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void agreeStaffExtension(item.id)}
+                  disabled={contractApprovalActionId === item.id}
+                  className="rounded-lg bg-sky-600 px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                >
+                  {t("extensionStaffAgreeBtn")}
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </>
       );
     }
 
@@ -4113,6 +4438,29 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       setContractApprovals([]);
     }
   }, [canViewContractApprovals, normalizedEmail]);
+
+  useEffect(() => {
+    if (!canReviewContractApprovals || !selectedClient?.email) {
+      setStaffTransferRooms([]);
+      setStaffTransferBed(null);
+      return;
+    }
+    const currentBranch = normalizeBranchLabel(selectedClient.branch);
+    setStaffTransferBranch(currentBranch === "D7" ? "D2" : "D7");
+  }, [canReviewContractApprovals, selectedClient?.email, selectedClient?.branch]);
+
+  useEffect(() => {
+    if (!canReviewContractApprovals || !selectedClient?.email || !clientPanelSections.contractTransfer) {
+      return;
+    }
+    void loadStaffTransferAvailability(selectedClient.email, staffTransferBranch);
+  }, [
+    canReviewContractApprovals,
+    selectedClient?.email,
+    staffTransferBranch,
+    clientPanelSections.contractTransfer,
+    normalizedEmail
+  ]);
 
   async function loadPaymentPurposeRows() {
     if (!isStaffSession) {
@@ -5685,7 +6033,17 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                             <button
                               type="button"
                               onClick={() => void reviewContractApproval(item.id, "approve")}
-                              disabled={contractApprovalActionId === item.id}
+                              disabled={
+                                contractApprovalActionId === item.id ||
+                                (item.type === "extension" &&
+                                  Boolean(item.negotiation) &&
+                                  !item.negotiation?.bothAgreed)
+                              }
+                              title={
+                                item.type === "extension" && item.negotiation && !item.negotiation.bothAgreed
+                                  ? t("extensionApproveBlocked")
+                                  : undefined
+                              }
                               className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                             >
                               {contractApprovalActionId === item.id ? "Working..." : "Approve and send"}
@@ -7002,7 +7360,17 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           <button
                             type="button"
                             onClick={() => void reviewContractApproval(item.id, "approve")}
-                            disabled={contractApprovalActionId === item.id}
+                            disabled={
+                              contractApprovalActionId === item.id ||
+                              (item.type === "extension" &&
+                                Boolean(item.negotiation) &&
+                                !item.negotiation?.bothAgreed)
+                            }
+                            title={
+                              item.type === "extension" && item.negotiation && !item.negotiation.bothAgreed
+                                ? t("extensionApproveBlocked")
+                                : undefined
+                            }
                             className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
                           >
                             {contractApprovalActionId === item.id ? "Working..." : "Approve and send"}
@@ -7597,6 +7965,114 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                       {t("depositRefundBtn")}
                     </button>
                   </div>
+                ) : null}
+
+                {canReviewContractApprovals &&
+                selectedClient &&
+                selectedClient.activeStay !== "0" &&
+                selectedClient.activeStay !== "-1" ? (
+                  <ManagerClientPanelCollapsible
+                    title={t("managerClientTransferTitle")}
+                    open={clientPanelSections.contractTransfer}
+                    onToggle={() =>
+                      setClientPanelSections((s) => ({
+                        ...s,
+                        contractTransfer: !s.contractTransfer
+                      }))
+                    }
+                  >
+                    <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 space-y-4">
+                      <p className="text-sm text-sky-900">{t("managerClientTransferDesc")}</p>
+                      <p className="text-xs text-sky-800">
+                        {t("contractTransferDesc")} · {selectedClient.name || selectedClient.email} ·{" "}
+                        {normalizeBranchLabel(selectedClient.branch)} {t("bedLabel")} {selectedClient.bed}
+                      </p>
+                      <div>
+                        <label className="text-xs font-bold uppercase tracking-wide text-sky-800">
+                          {t("contractTransferNewBranch")}
+                        </label>
+                        <div className="mt-2 flex gap-2">
+                          {(["D2", "D7"] as const).map((branch) => (
+                            <button
+                              key={branch}
+                              type="button"
+                              disabled={staffTransferBusy}
+                              onClick={() => setStaffTransferBranch(branch)}
+                              className={`rounded-full px-4 py-2 text-sm font-semibold border ${
+                                staffTransferBranch === branch
+                                  ? "border-sky-600 bg-sky-600 text-white"
+                                  : "border-sky-300 bg-white text-sky-900"
+                              }`}
+                            >
+                              {branch}
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            disabled={staffTransferLoading || staffTransferBusy || !selectedClient.email}
+                            onClick={() => void loadStaffTransferAvailability(selectedClient.email, staffTransferBranch)}
+                            className="ml-auto text-xs font-semibold text-sky-800 underline disabled:opacity-50"
+                          >
+                            {staffTransferLoading ? t("processing") : t("contractTransferRefresh")}
+                          </button>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold uppercase tracking-wide text-sky-800">
+                          {t("contractTransferPickBed")}
+                        </label>
+                        {staffTransferLoading ? (
+                          <p className="mt-2 text-sm text-sky-700">{t("processing")}</p>
+                        ) : staffTransferRooms.length > 0 ? (
+                          <div className="mt-2 max-h-48 space-y-2 overflow-y-auto">
+                            {staffTransferRooms.map((room) => (
+                              <div key={room.room} className="rounded-xl border border-sky-200 bg-white p-2">
+                                <p className="text-xs font-semibold text-slate-600 mb-1">
+                                  {t("contractTransferRoom", { room: room.room, floor: room.floor })}
+                                </p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {room.beds.map((bed) => (
+                                    <button
+                                      key={bed.bedNumber}
+                                      type="button"
+                                      disabled={staffTransferBusy}
+                                      onClick={() => setStaffTransferBed(bed.bedNumber)}
+                                      className={`rounded-lg border px-2 py-1 text-xs font-semibold ${
+                                        staffTransferBed === bed.bedNumber
+                                          ? "border-sky-600 bg-sky-100 text-sky-900"
+                                          : "border-slate-200 text-slate-800"
+                                      }`}
+                                    >
+                                      {t("bedLabel")} {bed.bedNumber}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-sm text-sky-800">{t("contractTransferNoBeds")}</p>
+                        )}
+                      </div>
+                      {staffTransferBed != null ? (
+                        <p className="text-sm font-semibold text-sky-900">
+                          {t("contractTransferSummary", {
+                            branch: staffTransferBranch,
+                            bed: String(staffTransferBed),
+                            end: selectedClient.row?.["Ngày hết hạn hợp đồng"] || "—"
+                          })}
+                        </p>
+                      ) : null}
+                      <button
+                        type="button"
+                        disabled={staffTransferBusy || staffTransferBed == null}
+                        onClick={() => void executeStaffTransferForClient()}
+                        className="rounded-xl bg-sky-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                      >
+                        {staffTransferBusy ? t("processing") : t("managerClientTransferExecute")}
+                      </button>
+                    </div>
+                  </ManagerClientPanelCollapsible>
                 ) : null}
 
                 {/* Contract Termination — hidden for inactive clients */}

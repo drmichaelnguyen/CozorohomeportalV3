@@ -79,6 +79,9 @@ const DEFAULT_SHORT_TERM_CONFIG = {
   },
   minimumStay: 1
 };
+/** Hostel direct booking — stays longer than this must use long-term registration. */
+const MAX_HOSTEL_STAY_NIGHTS = 60;
+const LONG_TERM_REGISTRATION_URL = "https://app.cozorohome.com/register";
 const SHORT_TERM_CONFIG_CACHE_TTL_MS = 5 * 60 * 1000;
 let cachedShortTermConfig = null;
 let cachedShortTermConfigAt = 0;
@@ -775,6 +778,8 @@ function calculatePricing(nights, nightlyPrice, pricingConfig, options = {}) {
     throw new Error(`Minimum stay is ${config.minimumStay} nights.`);
   }
 
+  assertHostelStayWithinLimit(stayNights, { previousNights: options.previousNights });
+
   const weeklyRule = config.discounts.weekly;
   const monthlyRule = config.discounts.monthly;
   let discountRule = null;
@@ -813,6 +818,7 @@ function calculatePricing(nights, nightlyPrice, pricingConfig, options = {}) {
     stayTotal,
     total: stayTotal + depositAmount,
     minimumStay: config.minimumStay,
+    maxStayNights: MAX_HOSTEL_STAY_NIGHTS,
     discountType: discountRule === monthlyRule ? "monthly" : discountRule === weeklyRule ? "weekly" : "",
     nightlyPrices: effectiveNightlyRates
   };
@@ -1172,6 +1178,7 @@ async function calculateBookingChange(booking, input, pricingConfig = null) {
   const requestedNights = nightsBetween(requestedCheckIn, requestedCheckOut);
   const datesChanged = requestedCheckIn !== currentCheckIn || requestedCheckOut !== currentCheckOut;
   ensureValidDateRange(requestedCheckIn, requestedCheckOut);
+  const currentNights = Number(booking.nights) || nightsBetween(currentCheckIn, currentCheckOut);
 
   const currentPricing = buildStoredPricingFromBooking(booking, config);
   const nightlyPrices = getNightlyPricesForStay(config, booking.branch_id, booking.bed_number, requestedCheckIn, requestedCheckOut);
@@ -1182,7 +1189,11 @@ async function calculateBookingChange(booking, input, pricingConfig = null) {
     requestedNights,
     bedPricing.nightlyPrice,
     config,
-    { cancellationPolicy: booking.cancellation_policy, nightlyPrices: nightlyPrices.map((entry) => entry.nightlyPrice) }
+    {
+      cancellationPolicy: booking.cancellation_policy,
+      nightlyPrices: nightlyPrices.map((entry) => entry.nightlyPrice),
+      previousNights: currentNights
+    }
   );
   const totalDifference = requestedPricing.total - currentPricing.total;
   const cancellationTerms = getBookingCancellationTerms(booking, config);
@@ -1282,6 +1293,27 @@ function nightsBetween(checkIn, checkOut) {
   const start = dateOnlyToUtc(checkIn);
   const end = dateOnlyToUtc(checkOut);
   return Math.round((end.getTime() - start.getTime()) / 86400000);
+}
+
+function assertHostelStayWithinLimit(nights, options = {}) {
+  const stayNights = Number.isFinite(Number(nights)) ? Math.floor(Number(nights)) : 0;
+  const previousNights = Number.isFinite(Number(options.previousNights))
+    ? Math.floor(Number(options.previousNights))
+    : 0;
+
+  if (stayNights <= MAX_HOSTEL_STAY_NIGHTS) {
+    return;
+  }
+
+  // Allow non-extending edits on grandfathered bookings that were created before this cap.
+  if (previousNights > MAX_HOSTEL_STAY_NIGHTS && stayNights <= previousNights) {
+    return;
+  }
+
+  throw new Error(
+    `Hostel bookings are limited to ${MAX_HOSTEL_STAY_NIGHTS} nights (2 months). ` +
+    `For longer stays, register at ${LONG_TERM_REGISTRATION_URL}`
+  );
 }
 
 function ensureValidDateRange(checkIn, checkOut) {
@@ -1766,6 +1798,7 @@ async function buildAvailability(branchId, checkIn, checkOut, bioSex, excludeBoo
     throw new Error("Biological sex is required to view D7 availability.");
   }
   const nights = nightsBetween(checkIn, checkOut);
+  assertHostelStayWithinLimit(nights);
   const config = pricingConfig || await getShortTermPricingConfig();
 
   const [residentBeds, guestBookings] = await Promise.all([
@@ -1818,7 +1851,8 @@ async function buildAvailability(branchId, checkIn, checkOut, bioSex, excludeBoo
     pricing: {
       currency: config.currency,
       nights,
-      minimumStay: config.minimumStay
+      minimumStay: config.minimumStay,
+      maxStayNights: MAX_HOSTEL_STAY_NIGHTS
     },
     rooms
   };
@@ -2052,6 +2086,8 @@ app.get("/api/config", async (_req, res) => {
       bedPricingByDate: pricing.bedPricingByDate,
       discounts: pricing.discounts,
       minimumStay: pricing.minimumStay,
+      maxStayNights: MAX_HOSTEL_STAY_NIGHTS,
+      longTermRegistrationUrl: LONG_TERM_REGISTRATION_URL,
       cancellationPolicies: {
         cancellable: {
           code: "cancellable",

@@ -1,10 +1,104 @@
 "use client";
 
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 
 const EXTENSION_MAX_MONTHS = 36;
+
+export type ContractExtensionClientSnapshot = {
+  branchId: string;
+  bedNumber: number | null;
+  monthlyRentVnd: number | null;
+  parkingFeeVnd: number | null;
+  depositVnd: number | null;
+  paymentPlan: string;
+  extraTerms: string;
+};
+
+type ExtensionTermsForm = {
+  bedNumber: string;
+  monthlyRentVnd: string;
+  parkingFeeVnd: string;
+  depositVnd: string;
+  paymentPlan: string;
+  extraTerms: string;
+};
+
+type PendingExtension = {
+  id: string;
+  submittedAt: string;
+  contractEndDate: string;
+  details?: Array<{ label: string; value: string; baselineValue?: string; changed?: boolean }>;
+  negotiation?: {
+    residentAgreedAt?: string;
+    staffAgreedAt?: string;
+    bothAgreed?: boolean;
+    changedFields?: string[];
+  };
+  extensionTerms?: {
+    baseline: Partial<ContractExtensionClientSnapshot>;
+    proposed: Partial<ContractExtensionClientSnapshot>;
+  };
+};
+
+function parseMoneyFromClient(value: unknown): number | null {
+  const text = String(value ?? "").replace(/[^0-9-]/g, "");
+  if (!text) return null;
+  const n = Number.parseInt(text, 10);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+export function parseClientExtensionSnapshot(client: Record<string, string>): ContractExtensionClientSnapshot {
+  const rawBranch = String(client["Chi nhánh Cozoro dorm"] ?? "").trim().toUpperCase();
+  const bedParsed = Number.parseInt(String(client["số giường"] ?? "").replace(/[^0-9]/g, ""), 10);
+  const rent =
+    parseMoneyFromClient(client["Số tiền chia sẻ mỗi tháng"]) ??
+    parseMoneyFromClient(client["Phí ở đóng mỗi tháng"]);
+  const extras =
+    String(client["Khoản ưu đãi và chi phí tăng thêm nếu có"] ?? "").trim() ||
+    String(client["Khoản ưu đãi và chi phí tăng thêm"] ?? "").trim();
+  return {
+    branchId: rawBranch.includes("7") ? "D7" : "D2",
+    bedNumber: Number.isFinite(bedParsed) && bedParsed > 0 ? bedParsed : null,
+    monthlyRentVnd: rent,
+    parkingFeeVnd: parseMoneyFromClient(client["Phí gởi xe"]),
+    depositVnd: parseMoneyFromClient(client["Số tiền cọc"]),
+    paymentPlan: String(client["Bạn muốn thanh toán chi phí như thế nào?"] ?? "").trim(),
+    extraTerms: extras
+  };
+}
+
+function snapshotToForm(snapshot: ContractExtensionClientSnapshot): ExtensionTermsForm {
+  return {
+    bedNumber: snapshot.bedNumber != null ? String(snapshot.bedNumber) : "",
+    monthlyRentVnd: snapshot.monthlyRentVnd != null ? String(snapshot.monthlyRentVnd) : "",
+    parkingFeeVnd: snapshot.parkingFeeVnd != null ? String(snapshot.parkingFeeVnd) : "",
+    depositVnd: snapshot.depositVnd != null ? String(snapshot.depositVnd) : "",
+    paymentPlan: snapshot.paymentPlan,
+    extraTerms: snapshot.extraTerms
+  };
+}
+
+function buildProposedChangesFromForm(
+  baseline: ContractExtensionClientSnapshot,
+  form: ExtensionTermsForm
+): Record<string, string | number> | undefined {
+  const patch: Record<string, string | number> = {};
+  const bed = Number.parseInt(form.bedNumber.replace(/[^0-9]/g, ""), 10);
+  if (Number.isFinite(bed) && bed > 0 && bed !== baseline.bedNumber) patch.bedNumber = bed;
+  const rent = Number.parseInt(form.monthlyRentVnd.replace(/[^0-9]/g, ""), 10);
+  if (Number.isFinite(rent) && rent >= 0 && rent !== (baseline.monthlyRentVnd ?? -1)) patch.monthlyRentVnd = rent;
+  const parking = Number.parseInt(form.parkingFeeVnd.replace(/[^0-9]/g, ""), 10);
+  if (Number.isFinite(parking) && parking >= 0 && parking !== (baseline.parkingFeeVnd ?? -1)) {
+    patch.parkingFeeVnd = parking;
+  }
+  const deposit = Number.parseInt(form.depositVnd.replace(/[^0-9]/g, ""), 10);
+  if (Number.isFinite(deposit) && deposit >= 0 && deposit !== (baseline.depositVnd ?? -1)) patch.depositVnd = deposit;
+  if (form.paymentPlan.trim() !== baseline.paymentPlan.trim()) patch.paymentPlan = form.paymentPlan.trim();
+  if (form.extraTerms.trim() !== baseline.extraTerms.trim()) patch.extraTerms = form.extraTerms.trim();
+  return Object.keys(patch).length > 0 ? patch : undefined;
+}
 
 function parsePortalEndDateStr(endDateStr: string): Date | null {
   if (!endDateStr) return null;
@@ -58,18 +152,114 @@ function calendarMonthsBetween(newStart: Date, newEnd: Date): number {
   return Math.max(1, months);
 }
 
+function ExtensionTermsFields({
+  form,
+  setForm,
+  disabled,
+  t
+}: {
+  form: ExtensionTermsForm;
+  setForm: (next: ExtensionTermsForm) => void;
+  disabled: boolean;
+  t: (key: string, fallback?: string) => string;
+}) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <label className="block text-sm">
+        <span className="text-xs font-bold uppercase tracking-wide text-amber-700">{t("extensionBedLabel")}</span>
+        <input
+          type="number"
+          min={1}
+          value={form.bedNumber}
+          onChange={(e) => setForm({ ...form, bedNumber: e.target.value })}
+          disabled={disabled}
+          className="mt-1 w-full rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm"
+        />
+      </label>
+      <label className="block text-sm">
+        <span className="text-xs font-bold uppercase tracking-wide text-amber-700">{t("extensionRentLabel")}</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={form.monthlyRentVnd}
+          onChange={(e) => setForm({ ...form, monthlyRentVnd: e.target.value })}
+          disabled={disabled}
+          className="mt-1 w-full rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm"
+        />
+      </label>
+      <label className="block text-sm">
+        <span className="text-xs font-bold uppercase tracking-wide text-amber-700">{t("extensionParkingLabel")}</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={form.parkingFeeVnd}
+          onChange={(e) => setForm({ ...form, parkingFeeVnd: e.target.value })}
+          disabled={disabled}
+          className="mt-1 w-full rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm"
+        />
+      </label>
+      <label className="block text-sm">
+        <span className="text-xs font-bold uppercase tracking-wide text-amber-700">{t("extensionDepositLabel")}</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={form.depositVnd}
+          onChange={(e) => setForm({ ...form, depositVnd: e.target.value })}
+          disabled={disabled}
+          className="mt-1 w-full rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm"
+        />
+      </label>
+      <label className="block text-sm sm:col-span-2">
+        <span className="text-xs font-bold uppercase tracking-wide text-amber-700">{t("paymentPlanLabel")}</span>
+        <input
+          type="text"
+          value={form.paymentPlan}
+          onChange={(e) => setForm({ ...form, paymentPlan: e.target.value })}
+          disabled={disabled}
+          className="mt-1 w-full rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm"
+        />
+      </label>
+      <label className="block text-sm sm:col-span-2">
+        <span className="text-xs font-bold uppercase tracking-wide text-amber-700">{t("extensionExtrasLabel")}</span>
+        <textarea
+          rows={2}
+          value={form.extraTerms}
+          onChange={(e) => setForm({ ...form, extraTerms: e.target.value })}
+          disabled={disabled}
+          className="mt-1 w-full rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm"
+        />
+      </label>
+    </div>
+  );
+}
+
 export function ContractExtension({
   email,
   endDateStr,
   onExtended,
-  forceExpand = false
+  forceExpand = false,
+  clientSnapshot
 }: {
   email: string;
   endDateStr: string;
   onExtended: () => void;
   forceExpand?: boolean;
+  clientSnapshot?: ContractExtensionClientSnapshot;
 }) {
   const { t, language } = usePortalLanguage();
+  const baseline = useMemo(
+    () =>
+      clientSnapshot ?? {
+        branchId: "D2",
+        bedNumber: null,
+        monthlyRentVnd: null,
+        parkingFeeVnd: null,
+        depositVnd: null,
+        paymentPlan: "",
+        extraTerms: ""
+      },
+    [clientSnapshot]
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [duration, setDuration] = useState<number | "hostel" | "custom">(6);
@@ -77,13 +267,50 @@ export function ContractExtension({
   const [agreed, setAgreed] = useState(false);
   const [fullName, setFullName] = useState("");
   const [isExpanded, setIsExpanded] = useState(forceExpand);
+  const [showTermEdits, setShowTermEdits] = useState(false);
+  const [termsForm, setTermsForm] = useState<ExtensionTermsForm>(() => snapshotToForm(baseline));
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [hasSignature, setHasSignature] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [countdown, setCountdown] = useState(15);
+  const [pendingExtension, setPendingExtension] = useState<PendingExtension | null>(null);
+  const [pendingLoading, setPendingLoading] = useState(true);
+  const [pendingEditForm, setPendingEditForm] = useState<ExtensionTermsForm | null>(null);
+  const [pendingActionLoading, setPendingActionLoading] = useState(false);
 
-  // Initialize Canvas
+  const loadPendingExtension = useCallback(async () => {
+    setPendingLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/clients/contracts/extend/pending?email=${encodeURIComponent(email)}`);
+      const data = (await res.json()) as { pending?: PendingExtension | null };
+      setPendingExtension(data.pending ?? null);
+      if (data.pending?.extensionTerms?.proposed) {
+        const p = data.pending.extensionTerms.proposed;
+        setPendingEditForm({
+          bedNumber: p.bedNumber != null ? String(p.bedNumber) : "",
+          monthlyRentVnd: p.monthlyRentVnd != null ? String(p.monthlyRentVnd) : "",
+          parkingFeeVnd: p.parkingFeeVnd != null ? String(p.parkingFeeVnd) : "",
+          depositVnd: p.depositVnd != null ? String(p.depositVnd) : "",
+          paymentPlan: p.paymentPlan ?? "",
+          extraTerms: p.extraTerms ?? ""
+        });
+      }
+    } catch {
+      setPendingExtension(null);
+    } finally {
+      setPendingLoading(false);
+    }
+  }, [email]);
+
+  useEffect(() => {
+    void loadPendingExtension();
+  }, [loadPendingExtension]);
+
+  useEffect(() => {
+    setTermsForm(snapshotToForm(baseline));
+  }, [baseline]);
+
   useEffect(() => {
     if (isExpanded && canvasRef.current) {
       const canvas = canvasRef.current;
@@ -109,15 +336,18 @@ export function ContractExtension({
     }
   };
 
-  const draw = (e: any) => {
+  const draw = (e: React.MouseEvent | React.TouchEvent) => {
     if (!isDrawing || !canvasRef.current) return;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
     const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX || (e.touches && e.touches[0].clientX)) - rect.left;
-    const y = (e.clientY || (e.touches && e.touches[0].clientY)) - rect.top;
+    const clientX = "clientX" in e ? e.clientX : e.touches?.[0]?.clientX;
+    const clientY = "clientY" in e ? e.clientY : e.touches?.[0]?.clientY;
+    if (clientX == null || clientY == null) return;
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
 
     ctx.lineTo(x, y);
     ctx.stroke();
@@ -171,7 +401,6 @@ export function ContractExtension({
     return calendarMonthsBetween(termBounds.newStart, effectiveEndDate);
   }, [termBounds, effectiveEndDate, duration]);
 
-  // Countdown logic for success state - MUST BE ABOVE EARLY RETURN
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (isSuccess && countdown > 0) {
@@ -183,6 +412,148 @@ export function ContractExtension({
     }
     return () => clearInterval(timer);
   }, [isSuccess, countdown, onExtended]);
+
+  async function agreeToPendingExtension() {
+    if (!pendingExtension) return;
+    setPendingActionLoading(true);
+    setError("");
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/clients/contracts/extend/pending/${encodeURIComponent(pendingExtension.id)}/agree`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email })
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to agree");
+      await loadPendingExtension();
+      onExtended();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Unable to agree.");
+    } finally {
+      setPendingActionLoading(false);
+    }
+  }
+
+  async function updatePendingExtension() {
+    if (!pendingExtension || !pendingEditForm) return;
+    const proposedChanges = buildProposedChangesFromForm(baseline, pendingEditForm);
+    if (!proposedChanges) {
+      setError(t("extensionInvalidDate", "No changes to save."));
+      return;
+    }
+    setPendingActionLoading(true);
+    setError("");
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/clients/contracts/extend/pending/${encodeURIComponent(pendingExtension.id)}/update`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, proposedChanges })
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update");
+      await loadPendingExtension();
+      onExtended();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Unable to update.");
+    } finally {
+      setPendingActionLoading(false);
+    }
+  }
+
+  if (!pendingLoading && pendingExtension && !isSuccess) {
+    const negotiation = pendingExtension.negotiation;
+    const residentAgreed = Boolean(negotiation?.residentAgreedAt);
+    const staffAgreed = Boolean(negotiation?.staffAgreedAt);
+    return (
+      <div className="mb-6 rounded-3xl border border-sky-300 bg-sky-50 p-5 shadow-sm sm:p-6">
+        <h2 className="text-lg font-bold text-sky-900">{t("extensionPendingReviewTitle")}</h2>
+        <p className="mt-2 text-sm text-sky-800">{t("extensionPendingReviewDesc")}</p>
+        <p className="mt-2 text-sm font-semibold text-sky-900">
+          {t("extensionSummaryLine", {
+            date: pendingExtension.contractEndDate,
+            months: String(pendingExtension.extensionTerms ? "" : "")
+          }).replace("(~ mo).", "")}{" "}
+          → {pendingExtension.contractEndDate}
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs">
+          <span className={`rounded-full px-2 py-1 font-semibold ${residentAgreed ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+            {residentAgreed ? `✓ ${t("extensionResidentAgreed")}` : t("extensionAwaitingResident")}
+          </span>
+          <span className={`rounded-full px-2 py-1 font-semibold ${staffAgreed ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+            {staffAgreed ? `✓ ${t("extensionStaffAgreed")}` : t("extensionAwaitingStaff")}
+          </span>
+          {negotiation?.bothAgreed ? (
+            <span className="rounded-full bg-emerald-200 px-2 py-1 font-semibold text-emerald-900">
+              {t("extensionBothAgreed")}
+            </span>
+          ) : null}
+        </div>
+        {pendingExtension.details && pendingExtension.details.length > 0 ? (
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            {pendingExtension.details
+              .filter((d) => !["Signed", "Submitted", "Code", "Email", "Resident"].includes(d.label))
+              .map((entry) => (
+                <div
+                  key={entry.label}
+                  className={`rounded-lg px-3 py-2 text-xs ${entry.changed ? "border-2 border-amber-400 bg-amber-50" : "bg-white border border-sky-100"}`}
+                >
+                  <div className="font-semibold text-slate-700">{entry.label}</div>
+                  <div className="text-slate-900">{entry.value || "—"}</div>
+                  {entry.changed && entry.baselineValue ? (
+                    <div className="mt-0.5 text-amber-700">
+                      {t("extensionChangedFrom", { value: entry.baselineValue })}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+          </div>
+        ) : null}
+        {pendingEditForm && !residentAgreed ? (
+          <div className="mt-4 border-t border-sky-200 pt-4">
+            <ExtensionTermsFields
+              form={pendingEditForm}
+              setForm={setPendingEditForm}
+              disabled={pendingActionLoading}
+              t={t}
+            />
+          </div>
+        ) : null}
+        {error ? <p className="mt-3 text-sm text-rose-600 font-bold">✕ {error}</p> : null}
+        <div className="mt-4 flex flex-wrap gap-2">
+          {!residentAgreed ? (
+            <>
+              <button
+                type="button"
+                onClick={() => void agreeToPendingExtension()}
+                disabled={pendingActionLoading}
+                className="rounded-full bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50"
+              >
+                {t("extensionAgreeTerms")}
+              </button>
+              <button
+                type="button"
+                onClick={() => void updatePendingExtension()}
+                disabled={pendingActionLoading}
+                className="rounded-full border border-sky-400 bg-white px-5 py-2.5 text-sm font-bold text-sky-900 disabled:opacity-50"
+              >
+                {t("extensionSaveEdits")}
+              </button>
+            </>
+          ) : (
+            <p className="text-sm text-emerald-800 font-medium">
+              {t("contractExtensionPendingApproval")}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   if (!isNearingEnd && !isSuccess && !forceExpand) {
     return null;
@@ -221,12 +592,14 @@ export function ContractExtension({
 
     try {
       const signatureTimestamp = new Date().toISOString();
+      const proposedChanges = showTermEdits ? buildProposedChangesFromForm(baseline, termsForm) : undefined;
       const payload: {
         email: string;
         clientSignatureDataUrl?: string;
         clientSignatureTimestamp: string;
         extensionMonths?: number;
         newContractEndDate?: string;
+        proposedChanges?: Record<string, string | number>;
       } = {
         email,
         clientSignatureDataUrl: canvasRef.current?.toDataURL("image/png"),
@@ -237,6 +610,7 @@ export function ContractExtension({
       } else {
         payload.newContractEndDate = formatDdMmYyyy(effectiveEndDate);
       }
+      if (proposedChanges) payload.proposedChanges = proposedChanges;
 
       const response = await fetch(`${API_BASE_URL}/clients/contracts/extend`, {
         method: "POST",
@@ -251,8 +625,8 @@ export function ContractExtension({
 
       setIsSuccess(true);
       setCountdown(15);
-    } catch (err: any) {
-      setError(err.message || "An unexpected error occurred.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "An unexpected error occurred.");
       setLoading(false);
     }
   }
@@ -273,19 +647,15 @@ export function ContractExtension({
           </div>
           <h2 className="text-2xl font-bold text-emerald-900">{t("extensionSubmitted")}</h2>
           <div className="max-w-md">
-            <p className="text-emerald-800 font-medium">
-              {t("processingWait")}
-            </p>
-            <p className="text-emerald-700 text-sm mt-3 leading-relaxed">
-              {t("contractExtensionPendingApproval", "Your signed extension is waiting for owner review. Email will be sent after approval.")}
-            </p>
+            <p className="text-emerald-800 font-medium">{t("processingWait")}</p>
+            <p className="text-emerald-700 text-sm mt-3 leading-relaxed">{t("contractExtensionPendingApproval")}</p>
           </div>
-          <button 
+          <button
             onClick={() => {
-               setIsExpanded(false);
-               setIsSuccess(false);
-               onExtended();
-            }} 
+              setIsExpanded(false);
+              setIsSuccess(false);
+              onExtended();
+            }}
             className="mt-4 rounded-full bg-emerald-600 px-8 py-3 text-sm font-bold text-white hover:bg-emerald-700 transition shadow-lg flex items-center gap-2"
           >
             <span>{t("gotIt")}</span>
@@ -306,12 +676,8 @@ export function ContractExtension({
             </svg>
           </div>
           <div>
-            <h2 className="text-lg font-bold text-amber-900">
-              {t("contractEndingSoon")}
-            </h2>
-            <p className="text-sm text-amber-800">
-              {t("contractEndingDesc", { date: endDateStr })}
-            </p>
+            <h2 className="text-lg font-bold text-amber-900">{t("contractEndingSoon")}</h2>
+            <p className="text-sm text-amber-800">{t("contractEndingDesc", { date: endDateStr })}</p>
           </div>
         </div>
         {!isExpanded && (
@@ -332,7 +698,6 @@ export function ContractExtension({
                 {t("selectExtensionDuration")}
               </label>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {/* Hostel redirect option */}
                 <button
                   type="button"
                   disabled={loading}
@@ -346,12 +711,14 @@ export function ContractExtension({
                   <p className="text-sm font-bold text-rose-900">{t("extensionUnderOneMonth")}</p>
                   <p className="mt-1.5 text-xs font-semibold text-rose-600">🏨 {t("hostelBooking")}</p>
                 </button>
-                {([
-                  { months: 1, durKey: "extensionDuration1m", coins: 0, surcharge: 12 },
-                  { months: 3, durKey: "extensionDuration3m", coins: 10000, surcharge: 12 },
-                  { months: 6, durKey: "extensionDuration6m", coins: 25000, surcharge: 0 },
-                  { months: 12, durKey: "extensionDuration12m", coins: 50000, surcharge: 0 }
-                ] as const).map((opt) => (
+                {(
+                  [
+                    { months: 1, durKey: "extensionDuration1m", coins: 0, surcharge: 12 },
+                    { months: 3, durKey: "extensionDuration3m", coins: 10000, surcharge: 12 },
+                    { months: 6, durKey: "extensionDuration6m", coins: 25000, surcharge: 0 },
+                    { months: 12, durKey: "extensionDuration12m", coins: 50000, surcharge: 0 }
+                  ] as const
+                ).map((opt) => (
                   <button
                     key={opt.months}
                     type="button"
@@ -427,21 +794,23 @@ export function ContractExtension({
                   })}
                 </p>
               )}
-              {/* Hostel redirect notice */}
               {duration === "hostel" && (
                 <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 flex items-start gap-3">
                   <span className="text-rose-500 text-lg shrink-0">🏨</span>
                   <div>
                     <p className="text-sm font-semibold text-rose-900">{t("hostelRedirectTitle")}</p>
                     <p className="text-xs text-rose-700 mt-1">{t("hostelRedirectDesc")}</p>
-                    <a href="https://hostel.cozorohome.com" target="_blank" rel="noopener noreferrer"
-                      className="mt-2 inline-block rounded-full bg-rose-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-rose-500">
+                    <a
+                      href="https://hostel.cozorohome.com"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-block rounded-full bg-rose-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-rose-500"
+                    >
                       {t("goToHostel")} →
                     </a>
                   </div>
                 </div>
               )}
-              {/* Surcharge warning for 1-3 month extensions */}
               {extensionSurchargeRate > 0 && duration !== "hostel" && (
                 <div className="mt-3 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-3">
                   <span className="text-amber-500 text-lg shrink-0">⚠️</span>
@@ -456,9 +825,34 @@ export function ContractExtension({
                 </div>
               )}
               <p className="mt-3 text-xs text-amber-700">
-                🎁 {t("continuousStayBonus", "Continuous stay bonus: +30,000 coins at 6 months · +20,000 extra at 12 months — awarded by management. / Thưởng ở liên tục: +30.000 coins đủ 6 tháng · +20.000 thêm đủ 12 tháng — quản lý cộng thủ công.")}
+                🎁{" "}
+                {t(
+                  "continuousStayBonus",
+                  "Continuous stay bonus: +30,000 coins at 6 months · +20,000 extra at 12 months — awarded by management."
+                )}
               </p>
             </div>
+
+            {duration !== "hostel" && clientSnapshot ? (
+              <div className="rounded-2xl border border-amber-200 bg-white/60 p-4">
+                <button
+                  type="button"
+                  onClick={() => setShowTermEdits((v) => !v)}
+                  className="flex w-full items-center justify-between text-left"
+                >
+                  <div>
+                    <p className="text-sm font-bold text-amber-900">{t("extensionTermsOptional")}</p>
+                    <p className="mt-1 text-xs text-amber-800">{t("extensionTermsOptionalDesc")}</p>
+                  </div>
+                  <span className="text-amber-700 text-lg">{showTermEdits ? "−" : "+"}</span>
+                </button>
+                {showTermEdits ? (
+                  <div className="mt-4">
+                    <ExtensionTermsFields form={termsForm} setForm={setTermsForm} disabled={loading} t={t} />
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             {duration !== "hostel" && (
               <>
@@ -480,7 +874,11 @@ export function ContractExtension({
                   <label className="block text-xs font-bold uppercase tracking-wider text-amber-700 mb-2 flex justify-between">
                     <span>{t("signatureLabel")}</span>
                     {hasSignature && (
-                      <button onClick={clearSignature} className="text-amber-600 hover:text-amber-800 underline lowercase">
+                      <button
+                        type="button"
+                        onClick={clearSignature}
+                        className="text-amber-600 hover:text-amber-800 underline lowercase"
+                      >
                         {t("clearSignature")}
                       </button>
                     )}
@@ -538,13 +936,15 @@ export function ContractExtension({
 
             <div className="flex items-center gap-4 pt-2">
               <button
-                onClick={handleExtend}
+                onClick={() => void handleExtend()}
                 disabled={duration !== "hostel" && (loading || !agreed || !hasSignature || !fullName.trim())}
                 className={`flex-1 rounded-full px-8 py-3.5 text-sm font-bold text-white transition shadow-lg translate-y-0 active:translate-y-0.5 disabled:opacity-50 disabled:shadow-none ${duration === "hostel" ? "bg-rose-600 hover:bg-rose-500" : "bg-slate-900 hover:bg-slate-800"}`}
               >
                 {duration === "hostel"
                   ? `${t("goToHostel")} →`
-                  : loading ? t("processing") : t("confirmExtension")}
+                  : loading
+                    ? t("processing")
+                    : t("confirmExtension")}
               </button>
               <button
                 onClick={() => setIsExpanded(false)}

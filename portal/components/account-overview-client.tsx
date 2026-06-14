@@ -17,7 +17,7 @@ import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 import { usePortalTheme } from "./portal-theme";
 import { LaundryController } from "./laundry-controller";
-import { ContractExtension } from "./contract-extension";
+import { ContractExtension, parseClientExtensionSnapshot } from "./contract-extension";
 import { ContractTransfer } from "./contract-transfer";
 import { NextPaymentSummary } from "./next-payment-summary";
 import { AccountNoonFlappyBee } from "./account-noon-flappy-bee";
@@ -1082,6 +1082,7 @@ export function AccountOverviewClient() {
         <ContractExtension
           email={sessionEmail}
           endDateStr={client["Ng\u00e0y h\u1ebft h\u1ea1n h\u1ee3p \u0111\u1ed3ng"]}
+          clientSnapshot={parseClientExtensionSnapshot(client)}
           onExtended={() => void loadAccountData()}
         />
       )}

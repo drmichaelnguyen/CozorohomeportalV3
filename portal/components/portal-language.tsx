@@ -852,6 +852,17 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "Your signed transfer is waiting for owner review. A new contract email will be sent after approval.",
     vi: "Yêu cầu chuyển đã ký đang chờ chủ nhà duyệt. Email hợp đồng mới sẽ gửi sau khi được duyệt."
   },
+  managerClientTransferTitle: { en: "Transfer client (owner)", vi: "Chuyển khách (chủ sở hữu)" },
+  managerClientTransferDesc: {
+    en: "Move this resident to another branch or bed immediately. Creates a new contract row and emails the resident — no resident signature required.",
+    vi: "Chuyển cư dân sang chi nhánh/giường khác ngay. Tạo dòng hợp đồng mới và gửi email — không cần chữ ký cư dân."
+  },
+  managerClientTransferExecute: { en: "Transfer now", vi: "Chuyển ngay" },
+  managerClientTransferConfirm: {
+    en: "Transfer {name} to {branch} bed {bed}? This sends a new contract email and deactivates the old row.",
+    vi: "Chuyển {name} sang {branch} giường {bed}? Hệ thống sẽ gửi email hợp đồng mới và vô hiệu dòng cũ."
+  },
+  managerClientTransferSuccess: { en: "Client transferred. Refreshing client list…", vi: "Đã chuyển khách. Đang tải lại danh sách…" },
   selectExtensionDuration: { en: "Select Duration", vi: "Chọn thời hạn" },
   extensionCustomEndDate: { en: "Or choose contract end date", vi: "Hoặc chọn ngày kết thúc hợp đồng" },
   extensionEndDatePicker: { en: "Contract end date", vi: "Ngày kết thúc hợp đồng" },
@@ -2014,7 +2025,35 @@ const translations: Record<string, { en: string; vi: string }> = {
   minNights: { en: "Min nights", vi: "Số đêm tối thiểu" },
   discountPercent: { en: "Discount %", vi: "% Giảm giá" },
   pendingContractApprovals: { en: "Pending contract approvals", vi: "Hợp đồng chờ duyệt" },
-  pendingContractApprovalsDesc: { en: "Signed registrations and extensions are not emailed until an owner approves them.", vi: "Các đơn đăng ký và gia hạn đã ký sẽ không được gửi email cho đến khi chủ sở hữu duyệt." },
+  pendingContractApprovalsDesc: {
+    en: "Signed registrations and extensions are not emailed until an owner approves them. Extension terms can be edited by resident and staff — both must agree before send.",
+    vi: "Các đơn đăng ký và gia hạn đã ký sẽ không được gửi email cho đến khi chủ sở hữu duyệt. Điều khoản gia hạn có thể chỉnh bởi cư dân và nhân viên — cả hai phải đồng ý trước khi gửi."
+  },
+  extensionTermsOptional: { en: "Optional contract changes", vi: "Thay đổi hợp đồng (tuỳ chọn)" },
+  extensionTermsOptionalDesc: {
+    en: "You may request changes to bed, monthly rent, parking, deposit, payment plan, or discounts. Staff will review and may adjust before both sides agree.",
+    vi: "Bạn có thể yêu cầu thay đổi giường, tiền thuê, gửi xe, cọc, kế hoạch thanh toán hoặc ưu đãi. Nhân viên sẽ xem xét và có thể điều chỉnh trước khi hai bên đồng ý."
+  },
+  extensionPendingReviewTitle: { en: "Extension waiting for agreement", vi: "Gia hạn đang chờ thống nhất" },
+  extensionPendingReviewDesc: {
+    en: "Staff may have updated your extension terms. Review the highlighted changes and agree, or edit and resubmit.",
+    vi: "Nhân viên có thể đã cập nhật điều khoản gia hạn. Xem các thay đổi được đánh dấu và đồng ý, hoặc chỉnh sửa rồi gửi lại."
+  },
+  extensionAgreeTerms: { en: "I agree to these terms", vi: "Tôi đồng ý với các điều khoản này" },
+  extensionResidentAgreed: { en: "Resident agreed", vi: "Cư dân đã đồng ý" },
+  extensionStaffAgreed: { en: "Staff agreed", vi: "Nhân viên đã đồng ý" },
+  extensionAwaitingResident: { en: "Waiting for resident agreement", vi: "Chờ cư dân đồng ý" },
+  extensionAwaitingStaff: { en: "Waiting for staff agreement", vi: "Chờ nhân viên đồng ý" },
+  extensionBothAgreed: { en: "Both sides agreed — ready for owner approval", vi: "Hai bên đã đồng ý — sẵn sàng để chủ duyệt" },
+  extensionChangedFrom: { en: "was {value}", vi: "trước: {value}" },
+  extensionSaveEdits: { en: "Save edits", vi: "Lưu chỉnh sửa" },
+  extensionStaffAgreeBtn: { en: "Agree as staff", vi: "Đồng ý (nhân viên)" },
+  extensionApproveBlocked: { en: "Both resident and staff must agree before sending the contract.", vi: "Cư dân và nhân viên phải đồng ý trước khi gửi hợp đồng." },
+  extensionBedLabel: { en: "Bed number", vi: "Số giường" },
+  extensionRentLabel: { en: "Monthly rent (VND)", vi: "Tiền thuê/tháng (VND)" },
+  extensionParkingLabel: { en: "Parking fee (VND)", vi: "Phí gửi xe (VND)" },
+  extensionDepositLabel: { en: "Deposit (VND)", vi: "Tiền cọc (VND)" },
+  extensionExtrasLabel: { en: "Discounts / extra terms", vi: "Ưu đãi / điều khoản thêm" },
   duplicateContractDetected: { en: "Duplicate Active Contract Detected", vi: "Phát hiện hợp đồng trùng lặp" },
   duplicateContractDesc: { en: "This client has {count} active rows in the sheet. The app uses the one with the latest submission timestamp automatically. Mark old rows inactive to fix this.", vi: "Khách này có {count} dòng đang hoạt động trên sheet. Ứng dụng sẽ tự động dùng dòng có dấu thời gian mới nhất. Hãy đánh dấu các dòng cũ là không hoạt động để sửa lỗi này." },
   usingThisRow: { en: "USING THIS", vi: "ĐANG DÙNG" },

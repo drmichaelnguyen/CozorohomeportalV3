@@ -104,6 +104,44 @@ function setMessage(messageKey, params = {}) {
   els.statusMessage.textContent = window.t(messageKey, params);
 }
 
+function getMaxStayNights() {
+  return Number(state.pricingConfig?.maxStayNights) > 0
+    ? Math.floor(Number(state.pricingConfig.maxStayNights))
+    : 60;
+}
+
+function getLongTermRegistrationUrl() {
+  return String(state.pricingConfig?.longTermRegistrationUrl || "https://app.cozorohome.com/register").trim();
+}
+
+function getStayNightsFromInputs() {
+  if (!els.checkIn.value || !els.checkOut.value) {
+    return 0;
+  }
+
+  const start = new Date(`${els.checkIn.value}T00:00:00.000Z`);
+  const end = new Date(`${els.checkOut.value}T00:00:00.000Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || !(start < end)) {
+    return 0;
+  }
+
+  return Math.round((end.getTime() - start.getTime()) / 86400000);
+}
+
+function stayExceedsMaxLimit(nights = getStayNightsFromInputs()) {
+  return nights > getMaxStayNights();
+}
+
+function longTermRegistrationLinkHtml() {
+  const url = getLongTermRegistrationUrl();
+  return `<a href="${url}" target="_blank" rel="noopener noreferrer">${window.t("longTermRegistrationLink")}</a>`;
+}
+
+function setMaxStayBlockedMessage(nights = getStayNightsFromInputs()) {
+  const maxNights = getMaxStayNights();
+  els.statusMessage.innerHTML = `${window.t("maxStayError", { nights, max: maxNights })} ${longTermRegistrationLinkHtml()}`;
+}
+
 function setAuthMessage(messageKey, params = {}) {
   els.authStatus.textContent = window.t(messageKey, params);
 }
@@ -217,6 +255,13 @@ function validateBookingBeforeCheckout() {
 
   if (!els.checkOut.value) {
     addMissing(els.checkOut, "CheckOut");
+  }
+
+  if (els.checkIn.value && els.checkOut.value && stayExceedsMaxLimit()) {
+    markInvalid(els.checkOut);
+    markInvalid(els.checkIn);
+    setMaxStayBlockedMessage();
+    return false;
   }
 
   if (!state.selectedBed) {
@@ -485,7 +530,11 @@ function getWizardState() {
   const nationalityChosen = els.isVietnamese.value !== "";
   const sexChosen = els.bioSex.value !== "";
   const step1Complete = nationalityChosen && sexChosen;
-  const step2Ready = step1Complete && Boolean(els.branchId.value) && Boolean(els.checkIn.value) && Boolean(els.checkOut.value);
+  const step2Ready = step1Complete
+    && Boolean(els.branchId.value)
+    && Boolean(els.checkIn.value)
+    && Boolean(els.checkOut.value)
+    && !stayExceedsMaxLimit();
   const step3Complete = step2Ready && Boolean(state.selectedBed);
   const step4Ready = step3Complete && hasValidBookingSession();
 
@@ -777,7 +826,8 @@ function calculateBedPricingPreview(bedDetails) {
     stayTotal,
     nightlyRateAfterDiscount,
     total: stayTotal + depositAmount,
-    minimumStay: Number(state.pricingConfig.minimumStay || 1)
+    minimumStay: Number(state.pricingConfig.minimumStay || 1),
+    maxStayNights: getMaxStayNights()
   };
 }
 
@@ -799,6 +849,17 @@ function updatePriceSummary(pricing) {
   if (pricing.minimumStay && pricing.nights < pricing.minimumStay) {
     els.priceSummary.textContent = `Minimum stay is ${pricing.minimumStay} nights`;
     els.priceDetails.innerHTML = "";
+    return;
+  }
+
+  if (pricing.maxStayNights && pricing.nights > pricing.maxStayNights) {
+    els.priceSummary.textContent = window.t("maxStaySummary", { max: pricing.maxStayNights });
+    els.priceDetails.innerHTML = `
+      <div class="section-note max-stay-note">
+        ${window.t("maxStayError", { nights: pricing.nights, max: pricing.maxStayNights })}
+        ${longTermRegistrationLinkHtml()}
+      </div>
+    `;
     return;
   }
 
@@ -1184,6 +1245,15 @@ async function loadAvailability() {
     return;
   }
 
+  if (stayExceedsMaxLimit()) {
+    state.availability = null;
+    els.roomsGrid.innerHTML = "";
+    setMaxStayBlockedMessage();
+    updateBookingInstructions();
+    updateWizardUi();
+    return;
+  }
+
   setMessage("loadingAvailability");
 
   const params = new URLSearchParams({
@@ -1241,6 +1311,11 @@ async function bookSelectedBed() {
   const pricingPreview = calculatePricingPreview();
   if (pricingPreview && pricingPreview.minimumStay && pricingPreview.nights < pricingPreview.minimumStay) {
     setMessage("minimumStayError", { min: pricingPreview.minimumStay });
+    return;
+  }
+
+  if (pricingPreview && pricingPreview.maxStayNights && pricingPreview.nights > pricingPreview.maxStayNights) {
+    setMaxStayBlockedMessage(pricingPreview.nights);
     return;
   }
 
@@ -1358,10 +1433,12 @@ els.branchId.addEventListener("change", () => {
 });
 els.checkIn.addEventListener("change", () => {
   clearFieldInvalidState(els.checkIn);
+  clearFieldInvalidState(els.checkOut);
   void loadAvailability();
 });
 els.checkOut.addEventListener("change", () => {
   clearFieldInvalidState(els.checkOut);
+  clearFieldInvalidState(els.checkIn);
   void loadAvailability();
 });
 els.bioSex.addEventListener("change", () => {
