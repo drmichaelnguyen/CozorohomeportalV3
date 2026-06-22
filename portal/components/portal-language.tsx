@@ -863,6 +863,11 @@ const translations: Record<string, { en: string; vi: string }> = {
     vi: "Chuyển {name} sang {branch} giường {bed}? Hệ thống sẽ gửi email hợp đồng mới và vô hiệu dòng cũ."
   },
   managerClientTransferSuccess: { en: "Client transferred. Refreshing client list…", vi: "Đã chuyển khách. Đang tải lại danh sách…" },
+  managerClientTransferToolsMenu: { en: "Transfer branch/bed", vi: "Chuyển chi nhánh/giường" },
+  managerClientTransferInactiveOnly: {
+    en: "Transfer is only available for active clients.",
+    vi: "Chỉ có thể chuyển khách đang ở (trạng thái hoạt động)."
+  },
   selectExtensionDuration: { en: "Select Duration", vi: "Chọn thời hạn" },
   extensionCustomEndDate: { en: "Or choose contract end date", vi: "Hoặc chọn ngày kết thúc hợp đồng" },
   extensionEndDatePicker: { en: "Contract end date", vi: "Ngày kết thúc hợp đồng" },
@@ -1204,6 +1209,25 @@ const translations: Record<string, { en: string; vi: string }> = {
   toolsPushBody: { en: "Message body", vi: "Nội dung" },
   toolsSendBulkPush: { en: "Send push to selected", vi: "Gửi push tới đã chọn" },
   toolsBulkResults: { en: "Results", vi: "Kết quả" },
+  toolsDbBackupTitle: { en: "Database backup (Google Sheet)", vi: "Sao lưu cơ sở dữ liệu (Google Sheet)" },
+  toolsDbBackupDesc: {
+    en: "Export all MariaDB tables to a dedicated Google Spreadsheet (one tab per table). Use Restore only in an emergency — it replaces every backed-up table with the sheet copy.",
+    vi: "Xuất toàn bộ bảng MariaDB sang Google Spreadsheet riêng (mỗi bảng một tab). Chỉ dùng Khôi phục khi khẩn cấp — thao tác này thay thế toàn bộ dữ liệu bằng bản sao trên sheet."
+  },
+  toolsDbBackupHelp: {
+    en: "Requires Google OAuth on the API server. First export creates a spreadsheet (or set GOOGLE_DB_BACKUP_SPREADSHEET_ID). Client rows in Google Sheets (COZORODATABASE) are separate — this backs up the app database only.",
+    vi: "Cần Google OAuth trên máy chủ API. Lần xuất đầu tạo spreadsheet mới (hoặc đặt GOOGLE_DB_BACKUP_SPREADSHEET_ID). Dữ liệu khách trên Google Sheets (COZORODATABASE) là riêng — đây chỉ sao lưu cơ sở dữ liệu ứng dụng."
+  },
+  toolsDbBackupLastExport: { en: "Last export", vi: "Lần xuất cuối" },
+  toolsDbBackupLastRestore: { en: "Last restore", vi: "Lần khôi phục cuối" },
+  toolsDbBackupOpenSheet: { en: "Open backup sheet", vi: "Mở sheet sao lưu" },
+  toolsDbBackupExport: { en: "Export database now", vi: "Xuất CSDL ngay" },
+  toolsDbBackupExporting: { en: "Exporting…", vi: "Đang xuất…" },
+  toolsDbBackupRestore: { en: "Restore from sheet", vi: "Khôi phục từ sheet" },
+  toolsDbBackupRestoring: { en: "Restoring…", vi: "Đang khôi phục…" },
+  toolsDbBackupConfirmLabel: { en: "Type RESTORE to confirm", vi: "Nhập RESTORE để xác nhận" },
+  toolsDbBackupNoSheet: { en: "No backup sheet yet — run Export first.", vi: "Chưa có sheet sao lưu — hãy Xuất trước." },
+  toolsDbBackupTableCounts: { en: "Row counts (last export)", vi: "Số dòng (lần xuất cuối)" },
   toolsLoadFailed: { en: "Could not load settings.", vi: "Không tải được cấu hình." },
   toolsSelectResidentsFirst: { en: "Select at least one resident.", vi: "Chọn ít nhất một cư dân." },
   toolsEnterNonZeroDelta: { en: "Enter a non-zero coin change.", vi: "Nhập mức thay đổi coin khác 0." },

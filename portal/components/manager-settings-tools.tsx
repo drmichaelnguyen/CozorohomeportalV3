@@ -24,6 +24,7 @@ const TASK_KEYS = ["KITCHEN_D2", "KITCHEN_D7", "TRASH_D7"] as const;
 type Props = {
   normalizedEmail: string;
   clients: ManagerSettingsToolsClient[];
+  canManageDbBackup?: boolean;
   /** Matches `usePortalLanguage().t` — second arg may be params when omitting fallback. */
   t: (key: string, fallback?: string | Record<string, unknown>, params?: Record<string, string | number>) => string;
   onRefreshClients: () => Promise<void>;
@@ -57,7 +58,7 @@ type FridgeApiRow =
       onTime?: string | null;
     };
 
-type ToolPanelKey = "cleaning" | "fridge" | "bulk_coins" | "bulk_push";
+type ToolPanelKey = "cleaning" | "fridge" | "bulk_coins" | "bulk_push" | "db_backup";
 
 function ToolCollapsiblePanel({
   title,
@@ -111,12 +112,13 @@ function emptyFridgeRow(loading: boolean): FridgeBranchUi {
   };
 }
 
-export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshClients }: Props) {
+export function ManagerSettingsTools({ normalizedEmail, clients, canManageDbBackup = false, t, onRefreshClients }: Props) {
   const [openToolPanels, setOpenToolPanels] = useState<Record<ToolPanelKey, boolean>>({
     cleaning: false,
     fridge: false,
     bulk_coins: false,
-    bulk_push: false
+    bulk_push: false,
+    db_backup: false
   });
   const toggleToolPanel = (key: ToolPanelKey) => {
     setOpenToolPanels((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -142,6 +144,50 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
   const [pushBody, setPushBody] = useState("");
   const [pushWorking, setPushWorking] = useState(false);
   const [pushMessage, setPushMessage] = useState("");
+
+  const [dbBackupLoading, setDbBackupLoading] = useState(false);
+  const [dbBackupExporting, setDbBackupExporting] = useState(false);
+  const [dbBackupRestoring, setDbBackupRestoring] = useState(false);
+  const [dbBackupMessage, setDbBackupMessage] = useState("");
+  const [dbBackupError, setDbBackupError] = useState("");
+  const [dbBackupConfirm, setDbBackupConfirm] = useState("");
+  const [dbBackupStatus, setDbBackupStatus] = useState<{
+    spreadsheetId: string;
+    spreadsheetUrl: string;
+    lastExportedAt: string | null;
+    lastExportedBy: string | null;
+    lastRestoredAt: string | null;
+    lastRestoredBy: string | null;
+    tableCounts: Record<string, number>;
+  } | null>(null);
+
+  const loadDbBackupStatus = useCallback(async () => {
+    if (!canManageDbBackup || !normalizedEmail) {
+      return;
+    }
+    setDbBackupLoading(true);
+    setDbBackupError("");
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/manager/db-backup/status?actorEmail=${encodeURIComponent(normalizedEmail)}`
+      );
+      const data = (await res.json()) as typeof dbBackupStatus & { error?: string };
+      if (!res.ok) {
+        throw new Error(data?.error ?? "Unable to load backup status");
+      }
+      setDbBackupStatus(data);
+    } catch (error) {
+      setDbBackupError(error instanceof Error ? error.message : "Unable to load backup status");
+    } finally {
+      setDbBackupLoading(false);
+    }
+  }, [canManageDbBackup, normalizedEmail]);
+
+  useEffect(() => {
+    if (canManageDbBackup && openToolPanels.db_backup) {
+      void loadDbBackupStatus();
+    }
+  }, [canManageDbBackup, openToolPanels.db_backup, loadDbBackupStatus]);
 
   const loadCleaning = useCallback(async () => {
     setCleaningLoading(true);
@@ -434,10 +480,67 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
     }
   };
 
+  const runDbBackupExport = async () => {
+    setDbBackupExporting(true);
+    setDbBackupMessage("");
+    setDbBackupError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/manager/db-backup/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorEmail: normalizedEmail })
+      });
+      const data = (await res.json()) as { error?: string; spreadsheetUrl?: string };
+      if (!res.ok) {
+        throw new Error(data.error ?? "Export failed");
+      }
+      setDbBackupMessage(data.spreadsheetUrl ? `${t("toolsDbBackupOpenSheet")}: ${data.spreadsheetUrl}` : t("portalUxSettingsSaved"));
+      await loadDbBackupStatus();
+    } catch (error) {
+      setDbBackupError(error instanceof Error ? error.message : "Export failed");
+    } finally {
+      setDbBackupExporting(false);
+    }
+  };
+
+  const runDbBackupRestore = async () => {
+    if (dbBackupConfirm.trim() !== "RESTORE") {
+      setDbBackupError(t("toolsDbBackupConfirmLabel"));
+      return;
+    }
+    setDbBackupRestoring(true);
+    setDbBackupMessage("");
+    setDbBackupError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/manager/db-backup/restore`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actorEmail: normalizedEmail,
+          confirmPhrase: dbBackupConfirm.trim(),
+          spreadsheetId: dbBackupStatus?.spreadsheetId ?? ""
+        })
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        throw new Error(data.error ?? "Restore failed");
+      }
+      setDbBackupMessage(t("portalUxSettingsSaved"));
+      setDbBackupConfirm("");
+      await loadDbBackupStatus();
+      await onRefreshClients();
+    } catch (error) {
+      setDbBackupError(error instanceof Error ? error.message : "Restore failed");
+    } finally {
+      setDbBackupRestoring(false);
+    }
+  };
+
   const cleaningHelpBody = t("toolsCleaningRewardsDesc");
   const fridgeHelpBody = `${t("toolsFridgeDrainDesc")}\n\n${t("toolsFridgeDrainIftttNote")}`;
   const bulkCoinsHelpBody = t("toolsBulkCoinsDesc");
   const bulkPushHelpBody = t("toolsBulkPushDesc");
+  const dbBackupHelpBody = t("toolsDbBackupHelp");
   const helpAria = t("toolsSectionHelpLabel");
 
   return (
@@ -719,6 +822,99 @@ export function ManagerSettingsTools({ normalizedEmail, clients, t, onRefreshCli
           {pushWorking ? t("saving") : t("toolsSendBulkPush")}
         </button>
       </ToolCollapsiblePanel>
+
+      {canManageDbBackup ? (
+        <ToolCollapsiblePanel
+          title={t("toolsDbBackupTitle")}
+          helpBody={dbBackupHelpBody}
+          helpLabel={helpAria}
+          expanded={openToolPanels.db_backup}
+          onToggle={() => toggleToolPanel("db_backup")}
+        >
+          <p className="text-sm text-slate-600 dark:text-slate-400">{t("toolsDbBackupDesc")}</p>
+          {dbBackupLoading ? <p className="mt-3 text-sm text-slate-500">{t("refreshing")}</p> : null}
+          {dbBackupStatus?.spreadsheetUrl ? (
+            <p className="mt-3 text-sm">
+              <a
+                href={dbBackupStatus.spreadsheetUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-violet-700 underline dark:text-violet-300"
+              >
+                {t("toolsDbBackupOpenSheet")}
+              </a>
+            </p>
+          ) : (
+            <p className="mt-3 text-sm text-amber-800 dark:text-amber-200">{t("toolsDbBackupNoSheet")}</p>
+          )}
+          {dbBackupStatus?.lastExportedAt ? (
+            <p className="mt-2 text-xs text-slate-500">
+              {t("toolsDbBackupLastExport")}: {formatCozoroDateTime(dbBackupStatus.lastExportedAt)}
+              {dbBackupStatus.lastExportedBy ? ` · ${dbBackupStatus.lastExportedBy}` : ""}
+            </p>
+          ) : null}
+          {dbBackupStatus?.lastRestoredAt ? (
+            <p className="mt-1 text-xs text-slate-500">
+              {t("toolsDbBackupLastRestore")}: {formatCozoroDateTime(dbBackupStatus.lastRestoredAt)}
+              {dbBackupStatus.lastRestoredBy ? ` · ${dbBackupStatus.lastRestoredBy}` : ""}
+            </p>
+          ) : null}
+          {dbBackupStatus?.tableCounts && Object.keys(dbBackupStatus.tableCounts).length > 0 ? (
+            <details className="mt-3 rounded-lg border border-slate-200 bg-slate-50/80 p-3 text-xs dark:border-slate-600 dark:bg-slate-800/40">
+              <summary className="cursor-pointer font-medium text-slate-700 dark:text-slate-200">
+                {t("toolsDbBackupTableCounts")}
+              </summary>
+              <ul className="mt-2 space-y-0.5 font-mono text-slate-600 dark:text-slate-400">
+                {Object.entries(dbBackupStatus.tableCounts).map(([table, count]) => (
+                  <li key={table}>
+                    {table}: {count}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={dbBackupExporting || dbBackupRestoring}
+              onClick={() => void runDbBackupExport()}
+              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
+            >
+              {dbBackupExporting ? t("toolsDbBackupExporting") : t("toolsDbBackupExport")}
+            </button>
+            <button
+              type="button"
+              onClick={() => void loadDbBackupStatus()}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 dark:border-slate-600 dark:text-slate-200"
+            >
+              {t("refresh")}
+            </button>
+          </div>
+          <div className="mt-5 rounded-xl border border-rose-200 bg-rose-50/80 p-4 dark:border-rose-900/50 dark:bg-rose-950/30">
+            <p className="text-sm font-medium text-rose-900 dark:text-rose-200">{t("toolsDbBackupRestore")}</p>
+            <label className="mt-3 block text-sm">
+              <span className="font-medium text-slate-700 dark:text-slate-300">{t("toolsDbBackupConfirmLabel")}</span>
+              <input
+                type="text"
+                className="mt-1 w-full max-w-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+                value={dbBackupConfirm}
+                onChange={(e) => setDbBackupConfirm(e.target.value)}
+                autoComplete="off"
+              />
+            </label>
+            <button
+              type="button"
+              disabled={dbBackupRestoring || dbBackupExporting || dbBackupConfirm.trim() !== "RESTORE"}
+              onClick={() => void runDbBackupRestore()}
+              className="mt-3 rounded-lg bg-rose-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {dbBackupRestoring ? t("toolsDbBackupRestoring") : t("toolsDbBackupRestore")}
+            </button>
+          </div>
+          {dbBackupMessage ? <p className="mt-3 text-sm text-emerald-800 dark:text-emerald-300">{dbBackupMessage}</p> : null}
+          {dbBackupError ? <p className="mt-3 text-sm text-rose-600">{dbBackupError}</p> : null}
+        </ToolCollapsiblePanel>
+      ) : null}
     </div>
   );
 }

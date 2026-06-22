@@ -46,6 +46,11 @@ import { getClientGroupContext, getGroupMessages, markGroupRead, postGroupMessag
 import { VAPID_PUBLIC_KEY, savePushSubscription, deletePushSubscription, sendPushToEmail } from "./push.js";
 import { getCleaningRewardSettings, updateCleaningRewardSettings } from "./cleaning-reward-settings.js";
 import { getManagerFridgeDrainSchedule, upsertFridgeDrainCleaningDate } from "./fridge-drain-schedule.js";
+import {
+  exportDatabaseToGoogleSheet,
+  getDatabaseBackupStatus,
+  restoreDatabaseFromGoogleSheet
+} from "./db-backup-sheets.js";
 import { getPortalUxSettings, updatePortalUxSettings } from "./portal-ux-settings.js";
 import {
   createGuideSchema,
@@ -7191,6 +7196,63 @@ app.put("/manager/cleaning-reward-settings", async (req, res) => {
   }
 });
 
+// GET /manager/db-backup/status — owner reads DB backup sheet metadata
+app.get("/manager/db-backup/status", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim();
+  if (!actorEmail) {
+    return res.status(400).json({ error: "actorEmail is required" });
+  }
+  try {
+    await requirePortalRole(actorEmail, ["owner", "app_admin"], "Only owners can manage database backups.");
+    const status = await getDatabaseBackupStatus();
+    return res.json(status);
+  } catch (error) {
+    return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+// POST /manager/db-backup/export — export MariaDB tables to Google Sheet tabs
+app.post("/manager/db-backup/export", async (req, res) => {
+  const actorEmail = String((req.body as Record<string, unknown>)?.actorEmail ?? "").trim();
+  if (!actorEmail) {
+    return res.status(400).json({ error: "actorEmail is required" });
+  }
+  try {
+    await requirePortalRole(actorEmail, ["owner", "app_admin"], "Only owners can manage database backups.");
+    const result = await exportDatabaseToGoogleSheet(actorEmail);
+    return res.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to export database backup";
+    return res.status(500).json({ error: message });
+  }
+});
+
+// POST /manager/db-backup/restore — replace MariaDB from Google Sheet backup (destructive)
+app.post("/manager/db-backup/restore", async (req, res) => {
+  const body = req.body as Record<string, unknown>;
+  const actorEmail = String(body.actorEmail ?? "").trim();
+  const confirmPhrase = String(body.confirmPhrase ?? "").trim();
+  const spreadsheetId = String(body.spreadsheetId ?? "").trim();
+
+  if (!actorEmail) {
+    return res.status(400).json({ error: "actorEmail is required" });
+  }
+  if (confirmPhrase !== "RESTORE") {
+    return res.status(400).json({ error: 'Type RESTORE in confirmPhrase to proceed.' });
+  }
+  try {
+    await requirePortalRole(actorEmail, ["owner", "app_admin"], "Only owners can manage database backups.");
+    const result = await restoreDatabaseFromGoogleSheet({
+      actorEmail,
+      spreadsheetId: spreadsheetId || undefined
+    });
+    return res.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to restore database backup";
+    return res.status(500).json({ error: message });
+  }
+});
+
 // GET /resident/guides — bilingual how-to sections for residents (public read)
 app.get("/resident/guides", async (_req, res) => {
   try {
@@ -7531,31 +7593,41 @@ function normalizeBranchLabelForUnpaidReminder(value: string): string {
   return value.trim() || "Unknown";
 }
 
-function isSheetRowPrepaidPlan(row: Record<string, string>): boolean {
-  const plan = String(row["Bạn muốn thanh toán chi phí như thế nào?"] ?? "");
-  return plan.includes("03 tháng") || plan.includes("06 tháng");
-}
-
 /**
  * Same eligibility as the manager UI unpaid marker + unpaid reminder list:
- * active stay "1", not on 3/6-month prepaid sheet plan, not marked paid in DB for the month, optional D2/D7 branch.
+ * active stay "1"; monthly clients when rent is unpaid or add-on components are marked unpaid;
+ * prepaid-package clients when add-on components (parking, gate, laundry, fines) are marked unpaid.
  */
-function collectEligibleUnpaidReminderEmails(
+async function collectEligibleUnpaidReminderEmails(
   clients: Awaited<ReturnType<typeof getManagerClients>>,
-  paidEmailSet: Set<string>,
+  month: string,
   branchFilter?: "D2" | "D7"
-): string[] {
+): Promise<string[]> {
+  const rentRows = await prisma.monthlyRentStatus.findMany({
+    where: { month },
+    select: { email: true, isPaid: true }
+  });
+  const paidByEmail = new Map(rentRows.map((row) => [row.email.trim().toLowerCase(), row.isPaid]));
+
   const seen = new Set<string>();
   const out: string[] = [];
   for (const client of clients) {
     if (String(client.activeStay ?? "").trim() !== "1") continue;
-    if (isSheetRowPrepaidPlan(client.row)) continue;
     const email = client.email.trim().toLowerCase();
-    if (!email || paidEmailSet.has(email)) continue;
+    if (!email) continue;
     if (branchFilter) {
       const b = normalizeBranchLabelForUnpaidReminder(String(client.branch ?? ""));
       if (b !== branchFilter) continue;
     }
+
+    const componentUnpaid = await getRentComponentUnpaid(email, month);
+    const prepaidCovered = isPrepaidRentCovered(client.row);
+    const isPaid = paidByEmail.get(email) === true;
+    const eligible = prepaidCovered
+      ? hasUnpaidAddOnComponents(componentUnpaid)
+      : !isPaid || hasAnyUnpaidComponent(componentUnpaid);
+    if (!eligible) continue;
+
     if (seen.has(email)) continue;
     seen.add(email);
     out.push(email);
@@ -7591,7 +7663,33 @@ async function buildPaymentReminderEmailBody(input: {
   if (client) {
     const paymentPlan = String(client["Bạn muốn thanh toán chi phí như thế nào?"] ?? "");
     const onPrepaidPlan = paymentPlan.includes("03 tháng") || paymentPlan.includes("06 tháng");
-    if (onPrepaidPlan) {
+    const componentUnpaid = await getRentComponentUnpaid(email, input.month);
+    const prepaidCovered = isPrepaidRentCovered(client);
+    if (prepaidCovered && hasUnpaidAddOnComponents(componentUnpaid)) {
+      const { breakdown } = await calculateRentBreakdownForBillingMonth(client, input.month, {
+        managerDiscountVnd: 0
+      });
+      const lines: string[] = [];
+      let addOnTotalVnd = 0;
+      if (componentUnpaid.parking) {
+        addOnTotalVnd += breakdown.parkingFeeVnd;
+        lines.push(`Phí gửi xe: ${formatVndForReminder(breakdown.parkingFeeVnd)}`);
+      }
+      if (componentUnpaid.gateParking) {
+        addOnTotalVnd += breakdown.gateParkingFeeVnd;
+        lines.push(`Phí giữ xe cổng: ${formatVndForReminder(breakdown.gateParkingFeeVnd)}`);
+      }
+      if (componentUnpaid.laundry) {
+        addOnTotalVnd += breakdown.laundryFeeVnd;
+        lines.push(`Phí giặt tiền mặt: ${formatVndForReminder(breakdown.laundryFeeVnd)}`);
+      }
+      if (componentUnpaid.fines) {
+        addOnTotalVnd += breakdown.finesVnd;
+        lines.push(`Tiền phạt chưa thanh toán: ${formatVndForReminder(breakdown.finesVnd)}`);
+      }
+      totalDueVnd = addOnTotalVnd;
+      breakdownLines = lines;
+    } else if (onPrepaidPlan) {
       const estimate = await computePrepaidNextPaymentEstimate(client, input.month);
       if (estimate) {
         totalDueVnd = estimate.estimatedTotalVnd;
@@ -7639,6 +7737,7 @@ async function buildPaymentReminderEmailBody(input: {
             .replace("Phụ phí thời hạn", "Tenure surcharge")
             .replace("Điều chỉnh tháng", "Monthly adjustment")
             .replace("Phí gửi xe", "Parking fees")
+            .replace("Phí giữ xe cổng", "Gate parking fees")
             .replace("Phí giặt tiền mặt", "Cash laundry fee")
             .replace("Tiền phạt chưa thanh toán", "Unpaid fines")
             .replace("Khuyến mãi/giảm trừ", "Discounts")
@@ -7711,13 +7810,8 @@ app.post("/manager/payment-reminders/send", async (request, response) => {
     const now = new Date();
     const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
     const allClients = await getManagerClients();
-    const paidRows = await prisma.monthlyRentStatus.findMany({
-      where: { month, isPaid: true },
-      select: { email: true }
-    });
-    const paidEmailSet = new Set(paidRows.map((row) => row.email.trim().toLowerCase()));
     const branchFilter = parsed.data.branch;
-    const eligibleUnpaidEmails = collectEligibleUnpaidReminderEmails(allClients, paidEmailSet, branchFilter);
+    const eligibleUnpaidEmails = await collectEligibleUnpaidReminderEmails(allClients, month, branchFilter);
     const eligibleSet = new Set(eligibleUnpaidEmails);
 
     const recipientEmails =
