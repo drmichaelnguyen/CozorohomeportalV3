@@ -8662,7 +8662,9 @@ app.post("/manager/contract-approvals/:id/approve", async (request, response) =>
       const result = await submitPublicRegistration({
         ...(registration as any),
         clientSignatureDataUrl: item.clientSignatureDataUrl,
-        clientSignatureTimestamp: item.clientSignatureTimestamp
+        clientSignatureTimestamp: item.clientSignatureTimestamp,
+        ownerApprovedBy: parsed.data.actorEmail.trim().toLowerCase(),
+        ownerApprovedAt: approvedAt
       });
       if (registration.contractCleaningOptOut) {
         await upsertContractCleaningOptOut({

@@ -312,6 +312,8 @@ export type PublicRegistrationInput = {
   referralNoteLine?: string;
   clientSignatureDataUrl?: string;
   clientSignatureTimestamp?: string;
+  ownerApprovedBy?: string;
+  ownerApprovedAt?: string;
 };
 
 export type FineRow = Record<string, string> & {
@@ -3278,7 +3280,7 @@ export async function submitPublicRegistration(input: PublicRegistrationInput) {
     [CLIENT_BRANCH_COLUMN]: input.branchId === "D7" ? "7" : "2",
     [CLIENT_PHONE_COLUMN]: input.phone.trim() ? `'${input.phone.trim()}` : "",
     [CLIENT_BED_COLUMN]: String(input.bedNumber),
-    [ACTIVE_STAYING_COLUMN]: "1",
+    [ACTIVE_STAYING_COLUMN]: "",
     ["Ngày tháng năm sinh"]: input.dateOfBirth ? formatClientContractDate(input.dateOfBirth) : "",
     ["Địa chỉ thường trú"]: input.permanentAddress?.trim() ?? "",
     ["Số CMND hoặc CCCD"]: input.governmentId?.trim() ?? "",
@@ -3325,17 +3327,84 @@ export async function submitPublicRegistration(input: PublicRegistrationInput) {
 
   const orderedRow = headers.map((header) => nextRow[header] ?? "");
 
-  await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range: `${sheetName}!A:AMJ`,
-    valueInputOption: "USER_ENTERED",
-    insertDataOption: "INSERT_ROWS",
-    requestBody: {
-      values: [orderedRow]
+  const activeColIndex = headers.indexOf(normalizeHeader(ACTIVE_STAYING_COLUMN));
+  const BRIDGE_URL =
+    "https://script.google.com/macros/s/AKfycbyykY6OqeAaILbv4yiG8y5ZBMV5Z-cwP8Pn2cYAtBd_uvojZoYS4y_uk76UknpX8Bk/exec";
+
+  const payload: Record<string, string> = {};
+  headers.forEach((header, index) => {
+    const norm = header.toString().toLowerCase().trim().replace(/ /g, "");
+    let value = orderedRow[index] ?? "";
+    if (index === activeColIndex) {
+      value = "";
     }
+    payload[norm] = value;
   });
 
+  payload.clientsignature = input.clientSignatureDataUrl?.trim() ?? "";
+  payload.clientsignaturetimestamp = input.clientSignatureTimestamp?.trim() ?? "";
+  payload.contractapprovalstatus = "approved";
+  payload.contractapprovedby = input.ownerApprovedBy?.trim() ?? "";
+  payload.contractapprovedat = input.ownerApprovedAt?.trim() ?? "";
+
+  console.log(`[PublicRegistration] Sending data to Bridge Script for ${normalizedEmail}...`);
+
+  let rowIndex: number | null = null;
+  try {
+    const bridgeResponse = await fetch(BRIDGE_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const result = (await bridgeResponse.json()) as { success?: boolean; rowIndex?: number; error?: string };
+    if (result.success) {
+      rowIndex = result.rowIndex ?? null;
+      console.log(
+        `[PublicRegistration] Bridge success! Row ${rowIndex} created for ${normalizedEmail}. Email sent.`
+      );
+    } else {
+      console.error(`[PublicRegistration] Bridge reported error:`, result.error);
+      throw new Error(result.error || "Bridge script failed");
+    }
+  } catch (err) {
+    console.error(`[PublicRegistration] Failed to communicate with Bridge Script:`, err);
+    throw new Error("Could not connect to contract generation service.");
+  }
+
   await syncClientsFromSheet();
+
+  if (rowIndex) {
+    const activationDelayMs = 15 * 1000;
+    setTimeout(async () => {
+      try {
+        console.log(`[PublicRegistration] Activating row ${rowIndex} for ${normalizedEmail} after 15s...`);
+        const authSheets = await getAuthorizedSheetsClient();
+        const activeIdx = headers.indexOf(normalizeHeader(ACTIVE_STAYING_COLUMN));
+        const activeLetter = columnIndexToLetter(activeIdx);
+
+        await authSheets.spreadsheets.values.update({
+          spreadsheetId,
+          range: `${sheetName}!${activeLetter}${rowIndex}`,
+          valueInputOption: "USER_ENTERED",
+          requestBody: { values: [["1"]] }
+        });
+
+        console.log(
+          `[PublicRegistration] Success: Activated row ${rowIndex} for ${normalizedEmail}. Refreshing cache...`
+        );
+        await syncClientsFromSheet();
+      } catch (err) {
+        console.error(`[PublicRegistration] Error during background activation for ${normalizedEmail}:`, err);
+      }
+    }, activationDelayMs);
+  }
+
+  clientsMemoryCache = null;
 
   return {
     contractCode
