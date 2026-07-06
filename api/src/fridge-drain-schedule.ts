@@ -1,4 +1,5 @@
 import { COZORO_TIMEZONE, getAuthorizedCalendarClient } from "./google-sheets.js";
+import { isBranchAutomationDisabled } from "./branch-closure.js";
 
 export type FridgeDrainBranchId = "D2" | "D7";
 
@@ -237,6 +238,10 @@ export type FridgeDrainReminder = {
 };
 
 export async function buildFridgeDrainReminderNotifications(branchId: FridgeDrainBranchId): Promise<FridgeDrainReminder[]> {
+  if (isBranchAutomationDisabled(branchId)) {
+    return [];
+  }
+
   const pair = await loadNextFridgeDrainPair(branchId);
   if (!pair) {
     return [];
@@ -265,6 +270,15 @@ export async function buildFridgeDrainReminderNotifications(branchId: FridgeDrai
 }
 
 export async function getManagerFridgeDrainSchedule(branchId: FridgeDrainBranchId) {
+  if (isBranchAutomationDisabled(branchId)) {
+    return {
+      branchId,
+      configured: false as const,
+      closed: true as const,
+      error: "D2 branch is permanently closed. Fridge drain automation has been stopped."
+    };
+  }
+
   const calendarId = getFridgeDrainCalendarId(branchId);
   if (!calendarId) {
     return {
@@ -328,6 +342,10 @@ export async function upsertFridgeDrainCleaningDate(input: {
   /** VN local time on cleaning day (power on). Default 17:00. */
   onTime?: string;
 }) {
+  if (isBranchAutomationDisabled(input.branchId)) {
+    throw new Error("D2 branch is permanently closed. Fridge drain automation has been stopped.");
+  }
+
   const calendarId = getFridgeDrainCalendarId(input.branchId);
   if (!calendarId) {
     throw new Error("Fridge drain calendar is not configured for this branch.");

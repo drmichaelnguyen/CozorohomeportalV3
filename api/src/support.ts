@@ -23,6 +23,7 @@ import {
 } from "./google-sheets.js";
 import { loadOpenAcComfortAlertsForStaff } from "./ac-comfort-votes.js";
 import { buildFridgeDrainReminderNotifications } from "./fridge-drain-schedule.js";
+import { isBranchAutomationDisabled, isCleaningTaskAutomationDisabled } from "./branch-closure.js";
 import { prisma } from "./prisma.js";
 import { ASSISTANT_SENDER_EMAIL, runResidentSupportAssistantTurn } from "./resident-support-ai.js";
 import { appendSupportAssistantMetaSuffix } from "./support-assistant-message-meta.js";
@@ -878,7 +879,7 @@ async function buildResidentReminderNotifications(email: string) {
 
   if (client) {
     const branchId = normalizeClientBranch(getClientBranchValue(client));
-    if (branchId === "D2" || branchId === "D7") {
+    if (branchId === "D7") {
       const fridge = await buildFridgeDrainReminderNotifications(branchId);
       for (const item of fridge) {
         notifications.push(item);
@@ -1162,6 +1163,10 @@ export async function dispatchCleaningReminderPushes(trigger: "startup" | "inter
     >();
 
     for (const task of assignedTasks) {
+      if (isCleaningTaskAutomationDisabled(task.type)) {
+        continue;
+      }
+
       const taskDayKey = getDateKeyInTimeZone(task.scheduledDate);
       const kind: CleaningReminderKind | null =
         taskDayKey === todayKey ? "DAY_OF" : taskDayKey === tomorrowKey ? "DAY_BEFORE" : null;
@@ -1253,7 +1258,22 @@ export async function dispatchLaundryReminderPushes(trigger: "startup" | "interv
     let sent = 0;
     let residentsChecked = 0;
 
+    const clientRows = clientCache?.rows ?? [];
+    const branchByEmail = new Map(
+      clientRows
+        .filter((row: ClientRow) => isActiveClient(row))
+        .map((row: ClientRow) => [
+          normalizeEmail(row[EMAIL_COLUMN] ?? ""),
+          normalizeClientBranch(getClientBranchValue(row))
+        ])
+    );
+
     for (const email of activeEmails) {
+      const branchId = branchByEmail.get(email);
+      if (branchId && isBranchAutomationDisabled(branchId)) {
+        continue;
+      }
+
       residentsChecked += 1;
       const bookings = await getLaundryBookingsForEmailWithOptions(email, { forceRefresh: false });
       if (bookings.length === 0) {

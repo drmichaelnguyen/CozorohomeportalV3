@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { getActiveClientByEmail } from "./google-sheets.js";
+import { isBranchAutomationDisabled } from "./branch-closure.js";
 
 const cacheDirPath = path.join(process.cwd(), "data");
 const microwaveStateFilePath = path.join(cacheDirPath, "microwave-state.json");
@@ -110,7 +111,7 @@ export async function getUserMicrowaveContext(email: string): Promise<UserMicrow
     email: normalizedEmail,
     name: clientName.trim(),
     branchId,
-    eligible: branchId === MICROWAVE_BRANCH,
+    eligible: branchId === MICROWAVE_BRANCH && !isBranchAutomationDisabled(MICROWAVE_BRANCH),
     cooldownMinutes: MICROWAVE_COOLDOWN_MINUTES,
     status: {
       inUse: Boolean(activeUse),
@@ -123,6 +124,10 @@ export async function getUserMicrowaveContext(email: string): Promise<UserMicrow
 }
 
 export async function startMicrowaveUse(input: { email: string; inspection: string }) {
+  if (isBranchAutomationDisabled(MICROWAVE_BRANCH)) {
+    throw new Error("D2 branch is permanently closed. Microwave automation has been stopped.");
+  }
+
   const context = await getUserMicrowaveContext(input.email);
 
   if (!context.eligible) {

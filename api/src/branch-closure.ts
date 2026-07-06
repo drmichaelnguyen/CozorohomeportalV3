@@ -8,7 +8,22 @@ export const D2_PERMANENT_CLOSURE_DATE = "2026-07-01";
 /** D2 no longer accepts new long-term or hostel registrations. */
 export const D2_NEW_REGISTRATION_CLOSED = true;
 
+/** D2 branch is permanently closed — stop background automation (cleaning, fridge, microwave IFTTT, reminders). */
+export const D2_AUTOMATION_DISABLED = true;
+
 export type BranchId = "D2" | "D7";
+
+export function isD2AutomationDisabled(): boolean {
+  return D2_AUTOMATION_DISABLED;
+}
+
+export function isBranchAutomationDisabled(branchId: string): boolean {
+  return branchId === "D2" && D2_AUTOMATION_DISABLED;
+}
+
+export function isCleaningTaskAutomationDisabled(type: string): boolean {
+  return type === "KITCHEN_D2" && D2_AUTOMATION_DISABLED;
+}
 
 export function isBranchClosedForNewRegistrations(branchId: string): branchId is "D2" {
   return branchId === "D2" && D2_NEW_REGISTRATION_CLOSED;
@@ -19,6 +34,13 @@ export function getBranchRegistrationClosedError(branchId: string): string | nul
     return null;
   }
   return `D2 is permanently closing on ${formatClosureDate(D2_PERMANENT_CLOSURE_DATE)} and is no longer accepting new registrations. Please choose D7 or contact staff.`;
+}
+
+export function getBranchAutomationClosedError(branchId: string): string | null {
+  if (!isBranchAutomationDisabled(branchId)) {
+    return null;
+  }
+  return `D2 branch is permanently closed. Automated services for D2 have been stopped.`;
 }
 
 function formatClosureDate(isoDate: string): string {

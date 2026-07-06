@@ -8,6 +8,9 @@ const D2_PERMANENT_CLOSURE_DATE = "2026-07-01";
 /** D2 no longer accepts new long-term or hostel registrations. */
 const D2_NEW_REGISTRATION_CLOSED = true;
 
+/** D2 branch is permanently closed — stop background automation (cleaning, fridge, microwave IFTTT, reminders). */
+const D2_AUTOMATION_DISABLED = true;
+
 function formatClosureDate(isoDate) {
   const [year, month, day] = isoDate.split("-").map(Number);
   const date = new Date(Date.UTC(year, month - 1, day));
@@ -21,6 +24,14 @@ function formatClosureDate(isoDate) {
 
 function isBranchClosedForNewRegistrations(branchId) {
   return branchId === "D2" && D2_NEW_REGISTRATION_CLOSED;
+}
+
+function isD2AutomationDisabled() {
+  return D2_AUTOMATION_DISABLED;
+}
+
+function isBranchAutomationDisabled(branchId) {
+  return branchId === "D2" && D2_AUTOMATION_DISABLED;
 }
 
 function getBranchRegistrationClosedError(branchId) {
@@ -47,6 +58,9 @@ function getD2ClosureNotice(lang = "en") {
 module.exports = {
   D2_PERMANENT_CLOSURE_DATE,
   D2_NEW_REGISTRATION_CLOSED,
+  D2_AUTOMATION_DISABLED,
+  isD2AutomationDisabled,
+  isBranchAutomationDisabled,
   isBranchClosedForNewRegistrations,
   getBranchRegistrationClosedError,
   getD2ClosureNotice

@@ -185,7 +185,7 @@ import type {
   ContractExtensionTermsSnapshot
 } from "./google-sheets.js";
 import type { ReferralProgramSettings } from "./referral-program.js";
-import { getBranchRegistrationClosedError } from "./branch-closure.js";
+import { getBranchRegistrationClosedError, getBranchAutomationClosedError } from "./branch-closure.js";
 import {
   computeReferralCodeForEmail,
   getReferralProgramPublicMarketing,
@@ -3552,6 +3552,11 @@ app.post("/manager/controller/airfryer/trigger", async (request, response) => {
 });
 
 app.post("/manager/controller/microwave/trigger", async (_request, response) => {
+  const automationError = getBranchAutomationClosedError("D2");
+  if (automationError) {
+    return response.status(410).json({ error: automationError });
+  }
+
   try {
     const eventName = process.env.MICROWAVE_D2_IFTTT_EVENT || "microwaveD2";
     const key = process.env.IFTTT_WEBHOOK_KEY;
@@ -3596,6 +3601,11 @@ app.get("/controller/microwave/d2", async (request, response) => {
 });
 
 app.post("/controller/microwave/d2/trigger", async (request, response) => {
+  const automationError = getBranchAutomationClosedError("D2");
+  if (automationError) {
+    return response.status(410).json({ error: automationError });
+  }
+
   const email = String(request.body?.email ?? "").trim().toLowerCase();
   const inspection = String(request.body?.inspection ?? "").trim();
 
@@ -7368,6 +7378,10 @@ app.put("/manager/fridge-drain-schedule", async (req, res) => {
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid fridge drain schedule payload" });
   }
+  const automationError = getBranchAutomationClosedError(parsed.data.branchId);
+  if (automationError) {
+    return res.status(410).json({ error: automationError });
+  }
   try {
     await requirePortalRole(parsed.data.actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
     const result = await upsertFridgeDrainCleaningDate({
@@ -9550,6 +9564,10 @@ process.on("SIGINT", () => void gracefulShutdown("SIGINT"));
 
 app.listen(port, "127.0.0.1", () => {
   console.log(`[AntiGravity v2] cozorohome-api listening on http://127.0.0.1:${port}`);
+
+  if (getBranchAutomationClosedError("D2")) {
+    console.log("[branch-closure] D2 automation disabled (cleaning auto-schedule, fridge drain, microwave IFTTT, reminders).");
+  }
 
   void recoverDeferredCleaningCalendarCreates().catch((error) => {
     console.error("[cleaning-calendar] deferred recovery on startup failed", error);

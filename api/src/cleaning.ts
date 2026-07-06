@@ -29,6 +29,7 @@ import {
   transferSwapCoins,
   updateCleaningCalendarEvent
 } from "./google-sheets.js";
+import { isBranchAutomationDisabled, isCleaningTaskAutomationDisabled } from "./branch-closure.js";
 import { logAction } from "./action-log.js";
 import { getCleaningRewardSettings } from "./cleaning-reward-settings.js";
 import { prisma } from "./prisma.js";
@@ -3114,6 +3115,10 @@ export async function sweepOverdueCleaningTasks(now = new Date()) {
   const knownFines = await getManagerFines();
 
   for (const task of overdueTasks) {
+    if (isCleaningTaskAutomationDisabled(task.type)) {
+      continue;
+    }
+
     const fineThreshold = getMissedCleaningFineThresholdDate(task);
     if (fineThreshold > now) {
       continue;
@@ -3177,6 +3182,9 @@ export async function sweepMonthlyEvasionPenalties(now = new Date()) {
 
   for (const user of activeUsers) {
     const email = user.email;
+    if (isBranchAutomationDisabled(user.branchId)) {
+      continue;
+    }
     if (contractOptOutLookup.has(getUserContractCode(user))) {
       continue;
     }
@@ -3399,7 +3407,9 @@ export async function autoScheduleCleaningTasks(horizonDays = 15) {
   const slotDefs =
     calendarDefs.length > 0
       ? calendarDefs.map((def) => ({ type: def.type as CleaningTaskType, floor: def.floor ?? null }))
-      : dailyTaskConfigs.map((cfg) => ({ type: cfg.type, floor: null as number | null }));
+      : dailyTaskConfigs
+          .filter((cfg) => !isCleaningTaskAutomationDisabled(cfg.type))
+          .map((cfg) => ({ type: cfg.type, floor: null as number | null }));
 
   const optOutCache = new Map<string, Set<string>>();
   const getOptedOut = async (month: string) => {
@@ -3490,7 +3500,7 @@ export async function autoScheduleCleaningTasksByJob(
   }>
 ) {
   const activeJobs = jobs
-    .filter((job) => job.enabled && job.fillUnassignedDates)
+    .filter((job) => job.enabled && job.fillUnassignedDates && !isCleaningTaskAutomationDisabled(job.type))
     .map((job) => ({
       ...job,
       horizonDays: Math.max(1, Math.min(60, Number(job.horizonDays) || 1))

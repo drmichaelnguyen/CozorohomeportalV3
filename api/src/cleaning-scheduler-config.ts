@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { getConfiguredCleaningCalendars } from "./google-sheets.js";
+import { isBranchAutomationDisabled } from "./branch-closure.js";
 import { requirePortalRole } from "./staff-access.js";
 
 const dataDir = path.join(process.cwd(), "data");
@@ -66,6 +67,17 @@ function buildDefaultJobs() {
   })) satisfies CleaningAutoSchedulerJobConfig[];
 }
 
+function applyBranchClosureToSchedulerConfig(config: CleaningAutoSchedulerConfig): CleaningAutoSchedulerConfig {
+  return {
+    ...config,
+    jobs: config.jobs.map((job) =>
+      isBranchAutomationDisabled(job.branchId)
+        ? { ...job, enabled: false, fillUnassignedDates: false }
+        : job
+    )
+  };
+}
+
 async function readConfig(): Promise<CleaningAutoSchedulerConfig> {
   await mkdir(dataDir, { recursive: true });
   const defaultJobs = buildDefaultJobs();
@@ -79,7 +91,7 @@ async function readConfig(): Promise<CleaningAutoSchedulerConfig> {
     const legacyFillUnassigned = typeof parsed.fillUnassignedDates === "boolean" ? parsed.fillUnassignedDates : undefined;
     const legacyHorizonDays = typeof parsed.horizonDays === "number" ? parsed.horizonDays : undefined;
 
-    return {
+    return applyBranchClosureToSchedulerConfig({
       enabled: typeof parsed.enabled === "boolean" ? parsed.enabled : DEFAULT_ENABLED,
       autoMissedCleaningFines: typeof parsed.autoMissedCleaningFines === "boolean" ? parsed.autoMissedCleaningFines : true,
       updatedAt: parsed.updatedAt ?? new Date(0).toISOString(),
@@ -98,15 +110,15 @@ async function readConfig(): Promise<CleaningAutoSchedulerConfig> {
           updatedBy: parsedJob?.updatedBy ?? parsed.updatedBy ?? job.updatedBy
         };
       })
-    };
+    });
   } catch {
-    return {
+    return applyBranchClosureToSchedulerConfig({
       enabled: DEFAULT_ENABLED,
       autoMissedCleaningFines: true,
       updatedAt: new Date(0).toISOString(),
       updatedBy: "system",
       jobs: defaultJobs
-    };
+    });
   }
 }
 
@@ -162,6 +174,6 @@ export async function updateCleaningAutoSchedulerConfig(
     })
   };
 
-  await writeConfig(next);
-  return next;
+  await writeConfig(applyBranchClosureToSchedulerConfig(next));
+  return applyBranchClosureToSchedulerConfig(next);
 }

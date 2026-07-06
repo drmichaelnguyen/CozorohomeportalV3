@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 
 import { calendar_v3, google } from "googleapis";
 import { repairMojibake, repairUnknownText } from "./text-encoding.js";
+import { isBranchAutomationDisabled } from "./branch-closure.js";
 import { compressFineEvidence } from "./fine-evidence-compress.js";
 
 const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID ?? "";
@@ -2472,7 +2473,10 @@ export async function deleteCleaningCalendarEvent(input: {
 }
 
 export async function warmLaundryCalendarCache() {
-  const calendarIds = await getLaundryCalendarIds();
+  const calendarIds = (await getLaundryCalendarIds()).filter((calendarId) => {
+    const machine = laundryMachines.find((entry) => entry.calendarId === calendarId);
+    return !machine || !isBranchAutomationDisabled(machine.branchId);
+  });
   const results = await Promise.all(
     calendarIds.map(async (calendarId) => {
       const [rawEvents, calendarMetadata] = await Promise.all([
@@ -2638,7 +2642,7 @@ export function getConfiguredCleaningCalendars() {
   const definitions: CleaningCalendarDefinition[] = [];
 
   const kitchenD2 = process.env.CLEANING_KITCHEN_D2_CALENDAR_ID?.trim();
-  if (kitchenD2) {
+  if (kitchenD2 && !isBranchAutomationDisabled("D2")) {
     definitions.push({
       calendarId: kitchenD2,
       title: "Vệ sinh bếp D2",
