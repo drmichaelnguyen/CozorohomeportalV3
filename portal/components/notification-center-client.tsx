@@ -32,7 +32,7 @@ type ResidentNotification = {
 
 type StaffNotification = {
   id: string;
-  type: "SUPPORT_REQUEST" | "AC_COMFORT";
+  type: "SUPPORT_REQUEST" | "AC_COMFORT" | "HOSTEL_BOOKING";
   conversationId: string;
   residentEmail: string;
   residentName: string | null;
@@ -65,6 +65,27 @@ export function NotificationCenterClient() {
     setStatus("");
     try {
       const response = await fetch(`${API_BASE_URL}/manager/ac-comfort/dismiss`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorEmail: normalizedEmail, alertId })
+      });
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(data.error ?? "Dismiss failed");
+      }
+      setStaffNotifications((list) => list.filter((n) => n.id !== alertId));
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Dismiss failed");
+    } finally {
+      setDismissingId(null);
+    }
+  }
+
+  async function dismissHostelBookingAlert(alertId: string) {
+    setDismissingId(alertId);
+    setStatus("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/manager/hostel-booking-alerts/dismiss`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ actorEmail: normalizedEmail, alertId })
@@ -137,7 +158,7 @@ export function NotificationCenterClient() {
         <h1 className="text-2xl font-semibold text-slate-900">Notification Center</h1>
         <p className="mt-2 text-sm text-slate-600">
           {isAdminSession
-            ? "See which residents have unread support requests for your Cozoro team."
+            ? "See support requests, hostel booking alerts, and AC comfort votes for your Cozoro team."
             : "See support replies plus reminders for payment, multi-month package notices, fines, laundry, and cleaning schedules."}
         </p>
       </section>
@@ -186,6 +207,45 @@ export function NotificationCenterClient() {
                         className="inline-flex rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 disabled:opacity-50"
                       >
                         {dismissingId === n.id ? "…" : t("notificationAcComfortDismiss")}
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+              if (isAdminSession && (notification as StaffNotification).type === "HOSTEL_BOOKING") {
+                const n = notification as StaffNotification;
+                return (
+                  <div
+                    key={n.id}
+                    className="rounded-2xl border border-violet-200 bg-violet-50/60 p-4"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">{n.title}</div>
+                        <p className="mt-2 text-sm text-slate-600">{n.body}</p>
+                        <p className="mt-1 text-xs text-slate-500">{n.residentEmail}</p>
+                      </div>
+                      <div className="text-right">
+                        <div className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-800">
+                          Hostel
+                        </div>
+                        <div className="mt-2 text-xs text-slate-500">{formatDateTime(n.createdAt)}</div>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Link
+                        href={n.href || "/manager?view=short_term"}
+                        className="inline-flex rounded-lg bg-violet-700 px-3 py-1.5 text-xs font-medium text-white"
+                      >
+                        Open short-term
+                      </Link>
+                      <button
+                        type="button"
+                        disabled={dismissingId === n.id}
+                        onClick={() => void dismissHostelBookingAlert(n.id)}
+                        className="inline-flex rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 disabled:opacity-50"
+                      >
+                        {dismissingId === n.id ? "…" : t("notificationAcComfortDismiss", "Dismiss")}
                       </button>
                     </div>
                   </div>

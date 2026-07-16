@@ -1,4 +1,9 @@
-import { Prisma, ResidentGuideContentType } from "@prisma/client";
+import {
+  Prisma,
+  ResidentGuideAudience,
+  ResidentGuideCategory,
+  ResidentGuideContentType
+} from "@prisma/client";
 import { z } from "zod";
 
 import { logAction } from "./action-log.js";
@@ -23,6 +28,9 @@ const guideStepSchema = z.object({
   imageUrl: optionalHttpsUrl
 });
 
+const categorySchema = z.enum(["howto", "check_in"]);
+const audienceSchema = z.enum(["long_term", "short_term", "both"]);
+
 const createGuideSchema = z.object({
   actorEmail: z.string().trim().email(),
   slug: slugSchema,
@@ -30,6 +38,8 @@ const createGuideSchema = z.object({
   titleEn: z.string().trim().min(1).max(200),
   sortOrder: z.number().int().min(0).max(1_000_000).optional(),
   contentType: z.enum(["steps", "video"]),
+  category: categorySchema.optional().default("howto"),
+  audience: audienceSchema.optional().default("both"),
   videoUrl: optionalHttpsUrl,
   steps: z.array(guideStepSchema).max(40).optional()
 });
@@ -40,6 +50,8 @@ const updateGuideSchema = z.object({
   titleEn: z.string().trim().min(1).max(200).optional(),
   sortOrder: z.number().int().min(0).max(1_000_000).optional(),
   contentType: z.enum(["steps", "video"]).optional(),
+  category: categorySchema.optional(),
+  audience: audienceSchema.optional(),
   videoUrl: optionalHttpsUrl,
   steps: z.array(guideStepSchema).max(40).optional()
 });
@@ -57,17 +69,44 @@ export type ResidentGuideSectionDto = {
   titleEn: string;
   sortOrder: number;
   contentType: "steps" | "video";
+  category: "howto" | "check_in";
+  audience: "long_term" | "short_term" | "both";
   videoUrl: string | null;
   steps: ResidentGuideStepDto[];
   updatedAt: string;
+};
+
+export type ResidentGuideListFilter = {
+  category?: "howto" | "check_in" | "all";
+  audience?: "long_term" | "short_term" | "both";
 };
 
 function mapContentType(v: ResidentGuideContentType): "steps" | "video" {
   return v === ResidentGuideContentType.VIDEO ? "video" : "steps";
 }
 
+function mapCategory(v: ResidentGuideCategory): "howto" | "check_in" {
+  return v === ResidentGuideCategory.CHECK_IN ? "check_in" : "howto";
+}
+
+function mapAudience(v: ResidentGuideAudience): "long_term" | "short_term" | "both" {
+  if (v === ResidentGuideAudience.LONG_TERM) return "long_term";
+  if (v === ResidentGuideAudience.SHORT_TERM) return "short_term";
+  return "both";
+}
+
 function toPrismaContentType(v: "steps" | "video"): ResidentGuideContentType {
   return v === "video" ? ResidentGuideContentType.VIDEO : ResidentGuideContentType.STEPS;
+}
+
+function toPrismaCategory(v: "howto" | "check_in"): ResidentGuideCategory {
+  return v === "check_in" ? ResidentGuideCategory.CHECK_IN : ResidentGuideCategory.HOWTO;
+}
+
+function toPrismaAudience(v: "long_term" | "short_term" | "both"): ResidentGuideAudience {
+  if (v === "long_term") return ResidentGuideAudience.LONG_TERM;
+  if (v === "short_term") return ResidentGuideAudience.SHORT_TERM;
+  return ResidentGuideAudience.BOTH;
 }
 
 function normalizeSteps(raw: unknown): ResidentGuideStepDto[] {
@@ -98,6 +137,8 @@ function serialize(row: {
   titleEn: string;
   sortOrder: number;
   contentType: ResidentGuideContentType;
+  category: ResidentGuideCategory;
+  audience: ResidentGuideAudience;
   videoUrl: string | null;
   stepsJson: unknown;
   updatedAt: Date;
@@ -109,17 +150,46 @@ function serialize(row: {
     titleEn: row.titleEn,
     sortOrder: row.sortOrder,
     contentType: mapContentType(row.contentType),
+    category: mapCategory(row.category),
+    audience: mapAudience(row.audience),
     videoUrl: row.videoUrl,
     steps: normalizeSteps(row.stepsJson),
     updatedAt: row.updatedAt.toISOString()
   };
 }
 
-export async function listResidentGuidesPublic(): Promise<ResidentGuideSectionDto[]> {
+function matchesAudienceFilter(
+  rowAudience: ResidentGuideAudience,
+  filter: "long_term" | "short_term" | "both" | undefined
+) {
+  if (!filter || filter === "both") {
+    return true;
+  }
+  if (rowAudience === ResidentGuideAudience.BOTH) {
+    return true;
+  }
+  if (filter === "long_term") {
+    return rowAudience === ResidentGuideAudience.LONG_TERM;
+  }
+  return rowAudience === ResidentGuideAudience.SHORT_TERM;
+}
+
+export async function listResidentGuidesPublic(
+  filter: ResidentGuideListFilter = {}
+): Promise<ResidentGuideSectionDto[]> {
+  const where: Prisma.ResidentGuideSectionWhereInput = {};
+  if (filter.category && filter.category !== "all") {
+    where.category = toPrismaCategory(filter.category);
+  }
+
   const rows = await prisma.residentGuideSection.findMany({
+    where,
     orderBy: [{ sortOrder: "asc" }, { slug: "asc" }]
   });
-  return rows.map(serialize);
+
+  return rows
+    .filter((row) => matchesAudienceFilter(row.audience, filter.audience))
+    .map(serialize);
 }
 
 export async function createResidentGuide(input: z.infer<typeof createGuideSchema>): Promise<ResidentGuideSectionDto> {
@@ -145,6 +215,8 @@ export async function createResidentGuide(input: z.infer<typeof createGuideSchem
       titleEn: input.titleEn.trim(),
       sortOrder: input.sortOrder ?? 100,
       contentType,
+      category: toPrismaCategory(input.category ?? "howto"),
+      audience: toPrismaAudience(input.audience ?? "both"),
       videoUrl: contentType === ResidentGuideContentType.VIDEO ? input.videoUrl!.trim() : null,
       stepsJson:
         contentType === ResidentGuideContentType.STEPS
@@ -163,7 +235,7 @@ export async function createResidentGuide(input: z.infer<typeof createGuideSchem
     entityType: "ResidentGuideSection",
     entityId: row.id,
     entityLabel: row.slug,
-    details: `contentType=${row.contentType}`
+    details: `contentType=${row.contentType}; category=${row.category}; audience=${row.audience}`
   });
   return serialize(row);
 }
@@ -216,6 +288,8 @@ export async function updateResidentGuide(
     titleEn: input.titleEn?.trim() ?? undefined,
     sortOrder: input.sortOrder ?? undefined,
     contentType: input.contentType ? toPrismaContentType(input.contentType) : undefined,
+    category: input.category ? toPrismaCategory(input.category) : undefined,
+    audience: input.audience ? toPrismaAudience(input.audience) : undefined,
     updatedBy: input.actorEmail.trim().toLowerCase()
   };
   const stepsForPrisma =
@@ -237,7 +311,7 @@ export async function updateResidentGuide(
     entityType: "ResidentGuideSection",
     entityId: row.id,
     entityLabel: row.slug,
-    details: `contentType=${row.contentType}`
+    details: `contentType=${row.contentType}; category=${row.category}; audience=${row.audience}`
   });
   return serialize(row);
 }

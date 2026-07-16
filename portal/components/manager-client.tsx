@@ -30,6 +30,7 @@ import {
 } from "../lib/account-lock-status";
 import { isContractExpired, parseVietnamDate } from "../lib/contract-utils";
 import { formatCozoroDate, formatCozoroDateTime } from "../lib/date-format";
+import { resolveCurrentCoinsBalance } from "../lib/resolve-current-coins";
 import { AdminCleaningClient } from "./admin-cleaning-client";
 import { ManagerAiChat } from "./manager-ai-chat";
 import { ManagerSupportInbox } from "./manager-support-inbox";
@@ -918,14 +919,10 @@ function summarizeCoins(entries: CoinEntry[], client: ManagerClientRecord | null
   );
   const earned = deltas.filter((value) => value > 0).reduce((sum, value) => sum + value, 0);
   const spent = Math.abs(deltas.filter((value) => value < 0).reduce((sum, value) => sum + value, 0));
-  const profileCurrentBalance = parseLooseNumber(client?.currentCoins != null ? String(client.currentCoins) : null);
-  const derivedBalanceFromEntries = Math.max(0, earned - spent);
-  // Some legacy rows have stale/blank "current coins" on the profile row while
-  // coin history is accurate; use history-derived balance as fallback.
-  const resolvedCurrentBalance =
-    profileCurrentBalance > 0 || derivedBalanceFromEntries <= 0
-      ? profileCurrentBalance
-      : derivedBalanceFromEntries;
+  const resolvedCurrentBalance = resolveCurrentCoinsBalance({
+    profileBalance: client?.currentCoins != null ? String(client.currentCoins) : null,
+    historyNet: earned - spent
+  });
 
   return [
     { label: t("currentBalance", "Current balance"), value: formatNumber(resolvedCurrentBalance), tone: "positive" },

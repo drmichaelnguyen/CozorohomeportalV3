@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.8.61] - 2026-07-16
+- **Coin balance consistency**: Account and Coins pages now show the same spendable balance as Home / laundry / fines (roster `Cozoro coins hiện có`), with history sum only as fallback when the profile is blank/zero. Cleaning coin awards are idempotent by transaction code.
+- **Hostel booking notifications**: On new booking, staff get in-app alerts + email (including `cozorohome@gmail.com`) and the guest gets a booking acknowledgment email; on paid import and manager confirm, guest (and staff on paid) get follow-up emails.
+- **Check-in instructions builder**: Resident guides in Settings support category (how-to / check-in) and audience (long-term / short-term / both). Account shows filtered check-in blocks; hostel booking-success and face-capture load short-term check-in guides from the API.
+
 ## [3.8.54] - 2026-06-11
 - **D7 bed layout fix**: Corrected Floor 1 room mapping so **Room 1.1** is beds **1–9** (3 bunk columns) and **Room 1.2** is beds **10–15** (2 bunk columns). Updates `BRANCH_LAYOUTS` in portal/API, manager bed diagram, registration/pricing diagrams, guest-booking standalone, and `docs/branch-room-bed-layout.md`.
 

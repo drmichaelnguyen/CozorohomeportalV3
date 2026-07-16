@@ -1112,13 +1112,13 @@ const translations: Record<string, { en: string; vi: string }> = {
   settingsResidentGuidesTab: { en: "Resident guides", vi: "Hướng dẫn cư dân" },
   settingsResidentGuidesTitle: { en: "Resident guides", vi: "Hướng dẫn cư dân" },
   settingsResidentGuidesDesc: {
-    en: "Step-by-step instructions with optional image links or a video URL appear at the top of the Account page for residents (collapsed by default).",
-    vi: "Hướng dẫn từng bước (có thể kèm ảnh qua URL) hoặc một video sẽ hiển thị đầu trang Tài khoản cho cư dân (mặc định thu gọn)."
+    en: "Build how-to guides and check-in instructions for long-term and hostel guests (steps + images or video). Residents see them on Account; hostel guests see check-in guides after payment.",
+    vi: "Tạo hướng dẫn dùng app và hướng dẫn check-in cho khách dài hạn / hostel (các bước + ảnh hoặc video). Cư dân xem ở Tài khoản; khách hostel xem sau thanh toán."
   },
-  residentGuidesPanelTitle: { en: "How to use the portal", vi: "Hướng dẫn sử dụng cổng thông tin" },
+  residentGuidesPanelTitle: { en: "Guides & check-in", vi: "Hướng dẫn & check-in" },
   residentGuidesPanelHint: {
-    en: "Tap a topic to expand. Your manager can update these guides in Settings.",
-    vi: "Chạm vào từng mục để mở rộng. Quản lý có thể cập nhật trong phần Cài đặt."
+    en: "Tap a topic to expand. Check-in steps are tailored to long-term or hostel stays. Your manager can update these in Settings → Resident guides.",
+    vi: "Chạm vào từng mục để mở rộng. Hướng dẫn check-in theo loại dài hạn hoặc hostel. Quản lý cập nhật trong Cài đặt → Hướng dẫn cư dân."
   },
   addToHomeSectionTitle: { en: "Add CozoroHome to your phone", vi: "Thêm CozoroHome vào màn hình điện thoại" },
   addToHomeIos1: { en: "Open this site in Safari (not Chrome).", vi: "Mở trang này bằng Safari (không dùng Chrome)." },

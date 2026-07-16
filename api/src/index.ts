@@ -24,6 +24,13 @@ import {
   submitAcComfortVote,
   type AcComfortPublicStatus
 } from "./ac-comfort-votes.js";
+import {
+  dismissHostelBookingAlert,
+  dismissHostelBookingAlertsForBooking,
+  notifyHostelBookingConfirmed,
+  notifyHostelBookingCreated,
+  notifyHostelBookingPaid
+} from "./hostel-booking-notifications.js";
 import { appendControllerHistoryEntry, listControllerHistory } from "./controller-history.js";
 import { getUserAirFryerContext, startAirFryerUse } from "./airfryer-controller.js";
 import { getUserMicrowaveContext, startMicrowaveUse } from "./microwave-controller.js";
@@ -1609,6 +1616,23 @@ const paidGuestBookingSyncSchema = z.object({
   stripeAmountPaid: z.coerce.number().int().nonnegative().optional(),
   stripePaymentAction: z.enum(["booking_create", "booking_adjustment"]).optional()
 });
+
+const hostelBookingNotifySchema = z.object({
+  bookingId: z.string().trim().min(1),
+  guestEmail: z.string().email(),
+  guestName: z.string().trim().min(1),
+  guestPhone: z.string().optional(),
+  branchId: z.string().trim().min(1),
+  roomCode: z.string().optional(),
+  bedNumber: z.union([z.coerce.number().int().positive(), z.string().trim().min(1)]),
+  checkIn: z.string().trim().min(1),
+  checkOut: z.string().trim().min(1),
+  nights: z.coerce.number().int().nonnegative().optional(),
+  totalAmount: z.coerce.number().nonnegative().optional(),
+  currency: z.string().optional(),
+  paymentStatus: z.string().optional(),
+  status: z.string().optional()
+});
 const referralQuoteSchema = z.object({
   code: z.string().trim().min(1),
   product: z.enum(["long_term", "hostel"]),
@@ -2312,9 +2336,6 @@ app.post("/internal/guest-bookings/import-paid", async (request, response) => {
     const stripeAmountPaid = parsed.data.stripeAmountPaid ?? parsed.data.pricingTotal;
     if ((stripePaymentIntentId || stripeSessionId) && stripeAmountPaid > 0) {
       try {
-        const checkInMs = new Date(`${parsed.data.checkIn}T12:00:00`).getTime();
-        const checkOutMs = new Date(`${parsed.data.checkOut}T12:00:00`).getTime();
-        const stayNights = Math.max(0, Math.round((checkOutMs - checkInMs) / 86400000));
         stripeReceipt = await createHostelStripePaymentReceipt({
           bookingId: parsed.data.bookingId,
           guestEmail: parsed.data.guestEmail,
@@ -2331,6 +2352,27 @@ app.post("/internal/guest-bookings/import-paid", async (request, response) => {
         });
       } catch (receiptError) {
         console.error("[internal/guest-bookings/import-paid] Stripe receipt creation failed", receiptError);
+        if (parsed.data.stripePaymentAction !== "booking_adjustment") {
+          try {
+            await notifyHostelBookingPaid({
+              bookingId: parsed.data.bookingId,
+              guestEmail: parsed.data.guestEmail,
+              guestName: parsed.data.guestName,
+              guestPhone: parsed.data.guestPhone,
+              branchId: parsed.data.branchId,
+              bedNumber: parsed.data.bedNumber,
+              checkIn: parsed.data.checkIn,
+              checkOut: parsed.data.checkOut,
+              nights: stayNights,
+              totalAmount: stripeAmountPaid,
+              currency: "VND",
+              paymentStatus: "paid",
+              status: "CONFIRMED"
+            });
+          } catch (notifyError) {
+            console.error("[internal/guest-bookings/import-paid] Paid booking notify failed", notifyError);
+          }
+        }
         return response.json({
           ...cache,
           stripeReceiptWarning: receiptError instanceof Error ? receiptError.message : "Stripe receipt creation failed"
@@ -2347,6 +2389,28 @@ app.post("/internal/guest-bookings/import-paid", async (request, response) => {
       entityLabel: parsed.data.guestEmail.trim().toLowerCase(),
       details: `branchId=${parsed.data.branchId}; bedNumber=${parsed.data.bedNumber}; pricingTotal=${parsed.data.pricingTotal}`
     });
+
+    if (parsed.data.stripePaymentAction !== "booking_adjustment") {
+      try {
+        await notifyHostelBookingPaid({
+          bookingId: parsed.data.bookingId,
+          guestEmail: parsed.data.guestEmail,
+          guestName: parsed.data.guestName,
+          guestPhone: parsed.data.guestPhone,
+          branchId: parsed.data.branchId,
+          bedNumber: parsed.data.bedNumber,
+          checkIn: parsed.data.checkIn,
+          checkOut: parsed.data.checkOut,
+          nights: stayNights,
+          totalAmount: stripeAmountPaid,
+          currency: "VND",
+          paymentStatus: "paid",
+          status: "CONFIRMED"
+        });
+      } catch (notifyError) {
+        console.error("[internal/guest-bookings/import-paid] Paid booking notify failed", notifyError);
+      }
+    }
 
     if (
       parsed.data.applyReferralCoins !== false &&
@@ -2377,6 +2441,27 @@ app.post("/internal/guest-bookings/import-paid", async (request, response) => {
   } catch (error) {
     return response.status(500).json({
       error: error instanceof Error ? error.message : "Unable to import paid guest booking."
+    });
+  }
+});
+
+app.post("/internal/guest-bookings/notify-new", async (request, response) => {
+  if (!isAuthorizedInternalRequest(request)) {
+    return response.status(403).json({ error: "This endpoint only accepts internal requests." });
+  }
+
+  const parsed = hostelBookingNotifySchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid new hostel booking notify payload." });
+  }
+
+  try {
+    await notifyHostelBookingCreated(parsed.data);
+    return response.json({ ok: true });
+  } catch (error) {
+    console.error("[internal/guest-bookings/notify-new] failed", error);
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to notify new hostel booking."
     });
   }
 });
@@ -2939,6 +3024,28 @@ app.post("/manager/ac-comfort/dismiss", async (request, response) => {
   } catch (error) {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to dismiss alert"
+    });
+  }
+});
+
+app.post("/manager/hostel-booking-alerts/dismiss", async (request, response) => {
+  const parsed = z
+    .object({
+      actorEmail: z.string().email(),
+      alertId: z.string().trim().min(1)
+    })
+    .safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "actorEmail and alertId are required" });
+  }
+  try {
+    await requirePortalRole(parsed.data.actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    await dismissHostelBookingAlert({ alertId: parsed.data.alertId });
+    invalidateStaffSupportNotificationCache();
+    return response.json({ ok: true });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to dismiss hostel booking alert"
     });
   }
 });
@@ -7263,17 +7370,43 @@ app.post("/manager/db-backup/restore", async (req, res) => {
   }
 });
 
-// GET /resident/guides — bilingual how-to sections for residents (public read)
-app.get("/resident/guides", async (_req, res) => {
+// GET /resident/guides — bilingual how-to / check-in sections for residents (public read)
+app.get("/resident/guides", async (req, res) => {
   try {
-    const guides = await listResidentGuidesPublic();
+    const categoryRaw = String(req.query.category ?? "all").trim().toLowerCase();
+    const audienceRaw = String(req.query.audience ?? "both").trim().toLowerCase();
+    const category =
+      categoryRaw === "howto" || categoryRaw === "check_in" || categoryRaw === "all" ? categoryRaw : "all";
+    const audience =
+      audienceRaw === "long_term" || audienceRaw === "short_term" || audienceRaw === "both"
+        ? audienceRaw
+        : "both";
+    const guides = await listResidentGuidesPublic({ category, audience });
     return res.json({ guides });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to load guides" });
   }
 });
 
-// GET /manager/resident-guides — same payload; staff-only
+// Public alias for hostel / external clients (same filters as /resident/guides)
+app.get("/api/public/resident-guides", async (req, res) => {
+  try {
+    const categoryRaw = String(req.query.category ?? "all").trim().toLowerCase();
+    const audienceRaw = String(req.query.audience ?? "both").trim().toLowerCase();
+    const category =
+      categoryRaw === "howto" || categoryRaw === "check_in" || categoryRaw === "all" ? categoryRaw : "all";
+    const audience =
+      audienceRaw === "long_term" || audienceRaw === "short_term" || audienceRaw === "both"
+        ? audienceRaw
+        : "both";
+    const guides = await listResidentGuidesPublic({ category, audience });
+    return res.json({ guides });
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to load guides" });
+  }
+});
+
+// GET /manager/resident-guides — full list for editor; staff-only
 app.get("/manager/resident-guides", async (req, res) => {
   const actorEmail = String(req.query.actorEmail ?? "").trim();
   if (!actorEmail) {
@@ -7281,7 +7414,7 @@ app.get("/manager/resident-guides", async (req, res) => {
   }
   try {
     await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
-    const guides = await listResidentGuidesPublic();
+    const guides = await listResidentGuidesPublic({ category: "all", audience: "both" });
     return res.json({ guides });
   } catch (error) {
     return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
@@ -9092,6 +9225,8 @@ app.post("/manager/short-term/bookings/:id/archive", async (request, response) =
       entityId: bookingId,
       details: parsed.data.reason?.trim() || ""
     });
+    await dismissHostelBookingAlertsForBooking(bookingId);
+    invalidateStaffSupportNotificationCache();
     return response.json(result);
   } catch (error) {
     return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
@@ -9132,6 +9267,8 @@ app.post("/manager/short-term/bookings/:id/reject", async (request, response) =>
         .filter(Boolean)
         .join(" | ")
     });
+    await dismissHostelBookingAlertsForBooking(bookingId);
+    invalidateStaffSupportNotificationCache();
     return response.json(result);
   } catch (error) {
     return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
@@ -9179,6 +9316,27 @@ app.post("/manager/short-term/bookings/:id/confirm", async (request, response) =
     await upsertStoredPassword(booking.email.trim().toLowerCase(), initialPassword, { mustChangePassword: true });
 
     await addImportedId(bookingId);
+
+    try {
+      await notifyHostelBookingConfirmed({
+        bookingId: booking.id,
+        guestEmail: booking.email,
+        guestName: booking.guestName,
+        guestPhone: booking.phone ?? "",
+        branchId: branch,
+        bedNumber: bed,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+        totalAmount: booking.pricing?.total,
+        currency: "VND",
+        paymentStatus: booking.paymentStatus,
+        status: "CONFIRMED",
+        initialPassword,
+        actorEmail
+      });
+    } catch (notifyError) {
+      console.error("[manager/short-term/bookings/confirm] Confirm notify failed", notifyError);
+    }
 
     return response.json({ ok: true, contractCode: `SHORTTERM-${bookingId}`, initialPassword });
   } catch (error) {

@@ -348,6 +348,8 @@ const BACKUP_TABLES: BackupTableDef[] = [
       "titleEn",
       "sortOrder",
       "contentType",
+      "category",
+      "audience",
       "videoUrl",
       "stepsJson",
       "updatedBy",

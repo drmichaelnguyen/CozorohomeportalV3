@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
-import type { ResidentGuideSectionDto, ResidentGuideStepDto } from "../lib/resident-guides-types";
+import type {
+  ResidentGuideAudience,
+  ResidentGuideCategory,
+  ResidentGuideSectionDto,
+  ResidentGuideStepDto
+} from "../lib/resident-guides-types";
 import { embeddableVideoSrc } from "../lib/video-embed";
 type Props = {
   normalizedEmail: string;
@@ -15,17 +20,31 @@ function emptyStep(): ResidentGuideStepDto {
   return { bodyVi: "", bodyEn: "", imageUrl: null };
 }
 
+function audienceLabel(audience: ResidentGuideAudience, language: "en" | "vi") {
+  if (audience === "long_term") return language === "vi" ? "Dài hạn" : "Long-term";
+  if (audience === "short_term") return language === "vi" ? "Ngắn hạn / Hostel" : "Short-term / Hostel";
+  return language === "vi" ? "Cả hai" : "Both";
+}
+
+function categoryLabel(category: ResidentGuideCategory, language: "en" | "vi") {
+  if (category === "check_in") return language === "vi" ? "Check-in" : "Check-in";
+  return language === "vi" ? "Hướng dẫn dùng app" : "How-to";
+}
+
 export function ManagerResidentGuidesEditor({ normalizedEmail, language, t }: Props) {
   const [guides, setGuides] = useState<ResidentGuideSectionDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [editingId, setEditingId] = useState<string | "new" | null>(null);
+  const [listFilter, setListFilter] = useState<"all" | "howto" | "check_in">("all");
 
   const [slug, setSlug] = useState("");
   const [titleVi, setTitleVi] = useState("");
   const [titleEn, setTitleEn] = useState("");
   const [sortOrder, setSortOrder] = useState("100");
   const [contentType, setContentType] = useState<"steps" | "video">("steps");
+  const [category, setCategory] = useState<ResidentGuideCategory>("howto");
+  const [audience, setAudience] = useState<ResidentGuideAudience>("both");
   const [videoUrl, setVideoUrl] = useState("");
   const [steps, setSteps] = useState<ResidentGuideStepDto[]>([emptyStep()]);
   const [saving, setSaving] = useState(false);
@@ -60,6 +79,8 @@ export function ManagerResidentGuidesEditor({ normalizedEmail, language, t }: Pr
     setTitleEn("");
     setSortOrder("100");
     setContentType("steps");
+    setCategory("howto");
+    setAudience("both");
     setVideoUrl("");
     setSteps([emptyStep()]);
   }
@@ -71,17 +92,21 @@ export function ManagerResidentGuidesEditor({ normalizedEmail, language, t }: Pr
     setTitleEn(g.titleEn);
     setSortOrder(String(g.sortOrder));
     setContentType(g.contentType);
+    setCategory(g.category ?? "howto");
+    setAudience(g.audience ?? "both");
     setVideoUrl(g.videoUrl ?? "");
     setSteps(g.steps.length ? g.steps.map((s) => ({ ...s })) : [emptyStep()]);
   }
 
-  function startNew() {
+  function startNew(preferCategory: ResidentGuideCategory = "howto") {
     setEditingId("new");
     setSlug("");
     setTitleVi("");
     setTitleEn("");
     setSortOrder(String((guides[guides.length - 1]?.sortOrder ?? 0) + 10));
     setContentType("steps");
+    setCategory(preferCategory);
+    setAudience(preferCategory === "check_in" ? "both" : "both");
     setVideoUrl("");
     setSteps([emptyStep()]);
   }
@@ -105,6 +130,8 @@ export function ManagerResidentGuidesEditor({ normalizedEmail, language, t }: Pr
             titleEn: titleEn.trim(),
             sortOrder: so,
             contentType,
+            category,
+            audience,
             videoUrl: contentType === "video" ? videoUrl.trim() : null,
             steps:
               contentType === "steps"
@@ -130,6 +157,8 @@ export function ManagerResidentGuidesEditor({ normalizedEmail, language, t }: Pr
             titleEn: titleEn.trim(),
             sortOrder: so,
             contentType,
+            category,
+            audience,
             videoUrl: contentType === "video" ? videoUrl.trim() : null,
             steps:
               contentType === "steps"
@@ -208,8 +237,10 @@ export function ManagerResidentGuidesEditor({ normalizedEmail, language, t }: Pr
 
   const hint =
     language === "vi"
-      ? "Ảnh: dán URL https (ví dụ ảnh đã tải lên Drive công khai). Video: YouTube, Vimeo hoặc file .mp4."
-      : "Images: paste a public https image URL (for example a shareable Drive link). Video: YouTube, Vimeo, or a direct .mp4 link.";
+      ? "Dùng mục Check-in cho hướng dẫn nhận phòng (dài hạn / hostel). Ảnh: URL https. Video: YouTube, Vimeo hoặc .mp4."
+      : "Use Check-in sections for arrival instructions (long-term / hostel). Images: https URL. Video: YouTube, Vimeo, or .mp4.";
+
+  const visibleGuides = guides.filter((g) => listFilter === "all" || (g.category ?? "howto") === listFilter);
 
   return (
     <div className="space-y-6">
@@ -225,10 +256,37 @@ export function ManagerResidentGuidesEditor({ normalizedEmail, language, t }: Pr
             >
               {loading ? t("refreshing") : t("refreshData")}
             </button>
-            <button type="button" onClick={startNew} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white">
-              {language === "vi" ? "Thêm mục" : "Add section"}
+            <button
+              type="button"
+              onClick={() => startNew("check_in")}
+              className="rounded-lg bg-violet-700 px-4 py-2 text-sm font-medium text-white"
+            >
+              {language === "vi" ? "+ Check-in" : "+ Check-in"}
+            </button>
+            <button type="button" onClick={() => startNew("howto")} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white">
+              {language === "vi" ? "Thêm hướng dẫn" : "Add how-to"}
             </button>
           </div>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {(
+            [
+              ["all", language === "vi" ? "Tất cả" : "All"],
+              ["check_in", "Check-in"],
+              ["howto", language === "vi" ? "How-to" : "How-to"]
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setListFilter(key)}
+              className={`rounded-full px-3 py-1 text-xs font-semibold border ${
+                listFilter === key ? "bg-slate-900 text-white border-slate-900" : "border-slate-300 text-slate-600"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
         {message ? <p className="mt-3 text-sm text-amber-800">{message}</p> : null}
       </div>
@@ -266,6 +324,36 @@ export function ManagerResidentGuidesEditor({ normalizedEmail, language, t }: Pr
               <span className="font-medium text-slate-700">{language === "vi" ? "Thứ tự" : "Sort order"}</span>
               <input className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} />
             </label>
+            <fieldset className="text-sm">
+              <legend className="font-medium text-slate-700">{language === "vi" ? "Loại mục" : "Section kind"}</legend>
+              <div className="mt-2 flex flex-wrap gap-4">
+                <label className="inline-flex items-center gap-2">
+                  <input type="radio" checked={category === "check_in"} onChange={() => setCategory("check_in")} />
+                  Check-in
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input type="radio" checked={category === "howto"} onChange={() => setCategory("howto")} />
+                  {language === "vi" ? "Hướng dẫn dùng app" : "How-to"}
+                </label>
+              </div>
+            </fieldset>
+            <fieldset className="text-sm md:col-span-2">
+              <legend className="font-medium text-slate-700">{language === "vi" ? "Đối tượng" : "Audience"}</legend>
+              <div className="mt-2 flex flex-wrap gap-4">
+                <label className="inline-flex items-center gap-2">
+                  <input type="radio" checked={audience === "long_term"} onChange={() => setAudience("long_term")} />
+                  {audienceLabel("long_term", language)}
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input type="radio" checked={audience === "short_term"} onChange={() => setAudience("short_term")} />
+                  {audienceLabel("short_term", language)}
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input type="radio" checked={audience === "both"} onChange={() => setAudience("both")} />
+                  {audienceLabel("both", language)}
+                </label>
+              </div>
+            </fieldset>
             <fieldset className="text-sm md:col-span-2">
               <legend className="font-medium text-slate-700">{language === "vi" ? "Loại nội dung" : "Content type"}</legend>
               <div className="mt-2 flex flex-wrap gap-4">
@@ -374,12 +462,20 @@ export function ManagerResidentGuidesEditor({ normalizedEmail, language, t }: Pr
 
       <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
         <div className="divide-y divide-slate-100">
-          {guides.map((g) => (
+          {visibleGuides.map((g) => (
             <div key={g.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
                 <p className="font-medium text-slate-900">{language === "vi" ? g.titleVi : g.titleEn}</p>
-                <p className="text-xs text-slate-500">
-                  <code>{g.slug}</code> · {g.contentType} · sort {g.sortOrder}
+                <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                  <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-700">
+                    {categoryLabel(g.category ?? "howto", language)}
+                  </span>
+                  <span className="inline-flex rounded-full bg-violet-50 px-2 py-0.5 font-semibold text-violet-800">
+                    {audienceLabel(g.audience ?? "both", language)}
+                  </span>
+                  <span>
+                    <code>{g.slug}</code> · {g.contentType} · sort {g.sortOrder}
+                  </span>
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -398,7 +494,7 @@ export function ManagerResidentGuidesEditor({ normalizedEmail, language, t }: Pr
               </div>
             </div>
           ))}
-          {!guides.length && !loading ? (
+          {!visibleGuides.length && !loading ? (
             <p className="p-6 text-sm text-slate-500">{language === "vi" ? "Chưa có mục nào." : "No sections yet."}</p>
           ) : null}
         </div>

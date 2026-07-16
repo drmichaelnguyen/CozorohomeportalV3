@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
 import { detectMobileOs, type MobileOsKind } from "../lib/mobile-platform";
-import type { ResidentGuideSectionDto } from "../lib/resident-guides-types";
+import type { ResidentGuideAudience, ResidentGuideSectionDto } from "../lib/resident-guides-types";
 import { embeddableVideoSrc } from "../lib/video-embed";
 import { usePortalLanguage } from "./portal-language";
 
@@ -81,15 +81,15 @@ function CollapseBlock({
   children: React.ReactNode;
 }) {
   return (
-    <div className="border-b border-slate-100 last:border-b-0">
+    <div>
       <button
         type="button"
-        onClick={onToggle}
-        className="flex w-full items-center justify-between gap-3 py-4 text-left"
+        className="flex w-full items-center justify-between gap-3 py-3 text-left"
         aria-expanded={expanded}
         aria-controls={`guide-section-${sectionKey}`}
+        onClick={onToggle}
       >
-        <span className="text-base font-semibold text-slate-900">{title}</span>
+        <span className="text-sm font-semibold text-slate-900">{title}</span>
         <svg
           className={`h-5 w-5 shrink-0 text-slate-500 transition-transform ${expanded ? "rotate-180" : ""}`}
           fill="none"
@@ -109,18 +109,26 @@ function CollapseBlock({
   );
 }
 
-export function ResidentInstructionsPanel() {
+type Props = {
+  /** long_term | short_term — filters check-in + how-to guides for this client type */
+  audience?: ResidentGuideAudience;
+};
+
+export function ResidentInstructionsPanel({ audience = "long_term" }: Props) {
   const { t, language } = usePortalLanguage();
   const [guides, setGuides] = useState<ResidentGuideSectionDto[]>([]);
   const [loadError, setLoadError] = useState("");
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
   const mobileOs = useMemo(() => detectMobileOs(), []);
+  const resolvedAudience: ResidentGuideAudience = audience === "short_term" ? "short_term" : "long_term";
 
   const loadGuides = useCallback(async () => {
     setLoadError("");
     try {
-      const res = await fetch(`${API_BASE_URL}/resident/guides`);
+      const res = await fetch(
+        `${API_BASE_URL}/resident/guides?audience=${encodeURIComponent(resolvedAudience)}&category=all`
+      );
       const data = (await res.json()) as { guides?: ResidentGuideSectionDto[]; error?: string };
       if (!res.ok) {
         throw new Error(data.error ?? "Failed to load guides");
@@ -130,7 +138,7 @@ export function ResidentInstructionsPanel() {
       setLoadError(e instanceof Error ? e.message : "Failed to load guides");
       setGuides([]);
     }
-  }, []);
+  }, [resolvedAudience]);
 
   useEffect(() => {
     void loadGuides();
@@ -140,11 +148,36 @@ export function ResidentInstructionsPanel() {
     setOpen((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const checkInGuides = guides.filter((g) => (g.category ?? "howto") === "check_in");
+  const howToGuides = guides.filter((g) => (g.category ?? "howto") !== "check_in");
+
   return (
     <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
       <h2 className="text-lg font-semibold text-slate-900">{t("residentGuidesPanelTitle")}</h2>
       <p className="mt-1 text-sm text-slate-600">{t("residentGuidesPanelHint")}</p>
       {loadError ? <p className="mt-2 text-sm text-amber-800">{loadError}</p> : null}
+
+      {checkInGuides.length > 0 ? (
+        <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50/50 p-3">
+          <h3 className="text-sm font-semibold text-violet-900">
+            {language === "vi" ? "Hướng dẫn check-in / nhận phòng" : "Check-in instructions"}
+          </h3>
+          <div className="mt-1 divide-y divide-violet-100">
+            {checkInGuides.map((g) => (
+              <CollapseBlock
+                key={g.id}
+                sectionKey={`checkin-${g.slug}`}
+                title={language === "vi" ? g.titleVi : g.titleEn}
+                expanded={Boolean(open[`checkin-${g.slug}`])}
+                onToggle={() => toggle(`checkin-${g.slug}`)}
+              >
+                <GuideBody guide={g} />
+              </CollapseBlock>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       <div className="mt-2 divide-y divide-slate-100">
         <CollapseBlock
           sectionKey="add-home"
@@ -154,7 +187,7 @@ export function ResidentInstructionsPanel() {
         >
           <AddToHomeStepsContent os={mobileOs} />
         </CollapseBlock>
-        {guides.map((g) => (
+        {howToGuides.map((g) => (
           <CollapseBlock
             key={g.id}
             sectionKey={g.slug}

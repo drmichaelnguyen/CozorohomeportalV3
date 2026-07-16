@@ -451,6 +451,15 @@ export async function getStaffName(email: string): Promise<string | null> {
   return entry?.name?.trim() || null;
 }
 
+/** Manager / owner / app_admin emails used for operational alerts (hostel bookings, etc.). */
+export async function listStaffNotifyEmails(): Promise<string[]> {
+  const file = await readStaffAccessFile();
+  const fromFile = file.staff
+    .filter((entry) => entry.role === "manager" || entry.role === "owner" || entry.role === "app_admin")
+    .map((entry) => normalizeEmail(entry.email));
+  return [...new Set([...DEFAULT_APP_ADMIN_EMAILS, ...DEFAULT_OWNER_EMAILS, ...fromFile].filter(Boolean))];
+}
+
 export async function updateSelfName(actorEmail: string, name: string): Promise<{ ok: boolean; name: string }> {
   const normalized = normalizeEmail(actorEmail);
   const file = await readStaffAccessFile();

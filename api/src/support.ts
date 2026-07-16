@@ -22,6 +22,7 @@ import {
   ClientRow,
 } from "./google-sheets.js";
 import { loadOpenAcComfortAlertsForStaff } from "./ac-comfort-votes.js";
+import { loadOpenHostelBookingAlertsForStaff } from "./hostel-booking-notifications.js";
 import { buildFridgeDrainReminderNotifications } from "./fridge-drain-schedule.js";
 import { isBranchAutomationDisabled, isCleaningTaskAutomationDisabled } from "./branch-closure.js";
 import { prisma } from "./prisma.js";
@@ -64,6 +65,18 @@ export type StaffSupportInboxItem =
       id: string;
       type: "AC_COMFORT";
       conversationId: "";
+      residentEmail: string;
+      residentName: string | null;
+      title: string;
+      body: string;
+      createdAt: Date;
+      unreadCount: number;
+      href: string;
+    }
+  | {
+      id: string;
+      type: "HOSTEL_BOOKING";
+      conversationId: string;
       residentEmail: string;
       residentName: string | null;
       title: string;
@@ -1115,6 +1128,22 @@ export async function listStaffSupportNotifications(operatorEmail: string) {
       createdAt: new Date(alert.createdAt),
       unreadCount: 1,
       href: "/manager?view=controller"
+    });
+  }
+
+  const hostelAlerts = await loadOpenHostelBookingAlertsForStaff();
+  for (const alert of hostelAlerts) {
+    notifications.push({
+      id: alert.id,
+      type: "HOSTEL_BOOKING",
+      conversationId: alert.bookingId,
+      residentEmail: alert.guestEmail,
+      residentName: alert.guestName,
+      title: alert.title,
+      body: alert.body,
+      createdAt: new Date(alert.createdAt),
+      unreadCount: 1,
+      href: "/manager?view=short_term"
     });
   }
 

@@ -13,6 +13,7 @@ import { API_BASE_URL } from "../lib/api-base-url";
 import { APP_VERSION } from "../lib/app-version";
 import { parseVietnamDate } from "../lib/contract-utils";
 import { formatResidentCoinsOperatorLabel } from "../lib/resident-coin-operator";
+import { resolveCurrentCoinsBalance } from "../lib/resolve-current-coins";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 import { usePortalTheme } from "./portal-theme";
@@ -24,6 +25,7 @@ import { AccountNoonFlappyBee } from "./account-noon-flappy-bee";
 import { ResidentInstructionsPanel } from "./resident-instructions-panel";
 import type { RentPaidStatusPayload } from "../lib/rent-paid-status";
 import { formatCozoroDate, formatCozoroDateTime, formatCozoroMonth } from "../lib/date-format";
+import { isShortTermContractCode } from "../lib/resident-guides-types";
 
 type ClientRecord = Record<string, string>;
 
@@ -825,8 +827,13 @@ export function AccountOverviewClient() {
       }
     }
 
-    return earned - used;
-  }, [coinEntries]);
+    // Match Home / laundry / fines: roster profile is spendable balance.
+    // History sum can overcount when duplicate ledger rows exist.
+    return resolveCurrentCoinsBalance({
+      profileBalance: clientWithDerivedRoom?.["Cozoro coins hiện có"] ?? client?.["Cozoro coins hiện có"],
+      historyNet: earned - used
+    });
+  }, [client, clientWithDerivedRoom, coinEntries]);
   const previousMonthEarnings = useMemo(() => {
     const now = new Date();
     const previousMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -926,9 +933,13 @@ export function AccountOverviewClient() {
     sessionRole === "app_admin" ||
     sessionRole === "mechanic";
 
+  const guideAudience = isShortTermContractCode(client?.["MÃ HD"] ?? clientWithDerivedRoom?.["MÃ HD"])
+    ? "short_term"
+    : "long_term";
+
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      {isLoggedIn && !hideResidentGuides ? <ResidentInstructionsPanel /> : null}
+      {isLoggedIn && !hideResidentGuides ? <ResidentInstructionsPanel audience={guideAudience} /> : null}
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
         <div className="flex items-start justify-between gap-4">
           <h1 className="text-2xl font-semibold text-slate-900">{t("accountOverviewTitle")}</h1>

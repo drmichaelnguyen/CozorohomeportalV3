@@ -10,6 +10,7 @@ import {
   COZORO_MEMBER_RULE_DETAIL_KEYS
 } from "../lib/cozoro-member";
 import { formatCozoroDateTime } from "../lib/date-format";
+import { resolveCurrentCoinsBalance } from "../lib/resolve-current-coins";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 const COINS_COLUMN = "COINS";
@@ -372,7 +373,11 @@ export function CoinsClient() {
       usedLastMonth,
       usedLastYear,
       earnedLastMonth,
-      currentCoins: earnedTotal - usedTotal,
+      // Match Home / laundry / fines: roster profile is spendable balance.
+      currentCoins: resolveCurrentCoinsBalance({
+        profileBalance: client?.["Cozoro coins hiện có"],
+        historyNet: earnedTotal - usedTotal
+      }),
       earnedByMonth: Array.from(earnedByMonth.entries())
         .sort((left, right) => left[0].localeCompare(right[0]))
         .map(([key, value]) => ({ key, label: key, value })),
@@ -380,7 +385,7 @@ export function CoinsClient() {
         .sort((left, right) => right[1] - left[1])
         .map(([key, value]) => ({ key, label: key, value }))
     };
-  }, [entries]);
+  }, [client, entries]);
 
   const maxMonthlyEarned = useMemo(
     () => Math.max(1, ...coinStats.earnedByMonth.map((entry) => entry.value)),
@@ -458,7 +463,7 @@ export function CoinsClient() {
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current Coins</div>
               <div className="mt-2 text-2xl font-semibold text-slate-900">{formatCoins(coinStats.currentCoins)}</div>
-              <div className="mt-1 text-xs text-slate-500">Earned minus used</div>
+              <div className="mt-1 text-xs text-slate-500">Spendable balance on your account</div>
             </div>
           </div>
 

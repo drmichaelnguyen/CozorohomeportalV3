@@ -49,23 +49,8 @@
 
       <section class="card wide">
         <h2>Check-In Instruction</h2>
-        <div class="instruction-grid">
-          <div class="instruction-block">
-            <h3>Bước 1: Xác nhận và Thanh toán</h3>
-            <p>Khách gửi ảnh chụp CCCD/Passport qua tin nhắn. Hoàn tất thanh toán và tiền cọc (nếu có) qua chuyển khoản. Hệ thống gửi mã cửa chính và số giường cụ thể.</p>
-          </div>
-          <div class="instruction-block">
-            <h3>Bước 2: Di chuyển và Vào nhà</h3>
-            <p>Gửi link Google Maps chính xác kèm video/hình ảnh ngắn quay cảnh trước cửa nhà để khách không nhầm lẫn. Hướng dẫn nhập mã khóa điện tử để vào cửa chính.</p>
-          </div>
-          <div class="instruction-block">
-            <h3>Bước 3: Nhận giường và Tủ đồ (Locker)</h3>
-            <p>Hướng dẫn khách tìm đúng số giường đã được cấp. Lưu ý: Mã số tủ Locker thường trùng với số giường.</p>
-          </div>
-          <div class="instruction-block">
-            <h3>Bước 4: Kết nối và Nội quy</h3>
-            <p>Quét mã QR dán tại giường để nhận mật khẩu Wifi, nội quy phòng chung, đăng kí sử dụng thiết bị và danh sách quán ăn gần đó.</p>
-          </div>
+        <div id="checkInGuides" class="instruction-grid">
+          <p class="section-note">Loading check-in instructions…</p>
         </div>
         <p class="section-note">Full check-in details and arrival instructions are sent within 2 days before check-in. The exact address for confirmed bookings is shown above.</p>
         <p class="section-note">Face + ID capture is required within 48 hours before check-in and must be taken with the camera only. Hold your physical ID next to your face. There is no upload option.</p>
@@ -114,6 +99,50 @@
           statusText.textContent = error.message || "Unable to confirm payment.";
         }
       })();
+
+      (async function loadCheckInGuides() {
+        const container = document.getElementById("checkInGuides");
+        if (!container) return;
+        try {
+          const response = await fetch("/api/check-in-guides");
+          const payload = await response.json();
+          const guides = Array.isArray(payload.guides) ? payload.guides : [];
+          if (!guides.length) {
+            container.innerHTML = '<p class="section-note">Check-in instructions will appear here once staff publish them in the portal.</p>';
+            return;
+          }
+          const lang = (document.documentElement.lang || "en").toLowerCase().startsWith("vi") ? "vi" : "en";
+          container.innerHTML = guides
+            .map((guide) => {
+              const title = lang === "vi" ? guide.titleVi : guide.titleEn;
+              if (guide.contentType === "video" && guide.videoUrl) {
+                return `<div class="instruction-block"><h3>${escapeHtml(title)}</h3><p><a href="${escapeHtml(guide.videoUrl)}" target="_blank" rel="noopener">Open video</a></p></div>`;
+              }
+              const steps = Array.isArray(guide.steps) ? guide.steps : [];
+              const stepsHtml = steps
+                .map((step, index) => {
+                  const body = lang === "vi" ? step.bodyVi : step.bodyEn;
+                  const image = step.imageUrl
+                    ? `<p><img src="${escapeHtml(step.imageUrl)}" alt="" style="max-width:100%;border-radius:8px;" /></p>`
+                    : "";
+                  return `<p><strong>Step ${index + 1}.</strong> ${escapeHtml(body)}</p>${image}`;
+                })
+                .join("");
+              return `<div class="instruction-block"><h3>${escapeHtml(title)}</h3>${stepsHtml}</div>`;
+            })
+            .join("");
+        } catch (_error) {
+          container.innerHTML = '<p class="section-note">Unable to load check-in instructions right now.</p>';
+        }
+      })();
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
     </script>
   </body>
 </html>

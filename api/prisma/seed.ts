@@ -1,4 +1,11 @@
-import { CoinReason, PrismaClient, ResidentGuideContentType, ResourceType } from "@prisma/client";
+import {
+  CoinReason,
+  PrismaClient,
+  ResidentGuideAudience,
+  ResidentGuideCategory,
+  ResidentGuideContentType,
+  ResourceType
+} from "@prisma/client";
 
 const prisma = new PrismaClient();
 
@@ -60,7 +67,9 @@ async function main() {
       titleEn: "Laundry",
       sortOrder: 10,
       contentType: ResidentGuideContentType.STEPS,
-      videoUrl: null,
+      category: ResidentGuideCategory.HOWTO,
+      audience: ResidentGuideAudience.BOTH,
+      videoUrl: null as string | null,
       stepsJson: [
         {
           bodyVi: "Mở tab Dịch vụ → Giặt sấy, chọn máy và khung giờ trống.",
@@ -79,7 +88,9 @@ async function main() {
       titleEn: "Cleaning schedule",
       sortOrder: 20,
       contentType: ResidentGuideContentType.STEPS,
-      videoUrl: null,
+      category: ResidentGuideCategory.HOWTO,
+      audience: ResidentGuideAudience.LONG_TERM,
+      videoUrl: null as string | null,
       stepsJson: [
         {
           bodyVi: "Mở Lịch / Cleaning schedule để xem nhiệm vụ được giao hoặc slot trống.",
@@ -88,6 +99,60 @@ async function main() {
         {
           bodyVi: "Bạn có thể tự đăng ký slot trống (self-assign) theo quy định chi nhánh; hoàn thành đúng ngày để nhận thưởng coin.",
           bodyEn: "You can self-assign open slots per branch rules; complete on time for coin rewards."
+        }
+      ],
+      updatedBy: "seed"
+    },
+    {
+      slug: "check_in_long_term",
+      titleVi: "Nhận phòng dài hạn",
+      titleEn: "Long-term check-in",
+      sortOrder: 5,
+      contentType: ResidentGuideContentType.STEPS,
+      category: ResidentGuideCategory.CHECK_IN,
+      audience: ResidentGuideAudience.LONG_TERM,
+      videoUrl: null as string | null,
+      stepsJson: [
+        {
+          bodyVi: "Mang CCCD/Passport và hoàn tất thanh toán/cọc theo hướng dẫn của quản lý trước ngày nhận phòng.",
+          bodyEn: "Bring your ID/passport and complete payment/deposit with staff before your move-in date."
+        },
+        {
+          bodyVi: "Nhận mã cửa chính, số giường và hướng dẫn nội quy từ quản lý khi đến nhà.",
+          bodyEn: "Receive the main-door code, bed number, and house rules from staff when you arrive."
+        },
+        {
+          bodyVi: "Quét mã QR tại giường để lấy Wi‑Fi, đăng ký thiết bị và đọc nội quy phòng chung.",
+          bodyEn: "Scan the QR code at your bed for Wi‑Fi, device registration, and shared-room rules."
+        }
+      ],
+      updatedBy: "seed"
+    },
+    {
+      slug: "check_in_short_term",
+      titleVi: "Nhận phòng hostel / ngắn hạn",
+      titleEn: "Hostel / short-term check-in",
+      sortOrder: 6,
+      contentType: ResidentGuideContentType.STEPS,
+      category: ResidentGuideCategory.CHECK_IN,
+      audience: ResidentGuideAudience.SHORT_TERM,
+      videoUrl: null as string | null,
+      stepsJson: [
+        {
+          bodyVi: "Hoàn tất thanh toán trên trang đặt phòng. Hệ thống sẽ gửi xác nhận và số giường sau khi thanh toán thành công.",
+          bodyEn: "Complete payment on the booking site. You will receive confirmation and your bed number after payment succeeds."
+        },
+        {
+          bodyVi: "Trong vòng 48 giờ trước check-in, mở trang face capture và chụp khuôn mặt kèm CCCD/Passport (không upload ảnh có sẵn).",
+          bodyEn: "Within 48 hours before check-in, open the face-capture page and take a live photo of your face with your physical ID (no file upload)."
+        },
+        {
+          bodyVi: "Dùng địa chỉ/Google Maps được gửi kèm mã khóa điện tử để vào cửa chính; tìm đúng số giường và tủ locker (thường trùng số giường).",
+          bodyEn: "Use the shared Google Maps link and door-code instructions to enter; find your assigned bed and locker (locker number usually matches the bed)."
+        },
+        {
+          bodyVi: "Quét mã QR tại giường để nhận Wi‑Fi, nội quy và danh sách tiện ích gần nhà.",
+          bodyEn: "Scan the QR at your bed for Wi‑Fi, house rules, and nearby amenity tips."
         }
       ],
       updatedBy: "seed"

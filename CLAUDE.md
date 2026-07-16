@@ -264,6 +264,8 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.8.61 | Unify coin balance display to roster profile (fixes Account/Coins vs Home mismatch); hostel booking emails + in-app staff alerts on new/paid/confirm; manager-editable check-in instructions for long-term and short-term clients. |
+| 3.8.60 | Stop all D2 background automation after permanent closure. |
 | 3.8.54 | D7 bed layout: Room 1.1 beds 1–9 (3 bunks), Room 1.2 beds 10–15 (2 bunks) — fixes manager bed diagram and `BRANCH_LAYOUTS` to match physical floor plan. |
 | 3.8.53 | Stripe hostel payments (auto VND receipts, manager list/detail/refund); pending hostel booking **Archive** and **Reject**; D2 new-registration closure shared across portal, API, and guest-booking standalone. |
 | 3.8.47 | Deposit refund email: bilingual notice now lists deposit, unpaid fines (per line), unpaid gate tickets (per ticket), other deductions when refund is below auto-suggested, and final refund amount. |

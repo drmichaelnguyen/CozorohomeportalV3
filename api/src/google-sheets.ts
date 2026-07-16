@@ -4736,6 +4736,18 @@ export async function awardCleaningCoinsToSheet(input: {
   reviewedBy: string;
 }) {
   const normalizedEmail = input.userEmail.trim().toLowerCase();
+  const transactionCode = `CleaningReward${input.taskId}`;
+  const existingEntries = await getCoinsForEmail(normalizedEmail);
+  const alreadyAwarded = existingEntries.some(
+    (entry) => (entry.row[COINS_TRANSACTION_CODE_COLUMN] ?? "").trim() === transactionCode
+  );
+  if (alreadyAwarded) {
+    console.warn(
+      `[CleaningCoins] Skipping duplicate award for ${normalizedEmail} transaction ${transactionCode}`
+    );
+    return;
+  }
+
   const client = await getActiveClientByEmail(normalizedEmail);
   const currentCoins = client
     ? Number.parseInt(String(client[CLIENT_CURRENT_COINS_COLUMN] ?? "0").replace(/[^0-9-]/g, ""), 10) || 0
@@ -4755,7 +4767,7 @@ export async function awardCleaningCoinsToSheet(input: {
     [COINS_OPERATOR_COLUMN]: "",
     [COINS_MEMBER_COLUMN]: recordedMember,
     [COINS_CURRENT_BALANCE_COLUMN]: String(nextCoins),
-    [COINS_TRANSACTION_CODE_COLUMN]: `CleaningReward${input.taskId}`
+    [COINS_TRANSACTION_CODE_COLUMN]: transactionCode
   });
 
   if (client && client[CONTRACT_CODE_COLUMN]) {

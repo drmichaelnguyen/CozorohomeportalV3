@@ -508,14 +508,29 @@ enum ResidentGuideContentType {
   VIDEO
 }
 
+/// HOWTO = portal how-to (laundry, cleaning). CHECK_IN = arrival / check-in instructions.
+enum ResidentGuideCategory {
+  HOWTO
+  CHECK_IN
+}
+
+/// Who should see this guide section.
+enum ResidentGuideAudience {
+  LONG_TERM
+  SHORT_TERM
+  BOTH
+}
+
 model ResidentGuideSection {
   id          String                   @id @default(cuid())
-  /// Lowercase slug, unique (e.g. laundry, cleaning_schedule, custom_topic)
+  /// Lowercase slug, unique (e.g. laundry, cleaning_schedule, check_in_short_term)
   slug        String                   @unique @db.VarChar(80)
   titleVi     String                   @db.VarChar(200)
   titleEn     String                   @db.VarChar(200)
   sortOrder   Int                      @default(0)
   contentType ResidentGuideContentType
+  category    ResidentGuideCategory    @default(HOWTO)
+  audience    ResidentGuideAudience    @default(BOTH)
   /// YouTube / Vimeo watch URL or direct .mp4 link for VIDEO mode
   videoUrl    String?                  @db.VarChar(2000)
   /// STEPS: [{ "bodyVi", "bodyEn", "imageUrl"? }]
@@ -525,6 +540,7 @@ model ResidentGuideSection {
   updatedAt   DateTime                 @updatedAt
 
   @@index([sortOrder])
+  @@index([category, audience])
 }
 
 model CleaningSwapRequest {

@@ -1596,6 +1596,40 @@ async function syncPaidGuestBookingToMainApp(input) {
   }
 }
 
+async function notifyNewGuestBookingToMainApp(input) {
+  try {
+    const response = await fetch(`${MAIN_APP_API_URL}/internal/guest-bookings/notify-new`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(MAIN_APP_API_KEY ? { "x-internal-api-key": MAIN_APP_API_KEY } : {})
+      },
+      body: JSON.stringify({
+        bookingId: String(input.bookingId || "").trim(),
+        guestEmail: String(input.guestEmail || "").trim().toLowerCase(),
+        guestName: input.guestName,
+        guestPhone: input.guestPhone || "",
+        branchId: input.branchId,
+        roomCode: input.roomCode || "",
+        bedNumber: Number(input.bedNumber),
+        checkIn: input.checkIn,
+        checkOut: input.checkOut,
+        nights: input.nights,
+        totalAmount: input.totalAmount,
+        currency: input.currency || "VND",
+        paymentStatus: input.paymentStatus || "unpaid",
+        status: input.status || "PENDING_PAYMENT"
+      })
+    });
+    if (!response.ok) {
+      const payload = await response.text();
+      console.error(`[notify-new] Main app notify failed (${response.status}): ${payload}`);
+    }
+  } catch (error) {
+    console.error("[notify-new] Main app notify error", error);
+  }
+}
+
 async function getPool() {
   if (!DATABASE_URL) {
     throw new Error("DATABASE_URL is not configured.");
@@ -1997,6 +2031,27 @@ async function createPendingBooking(input, pricingConfig = null) {
   };
 }
 
+async function notifyCreatedPendingBooking(input, pendingBooking) {
+  const checkIn = String(input.checkIn || "").slice(0, 10);
+  const checkOut = String(input.checkOut || "").slice(0, 10);
+  await notifyNewGuestBookingToMainApp({
+    bookingId: pendingBooking.id,
+    guestEmail: input.guestEmail,
+    guestName: input.guestName,
+    guestPhone: input.guestPhone || "",
+    branchId: input.branchId,
+    roomCode: input.roomCode,
+    bedNumber: input.bedNumber,
+    checkIn,
+    checkOut,
+    nights: pendingBooking.pricing?.nights,
+    totalAmount: pendingBooking.pricing?.total,
+    currency: pendingBooking.pricing?.currency || "VND",
+    paymentStatus: input.paymentStatus === undefined ? "unpaid" : input.paymentStatus,
+    status: input.status || "PENDING_PAYMENT"
+  });
+}
+
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   if (!stripe) {
     return res.status(500).send("Stripe is not configured.");
@@ -2064,6 +2119,24 @@ app.get("/api/referral-program", async (_req, res) => {
   } catch (error) {
     return res.status(502).json({
       error: error instanceof Error ? error.message : "Unable to load referral program"
+    });
+  }
+});
+
+app.get("/api/check-in-guides", async (_req, res) => {
+  try {
+    const response = await fetch(
+      `${MAIN_APP_API_URL}/api/public/resident-guides?category=check_in&audience=short_term`
+    );
+    if (!response.ok) {
+      const payload = await response.text();
+      return res.status(502).json({ error: `Unable to load check-in guides (${response.status}): ${payload}` });
+    }
+    const data = await response.json();
+    return res.json(data);
+  } catch (error) {
+    return res.status(502).json({
+      error: error instanceof Error ? error.message : "Unable to load check-in guides"
     });
   }
 });
@@ -2395,6 +2468,22 @@ app.post("/api/create-checkout-session", async (req, res) => {
       cancellationPolicy: submission.cancellationPolicy,
       referralCode: submission.referralCode
     }, pricingConfig);
+
+    await notifyCreatedPendingBooking(
+      {
+        branchId: submission.branchId,
+        roomCode: room.roomCode,
+        bedNumber: submission.bedNumber,
+        guestName: submission.guestName,
+        guestEmail: submission.guestEmail,
+        guestPhone: submission.guestPhone,
+        checkIn: submission.checkIn,
+        checkOut: submission.checkOut,
+        status: "PENDING_PAYMENT",
+        paymentStatus: "unpaid"
+      },
+      pendingBooking
+    );
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
