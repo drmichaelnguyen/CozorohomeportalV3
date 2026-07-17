@@ -69,6 +69,27 @@ type AutoAssignPreview = {
   user: AdminAvailableUser | null;
 };
 
+type CorrectionReason = {
+  id: string;
+  code: string | null;
+  labelVi: string;
+  labelEn: string | null;
+  isSystem: boolean;
+  sortOrder: number;
+};
+
+type CorrectionPayload = {
+  reasonIds: string[];
+  customNote?: string;
+  newReasonLabel?: string;
+};
+
+type CorrectionDialogState = {
+  mode: "assign" | "remove";
+  force: boolean;
+  taskId?: string;
+};
+
 type CleaningReviewQueuePayload = {
   pendingAudit: Array<{
     id: string;
@@ -278,6 +299,12 @@ export function AdminCleaningClient() {
   const [rejectFineCreate, setRejectFineCreate] = useState(false);
   const [rejectFineAmount, setRejectFineAmount] = useState("50000");
   const [rejectFineSendEmail, setRejectFineSendEmail] = useState(false);
+  const [correctionReasons, setCorrectionReasons] = useState<CorrectionReason[]>([]);
+  const [correctionDialog, setCorrectionDialog] = useState<CorrectionDialogState | null>(null);
+  const [selectedCorrectionReasonIds, setSelectedCorrectionReasonIds] = useState<string[]>([]);
+  const [correctionCustomNote, setCorrectionCustomNote] = useState("");
+  const [newCorrectionReasonLabel, setNewCorrectionReasonLabel] = useState("");
+  const [correctionReasonsLoading, setCorrectionReasonsLoading] = useState(false);
   const [missedFineSendEmail, setMissedFineSendEmail] = useState(false);
   const [bulkOverdueLoading, setBulkOverdueLoading] = useState(false);
   const [autoSchedulerConfig, setAutoSchedulerConfig] = useState<AutoSchedulerConfig | null>(null);
@@ -604,18 +631,114 @@ export function AdminCleaningClient() {
     }
   }
 
-  async function removeTask(taskId: string) {
+  function reasonLabel(reason: CorrectionReason) {
+    if (language === "vi") {
+      return reason.labelVi;
+    }
+    return reason.labelEn?.trim() || reason.labelVi;
+  }
+
+  function resetCorrectionDialog() {
+    setCorrectionDialog(null);
+    setSelectedCorrectionReasonIds([]);
+    setCorrectionCustomNote("");
+    setNewCorrectionReasonLabel("");
+  }
+
+  async function loadCorrectionReasons() {
+    setCorrectionReasonsLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/cleaning/correction-reasons`);
+      const data = await readJsonSafely<{ reasons?: CorrectionReason[]; error?: string }>(response);
+      if (!response.ok) {
+        throw new Error(data.error ?? t("correctionErrLoadReasons"));
+      }
+      setCorrectionReasons(data.reasons ?? []);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : t("correctionErrLoadReasons"));
+    } finally {
+      setCorrectionReasonsLoading(false);
+    }
+  }
+
+  async function openCorrectionDialog(state: CorrectionDialogState) {
+    setSelectedCorrectionReasonIds([]);
+    setCorrectionCustomNote("");
+    setNewCorrectionReasonLabel("");
+    setCorrectionDialog(state);
+    if (correctionReasons.length === 0) {
+      await loadCorrectionReasons();
+    }
+  }
+
+  function needsAssignCorrectionFeedback(force: boolean) {
+    const systemTask = selectedDayTasks.find(
+      (task) => task.status === "ASSIGNED" && task.assignmentSource === "SYSTEM"
+    );
+    if (!systemTask) {
+      return force;
+    }
+    return force || systemTask.userEmail.toLowerCase() !== selectedAssignEmail.trim().toLowerCase();
+  }
+
+  async function addCustomCorrectionReason() {
+    const label = newCorrectionReasonLabel.trim();
+    if (!label) {
+      return;
+    }
+    setLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/cleaning/correction-reasons`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actorEmail: activeEmail,
+          labelVi: label,
+          labelEn: label
+        })
+      });
+      const data = await readJsonSafely<{ reason?: CorrectionReason; error?: string }>(response);
+      if (!response.ok || !data.reason) {
+        setMessage(data.error ?? t("correctionErrAddReason"));
+        return;
+      }
+      setCorrectionReasons((current) => {
+        if (current.some((entry) => entry.id === data.reason!.id)) {
+          return current;
+        }
+        return [...current, data.reason!].sort((a, b) => a.sortOrder - b.sortOrder);
+      });
+      setSelectedCorrectionReasonIds((current) =>
+        current.includes(data.reason!.id) ? current : [...current, data.reason!.id]
+      );
+      setNewCorrectionReasonLabel("");
+      setMessage(t("correctionReasonAdded"));
+    } catch {
+      setMessage(t("correctionErrAddReason"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function removeTask(taskId: string, correction?: CorrectionPayload) {
     setLoading(true);
     setMessage("");
     try {
       const response = await fetch(`${API_BASE_URL}/admin/cleaning/tasks/${encodeURIComponent(taskId)}`, {
-        method: "DELETE"
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actorEmail: activeEmail,
+          correction: correction ?? undefined
+        })
       });
       const data = await readJsonSafely<{ error?: string }>(response);
       if (!response.ok) {
         setMessage(data.error ?? t("adminCleaningErrRemoveTask"));
         return;
       }
+      resetCorrectionDialog();
       await reloadAll();
       setMessage(t("adminCleaningTaskRemoved"));
     } catch {
@@ -625,7 +748,15 @@ export function AdminCleaningClient() {
     }
   }
 
-  async function assignSelectedUser(force = false) {
+  async function requestRemoveTask(task: AdminTask) {
+    if (task.assignmentSource === "SYSTEM") {
+      await openCorrectionDialog({ mode: "remove", force: false, taskId: task.id });
+      return;
+    }
+    await removeTask(task.id);
+  }
+
+  async function assignSelectedUser(force = false, correction?: CorrectionPayload) {
     if (!selectedCalendar || !selectedAssignEmail) {
       setMessage(t("adminCleaningChooseSuggestedUserFirst"));
       return;
@@ -650,7 +781,8 @@ export function AdminCleaningClient() {
           date: toApiDate(selectedDate),
           type: selectedCalendar.type,
           floor: selectedCalendar.floor ?? undefined,
-          force
+          force,
+          correction: correction ?? undefined
         })
       });
       const data = await readJsonSafely<{
@@ -672,6 +804,7 @@ export function AdminCleaningClient() {
         return;
       }
 
+      resetCorrectionDialog();
       await reloadAll();
       await loadAvailableUsers();
       setPendingConflict(null);
@@ -681,6 +814,73 @@ export function AdminCleaningClient() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function requestAssignSelectedUser(force = false) {
+    if (needsAssignCorrectionFeedback(force)) {
+      await openCorrectionDialog({ mode: "assign", force });
+      return;
+    }
+    await assignSelectedUser(force);
+  }
+
+  async function confirmCorrectionDialog() {
+    if (!correctionDialog) {
+      return;
+    }
+    if (selectedCorrectionReasonIds.length === 0 && !newCorrectionReasonLabel.trim()) {
+      setMessage(t("correctionReasonRequired"));
+      return;
+    }
+
+    let reasonIds = [...selectedCorrectionReasonIds];
+    const newLabel = newCorrectionReasonLabel.trim();
+    if (newLabel && reasonIds.length === 0) {
+      // Persist as a new checkbox option, then use it
+      setLoading(true);
+      try {
+        const response = await fetch(`${API_BASE_URL}/admin/cleaning/correction-reasons`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            actorEmail: activeEmail,
+            labelVi: newLabel,
+            labelEn: newLabel
+          })
+        });
+        const data = await readJsonSafely<{ reason?: CorrectionReason; error?: string }>(response);
+        if (!response.ok || !data.reason) {
+          setMessage(data.error ?? t("correctionErrAddReason"));
+          setLoading(false);
+          return;
+        }
+        setCorrectionReasons((current) => {
+          if (current.some((entry) => entry.id === data.reason!.id)) {
+            return current;
+          }
+          return [...current, data.reason!].sort((a, b) => a.sortOrder - b.sortOrder);
+        });
+        reasonIds = [data.reason.id];
+        setNewCorrectionReasonLabel("");
+      } catch {
+        setMessage(t("correctionErrAddReason"));
+        setLoading(false);
+        return;
+      }
+    }
+
+    const correction: CorrectionPayload = {
+      reasonIds,
+      customNote: correctionCustomNote.trim() || undefined,
+      newReasonLabel: newLabel && selectedCorrectionReasonIds.length > 0 ? newLabel : undefined
+    };
+
+    if (correctionDialog.mode === "remove" && correctionDialog.taskId) {
+      await removeTask(correctionDialog.taskId, correction);
+      return;
+    }
+
+    await assignSelectedUser(correctionDialog.force, correction);
   }
 
   async function previewAutoAssignDates(dates: string[]) {
@@ -1639,7 +1839,7 @@ export function AdminCleaningClient() {
                               {task.status === "ASSIGNED" && canRemoveAssigned ? (
                                 <button
                                   type="button"
-                                  onClick={() => void removeTask(task.id)}
+                                  onClick={() => void requestRemoveTask(task)}
                                   disabled={loading}
                                   className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
                                 >
@@ -1779,7 +1979,7 @@ export function AdminCleaningClient() {
                     <div className="flex flex-wrap gap-3">
                       <button
                         type="button"
-                        onClick={() => void assignSelectedUser(false)}
+                        onClick={() => void requestAssignSelectedUser(false)}
                         disabled={loading || !selectedAssignEmail || !canAssignSelectedDate}
                         className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-60"
                       >
@@ -1788,7 +1988,7 @@ export function AdminCleaningClient() {
                       {pendingConflict ? (
                         <button
                           type="button"
-                          onClick={() => void assignSelectedUser(true)}
+                          onClick={() => void requestAssignSelectedUser(true)}
                           disabled={loading || !canAssignSelectedDate}
                           className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-800 disabled:opacity-60"
                         >
@@ -1952,6 +2152,97 @@ export function AdminCleaningClient() {
               <button
                 type="button"
                 onClick={() => { setRejectFineDialog(null); setRejectFineCreate(false); setRejectFineSendEmail(false); }}
+                className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                {t("cancelLabel")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {correctionDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-base font-bold text-slate-900">{t("correctionReasonTitle")}</h3>
+            <p className="text-sm text-slate-600">{t("correctionReasonDesc")}</p>
+
+            <div className="space-y-2">
+              {correctionReasonsLoading && correctionReasons.length === 0 ? (
+                <p className="text-sm text-slate-500">{t("refreshing")}</p>
+              ) : (
+                correctionReasons.map((reason) => {
+                  const checked = selectedCorrectionReasonIds.includes(reason.id);
+                  return (
+                    <label
+                      key={reason.id}
+                      className="flex items-start gap-3 rounded-xl border border-slate-200 px-3 py-2.5 cursor-pointer hover:bg-slate-50"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          setSelectedCorrectionReasonIds((current) =>
+                            checked ? current.filter((id) => id !== reason.id) : [...current, reason.id]
+                          );
+                        }}
+                        className="mt-0.5 h-4 w-4 rounded border-slate-300 text-sky-600"
+                      />
+                      <span className="text-sm text-slate-800">{reasonLabel(reason)}</span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="rounded-xl border border-dashed border-slate-300 p-3 space-y-2">
+              <div className="text-sm font-medium text-slate-700">{t("correctionAddReason")}</div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newCorrectionReasonLabel}
+                  onChange={(e) => setNewCorrectionReasonLabel(e.target.value)}
+                  placeholder={t("correctionAddReasonPlaceholder")}
+                  className="flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                />
+                <button
+                  type="button"
+                  disabled={loading || !newCorrectionReasonLabel.trim()}
+                  onClick={() => void addCustomCorrectionReason()}
+                  className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {t("correctionAddReasonButton")}
+                </button>
+              </div>
+            </div>
+
+            <label className="block text-sm font-medium text-slate-700">
+              {t("correctionNoteLabel")}
+              <textarea
+                rows={2}
+                value={correctionCustomNote}
+                onChange={(e) => setCorrectionCustomNote(e.target.value)}
+                placeholder={t("correctionNotePlaceholder")}
+                className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              />
+            </label>
+
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => void confirmCorrectionDialog()}
+                className="flex-1 rounded-xl bg-slate-900 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-50"
+              >
+                {loading
+                  ? t("refreshing")
+                  : correctionDialog.mode === "remove"
+                    ? t("correctionConfirmRemove")
+                    : t("correctionConfirmAssign")}
+              </button>
+              <button
+                type="button"
+                onClick={() => resetCorrectionDialog()}
                 className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
                 {t("cancelLabel")}

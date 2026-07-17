@@ -165,6 +165,66 @@ async function main() {
       await prisma.residentGuideSection.create({ data: g });
     }
   }
+
+  const correctionReasons = [
+    {
+      code: "overlap",
+      labelVi: "Vẫn phân trùng lịch (chồng chéo)",
+      labelEn: "Still assigns overlapping schedules",
+      sortOrder: 10
+    },
+    {
+      code: "overlap_random",
+      labelVi: "Trùng lịch không theo quy luật nào",
+      labelEn: "Overlaps with no clear pattern",
+      sortOrder: 20
+    },
+    {
+      code: "never_assigned",
+      labelVi: "Có bạn thì hệ thống không phân",
+      labelEn: "Some people never get assigned",
+      sortOrder: 30
+    },
+    {
+      code: "over_assigned_week",
+      labelVi: "Có bạn 1 tuần bị phân 3 lần",
+      labelEn: "Some people get assigned 3 times in one week",
+      sortOrder: 40
+    },
+    {
+      code: "wrong_person",
+      labelVi: "Phân sai người",
+      labelEn: "Wrong person assigned",
+      sortOrder: 50
+    },
+    {
+      code: "other",
+      labelVi: "Lý do khác",
+      labelEn: "Other reason",
+      sortOrder: 90
+    }
+  ];
+
+  for (const reason of correctionReasons) {
+    await prisma.cleaningScheduleCorrectionReason.upsert({
+      where: { code: reason.code },
+      update: {
+        labelVi: reason.labelVi,
+        labelEn: reason.labelEn,
+        isSystem: true,
+        isActive: true,
+        sortOrder: reason.sortOrder
+      },
+      create: {
+        code: reason.code,
+        labelVi: reason.labelVi,
+        labelEn: reason.labelEn,
+        isSystem: true,
+        isActive: true,
+        sortOrder: reason.sortOrder
+      }
+    });
+  }
 }
 
 main()

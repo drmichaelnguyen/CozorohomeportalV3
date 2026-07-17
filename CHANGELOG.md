@@ -1,5 +1,8 @@
 # Changelog
 
+## [3.8.62] - 2026-07-17
+- **Cleaning schedule correction feedback**: When staff remove or reassign an auto-scheduled cleaning task (or override a same-day conflict), the admin UI requires checkbox reasons (overlap, uneven load, never assigned, etc.). Custom reasons can be added and persist for later use; each correction is stored for future auto-scheduler learning.
+
 ## [3.8.61] - 2026-07-16
 - **Coin balance consistency**: Account and Coins pages now show the same spendable balance as Home / laundry / fines (roster `Cozoro coins hiện có`), with history sum only as fallback when the profile is blank/zero. Cleaning coin awards are idempotent by transaction code.
 - **Hostel booking notifications**: On new booking, staff get in-app alerts + email (including `cozorohome@gmail.com`) and the guest gets a booking acknowledgment email; on paid import and manager confirm, guest (and staff on paid) get follow-up emails.

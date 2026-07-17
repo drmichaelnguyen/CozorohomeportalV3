@@ -69,6 +69,13 @@ enum CleaningAuditDecision {
   REJECT
 }
 
+enum CleaningScheduleCorrectionAction {
+  REASSIGN
+  ASSIGN_OVERRIDE
+  REMOVE
+  REPLACE_SYSTEM
+}
+
 enum SupportConversationStatus {
   OPEN
   CLOSED
@@ -210,6 +217,59 @@ model CleaningAudit {
   createdAt   DateTime            @default(now())
 
   @@index([taskId, createdAt])
+}
+
+/// Reusable checkbox options for why staff corrected auto-schedule (seeded + staff-added).
+model CleaningScheduleCorrectionReason {
+  id        String   @id @default(cuid())
+  /// Stable key for seeded reasons, e.g. "overlap"
+  code      String?  @unique
+  labelVi   String
+  labelEn   String?
+  isSystem  Boolean  @default(false)
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(100)
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  events    CleaningScheduleCorrectionReasonLink[]
+
+  @@index([isActive, sortOrder])
+}
+
+/// One human correction of an auto/manual schedule assignment (RL feedback signal).
+model CleaningScheduleCorrection {
+  id                String                            @id @default(cuid())
+  action            CleaningScheduleCorrectionAction
+  taskId            String?
+  slotKey           String?
+  taskType          CleaningTaskType
+  scheduledDate     DateTime
+  floor             Int?
+  previousUserEmail String?
+  previousUserName  String?
+  previousSource    CleaningAssignmentSource?
+  newUserEmail      String?
+  actorEmail        String
+  actorName         String?
+  customNote        String?                           @db.Text
+  createdAt         DateTime                          @default(now())
+  reasons           CleaningScheduleCorrectionReasonLink[]
+
+  @@index([createdAt])
+  @@index([taskType, scheduledDate])
+  @@index([actorEmail, createdAt])
+  @@index([previousSource, createdAt])
+}
+
+model CleaningScheduleCorrectionReasonLink {
+  correctionId String
+  reasonId     String
+  correction   CleaningScheduleCorrection       @relation(fields: [correctionId], references: [id], onDelete: Cascade)
+  reason       CleaningScheduleCorrectionReason @relation(fields: [reasonId], references: [id], onDelete: Cascade)
+
+  @@id([correctionId, reasonId])
+  @@index([reasonId])
 }
 
 model SupportConversation {

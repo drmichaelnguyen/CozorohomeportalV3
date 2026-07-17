@@ -1466,6 +1466,58 @@ const translations: Record<string, { en: string; vi: string }> = {
   rejectTaskConfirm: { en: "Reject task — confirm", vi: "Từ chối công việc — xác nhận" },
   rejectingFor: { en: "Rejecting for {email} on {date}.", vi: "Từ chối cho {email} vào ngày {date}." },
   coinsWillBeForfeited: { en: "Coins will be forfeited.", vi: "Xu sẽ bị thu hồi." },
+  correctionReasonTitle: {
+    en: "Why does this schedule need correction?",
+    vi: "Vì sao lịch này cần chỉnh sửa?"
+  },
+  correctionReasonDesc: {
+    en: "Select one or more reasons. This feedback helps improve auto-scheduling.",
+    vi: "Chọn một hoặc nhiều lý do. Phản hồi này giúp cải thiện lịch tự động."
+  },
+  correctionReasonRequired: {
+    en: "Please select at least one reason.",
+    vi: "Vui lòng chọn ít nhất một lý do."
+  },
+  correctionAddReason: {
+    en: "Add a new reason",
+    vi: "Thêm lý do mới"
+  },
+  correctionAddReasonPlaceholder: {
+    en: "Type a new reason…",
+    vi: "Nhập lý do mới…"
+  },
+  correctionAddReasonButton: {
+    en: "Add to list",
+    vi: "Thêm vào danh sách"
+  },
+  correctionNoteLabel: {
+    en: "Extra note (optional)",
+    vi: "Ghi chú thêm (tuỳ chọn)"
+  },
+  correctionNotePlaceholder: {
+    en: "Any extra detail…",
+    vi: "Chi tiết thêm…"
+  },
+  correctionConfirmAssign: {
+    en: "Save & assign",
+    vi: "Lưu & phân công"
+  },
+  correctionConfirmRemove: {
+    en: "Save & remove",
+    vi: "Lưu & xóa"
+  },
+  correctionReasonAdded: {
+    en: "New reason added to the list.",
+    vi: "Đã thêm lý do mới vào danh sách."
+  },
+  correctionErrLoadReasons: {
+    en: "Unable to load correction reasons.",
+    vi: "Không tải được danh sách lý do chỉnh sửa."
+  },
+  correctionErrAddReason: {
+    en: "Unable to add correction reason.",
+    vi: "Không thêm được lý do chỉnh sửa."
+  },
   alsoCreateFineTicket: { en: "Also create a fine ticket", vi: "Đồng thời tạo phiếu phạt" },
   fineAmountLabel: { en: "Fine amount (₫)", vi: "Số tiền phạt (₫)" },
   rejectIssueFine: { en: "Reject & Issue Fine", vi: "Từ chối & Phạt" },

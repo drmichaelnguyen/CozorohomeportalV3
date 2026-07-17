@@ -68,6 +68,9 @@ type TableDelegateName =
   | "cleaningAvailability"
   | "cleaningTask"
   | "cleaningAudit"
+  | "cleaningScheduleCorrectionReason"
+  | "cleaningScheduleCorrection"
+  | "cleaningScheduleCorrectionReasonLink"
   | "supportConversation"
   | "supportMessage"
   | "supportReadState"
@@ -160,6 +163,48 @@ const BACKUP_TABLES: BackupTableDef[] = [
       "createdAt",
       "updatedAt"
     ]
+  },
+  {
+    tabName: "CleaningScheduleCorrectionReason",
+    delegate: "cleaningScheduleCorrectionReason",
+    fields: [
+      "id",
+      "code",
+      "labelVi",
+      "labelEn",
+      "isSystem",
+      "isActive",
+      "sortOrder",
+      "createdBy",
+      "createdAt",
+      "updatedAt"
+    ]
+  },
+  {
+    tabName: "CleaningScheduleCorrection",
+    delegate: "cleaningScheduleCorrection",
+    fields: [
+      "id",
+      "action",
+      "taskId",
+      "slotKey",
+      "taskType",
+      "scheduledDate",
+      "floor",
+      "previousUserEmail",
+      "previousUserName",
+      "previousSource",
+      "newUserEmail",
+      "actorEmail",
+      "actorName",
+      "customNote",
+      "createdAt"
+    ]
+  },
+  {
+    tabName: "CleaningScheduleCorrectionReasonLink",
+    delegate: "cleaningScheduleCorrectionReasonLink",
+    fields: ["correctionId", "reasonId"]
   },
   {
     tabName: "CleaningAudit",

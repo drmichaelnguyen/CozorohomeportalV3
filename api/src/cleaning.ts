@@ -5,6 +5,7 @@ import {
   CleaningAssignmentSource,
   CleaningAuditDecision,
   CleaningAvailabilityType,
+  CleaningScheduleCorrectionAction,
   CleaningSwapRequestStatus,
   CleaningTaskStatus,
   CleaningTaskType,
@@ -31,6 +32,11 @@ import {
 } from "./google-sheets.js";
 import { isBranchAutomationDisabled, isCleaningTaskAutomationDisabled } from "./branch-closure.js";
 import { logAction } from "./action-log.js";
+import {
+  type CorrectionPayload,
+  inferCorrectionAction,
+  recordCleaningScheduleCorrection
+} from "./cleaning-schedule-corrections.js";
 import { getCleaningRewardSettings } from "./cleaning-reward-settings.js";
 import { prisma } from "./prisma.js";
 
@@ -2447,6 +2453,7 @@ export async function adminAssignCleaningTask(input: {
   force?: boolean;
   actorEmail?: string;
   actorName?: string | null;
+  correction?: CorrectionPayload | null;
 }) {
   if (!isFutureCalendarDate(input.date)) {
     throw new Error("Admin assignment is only available for future dates");
@@ -2461,11 +2468,38 @@ export async function adminAssignCleaningTask(input: {
     throw new Error("This user is opted out of cleaning for the current contract.");
   }
 
+  const normalizedDate = normalizeCalendarDate(input.date);
+  const slotFloor =
+    input.type === CleaningTaskType.TRASH_D7 && typeof input.floor === "number" ? input.floor : undefined;
+
+  const existingSlot = await findFirstCleaningTask({
+    where: {
+      type: input.type,
+      scheduledDate: {
+        gte: calendarRangeStart(normalizedDate),
+        lte: calendarRangeEnd(normalizedDate)
+      },
+      ...(typeof slotFloor === "number" ? { floor: slotFloor } : {})
+    }
+  });
+
+  const replacingDifferentUser =
+    !!existingSlot &&
+    existingSlot.status === CleaningTaskStatus.ASSIGNED &&
+    existingSlot.userEmail.toLowerCase() !== input.email.trim().toLowerCase();
+  const isSystemCorrection =
+    replacingDifferentUser && existingSlot?.assignmentSource === CleaningAssignmentSource.SYSTEM;
+  const needsCorrectionFeedback = Boolean(input.force || isSystemCorrection);
+
+  if (needsCorrectionFeedback && !input.correction) {
+    throw new Error("Correction reason is required when fixing auto-schedule or overriding a same-day conflict.");
+  }
+
   const availability = await prisma.cleaningAvailability.findUnique({
     where: {
       userEmail_date: {
         userEmail: input.email.trim().toLowerCase(),
-        date: normalizeCalendarDate(input.date)
+        date: normalizedDate
       }
     }
   });
@@ -2487,12 +2521,9 @@ export async function adminAssignCleaningTask(input: {
 
   const assignedTask = await assignTaskToUser({
     user,
-    date: normalizeCalendarDate(input.date),
+    date: normalizedDate,
     type: input.type,
-    floor:
-      input.type === CleaningTaskType.TRASH_D7 && typeof input.floor === "number"
-        ? input.floor
-        : undefined,
+    floor: slotFloor,
     allowSameDayOverride: input.force,
     assignmentSource: CleaningAssignmentSource.MANAGER,
     assignedByEmail: input.actorEmail?.trim().toLowerCase() ?? null,
@@ -2508,6 +2539,29 @@ export async function adminAssignCleaningTask(input: {
     entityLabel: `${assignedTask.type}|${assignedTask.scheduledDate.toISOString().slice(0, 10)}`,
     details: `target=${assignedTask.userEmail}`
   });
+
+  if (input.correction && (needsCorrectionFeedback || replacingDifferentUser)) {
+    await recordCleaningScheduleCorrection({
+      action: inferCorrectionAction({
+        force: input.force,
+        previousSource: existingSlot?.assignmentSource ?? null,
+        hadPreviousAssignee: replacingDifferentUser
+      }),
+      taskId: assignedTask.id,
+      slotKey: assignedTask.slotKey,
+      taskType: assignedTask.type,
+      scheduledDate: assignedTask.scheduledDate,
+      floor: assignedTask.floor,
+      previousUserEmail: existingSlot?.userEmail ?? null,
+      previousUserName: existingSlot?.userName ?? null,
+      previousSource: existingSlot?.assignmentSource ?? null,
+      newUserEmail: assignedTask.userEmail,
+      actorEmail: input.actorEmail?.trim().toLowerCase() || "unknown",
+      actorName: input.actorName?.trim() || "Cozoro",
+      correction: input.correction
+    });
+  }
+
   return assignedTask;
 }
 
@@ -2606,7 +2660,12 @@ export async function adminAutoAssignCleaningSlots(input: {
   return results;
 }
 
-export async function adminRemoveCleaningTask(taskId: string, actorEmail?: string, actorName?: string | null) {
+export async function adminRemoveCleaningTask(
+  taskId: string,
+  actorEmail?: string,
+  actorName?: string | null,
+  correction?: CorrectionPayload | null
+) {
   const task = await findUniqueCleaningTask({ where: { id: taskId } });
   if (!task) {
     throw new Error("Cleaning task not found");
@@ -2614,6 +2673,11 @@ export async function adminRemoveCleaningTask(taskId: string, actorEmail?: strin
 
   if (!canReleaseCalendarDate(task.scheduledDate)) {
     throw new Error("Cleaning tasks cannot be removed after the scheduled date has passed.");
+  }
+
+  const isSystemCorrection = task.assignmentSource === CleaningAssignmentSource.SYSTEM;
+  if (isSystemCorrection && !correction) {
+    throw new Error("Correction reason is required when removing an auto-scheduled task.");
   }
 
   if (task.calendarId && task.calendarEventId) {
@@ -2628,6 +2692,24 @@ export async function adminRemoveCleaningTask(taskId: string, actorEmail?: strin
       const isGone = /404|410|not found|Resource has been deleted/i.test(msg);
       if (!isGone) throw calErr;
     }
+  }
+
+  if (correction && (isSystemCorrection || correction.reasonIds?.length || correction.newReasonLabel)) {
+    await recordCleaningScheduleCorrection({
+      action: CleaningScheduleCorrectionAction.REMOVE,
+      taskId: task.id,
+      slotKey: task.slotKey,
+      taskType: task.type,
+      scheduledDate: task.scheduledDate,
+      floor: task.floor,
+      previousUserEmail: task.userEmail,
+      previousUserName: task.userName,
+      previousSource: task.assignmentSource,
+      newUserEmail: null,
+      actorEmail: actorEmail?.trim().toLowerCase() || "unknown",
+      actorName: actorName?.trim() || "Cozoro",
+      correction
+    });
   }
 
   await deleteCleaningTask({ where: { id: taskId } });

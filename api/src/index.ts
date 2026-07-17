@@ -243,6 +243,12 @@ import {
   flushDeferredCleaningCalendarCreates,
   getDeferredCleaningCalendarFlushChain
 } from "./cleaning.js";
+
+import {
+  createCustomCorrectionReason,
+  listActiveCorrectionReasons
+} from "./cleaning-schedule-corrections.js";
+
 import {
   getCleaningAutoSchedulerConfig,
   updateCleaningAutoSchedulerConfig
@@ -1727,13 +1733,28 @@ const adminCleaningAvailabilitySchema = z.object({
     }, z.array(z.string().email()))
     .optional()
 });
+const cleaningCorrectionPayloadSchema = z.object({
+  reasonIds: z.array(z.string().min(1)).optional(),
+  customNote: z.string().max(2000).optional().nullable(),
+  newReasonLabel: z.string().trim().min(1).max(200).optional().nullable()
+});
 const adminAssignCleaningSchema = z.object({
   actorEmail: z.string().email(),
   email: z.string().email(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   type: z.enum(["KITCHEN_D2", "KITCHEN_D7", "TRASH_D7"]),
   floor: z.number().int().positive().optional(),
-  force: z.boolean().optional()
+  force: z.boolean().optional(),
+  correction: cleaningCorrectionPayloadSchema.optional().nullable()
+});
+const adminRemoveCleaningSchema = z.object({
+  actorEmail: z.string().email().optional(),
+  correction: cleaningCorrectionPayloadSchema.optional().nullable()
+});
+const createCorrectionReasonSchema = z.object({
+  actorEmail: z.string().email(),
+  labelVi: z.string().trim().min(1).max(200),
+  labelEn: z.string().trim().max(200).optional().nullable()
 });
 const adminBulkAutoAssignSchema = z.object({
   actorEmail: z.string().email(),
@@ -5193,7 +5214,8 @@ app.post("/admin/cleaning/assign", async (request, response) => {
       floor: parsed.data.floor,
       force: parsed.data.force,
       actorEmail: parsed.data.actorEmail,
-      actorName
+      actorName,
+      correction: parsed.data.correction
     });
     return response.json(task);
   } catch (error) {
@@ -5242,13 +5264,66 @@ app.post("/admin/cleaning/auto-assign", async (request, response) => {
   }
 });
 
+app.get("/admin/cleaning/correction-reasons", async (_request, response) => {
+  try {
+    const reasons = await listActiveCorrectionReasons();
+    return response.json({ reasons });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to load correction reasons"
+    });
+  }
+});
+
+app.post("/admin/cleaning/correction-reasons", async (request, response) => {
+  const parsed = createCorrectionReasonSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid correction reason payload" });
+  }
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only managers can add correction reasons."
+    );
+    const reason = await createCustomCorrectionReason({
+      labelVi: parsed.data.labelVi,
+      labelEn: parsed.data.labelEn,
+      createdBy: parsed.data.actorEmail
+    });
+    return response.json({ reason });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to create correction reason"
+    });
+  }
+});
+
 app.delete("/admin/cleaning/tasks/:id", async (request, response) => {
   const { id } = request.params;
   if (!id) {
     return response.status(400).json({ error: "Task ID is required" });
   }
+  const parsed = adminRemoveCleaningSchema.safeParse(request.body ?? {});
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid remove cleaning task payload" });
+  }
   try {
-    const result = await adminRemoveCleaningTask(id);
+    let actorName: string | null = null;
+    if (parsed.data.actorEmail) {
+      await requirePortalRole(
+        parsed.data.actorEmail,
+        ["manager", "owner", "app_admin"],
+        "Only managers can remove cleaning tasks."
+      );
+      actorName = await getStaffName(parsed.data.actorEmail);
+    }
+    const result = await adminRemoveCleaningTask(
+      id,
+      parsed.data.actorEmail,
+      actorName,
+      parsed.data.correction
+    );
     return response.json(result);
   } catch (error) {
     return response.status(400).json({

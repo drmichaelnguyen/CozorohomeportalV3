@@ -264,6 +264,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.8.62 | Cleaning schedule correction feedback: staff must pick (or add) reasons when fixing auto-assigned tasks; reasons persist and corrections are stored for RL. |
 | 3.8.61 | Unify coin balance display to roster profile (fixes Account/Coins vs Home mismatch); hostel booking emails + in-app staff alerts on new/paid/confirm; manager-editable check-in instructions for long-term and short-term clients. |
 | 3.8.60 | Stop all D2 background automation after permanent closure. |
 | 3.8.54 | D7 bed layout: Room 1.1 beds 1–9 (3 bunks), Room 1.2 beds 10–15 (2 bunks) — fixes manager bed diagram and `BRANCH_LAYOUTS` to match physical floor plan. |
