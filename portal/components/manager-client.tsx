@@ -34,6 +34,7 @@ import { resolveCurrentCoinsBalance } from "../lib/resolve-current-coins";
 import { AdminCleaningClient } from "./admin-cleaning-client";
 import { ManagerAiChat } from "./manager-ai-chat";
 import { ManagerSupportInbox } from "./manager-support-inbox";
+import { ManagerWebLeadInbox } from "./manager-web-lead-inbox";
 import { LaundryScheduleManager } from "./laundry-schedule-manager";
 import { usePortalLanguage } from "./portal-language";
 import { PrepaidPackageBreakdownRows } from "./next-payment-summary";
@@ -44,6 +45,8 @@ import { useRouter } from "next/navigation";
 import { InlineHelp } from "./inline-help";
 import { ManagerSettingsTools } from "./manager-settings-tools";
 import { ManagerResidentGuidesEditor } from "./manager-resident-guides-editor";
+import { AdminAiUsageAnalytics } from "./admin-ai-usage-analytics";
+import { BedOccupancyAnalytics } from "./bed-occupancy-analytics";
 
 
 type StaffRole = "manager" | "owner" | "app_admin" | "mechanic";
@@ -128,6 +131,11 @@ type ContractApprovalSummary = {
       paymentPlan?: string;
       extraTerms?: string;
     };
+  };
+  registrationPricing?: {
+    baseMonthlyPriceVnd: number;
+    discountVnd: number;
+    monthlyPriceVnd: number;
   };
 };
 
@@ -229,10 +237,10 @@ type PricingSettingsSectionKey =
   | "stay_discounts"
   | "staff_accounts";
 
-type ManagerSettingsMainSection = "pricing" | "resident_guides" | "tools";
+type ManagerSettingsMainSection = "pricing" | "resident_guides" | "tools" | "ai_usage";
 type PricingSettingsSubTab = "long_term" | "short_term" | "referral" | "staff";
 type ClientSubTab = "list" | "details" | "analytics";
-type OwnerAnalyticsTab = "payments" | "coins" | "laundry" | "fines" | "cleaning" | "airfryer";
+type OwnerAnalyticsTab = "payments" | "coins" | "laundry" | "fines" | "cleaning" | "airfryer" | "occupancy";
 type PaymentAnalyticsChartView = "bar" | "donut";
 type PaymentAnalyticsDimension = "receiver" | "branch" | "category" | "bed" | "year" | "month";
 type PaymentAnalyticsPathItem = { dimension: PaymentAnalyticsDimension; value: string };
@@ -1946,7 +1954,8 @@ function OwnerAnalyticsDashboard({
     { key: "laundry", label: t("analyticsLaundryTab") },
     { key: "fines", label: t("analyticsFineTab") },
     { key: "cleaning", label: t("analyticsCleaningTab") },
-    { key: "airfryer", label: t("analyticsAirfryerTab") }
+    { key: "airfryer", label: t("analyticsAirfryerTab") },
+    { key: "occupancy", label: "Bed occupancy" }
   ];
 
   const activeTabLabel = tabItems.find((item) => item.key === activeTab)?.label ?? t("analyticsTab", "Analytics");
@@ -2220,6 +2229,8 @@ function OwnerAnalyticsDashboard({
               void loadLaundryHistory();
             } else if (activeTab === "airfryer") {
               void loadControllerHistory();
+            } else if (activeTab === "occupancy") {
+              // The occupancy panel loads its own snapshot history.
             } else {
               void loadCleaningTasks();
             }
@@ -2245,7 +2256,9 @@ function OwnerAnalyticsDashboard({
         ))}
       </div>
 
-      {activeTab === "payments" ? (
+      {activeTab === "occupancy" ? (
+        <BedOccupancyAnalytics actorEmail={normalizedEmail} />
+      ) : activeTab === "payments" ? (
         <PaymentAnalyticsDashboard rows={paymentRows} loading={paymentLoading} onRefresh={onRefreshPayments} t={t} />
       ) : activeTab === "coins" ? (
         <GroupedAnalyticsDashboard
@@ -2829,6 +2842,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [contractApprovalsLoading, setContractApprovalsLoading] = useState(false);
   const [contractApprovalActionId, setContractApprovalActionId] = useState<string | null>(null);
   const [expandedContractApprovals, setExpandedContractApprovals] = useState<Record<string, boolean>>({});
+  const [registrationDiscountDrafts, setRegistrationDiscountDrafts] = useState<Record<string, string>>({});
   const [extensionStaffDrafts, setExtensionStaffDrafts] = useState<
     Record<
       string,
@@ -3272,7 +3286,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [controllerActionPending, setControllerActionPending] = useState<Record<string, string>>({});
   const [controllerActionFeedback, setControllerActionFeedback] = useState<Record<string, { tone: "success" | "error"; message: string }>>({});
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
-  const [supportSubTab, setSupportSubTab] = useState<"messages" | "feedbacks" | "maintenance" | "assistant">("messages");
+  const [supportSubTab, setSupportSubTab] = useState<"messages" | "feedbacks" | "maintenance" | "assistant" | "web_ai">("messages");
   const [clientSubTab, setClientSubTab] = useState<ClientSubTab>("list");
   const [clientTermTab, setClientTermTab] = useState<"long_term" | "short_term" | "inactive">(
     initialView === "short_term" ? "short_term" : "long_term"
@@ -3938,6 +3952,35 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     }
   }
 
+  async function saveRegistrationDiscount(item: ContractApprovalSummary) {
+    const raw = registrationDiscountDrafts[item.id] ?? String(item.registrationPricing?.discountVnd ?? 0);
+    const discountVnd = Number.parseInt(raw.replace(/[^0-9]/g, ""), 10);
+    if (!Number.isFinite(discountVnd) || discountVnd < 0) {
+      setStatus("Enter a valid discount amount.");
+      return;
+    }
+    setContractApprovalActionId(item.id);
+    setStatus("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/manager/contract-approvals/${encodeURIComponent(item.id)}/update-registration-discount`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorEmail: normalizedEmail, discountVnd })
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        setStatus(data.error ?? "Unable to update the registration discount.");
+        return;
+      }
+      setStatus("Discount saved and monthly contract price recalculated.");
+      await loadContractApprovals();
+    } catch {
+      setStatus("Unable to update the registration discount.");
+    } finally {
+      setContractApprovalActionId(null);
+    }
+  }
+
   function ensureExtensionStaffDraft(item: ContractApprovalSummary) {
     if (extensionStaffDrafts[item.id]) return extensionStaffDrafts[item.id];
     const proposed = item.extensionTerms?.proposed ?? {};
@@ -4270,6 +4313,37 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               </div>
             ))}
           </div>
+          {item.type === "registration" && item.status === "pending" && canViewContractApprovals && item.registrationPricing ? (
+            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-emerald-800">Registration discount</p>
+              <p className="mt-1 text-xs text-emerald-700">
+                List rent: {item.registrationPricing.baseMonthlyPriceVnd.toLocaleString("vi-VN")} ₫/month. The saved discount is deducted from this price.
+              </p>
+              <div className="mt-2 flex flex-wrap items-end gap-2">
+                <label className="min-w-[220px] flex-1 text-xs text-slate-700">
+                  Discount (₫/month)
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={registrationDiscountDrafts[item.id] ?? String(item.registrationPricing.discountVnd)}
+                    onChange={(e) => setRegistrationDiscountDrafts((current) => ({ ...current, [item.id]: e.target.value }))}
+                    className="mt-0.5 w-full rounded border border-emerald-300 bg-white px-2 py-1.5 text-xs"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void saveRegistrationDiscount(item)}
+                  disabled={contractApprovalActionId === item.id}
+                  className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                >
+                  Save discount
+                </button>
+              </div>
+              <p className="mt-2 text-xs font-semibold text-emerald-900">
+                New monthly price: {Math.max(0, item.registrationPricing.baseMonthlyPriceVnd - (Number.parseInt((registrationDiscountDrafts[item.id] ?? String(item.registrationPricing.discountVnd)).replace(/[^0-9]/g, ""), 10) || 0)).toLocaleString("vi-VN")} ₫
+              </p>
+            </div>
+          ) : null}
           {item.type === "extension" && item.status === "pending" && canViewContractApprovals && draft ? (
             <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
               <p className="text-xs font-bold uppercase tracking-wide text-slate-600">{t("extensionTermsOptional")}</p>
@@ -6027,7 +6101,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 {t("clientDetailsTab")}
               </button>
             )}
-            {isOwnerSession ? (
+            {isOwnerSession || isAppAdminSession ? (
               <button
                 type="button"
                 onClick={() => setClientSubTab("analytics")}
@@ -7393,7 +7467,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             );
           })()}
           </div>
-        ) : clientSubTab === "analytics" && isOwnerSession ? (
+        ) : clientSubTab === "analytics" && (isOwnerSession || isAppAdminSession) ? (
            <OwnerAnalyticsDashboard
             paymentRows={paymentPurposeRows}
             normalizedEmail={normalizedEmail}
@@ -10825,6 +10899,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 <h2 className="text-xl font-bold text-slate-900">
                   {managerSettingsMainSection === "tools"
                     ? t("settingsToolsTitle")
+                    : managerSettingsMainSection === "ai_usage"
+                      ? "AI usage"
                     : managerSettingsMainSection === "resident_guides"
                       ? t("settingsResidentGuidesTitle")
                       : pricingSettingsTab === "referral"
@@ -10836,6 +10912,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 <p className="mt-1 text-sm text-slate-500">
                   {managerSettingsMainSection === "tools"
                     ? t("settingsToolsDesc")
+                    : managerSettingsMainSection === "ai_usage"
+                      ? "Token measurement and estimated AI cost analytics."
                     : managerSettingsMainSection === "resident_guides"
                       ? t("settingsResidentGuidesDesc")
                       : pricingSettingsTab === "referral"
@@ -10863,7 +10941,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               ) : null}
             </div>
             <div className="mt-5 flex flex-wrap gap-2">
-              {(["pricing", "resident_guides", "tools"] as const).map((sec) => (
+              {(["pricing", "resident_guides", "tools", ...(isAppAdminSession ? ["ai_usage" as const] : [])] as const).map((sec) => (
                 <button
                   key={sec}
                   type="button"
@@ -10874,6 +10952,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 >
                   {sec === "pricing"
                     ? t("pricing")
+                    : sec === "ai_usage"
+                      ? "AI usage"
                     : sec === "resident_guides"
                       ? t("settingsResidentGuidesTab")
                       : t("settingsToolsTab")}
@@ -12191,6 +12271,10 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
             />
           ) : null}
 
+          {managerSettingsMainSection === "ai_usage" && isAppAdminSession ? (
+            <AdminAiUsageAnalytics actorEmail={normalizedEmail} />
+          ) : null}
+
         </section>
       ) : null}
 
@@ -12749,6 +12833,17 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               </button>
               <button
                 type="button"
+                onClick={() => setSupportSubTab("web_ai")}
+                className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold transition-all sm:text-sm ${
+                  supportSubTab === "web_ai"
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                {t("webAiChatTab")}
+              </button>
+              <button
+                type="button"
                 onClick={() => {
                   setSupportSubTab("maintenance");
                   void loadMaintenanceTickets();
@@ -12804,6 +12899,8 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               </div>
               <ManagerAiChat operatorEmail={normalizedEmail} onNavigate={handleManagerAiNavigate} inline />
             </section>
+          ) : supportSubTab === "web_ai" ? (
+            <ManagerWebLeadInbox operatorEmail={normalizedEmail} enabled={isStaffSession} />
           ) : supportSubTab === "feedbacks" ? (
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-3">

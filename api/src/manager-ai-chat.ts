@@ -11,6 +11,7 @@
  */
 
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
+import { recordGeminiUsage, type GeminiUsageMetadata } from "./ai-usage.js";
 import { appendAiToolInvocation, appendAiTrainingExchange } from "./ai-training-log.js";
 import { geminiModelDoesNotKnowReply } from "./gemini-capacity-reply.js";
 import { tryFounderEasterEggReply } from "./cozoro-founder-easter-egg.js";
@@ -58,6 +59,7 @@ type GeminiResponse = {
     finishReason?: string;
   }>;
   error?: { message: string };
+  usageMetadata?: GeminiUsageMetadata;
 };
 
 const SAFETY_ONE_DELETE_PER_MESSAGE =
@@ -618,6 +620,7 @@ export async function handleManagerAiChat(
       }
     };
 
+    const requestStartedAt = Date.now();
     const res = await fetch(GEMINI_ENDPOINT(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -625,6 +628,14 @@ export async function handleManagerAiChat(
     });
 
     const data = (await res.json()) as GeminiResponse;
+
+    void recordGeminiUsage({
+      feature: "manager_ai_chat",
+      actorEmail: operatorEmail,
+      usage: data.usageMetadata,
+      status: data.error || !res.ok ? "ERROR" : "SUCCESS",
+      latencyMs: Date.now() - requestStartedAt
+    });
 
     if (data.error) {
       throw new Error(data.error.message);

@@ -160,6 +160,44 @@ model ActionLog {
   @@index([entityType, entityId])
 }
 
+model AiUsageEvent {
+  id                  String   @id @default(cuid())
+  provider            String
+  model               String
+  feature             String
+  actorEmail          String?
+  promptTokens        Int      @default(0)
+  outputTokens        Int      @default(0)
+  thinkingTokens      Int      @default(0)
+  cachedTokens        Int      @default(0)
+  totalTokens         Int      @default(0)
+  estimatedCostMicros Int      @default(0)
+  pricingVersion      String
+  status              String   @default("SUCCESS")
+  latencyMs           Int?
+  createdAt           DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([feature, createdAt])
+  @@index([model, createdAt])
+}
+
+model BedOccupancySnapshot {
+  id              String   @id @default(cuid())
+  month           String
+  branchId        String
+  snapshotDate    DateTime
+  totalBeds       Int
+  occupiedBeds    Int
+  availableBeds   Int
+  unassignedUsers Int      @default(0)
+  capturedAt      DateTime @default(now())
+
+  @@unique([month, branchId])
+  @@index([snapshotDate])
+  @@index([branchId, snapshotDate])
+}
+
 model CleaningAvailability {
   id        String                  @id @default(cuid())
   userEmail String
@@ -624,4 +662,50 @@ model CleaningSwapRequest {
   @@index([requesterEmail, status, createdAt])
   @@index([targetEmail, status, createdAt])
   @@index([taskId, status])
+}
+
+/// Marketing-site (www) AI chat leads — synced from cozorohome-www for staff follow-up.
+enum WebLeadMessageRole {
+  GUEST
+  BOT
+  STAFF
+}
+
+enum WebLeadConversationStatus {
+  OPEN
+  CLOSED
+}
+
+model WebLeadConversation {
+  id              String                     @id @default(cuid())
+  conversationKey String                     @unique
+  guestName       String?
+  phone           String?                    @db.VarChar(48)
+  facebook        String?                    @db.VarChar(191)
+  otherContact    String?                    @db.VarChar(255)
+  preferredBranch String?                    @db.VarChar(8)
+  stayMonths      Int?
+  moveInHint      String?                    @db.VarChar(120)
+  occupationHint  String?                    @db.VarChar(64)
+  lastQuoteVnd    Int?
+  summary         String?                    @db.Text
+  status          WebLeadConversationStatus  @default(OPEN)
+  lastMessageAt   DateTime                   @default(now())
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+  messages        WebLeadMessage[]
+
+  @@index([status, lastMessageAt])
+  @@index([phone])
+}
+
+model WebLeadMessage {
+  id             String              @id @default(cuid())
+  conversationId String
+  conversation   WebLeadConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           WebLeadMessageRole
+  body           String              @db.Text
+  createdAt      DateTime            @default(now())
+
+  @@index([conversationId, createdAt])
 }

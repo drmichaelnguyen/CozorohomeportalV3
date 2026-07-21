@@ -8,6 +8,7 @@
 import { CleaningAvailabilityType } from "@prisma/client";
 
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
+import { recordGeminiUsage, type GeminiUsageMetadata } from "./ai-usage.js";
 import { appendAiToolInvocation, appendAiTrainingExchange } from "./ai-training-log.js";
 import { tryFounderEasterEggReply } from "./cozoro-founder-easter-egg.js";
 import {
@@ -92,6 +93,7 @@ type GeminiResponse = {
     finishReason?: string;
   }>;
   error?: { message: string; code?: number; status?: string };
+  usageMetadata?: GeminiUsageMetadata;
 };
 
 function clipJson(value: unknown, maxLen: number): string {
@@ -729,6 +731,7 @@ export async function handleResidentPortalAiChat(
       }
     };
 
+    const requestStartedAt = Date.now();
     const res = await fetch(residentGeminiEndpoint(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -740,8 +743,22 @@ export async function handleResidentPortalAiChat(
     try {
       data = JSON.parse(raw) as GeminiResponse;
     } catch {
+      void recordGeminiUsage({
+        feature: "resident_portal",
+        actorEmail: normalizedEmail,
+        status: "INVALID_RESPONSE",
+        latencyMs: Date.now() - requestStartedAt
+      });
       throw new Error("Cozoro Bee: invalid response from AI gateway.");
     }
+
+    void recordGeminiUsage({
+      feature: "resident_portal",
+      actorEmail: normalizedEmail,
+      usage: data.usageMetadata,
+      status: isGeminiCapacityOrRateLimit(res, data) ? "RATE_LIMITED" : data.error || !res.ok ? "ERROR" : "SUCCESS",
+      latencyMs: Date.now() - requestStartedAt
+    });
 
     if (isGeminiCapacityOrRateLimit(res, data)) {
       const lastUser = [...history].reverse().find((m) => m.role === "user");

@@ -264,6 +264,8 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.8.64 | Monthly D2/D7 bed occupancy snapshots and owner analytics; app-admin AI token/cost analytics; clearer cleaning availability safeguards. |
+| 3.8.63 | Pending registration approvals now let owners, app admins, and managers edit the monthly discount; the original list rent is preserved and the approved contract price and additional terms are recalculated accordingly. |
 | 3.8.62 | Cleaning schedule correction feedback: staff must pick (or add) reasons when fixing auto-assigned tasks; reasons persist and corrections are stored for RL. |
 | 3.8.61 | Unify coin balance display to roster profile (fixes Account/Coins vs Home mismatch); hostel booking emails + in-app staff alerts on new/paid/confirm; manager-editable check-in instructions for long-term and short-term clients. |
 | 3.8.60 | Stop all D2 background automation after permanent closure. |

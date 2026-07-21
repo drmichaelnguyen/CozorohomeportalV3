@@ -520,6 +520,24 @@ export function CleaningScheduleClient() {
       return;
     }
 
+    if (type === "UNAVAILABLE" && !isTodayOrFuture(selectedDate)) {
+      setMessage(t("pastUnavailableError", "Past dates cannot be marked unavailable."));
+      return;
+    }
+
+    const assignedTasks = (overview?.tasks ?? []).filter(
+      (task) => task.status === "ASSIGNED" && sameDay(new Date(task.scheduledDate), selectedDate)
+    );
+    if (
+      type === "UNAVAILABLE" &&
+      assignedTasks.length > 0 &&
+      !window.confirm(
+        t("assignedTaskAwayWarning", undefined, { dates: formatCozoroDate(selectedDate) })
+      )
+    ) {
+      return;
+    }
+
     setLoading(true);
     setMessage("");
 
@@ -556,6 +574,29 @@ export function CleaningScheduleClient() {
 
   async function submitAwayDates() {
     if (awayDates.size === 0) return;
+    const sortedDates = Array.from(awayDates).sort();
+    const dateLabels = sortedDates
+      .map((date) => formatCozoroDate(new Date(`${date}T00:00:00`), { month: "short", day: "numeric", year: "numeric" }))
+      .join(", ");
+    if (!window.confirm(t("confirmAwayDates", undefined, { dates: dateLabels }))) return;
+
+    const assignedDateSet = new Set(
+      (overview?.tasks ?? [])
+        .filter((task) => task.status === "ASSIGNED")
+        .map((task) => toApiCalendarDate(new Date(task.scheduledDate)))
+    );
+    const conflictingDates = sortedDates.filter((date) => assignedDateSet.has(date));
+    if (
+      conflictingDates.length > 0 &&
+      !window.confirm(
+        t("assignedTaskAwayWarning", undefined, {
+          dates: conflictingDates
+            .map((date) => formatCozoroDate(new Date(`${date}T00:00:00`), { month: "short", day: "numeric", year: "numeric" }))
+            .join(", ")
+        })
+      )
+    ) return;
+
     setAwaySubmitting(true);
     setMessage("");
     try {
@@ -564,7 +605,7 @@ export function CleaningScheduleClient() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: activeEmail,
-          dates: Array.from(awayDates),
+          dates: sortedDates,
           type: "UNAVAILABLE",
           note: "Away"
         })
@@ -1803,7 +1844,16 @@ export function CleaningScheduleClient() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setAwayMode((m) => !m); setAwayDates(new Set()); }}
+                    onClick={() => {
+                      const enablingAwayMode = !awayMode;
+                      setAwayMode(enablingAwayMode);
+                      setAwayDates(new Set());
+                      if (enablingAwayMode) {
+                        const today = startOfDay(new Date());
+                        setCalendarFocusDate(today);
+                        setSelectedDate(today);
+                      }
+                    }}
                     className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${awayMode ? "border-orange-400 bg-orange-50 text-orange-700" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}
                   >
                     {awayMode ? t("cancelAwayBtn", "Cancel Away") : t("markAwayBtn", "Mark Away")}
@@ -1898,6 +1948,7 @@ export function CleaningScheduleClient() {
                   });
 
                   const isAwaySelected = awayDates.has(dayDateStr);
+                  const canMarkAway = isTodayOrFuture(day);
 
                   return (
                     <button
@@ -1905,6 +1956,10 @@ export function CleaningScheduleClient() {
                       type="button"
                       onClick={() => {
                         if (awayMode) {
+                          if (!canMarkAway) {
+                            setMessage(t("pastUnavailableError", "Past dates cannot be marked unavailable."));
+                            return;
+                          }
                           setAwayDates((prev) => {
                             const next = new Set(prev);
                             if (next.has(dayDateStr)) next.delete(dayDateStr);
@@ -1922,6 +1977,7 @@ export function CleaningScheduleClient() {
                       className={[
                         "min-h-[3.5rem] md:min-h-28 rounded-lg border p-1 md:p-2 text-left transition-all",
                         awayMode && isAwaySelected ? "bg-orange-100 border-orange-400 ring-2 ring-orange-400" :
+                        awayMode && !canMarkAway ? "cursor-not-allowed bg-slate-100 text-slate-400 opacity-60" :
                         awayMode ? "hover:bg-orange-50 hover:border-orange-300" :
                         isSelected ? "ring-2 ring-slate-900 border-slate-900" : "hover:border-slate-400",
                         isToday && !awayMode ? "border-slate-400" : "",
@@ -2004,7 +2060,7 @@ export function CleaningScheduleClient() {
                   <button
                     type="button"
                     onClick={() => void saveAvailability("UNAVAILABLE")}
-                    disabled={loading}
+                    disabled={loading || !isTodayOrFuture(selectedDate)}
                     className="rounded-lg border border-rose-300 bg-rose-50 px-4 py-2 text-sm text-rose-700 disabled:opacity-60"
                   >
                     {t("markUnavailableBtn", "Mark unavailable")}

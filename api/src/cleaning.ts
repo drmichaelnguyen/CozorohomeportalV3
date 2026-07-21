@@ -1746,6 +1746,12 @@ export async function setCleaningAvailability(input: {
   note?: string;
 }) {
   const normalizedDate = normalizeCalendarDate(input.date);
+  if (
+    input.type === CleaningAvailabilityType.UNAVAILABLE &&
+    normalizedDate.getTime() < normalizeCalendarDate(new Date()).getTime()
+  ) {
+    throw new Error("Past dates cannot be marked unavailable");
+  }
   const availability = await prisma.cleaningAvailability.upsert({
     where: {
       userEmail_date: {
@@ -3331,6 +3337,14 @@ export async function setBulkCleaningAvailability(input: {
   note?: string;
 }) {
   const normalizedEmail = input.email.trim().toLowerCase();
+  if (
+    input.type === CleaningAvailabilityType.UNAVAILABLE &&
+    input.dates.some(
+      (date) => normalizeCalendarDate(date).getTime() < normalizeCalendarDate(new Date()).getTime()
+    )
+  ) {
+    throw new Error("Past dates cannot be marked unavailable");
+  }
   const userContext = await getUserCleaningContext(normalizedEmail);
   if (!userContext) {
     throw new Error("Active user not found for cleaning availability");

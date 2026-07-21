@@ -59,6 +59,8 @@ import {
   restoreDatabaseFromGoogleSheet
 } from "./db-backup-sheets.js";
 import { getPortalUxSettings, updatePortalUxSettings } from "./portal-ux-settings.js";
+import { getAiUsageAnalytics } from "./ai-usage.js";
+import { captureMonthlyBedOccupancy, getBedOccupancyHistory } from "./bed-occupancy.js";
 import {
   createGuideSchema,
   createResidentGuide,
@@ -187,6 +189,12 @@ import {
   updateProspectAssistantSettings,
   validateContractTransferTarget
 } from "./prospect-assistant.js";
+import {
+  getWebLeadConversation,
+  listWebLeadConversations,
+  syncWebLeadTurn,
+  updateWebLeadStatus
+} from "./web-leads.js";
 import type {
   ContractExtensionNegotiation,
   ContractExtensionTermsSnapshot
@@ -659,7 +667,9 @@ function publicApprovalSummary(item: PendingContractApproval) {
         { label: "Contract start", value: String(registration.contractStartDate ?? "") },
         { label: "Contract end", value: String(registration.contractEndDate ?? "") },
         { label: "Contract months", value: String(registration.contractMonths ?? "") },
-        { label: "Monthly price (VND)", value: String(registration.monthlyPrice ?? "") },
+        { label: "List monthly price (VND)", value: String(registration.baseMonthlyPriceVnd ?? registration.monthlyPrice ?? "") },
+        { label: "Staff discount (VND/month)", value: String(registration.staffDiscountVnd ?? 0) },
+        { label: "Monthly price after discount (VND)", value: String(registration.monthlyPrice ?? "") },
         { label: "Deposit (VND)", value: String(registration.deposit ?? "") },
         { label: "Payment frequency", value: String(registration.paymentFrequency ?? "") },
         { label: "Current status", value: String(registration.currentStatus ?? "") },
@@ -726,6 +736,13 @@ function publicApprovalSummary(item: PendingContractApproval) {
       : isExtension
         ? String(extension.contractCode ?? "")
         : String(registration.contractCode ?? registration.maHd ?? ""),
+    registrationPricing: item.type === "registration"
+      ? {
+          baseMonthlyPriceVnd: Number(registration.baseMonthlyPriceVnd ?? registration.monthlyPrice ?? 0),
+          discountVnd: Number(registration.staffDiscountVnd ?? 0),
+          monthlyPriceVnd: Number(registration.monthlyPrice ?? 0)
+        }
+      : undefined,
     details
   };
 }
@@ -4080,6 +4097,111 @@ app.post("/manager/support/conversations/:id/read", async (request, response) =>
   }
 });
 
+app.post("/internal/web-leads/sync", async (request, response) => {
+  if (!isAuthorizedInternalRequest(request)) {
+    return response.status(403).json({ error: "Unauthorized" });
+  }
+
+  const parsed = z
+    .object({
+      conversationKey: z.string().min(4).max(120),
+      guestMessage: z.string().min(1).max(8000),
+      botMessage: z.string().min(1).max(8000),
+      guestName: z.string().max(120).optional().nullable(),
+      phone: z.string().max(48).optional().nullable(),
+      facebook: z.string().max(191).optional().nullable(),
+      otherContact: z.string().max(255).optional().nullable(),
+      preferredBranch: z.string().max(8).optional().nullable(),
+      stayMonths: z.number().int().min(1).max(36).optional().nullable(),
+      moveInHint: z.string().max(120).optional().nullable(),
+      occupationHint: z.string().max(64).optional().nullable(),
+      lastQuoteVnd: z.number().int().nonnegative().optional().nullable(),
+      summary: z.string().max(2000).optional().nullable()
+    })
+    .safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid web lead sync payload" });
+  }
+
+  try {
+    const result = await syncWebLeadTurn(parsed.data);
+    return response.json({ ok: true, ...result });
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to sync web lead chat"
+    });
+  }
+});
+
+app.get("/manager/web-leads", async (request, response) => {
+  const parsed = supportInboxQuerySchema.safeParse({
+    operatorEmail: request.query.operatorEmail
+  });
+
+  if (!parsed.success || !(await isPrivilegedSupportOperator(parsed.data.operatorEmail))) {
+    return response.status(403).json({ error: "Only Cozoro team accounts can open web AI chats." });
+  }
+
+  try {
+    const conversations = await listWebLeadConversations();
+    return response.json({ conversations });
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to load web lead chats"
+    });
+  }
+});
+
+app.get("/manager/web-leads/:id", async (request, response) => {
+  const parsed = supportInboxQuerySchema.safeParse({
+    operatorEmail: request.query.operatorEmail
+  });
+
+  if (!parsed.success || !(await isPrivilegedSupportOperator(parsed.data.operatorEmail))) {
+    return response.status(403).json({ error: "Only Cozoro team accounts can open web AI chats." });
+  }
+
+  try {
+    const detail = await getWebLeadConversation(request.params.id ?? "");
+    if (!detail) {
+      return response.status(404).json({ error: "Web lead conversation not found" });
+    }
+    return response.json(detail);
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to load web lead chat"
+    });
+  }
+});
+
+app.post("/manager/web-leads/:id/status", async (request, response) => {
+  const parsed = z
+    .object({
+      operatorEmail: z.string().email(),
+      status: z.enum(["OPEN", "CLOSED"])
+    })
+    .safeParse(request.body);
+
+  if (!parsed.success || !(await isPrivilegedSupportOperator(parsed.data.operatorEmail))) {
+    return response.status(403).json({ error: "Forbidden" });
+  }
+
+  try {
+    const conversation = await updateWebLeadStatus(request.params.id ?? "", parsed.data.status);
+    return response.json({
+      conversation: {
+        id: conversation.id,
+        status: conversation.status
+      }
+    });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to update web lead status"
+    });
+  }
+});
+
 app.get("/staff/clients", async (request, response) => {
   const parsed = clientLookupSchema.safeParse({
     email: request.query.actorEmail
@@ -4916,16 +5038,22 @@ app.post("/cleaning/availability", async (request, response) => {
     return response.status(404).json({ error: "Active user not found for cleaning availability" });
   }
 
-  const availability = await setCleaningAvailability({
-    email: parsed.data.email,
-    branchId: userContext.branchId,
-    floor: userContext.floor,
-    date: parseCalendarDateInput(parsed.data.date),
-    type: parsed.data.type,
-    note: parsed.data.note
-  });
+  try {
+    const availability = await setCleaningAvailability({
+      email: parsed.data.email,
+      branchId: userContext.branchId,
+      floor: userContext.floor,
+      date: parseCalendarDateInput(parsed.data.date),
+      type: parsed.data.type,
+      note: parsed.data.note
+    });
 
-  return response.json(availability);
+    return response.json(availability);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to save availability"
+    });
+  }
 });
 
 app.post("/cleaning/availability/bulk", async (request, response) => {
@@ -7323,6 +7451,45 @@ app.get("/rent-paid-status", async (req, res) => {
 });
 
 // GET /manager/portal-ux-settings — staff reads portal UX toggles
+app.get("/manager/ai-usage-analytics", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim().toLowerCase();
+  const days = Math.min(365, Math.max(1, Number.parseInt(String(req.query.days ?? "30"), 10) || 30));
+  try {
+    await requirePortalRole(actorEmail, ["app_admin"], "App admin only.");
+    return res.json(await getAiUsageAnalytics(days));
+  } catch (error) {
+    return res.status((error as Error & { statusCode?: number }).statusCode ?? 403).json({
+      error: error instanceof Error ? error.message : "Unable to load AI usage analytics."
+    });
+  }
+});
+
+app.get("/manager/bed-occupancy-history", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim().toLowerCase();
+  const months = Math.min(120, Math.max(1, Number.parseInt(String(req.query.months ?? "24"), 10) || 24));
+  try {
+    await requirePortalRole(actorEmail, ["owner", "app_admin"], "Only owners or app admins can view occupancy history.");
+    return res.json(await getBedOccupancyHistory(months));
+  } catch (error) {
+    return res.status((error as Error & { statusCode?: number }).statusCode ?? 403).json({
+      error: error instanceof Error ? error.message : "Unable to load bed occupancy history."
+    });
+  }
+});
+
+app.post("/manager/bed-occupancy-history/capture", async (req, res) => {
+  const actorEmail = String(req.body?.actorEmail ?? "").trim().toLowerCase();
+  try {
+    await requirePortalRole(actorEmail, ["owner", "app_admin"], "Only owners or app admins can capture occupancy.");
+    return res.json(await captureMonthlyBedOccupancy(new Date(), true));
+  } catch (error) {
+    return res.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
+      error: error instanceof Error ? error.message : "Unable to capture bed occupancy."
+    });
+  }
+});
+
+
 app.get("/manager/portal-ux-settings", async (req, res) => {
   const actorEmail = String(req.query.actorEmail ?? "").trim();
   if (!actorEmail) {
@@ -8740,6 +8907,61 @@ app.get("/manager/contract-approvals", async (request, response) => {
   }
 });
 
+app.post("/manager/contract-approvals/:id/update-registration-discount", async (request, response) => {
+  const parsed = z.object({
+    actorEmail: z.string().email(),
+    discountVnd: z.coerce.number().int().min(0)
+  }).safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid registration discount payload." });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["owner", "app_admin", "manager"],
+      "Only staff can edit a pending registration discount."
+    );
+    const file = await readContractApprovals();
+    const item = file.approvals.find((entry) => entry.id === request.params.id);
+    if (!item || item.type !== "registration" || item.status !== "pending" || !item.registration) {
+      return response.status(404).json({ error: "Pending registration not found." });
+    }
+
+    const registration = item.registration;
+    const currentPrice = Math.max(0, Math.trunc(Number(registration.monthlyPrice) || 0));
+    const baseMonthlyPrice = Math.max(
+      0,
+      Math.trunc(Number(registration.baseMonthlyPriceVnd) || currentPrice + (Number(registration.staffDiscountVnd) || 0))
+    );
+    const discountVnd = Math.min(parsed.data.discountVnd, baseMonthlyPrice);
+    const adjustedMonthlyPrice = baseMonthlyPrice - discountVnd;
+
+    registration.baseMonthlyPriceVnd = baseMonthlyPrice;
+    registration.staffDiscountVnd = discountVnd;
+    registration.monthlyPrice = adjustedMonthlyPrice;
+    registration.staffDiscountEditedBy = parsed.data.actorEmail.trim().toLowerCase();
+    registration.staffDiscountEditedAt = new Date().toISOString();
+    const discountTermPrefix = "Staff-approved monthly discount:";
+    const existingTerms = String(registration.additionalTerms ?? "")
+      .split(" | ")
+      .filter((term) => !term.trim().startsWith(discountTermPrefix));
+    if (discountVnd > 0) {
+      existingTerms.push(
+        `${discountTermPrefix} −${discountVnd.toLocaleString("vi-VN")} VND/month; adjusted monthly price ${adjustedMonthlyPrice.toLocaleString("vi-VN")} VND`
+      );
+    }
+    registration.additionalTerms = existingTerms.filter(Boolean).join(" | ") || undefined;
+
+    await writeContractApprovals(file);
+    return response.json({ ok: true, approval: await enrichPublicApprovalSummary(item) });
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
+      error: error instanceof Error ? error.message : "Unable to update the registration discount."
+    });
+  }
+});
+
 app.post("/manager/contract-approvals/:id/update-extension", async (request, response) => {
   const parsed = z
     .object({
@@ -9808,6 +10030,16 @@ app.listen(port, "127.0.0.1", () => {
 
   startMaintenanceSyncInterval();
 
+  void captureMonthlyBedOccupancy().catch((error) => {
+    console.error("[bed-occupancy] startup snapshot failed", error);
+  });
+  const bedOccupancyTimer = setInterval(() => {
+    void captureMonthlyBedOccupancy().catch((error) => {
+      console.error("[bed-occupancy] scheduled snapshot failed", error);
+    });
+  }, 6 * 60 * 60 * 1000);
+  bedOccupancyTimer.unref();
+
   void dispatchCleaningReminderPushes("startup").catch((error) => {
     console.error("[cleaning-reminder-push] startup failed", error);
   });
@@ -9859,4 +10091,5 @@ app.listen(port, "127.0.0.1", () => {
   }, autoScheduleIntervalMs);
 
   scheduleTimer.unref();
+
 });

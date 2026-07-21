@@ -949,9 +949,15 @@ const translations: Record<string, { en: string; vi: string }> = {
   upcomingOpenSlotsHelp: { en: "These are unclaimed slots that match your branch and floor. Click a date to open it on the calendar and assign yourself.", vi: "Đây là các lịch chưa có người nhận phù hợp với chi nhánh và tầng của bạn. Nhấn vào ngày để mở trên lịch và tự đăng ký." },
   markAwayHelpTitle: { en: "What is Mark Away?", vi: "Mark Away là gì?" },
   markAwayHelp: {
-    en: "Mark Away lets you block multiple days at once as unavailable — useful if you are traveling or on leave. Turn it on, tap the dates you will be away, then confirm.",
-    vi: "Mark Away cho phép bạn đánh dấu nhiều ngày là không rảnh cùng lúc — hữu ích khi đi xa hoặc nghỉ phép. Bật chế độ, chạm các ngày bạn vắng, rồi xác nhận."
+    en: "Mark Away lets you block multiple current or future days at once as unavailable. It prevents new automatic assignments, but does not remove tasks already assigned to you.",
+    vi: "Mark Away cho phép bạn đánh dấu nhiều ngày hiện tại hoặc tương lai là không rảnh. Tính năng này ngăn phân công tự động mới nhưng không xóa lịch trực đã được giao."
   },
+  confirmAwayDates: { en: "Mark these dates as away?\n\n{dates}", vi: "Đánh dấu vắng cho các ngày này?\n\n{dates}" },
+  assignedTaskAwayWarning: {
+    en: "You already have a cleaning task on: {dates}. Marking unavailable will NOT remove it. Use Release or Swap if you cannot do the task. Continue?",
+    vi: "Bạn đã có lịch trực vào: {dates}. Đánh dấu không rảnh sẽ KHÔNG xóa lịch trực đó. Hãy dùng Hủy lịch hoặc Đổi lịch nếu bạn không thể thực hiện. Tiếp tục?"
+  },
+  pastUnavailableError: { en: "Past dates cannot be marked unavailable.", vi: "Không thể đánh dấu không rảnh cho ngày đã qua." },
   optOutHelp: { en: "Opt Out pays a one-time fee (100,000 VND or 150,000 coins) to skip ALL cleaning assignments for this month entirely.", vi: "Opt Out trả một lần (100.000 VND hoặc 150.000 coin) để bỏ qua toàn bộ lịch trực vệ sinh trong tháng này." },
   cleaningCalendarTitle: { en: "Cleaning Calendar", vi: "Lịch vệ sinh" },
   cleaningCalendarDesc: { en: "Select a date to set availability or claim a task yourself.", vi: "Chọn ngày để đặt trạng thái rảnh/bận hoặc tự nhận lịch trực." },
@@ -991,8 +997,8 @@ const translations: Record<string, { en: string; vi: string }> = {
     vi: "Đánh dấu không rảnh dùng để làm gì?"
   },
   markUnavailableHelp: {
-    en: "This saves your choice for the selected date only: scheduling will treat you as not available for cleaning duty that day. Use Mark available to clear it. Add an optional note above if needed. To block several days at once, use Mark Away on the calendar.",
-    vi: "Chỉ áp dụng cho ngày đang chọn trên lịch: hệ thống hiểu bạn không rảnh để nhận lịch trực vệ sinh vào ngày đó. Dùng Đánh dấu rảnh để gỡ. Có thể thêm ghi chú ở trên. Để đánh dấu nhiều ngày cùng lúc, hãy dùng Mark Away trên lịch."
+    en: "This prevents new automatic assignments on the selected date. It does not remove a task already assigned to you; use Release or Swap for that. Past dates cannot be marked unavailable.",
+    vi: "Tính năng này ngăn phân công tự động mới vào ngày đã chọn. Nó không xóa lịch trực đã được giao; hãy dùng Hủy lịch hoặc Đổi lịch. Không thể đánh dấu ngày đã qua."
   },
   markAvailableBtn: { en: "Mark available", vi: "Đánh dấu rảnh" },
   assignMyselfOnDate: { en: "Assign myself on this date", vi: "Tự đăng ký ngày này" },
@@ -1393,6 +1399,7 @@ const translations: Record<string, { en: string; vi: string }> = {
   messagesTab: { en: "Messages", vi: "Tin nhắn" },
   feedbacksTab: { en: "Feedbacks", vi: "Phản hồi" },
   chatAssistantTab: { en: "AI assistant", vi: "Trợ lý AI" },
+  webAiChatTab: { en: "Web AI chat", vi: "Chat AI web" },
   maintenanceTickets: { en: "Maintenance Tickets", vi: "Yêu cầu sửa chữa" },
   maintenanceTicketsDesc: { en: "Manage active malfunction and maintenance reports.", vi: "Quản lý các báo cáo sự cố và bảo trì đang hoạt động." },
   loadingFeedbacks: { en: "Loading feedbacks...", vi: "Đang tải phản hồi..." },

@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.8.64] - 2026-07-21
+- **Monthly bed occupancy analytics**: The API records D2 and D7 occupied/available bed snapshots once per month on or after the 15th, and Owner Analytics shows occupancy history and rates over time.
+- **AI usage analytics**: App admins can review token consumption, request status, latency, and estimated Gemini cost from Settings.
+- **Cleaning availability safeguards**: Past unavailable dates are rejected and residents are warned that marking unavailable does not remove an existing cleaning assignment.
+
+## [3.8.63] - 2026-07-20
+- **Pending registration discount editing**: Owners, app admins, and managers can edit the monthly discount after a client submits a registration for approval. The API preserves the original list rent, clamps the discount to that amount, recalculates the monthly contract price, records the staff-approved discount in the additional contract terms, and uses the adjusted price when the registration is approved.
+
 ## [3.8.62] - 2026-07-17
 - **Cleaning schedule correction feedback**: When staff remove or reassign an auto-scheduled cleaning task (or override a same-day conflict), the admin UI requires checkbox reasons (overlap, uneven load, never assigned, etc.). Custom reasons can be added and persist for later use; each correction is stored for future auto-scheduler learning.
 

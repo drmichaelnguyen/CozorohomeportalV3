@@ -6,6 +6,7 @@
 import { SupportMessageSenderRole } from "@prisma/client";
 
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
+import { recordGeminiUsage, type GeminiUsageMetadata } from "./ai-usage.js";
 import {
   stripSupportAssistantMetaSuffix,
   type SupportAssistantStoredMeta
@@ -53,6 +54,7 @@ type GeminiResponse = {
     };
   }>;
   error?: { message: string; code?: number; status?: string };
+  usageMetadata?: GeminiUsageMetadata;
 };
 
 function looksVietnamese(text: string) {
@@ -441,6 +443,7 @@ export async function runResidentSupportAssistantTurn(input: {
       }
     };
 
+    const requestStartedAt = Date.now();
     const res = await fetch(GEMINI_ENDPOINT(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -452,9 +455,23 @@ export async function runResidentSupportAssistantTurn(input: {
     try {
       data = JSON.parse(raw) as GeminiResponse;
     } catch {
+      void recordGeminiUsage({
+        feature: "resident_support_thread",
+        actorEmail: input.residentEmail,
+        status: "INVALID_RESPONSE",
+        latencyMs: Date.now() - requestStartedAt
+      });
       console.warn("[resident-support-ai] Gemini non-JSON response");
       return { replyText: null };
     }
+
+    void recordGeminiUsage({
+      feature: "resident_support_thread",
+      actorEmail: input.residentEmail,
+      usage: data.usageMetadata,
+      status: isGeminiCapacityOrRateLimit(res, data) ? "RATE_LIMITED" : data.error || !res.ok ? "ERROR" : "SUCCESS",
+      latencyMs: Date.now() - requestStartedAt
+    });
 
     if (isGeminiCapacityOrRateLimit(res, data)) {
       const quotaReply = geminiCapacityReply(preferVietnamese ? "vi" : "en");
