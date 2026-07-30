@@ -32,6 +32,7 @@ import { isContractExpired, parseVietnamDate } from "../lib/contract-utils";
 import { formatCozoroDate, formatCozoroDateTime } from "../lib/date-format";
 import { resolveCurrentCoinsBalance } from "../lib/resolve-current-coins";
 import { AdminCleaningClient } from "./admin-cleaning-client";
+import { CleaningScheduleClient } from "./cleaning-schedule-client";
 import { ManagerAiChat } from "./manager-ai-chat";
 import { ManagerSupportInbox } from "./manager-support-inbox";
 import { ManagerWebLeadInbox } from "./manager-web-lead-inbox";
@@ -2864,6 +2865,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
   const [staffTransferLoading, setStaffTransferLoading] = useState(false);
   const [staffTransferBusy, setStaffTransferBusy] = useState(false);
   const [clientTransferModalOpen, setClientTransferModalOpen] = useState(false);
+  const [clientAvailabilityOpen, setClientAvailabilityOpen] = useState(false);
   const [branchToolsOpen, setBranchToolsOpen] = useState(false);
   const [branchToolsTab, setBranchToolsTab] = useState<"manual_receipt" | "branch_broadcast" | "unpaid_reminder" | null>(null);
   const [manualReceiptName, setManualReceiptName] = useState("");
@@ -3020,6 +3022,86 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
     totalAmount: string; paymentStatus: string; source: string; notes: string;
     saving: boolean; result: string;
   } | null>(null);
+  // #region agent log
+  const stAddSheetRef = useRef<HTMLDivElement | null>(null);
+  const stAddScrollRef = useRef<HTMLDivElement | null>(null);
+  const stAddFooterRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!stAddDialog) return;
+    const measure = (trigger: string) => {
+      const sheet = stAddSheetRef.current;
+      const scroll = stAddScrollRef.current;
+      const footer = stAddFooterRef.current;
+      if (!sheet || !scroll || !footer) return;
+      const sheetRect = sheet.getBoundingClientRect();
+      const footerRect = footer.getBoundingClientRect();
+      const scrollRect = scroll.getBoundingClientRect();
+      const vv = window.visualViewport;
+      const nav = document.querySelector("nav.fixed.bottom-0");
+      const navRect = nav?.getBoundingClientRect() ?? null;
+      const footerBottom = footerRect.bottom;
+      const viewportH = vv?.height ?? window.innerHeight;
+      const footerBelowViewport = footerBottom > viewportH + 1;
+      const footerCoveredByNav = Boolean(
+        navRect && footerRect.bottom > navRect.top && footerRect.top < navRect.bottom
+      );
+      const scrollCanReachEnd = scroll.scrollHeight > scroll.clientHeight + 2;
+      const sheetOverflows = sheet.scrollHeight > sheet.clientHeight + 2;
+      const computed = window.getComputedStyle(scroll);
+      fetch("http://127.0.0.1:7334/ingest/99499d10-2452-43bb-b244-1ba866840dd1", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "5eee0d" },
+        body: JSON.stringify({
+          sessionId: "5eee0d",
+          runId: "pre-fix",
+          hypothesisId: "A-E",
+          location: "manager-client.tsx:stAddDialog-measure",
+          message: "Add hostel guest dialog layout metrics",
+          data: {
+            trigger,
+            innerH: window.innerHeight,
+            vvH: vv?.height ?? null,
+            vvOffsetTop: vv?.offsetTop ?? null,
+            sheetTop: Math.round(sheetRect.top),
+            sheetBottom: Math.round(sheetRect.bottom),
+            sheetH: Math.round(sheetRect.height),
+            scrollClientH: Math.round(scroll.clientHeight),
+            scrollScrollH: Math.round(scroll.scrollHeight),
+            scrollCanReachEnd,
+            scrollMinH: computed.minHeight,
+            footerTop: Math.round(footerRect.top),
+            footerBottom: Math.round(footerBottom),
+            footerBelowViewport,
+            footerCoveredByNav,
+            navTop: navRect ? Math.round(navRect.top) : null,
+            navZ: nav ? window.getComputedStyle(nav).zIndex : null,
+            overlayZ: window.getComputedStyle(sheet.parentElement ?? sheet).zIndex,
+            sheetOverflows,
+            scrollTopAtMeasure: scroll.scrollTop,
+            scrollRectBottom: Math.round(scrollRect.bottom)
+          },
+          timestamp: Date.now()
+        })
+      }).catch(() => {});
+    };
+    const onFocus = () => measure("focusin");
+    const onVv = () => measure("visualViewport");
+    let attachedSheet: HTMLDivElement | null = null;
+    const t = window.setTimeout(() => {
+      measure("open");
+      attachedSheet = stAddSheetRef.current;
+      attachedSheet?.addEventListener("focusin", onFocus);
+    }, 120);
+    window.visualViewport?.addEventListener("resize", onVv);
+    window.visualViewport?.addEventListener("scroll", onVv);
+    return () => {
+      window.clearTimeout(t);
+      attachedSheet?.removeEventListener("focusin", onFocus);
+      window.visualViewport?.removeEventListener("resize", onVv);
+      window.visualViewport?.removeEventListener("scroll", onVv);
+    };
+  }, [stAddDialog]);
+  // #endregion
   const [stStripePayments, setStStripePayments] = useState<StripeHostelPaymentSummary[] | null>(null);
   const [stStripePaymentsLoading, setStStripePaymentsLoading] = useState(false);
   const [stStripeSelectedId, setStStripeSelectedId] = useState<string | null>(null);
@@ -3938,6 +4020,9 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         body: JSON.stringify({ actorEmail: normalizedEmail })
       });
       const data = (await res.json()) as { error?: string };
+      // #region agent log
+      fetch('http://127.0.0.1:7334/ingest/99499d10-2452-43bb-b244-1ba866840dd1',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c6061d'},body:JSON.stringify({sessionId:'c6061d',runId:'pre-fix',hypothesisId:'H4',location:'manager-client.tsx:reviewContractApproval',message:'approve/reject response received',data:{id,decision,ok:res.ok,status:res.status,error:data.error??null,itemType:item?.type??null},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       if (!res.ok) {
         setStatus(data.error ?? "Unable to review contract.");
         return;
@@ -5467,6 +5552,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
 
   useEffect(() => {
     setActiveAction("");
+    setClientAvailabilityOpen(false);
     setFineAttachments([]);
     setPaymentPurpose("");
     setPaymentPurposeInput("");
@@ -7768,6 +7854,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                         selectedClient.activeStay !== "-1"
                           ? ([["transfer", `🔄 ${t("managerClientTransferToolsMenu")}`]] as const)
                           : []),
+                        ["availability", `📅 ${t("staffClientAvailabilityMenu", "Cleaning schedule")}`],
                         ["reminder", "🔔 Send notification to client"],
                         ["message", `💬 ${t("openChat")}`],
                         ["call", `📞 ${t("callClient")}`],
@@ -7784,6 +7871,11 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                           onClick={() => {
                             if (value === "transfer") {
                               openClientTransferModal();
+                              return;
+                            }
+                            if (value === "availability") {
+                              setClientAvailabilityOpen(true);
+                              setClientActionMenuOpen(false);
                               return;
                             }
                             setActiveAction(value as ClientAction);
@@ -13465,6 +13557,50 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
         </div>
       ) : null}
 
+      {clientAvailabilityOpen && selectedClient?.email ? (
+        <div
+          className="fixed inset-0 z-[185] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="staff-client-cleaning-schedule-title"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setClientAvailabilityOpen(false);
+            }
+          }}
+        >
+          <div className="flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-t-3xl bg-slate-100 shadow-xl sm:max-h-[92vh] sm:rounded-3xl">
+            <div className="flex items-start justify-between gap-4 border-b border-rose-100 bg-rose-50 px-5 py-4 sm:px-6">
+              <div>
+                <h3
+                  id="staff-client-cleaning-schedule-title"
+                  className="text-base font-semibold text-rose-950"
+                >
+                  {t("staffClientCleaningScheduleTitle", "Resident cleaning schedule")}
+                </h3>
+                <p className="mt-1 text-xs text-rose-800">
+                  {selectedClient.name || selectedClient.email} · {selectedClient.email}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setClientAvailabilityOpen(false)}
+                className="rounded-full border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-900"
+              >
+                {t("closeLabel")}
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
+              <CleaningScheduleClient
+                viewEmail={selectedClient.email}
+                clientName={selectedClient.name}
+                embedded
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {branchToolsOpen && (selectedBranch === "D2" || selectedBranch === "D7") ? (
         <div className="fixed inset-0 z-[170] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
           <div className="flex max-h-[92vh] w-full max-w-2xl flex-col rounded-t-3xl bg-white shadow-xl sm:max-h-[88vh] sm:rounded-3xl">
@@ -13872,12 +14008,12 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
       {/* Add hostel guest dialog */}
       {stAddDialog && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center p-0 sm:p-4">
-          <div className="w-full max-w-md rounded-t-3xl sm:rounded-3xl bg-white shadow-xl flex flex-col max-h-[90vh]">
+          <div ref={stAddSheetRef} className="w-full max-w-md rounded-t-3xl sm:rounded-3xl bg-white shadow-xl flex flex-col max-h-[90vh]">
             <div className="px-6 pt-6 pb-4 border-b border-slate-100 flex-shrink-0">
               <h3 className="text-base font-semibold text-slate-900">{t("addHostelGuest")}</h3>
               <p className="mt-1 text-xs text-slate-500">{t("addHostelGuestDesc")}</p>
             </div>
-            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+            <div ref={stAddScrollRef} className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
                   <label className="block text-xs font-semibold text-slate-600 mb-1">{t("guestNameLabel")}</label>
@@ -13958,7 +14094,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                 </div>
               )}
             </div>
-            <div className="flex gap-3 px-6 py-4 border-t border-slate-100 flex-shrink-0">
+            <div ref={stAddFooterRef} className="flex gap-3 px-6 py-4 border-t border-slate-100 flex-shrink-0">
               <button type="button" onClick={() => setStAddDialog(null)}
                 className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700">{t("cancelLabel")}</button>
               <button type="button"
@@ -14125,6 +14261,16 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
                     className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-center text-xs font-semibold text-sky-900 hover:bg-sky-100"
                   >
                     {t("diagramMessageClient")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setClientAvailabilityOpen(true);
+                      setDiagramBedQuickSheet(null);
+                    }}
+                    className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-center text-xs font-semibold text-rose-900 hover:bg-rose-100"
+                  >
+                    {t("staffClientAvailabilityMenu", "Cleaning schedule")}
                   </button>
                   {(() => {
                     const tel = toPhoneHref(getClientPhone(diagramBedQuickSheet.client));

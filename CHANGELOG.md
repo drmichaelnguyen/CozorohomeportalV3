@@ -1,5 +1,9 @@
 # Changelog
 
+## [3.8.65] - 2026-07-30
+
+- **Staff resident cleaning schedule**: Managers, owners, and app admins can open a selected client’s full cleaning schedule from **🧰 Tools → Cleaning schedule** (also from the bed-diagram quick actions). The popup reuses the resident cleaning calendar for that user: tasks, unavailability / Mark Away, self-assign options, swaps, and related schedule controls.
+
 ## [3.8.64] - 2026-07-21
 - **Monthly bed occupancy analytics**: The API records D2 and D7 occupied/available bed snapshots once per month on or after the 15th, and Owner Analytics shows occupancy history and rates over time.
 - **AI usage analytics**: App admins can review token consumption, request status, latency, and estimated Gemini cost from Settings.

@@ -136,7 +136,7 @@ const nextConfig: NextConfig = {
 | `site-shell.tsx` | Root layout wrapper â€” header, nav, providers |
 | `portal-session.tsx` | Session context (`sessionEmail`, `sessionRole`, `isLoggedIn`) |
 | `portal-language.tsx` | i18n context with `t()` helper (Vietnamese/English) |
-| `cleaning-schedule-client.tsx` | Full cleaning calendar with self-assign, availability, task management |
+| `cleaning-schedule-client.tsx` | Full cleaning calendar with self-assign, availability, task management; staff can embed via `viewEmail` to open a selected resident’s schedule from manager Tools |
 | `manager-support-inbox.tsx` | iMessage-style support chat for managers |
 | `support-client.tsx` | Resident support chat (tabs: personal, room, floor, branch) |
 | `notification-bell.tsx` | Header bell icon with total unread badge |
@@ -264,6 +264,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.8.65 | Staff can open a selected resident’s full cleaning schedule (tasks, unavailability, self-assign, swaps) from client Tools and the bed-diagram quick actions. |
 | 3.8.64 | Monthly D2/D7 bed occupancy snapshots and owner analytics; app-admin AI token/cost analytics; clearer cleaning availability safeguards. |
 | 3.8.63 | Pending registration approvals now let owners, app admins, and managers edit the monthly discount; the original list rent is preserved and the approved contract price and additional terms are recalculated accordingly. |
 | 3.8.62 | Cleaning schedule correction feedback: staff must pick (or add) reasons when fixing auto-assigned tasks; reasons persist and corrections are stored for RL. |

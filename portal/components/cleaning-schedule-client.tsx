@@ -377,9 +377,25 @@ function getReleasePenalty(task: { scheduledDate: string; isSelfAssigned?: boole
   };
 }
 
-export function CleaningScheduleClient() {
+type CleaningScheduleClientProps = {
+  /** When set (staff Tools), load this resident’s full cleaning schedule instead of the session user. */
+  viewEmail?: string;
+  clientName?: string;
+  /** Compact layout for manager modal embedding. */
+  embedded?: boolean;
+  onClose?: () => void;
+};
+
+export function CleaningScheduleClient({
+  viewEmail,
+  clientName,
+  embedded = false,
+  onClose
+}: CleaningScheduleClientProps) {
   const { sessionEmail, isLoggedIn, isSessionLoaded, login } = usePortalSession();
   const { t, language } = usePortalLanguage();
+  const staffViewEmail = viewEmail?.trim().toLowerCase() ?? "";
+  const isStaffView = Boolean(staffViewEmail);
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -417,7 +433,8 @@ export function CleaningScheduleClient() {
   const [swapSubmitting, setSwapSubmitting] = useState(false);
   const [swapRequestsData, setSwapRequestsData] = useState<SwapRequestsData | null>(null);
   const [swapActionLoading, setSwapActionLoading] = useState<string | null>(null);
-  const activeEmail = sessionEmail.trim().toLowerCase();
+  const activeEmail = isStaffView ? staffViewEmail : sessionEmail.trim().toLowerCase();
+  const displayName = clientName?.trim() || overview?.user?.name || activeEmail;
 
   const currentMonth = (() => {
     const now = new Date();
@@ -426,14 +443,34 @@ export function CleaningScheduleClient() {
   const currentMonthLabel = new Date().toLocaleString(language === "vi" ? "vi-VN" : "en-US", { month: "long", year: "numeric" });
 
   useEffect(() => {
+    if (isStaffView) {
+      setEmail(staffViewEmail);
+      return;
+    }
     if (sessionEmail) {
       setEmail(sessionEmail);
     }
-  }, [sessionEmail]);
+  }, [isStaffView, staffViewEmail, sessionEmail]);
 
-  // Auto-load once session is known and the user is logged in
   useEffect(() => {
-    if (!isSessionLoaded || !isLoggedIn || !activeEmail || overview) {
+    if (!isStaffView) {
+      return;
+    }
+    setOverview(null);
+    setSwapRequestsData(null);
+    setMessage("");
+    setAwayMode(false);
+    setAwayDates(new Set());
+    setPendingSelfAssignment(null);
+    setActiveMenuDate(null);
+  }, [isStaffView, staffViewEmail]);
+
+  // Auto-load once session is known and the user is logged in (or immediately in staff view)
+  useEffect(() => {
+    if (!activeEmail || overview) {
+      return;
+    }
+    if (!isStaffView && (!isSessionLoaded || !isLoggedIn)) {
       return;
     }
     setLoading(true);
@@ -443,7 +480,7 @@ export function CleaningScheduleClient() {
       .finally(() => setLoading(false));
     // overview omitted from deps on purpose: we only auto-fetch when session/email gates change, not when overview updates (avoids loops on failed fetch)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSessionLoaded, isLoggedIn, activeEmail]);
+  }, [isStaffView, isSessionLoaded, isLoggedIn, activeEmail, overview]);
 
   async function readJsonSafely<T>(response: Response) {
     const contentType = response.headers.get("content-type") ?? "";
@@ -1092,21 +1129,35 @@ export function CleaningScheduleClient() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-        <h1 className="text-2xl font-semibold text-slate-900">{t("cleaningScheduleTitle", "Cleaning Schedule")}</h1>
-
-        <form onSubmit={handleLogin} className="mt-6 grid gap-4 md:grid-cols-2">
-          <div className="md:col-span-2 flex flex-wrap gap-3">
-            {!(isLoggedIn && activeEmail && (loading || overview)) ? (
-            <button
-              type="submit"
-              disabled={loading || !activeEmail}
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-            >
-              {loading ? t("refreshing", "Loading...") : t("loadCleaningSchedule", "Load cleaning schedule")}
-            </button>
+    <div className={embedded ? "space-y-6" : "mx-auto max-w-6xl space-y-6"}>
+      <section className={embedded ? "rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:p-5" : "rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200"}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className={`font-semibold text-slate-900 ${embedded ? "text-xl" : "text-2xl"}`}>
+              {isStaffView
+                ? t("staffClientCleaningScheduleTitle", "Resident cleaning schedule")
+                : t("cleaningScheduleTitle", "Cleaning Schedule")}
+            </h1>
+            {isStaffView ? (
+              <p className="mt-1 text-sm text-slate-600">
+                {displayName}
+                {activeEmail ? ` · ${activeEmail}` : ""}
+              </p>
             ) : null}
+          </div>
+          {embedded && onClose ? (
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700"
+            >
+              {t("closeLabel", "Close")}
+            </button>
+          ) : null}
+        </div>
+
+        {isStaffView ? (
+          <div className="mt-4 flex flex-wrap gap-3">
             <button
               type="button"
               onClick={() => void refreshOverviewNow()}
@@ -1115,8 +1166,31 @@ export function CleaningScheduleClient() {
             >
               {refreshing ? t("refreshingSchedule", "Refreshing...") : t("refreshSchedule", "Refresh schedule")}
             </button>
+            {loading ? <p className="self-center text-sm text-slate-500">{t("refreshing", "Loading...")}</p> : null}
           </div>
-        </form>
+        ) : (
+          <form onSubmit={handleLogin} className="mt-6 grid gap-4 md:grid-cols-2">
+            <div className="md:col-span-2 flex flex-wrap gap-3">
+              {!(isLoggedIn && activeEmail && (loading || overview)) ? (
+              <button
+                type="submit"
+                disabled={loading || !activeEmail}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+              >
+                {loading ? t("refreshing", "Loading...") : t("loadCleaningSchedule", "Load cleaning schedule")}
+              </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void refreshOverviewNow()}
+                disabled={refreshing || !activeEmail}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60"
+              >
+                {refreshing ? t("refreshingSchedule", "Refreshing...") : t("refreshSchedule", "Refresh schedule")}
+              </button>
+            </div>
+          </form>
+        )}
 
         {message ? <p className="mt-4 text-sm text-slate-700">{message}</p> : null}
       </section>
@@ -1561,7 +1635,7 @@ export function CleaningScheduleClient() {
                   ·
                 </span>
                 <span className="text-slate-500">{t("name")}</span>{" "}
-                <span className="font-medium text-slate-900 break-words">{overview.user?.name ?? sessionEmail}</span>
+                <span className="font-medium text-slate-900 break-words">{overview.user?.name ?? displayName}</span>
               </p>
             </div>
           </section>
@@ -1817,7 +1891,12 @@ export function CleaningScheduleClient() {
                 <div>
                   <h2 className="text-lg font-semibold text-slate-900">Cleaning Calendar</h2>
                   <p className="mt-1 text-sm text-slate-600">
-                    Select a date to set availability or claim a task yourself.
+                    {isStaffView
+                      ? t(
+                          "staffCleaningCalendarHint",
+                          "Tasks, unavailability, self-assign options, and swap activity for this resident."
+                        )
+                      : "Select a date to set availability or claim a task yourself."}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
