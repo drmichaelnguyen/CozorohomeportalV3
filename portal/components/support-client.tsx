@@ -203,8 +203,11 @@ export function SupportClient() {
     const params = new URLSearchParams(window.location.search);
     const tabParam = params.get("tab") as ChatTab;
     const groupParam = params.get("groupId");
+    const chatParam = params.get("chat");
     if (tabParam && ["personal", "room", "floor", "branch"].includes(tabParam)) {
       setActiveTab(tabParam);
+    } else if (chatParam) {
+      setActiveTab("personal");
     }
     if (groupParam) {
       setOverrideGroupId(groupParam);

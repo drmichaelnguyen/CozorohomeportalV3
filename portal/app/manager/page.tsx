@@ -3,10 +3,11 @@ import { ManagerClient } from "../../components/manager-client";
 export default async function ManagerPage({
   searchParams
 }: {
-  searchParams?: Promise<{ view?: string }>;
+  searchParams?: Promise<{ view?: string; chat?: string }>;
 }) {
   const resolvedSearchParams = (await searchParams) ?? {};
-  const view = resolvedSearchParams.view;
+  const initialChatId = resolvedSearchParams.chat?.trim() || undefined;
+  const view = resolvedSearchParams.view ?? (initialChatId ? "support_chat" : undefined);
   const initialView =
     view === "client_list" ||
     view === "owners_employees" ||
@@ -21,5 +22,5 @@ export default async function ManagerPage({
       ? view
       : "overview";
 
-  return <ManagerClient initialView={initialView} />;
+  return <ManagerClient initialView={initialView} initialChatId={initialChatId} />;
 }

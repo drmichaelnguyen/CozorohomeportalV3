@@ -89,12 +89,15 @@ export function ManagerSupportInbox({
   operatorEmail,
   enabled,
   operatorIsOwner = false,
+  initialConversationId,
   onViewClient
 }: {
   operatorEmail: string;
   enabled: boolean;
   /** When true, owner can delete an entire thread or individual messages (API enforces owner role). */
   operatorIsOwner?: boolean;
+  /** Conversation or group id to open on first load, e.g. from a notification deep link. */
+  initialConversationId?: string;
   onViewClient?: (email: string) => void;
 }) {
   const { t } = usePortalLanguage();
@@ -112,6 +115,7 @@ export function ManagerSupportInbox({
   const imageInputRef = useRef<HTMLInputElement>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressNextRowClickRef = useRef(false);
+  const consumedInitialConversationIdRef = useRef(false);
 
   const [ownerSheet, setOwnerSheet] = useState<
     null | { kind: "thread"; conversationId: string } | { kind: "message"; messageId: string }
@@ -230,9 +234,11 @@ export function ManagerSupportInbox({
 
   useEffect(() => {
     if (enabled && operatorEmail.trim()) {
-      void loadInbox();
+      const deepLinkId = consumedInitialConversationIdRef.current ? undefined : initialConversationId?.trim();
+      consumedInitialConversationIdRef.current = true;
+      void loadInbox(deepLinkId || undefined);
     }
-  }, [enabled, operatorEmail]);
+  }, [enabled, operatorEmail, initialConversationId]);
 
   async function sendReply(event?: React.FormEvent<HTMLFormElement>) {
     event?.preventDefault();

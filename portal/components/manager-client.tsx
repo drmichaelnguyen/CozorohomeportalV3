@@ -2785,7 +2785,13 @@ function buildPrepaidOwnerLinesDiff(
   return out;
 }
 
-export function ManagerClient({ initialView = "overview" }: { initialView?: ManagerView }) {
+export function ManagerClient({
+  initialView = "overview",
+  initialChatId
+}: {
+  initialView?: ManagerView;
+  initialChatId?: string;
+}) {
 
   const router = useRouter();
   const { language, setLanguage, t } = usePortalLanguage();
@@ -12962,6 +12968,7 @@ export function ManagerClient({ initialView = "overview" }: { initialView?: Mana
               operatorEmail={normalizedEmail}
               enabled={isStaffSession}
               operatorIsOwner={isOwnerSession}
+              initialConversationId={initialChatId}
               onViewClient={(email) => {
                 const client = clients.find((c) => c.email?.toLowerCase() === email.toLowerCase())
                   ?? inactiveClients.find((c) => c.email?.toLowerCase() === email.toLowerCase());

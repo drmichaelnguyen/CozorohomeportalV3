@@ -1075,7 +1075,7 @@ export async function listStaffSupportNotifications(operatorEmail: string) {
       body: summary.latestUnreadMessage.body,
       createdAt: summary.latestUnreadMessage.createdAt,
       unreadCount: summary.unreadCount,
-      href: `/manager?chat=${encodeURIComponent(conversation.id)}`
+      href: `/manager?view=support_chat&chat=${encodeURIComponent(conversation.id)}`
     });
   }
 
@@ -1123,7 +1123,7 @@ export async function listStaffSupportNotifications(operatorEmail: string) {
         body: latest.body,
         createdAt: latest.createdAt,
         unreadCount: unreadMessages.length,
-        href: `/manager?chat=${encodeURIComponent(groupId)}`
+        href: `/manager?view=support_chat&chat=${encodeURIComponent(groupId)}`
       });
     }
   }

@@ -274,6 +274,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.1 | Notification Center deep links: staff support notifications open `/manager?view=support_chat&chat=…` (and auto-select that thread); resident `/support?chat=…` selects the personal tab. Fixes clicks that previously landed on manager Overview with no conversation. |
 | 3.9.0 | Self-assign encouragement: occasional in-app coin promo (~every 4 days / 1–2× per week) plus Cozoro Assistant/Bee one-liner side jokes about higher self-assign rates (weekday x2 / weekend x2.5 / VN holiday x3). |
 | 3.8.70 | Cleaning assign: one shared ranking for auto, manager list/bulk preview, release fill, and swaps; per-type 60-day fairness (kitchen vs trash); soft correction demotion; post-release re-place only when releaser is top underdue pick; reassign recalculates reward coins; algorithm documented in `docs/cleaning-auto-assign.md`. |
 | 3.8.69 | Cleaning schedule purge only after confirmed departure (checkout form) or set-inactive — expired contract end / terminate alone no longer clears tasks while the account stays active. |
