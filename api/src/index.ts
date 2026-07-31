@@ -61,6 +61,7 @@ import {
 import { getPortalUxSettings, updatePortalUxSettings } from "./portal-ux-settings.js";
 import { getAiUsageAnalytics } from "./ai-usage.js";
 import { captureMonthlyBedOccupancy, getBedOccupancyHistory } from "./bed-occupancy.js";
+import { getChatAttachmentForViewer } from "./chat-attachments.js";
 import {
   createGuideSchema,
   createResidentGuide,
@@ -373,6 +374,8 @@ type PendingContractApproval = {
   reviewedAt?: string;
   reviewedBy?: string;
   rejectionReason?: string;
+  /** Optional note when recovered / already-applied. */
+  reviewNote?: string;
   clientSignatureDataUrl?: string;
   clientSignatureTimestamp?: string;
   registration?: Record<string, any>;
@@ -1818,9 +1821,15 @@ const supportResidentQuerySchema = z.object({
 });
 const supportResidentMessageSchema = z.object({
   email: z.string().email(),
-  body: z.string().trim().min(1),
-  pagePath: z.string().trim().optional()
-});
+  body: z.string().trim().max(8000).default(""),
+  pagePath: z.string().trim().optional(),
+  attachments: z.array(z.object({
+    dataUrl: z.string().max(2_800_000),
+    fileName: z.string().max(191),
+    width: z.number().int().positive().max(5000).optional(),
+    height: z.number().int().positive().max(5000).optional()
+  })).max(3).optional()
+}).refine((value) => value.body.length > 0 || Boolean(value.attachments?.length));
 const supportReadSchema = z.object({
   email: z.string().email()
 });
@@ -1830,8 +1839,14 @@ const supportInboxQuerySchema = z.object({
 const supportOperatorMessageSchema = z.object({
   conversationId: z.string().min(1),
   operatorEmail: z.string().email(),
-  body: z.string().trim().min(1)
-});
+  body: z.string().trim().max(8000).default(""),
+  attachments: z.array(z.object({
+    dataUrl: z.string().max(2_800_000),
+    fileName: z.string().max(191),
+    width: z.number().int().positive().max(5000).optional(),
+    height: z.number().int().positive().max(5000).optional()
+  })).max(3).optional()
+}).refine((value) => value.body.length > 0 || Boolean(value.attachments?.length));
 const supportConversationStatusSchema = z.object({
   operatorEmail: z.string().email(),
   status: z.enum(["OPEN", "CLOSED"])
@@ -1839,9 +1854,15 @@ const supportConversationStatusSchema = z.object({
 const groupMessageInputSchema = z.object({
   email: z.string().email(),
   groupId: z.string().min(1),
-  body: z.string().trim().min(1),
-  isAnonymous: z.boolean().optional()
-});
+  body: z.string().trim().max(8000).default(""),
+  isAnonymous: z.boolean().optional(),
+  attachments: z.array(z.object({
+    dataUrl: z.string().max(2_800_000),
+    fileName: z.string().max(191),
+    width: z.number().int().positive().max(5000).optional(),
+    height: z.number().int().positive().max(5000).optional()
+  })).max(3).optional()
+}).refine((value) => value.body.length > 0 || Boolean(value.attachments?.length));
 const groupReadInputSchema = z.object({
   email: z.string().email(),
   groupId: z.string().min(1)
@@ -2841,7 +2862,8 @@ app.post("/support/group-messages", async (request, response) => {
       groupId: parsed.data.groupId,
       senderEmail: parsed.data.email,
       body: parsed.data.body,
-      isAnonymous: parsed.data.isAnonymous ?? false
+      isAnonymous: parsed.data.isAnonymous ?? false,
+      attachments: parsed.data.attachments
     });
     clearAllResidentNotificationCaches();
     return response.json(result);
@@ -3822,7 +3844,7 @@ app.post("/support/messages", async (request, response) => {
     const result = await postResidentSupportMessage(parsed.data);
     let assistantMessage: Awaited<ReturnType<typeof tryAppendAssistantAfterResidentMessage>> = null;
     try {
-      assistantMessage = await tryAppendAssistantAfterResidentMessage({
+      if (parsed.data.body) assistantMessage = await tryAppendAssistantAfterResidentMessage({
         conversationId: result.conversation.id,
         residentEmail: parsed.data.email
       });
@@ -3834,6 +3856,21 @@ app.post("/support/messages", async (request, response) => {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to send support message"
     });
+  }
+});
+
+app.get("/support/attachments/:id", async (request, response) => {
+  const email = typeof request.query.email === "string" ? request.query.email : "";
+  if (!email) return response.status(400).json({ error: "Email is required" });
+  try {
+    const attachment = await getChatAttachmentForViewer(request.params.id ?? "", email);
+    response.setHeader("Content-Type", attachment.mimeType);
+    response.setHeader("Cache-Control", "private, max-age=3600");
+    response.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(attachment.fileName)}`);
+    return response.sendFile(attachment.absolutePath);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to load attachment";
+    return response.status(message.includes("access") ? 403 : 404).json({ error: message });
   }
 });
 
@@ -4028,7 +4065,8 @@ app.post("/manager/support/messages", async (request, response) => {
         groupId: id,
         senderEmail: parsed.data.operatorEmail,
         body: parsed.data.body,
-        isAnonymous: false
+        isAnonymous: false,
+        attachments: parsed.data.attachments
       });
       return response.status(201).json({ message });
     } else {
@@ -9089,6 +9127,9 @@ app.post("/manager/contract-approvals/:id/approve", async (request, response) =>
   if (!parsed.success) return response.status(400).json({ error: "Invalid approval payload" });
 
   try {
+    // #region agent log
+    fetch('http://127.0.0.1:7334/ingest/99499d10-2452-43bb-b244-1ba866840dd1',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c6061d'},body:JSON.stringify({sessionId:'c6061d',runId:'pre-fix',hypothesisId:'H3',location:'api/src/index.ts:approve-entry',message:'approve endpoint entered',data:{approvalId:String(request.params.id??'')},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     await requirePortalRole(parsed.data.actorEmail, ["owner", "app_admin"], "Only owners can approve contract approvals.");
     const file = await readContractApprovals();
     const item = file.approvals.find((entry) => entry.id === request.params.id);
@@ -9100,8 +9141,46 @@ app.post("/manager/contract-approvals/:id/approve", async (request, response) =>
       const registration = item.registration;
       if (!registration) throw new Error("Pending registration payload is missing.");
       const email = String(registration.email ?? "").trim().toLowerCase();
-      if (await anyClientRowExistsForEmail(email)) {
-        throw new Error("This email already has a registration record. Reject this pending request or review the existing contract.");
+      const emailExists = await anyClientRowExistsForEmail(email);
+      // #region agent log
+      fetch('http://127.0.0.1:7334/ingest/99499d10-2452-43bb-b244-1ba866840dd1',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c6061d'},body:JSON.stringify({sessionId:'c6061d',runId:'pre-fix',hypothesisId:'H1',location:'api/src/index.ts:approve-email-exists',message:'registration email existence check',data:{approvalId:item.id,emailExists,itemStatus:item.status},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      if (emailExists) {
+        // Prior approve often wrote the Google Sheet row then failed before status update.
+        // If the live row matches this pending request, close the queue item instead of
+        // leaving it stuck on "pending" forever.
+        const existing = await getActiveClientByEmail(email);
+        const pendingBed = String(registration.bedNumber ?? "").replace(/[^0-9]/g, "");
+        const existingBed = String(existing?.[CLIENT_BED_COLUMN] ?? "").replace(/[^0-9]/g, "");
+        const pendingName = String(registration.fullName ?? "").trim().toLowerCase();
+        const existingName = String(existing?.["Tên"] ?? existing?.name ?? "").trim().toLowerCase();
+        const samePerson =
+          Boolean(existing) &&
+          pendingBed.length > 0 &&
+          pendingBed === existingBed &&
+          (pendingName.length === 0 ||
+            existingName.length === 0 ||
+            pendingName === existingName ||
+            pendingName.includes(existingName) ||
+            existingName.includes(pendingName));
+        // #region agent log
+        fetch('http://127.0.0.1:7334/ingest/99499d10-2452-43bb-b244-1ba866840dd1',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c6061d'},body:JSON.stringify({sessionId:'c6061d',runId:'pre-fix',hypothesisId:'H1',location:'api/src/index.ts:approve-reconcile-check',message:'email exists reconcile decision',data:{approvalId:item.id,samePerson,pendingBed,existingBed,hasExisting:Boolean(existing)},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+        if (samePerson) {
+          item.status = "approved";
+          item.reviewedAt = approvedAt;
+          item.reviewedBy = parsed.data.actorEmail.trim().toLowerCase();
+          item.reviewNote =
+            "Already on the client sheet for this email/bed — marked approved after a prior partial approve.";
+          await writeContractApprovals(file);
+          // #region agent log
+          fetch('http://127.0.0.1:7334/ingest/99499d10-2452-43bb-b244-1ba866840dd1',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c6061d'},body:JSON.stringify({sessionId:'c6061d',runId:'pre-fix',hypothesisId:'H1',location:'api/src/index.ts:approve-reconciled',message:'reconciled stuck pending to approved',data:{approvalId:item.id},timestamp:Date.now()})}).catch(()=>{});
+          // #endregion
+          return response.json({ ok: true, alreadyApplied: true });
+        }
+        throw new Error(
+          "This email already has a registration record. Reject this pending request or review the existing contract."
+        );
       }
       const result = await submitPublicRegistration({
         ...(registration as any),
@@ -9110,6 +9189,13 @@ app.post("/manager/contract-approvals/:id/approve", async (request, response) =>
         ownerApprovedBy: parsed.data.actorEmail.trim().toLowerCase(),
         ownerApprovedAt: approvedAt
       });
+      // Persist approved status immediately after sheet write so a later referral/opt-out
+      // failure cannot leave the request stuck as pending.
+      item.status = "approved";
+      item.reviewedAt = approvedAt;
+      item.reviewedBy = parsed.data.actorEmail.trim().toLowerCase();
+      await writeContractApprovals(file);
+
       if (registration.contractCleaningOptOut) {
         await upsertContractCleaningOptOut({
           email,
@@ -9129,6 +9215,7 @@ app.post("/manager/contract-approvals/:id/approve", async (request, response) =>
           referrerCoins: rewards.referrerCoins
         });
       }
+      return response.json({ ok: true });
     } else if (item.type === "transfer") {
       const transfer = item.transfer;
       if (!transfer) throw new Error("Pending transfer payload is missing.");
@@ -9190,9 +9277,29 @@ app.post("/manager/contract-approvals/:id/approve", async (request, response) =>
     item.status = "approved";
     item.reviewedAt = approvedAt;
     item.reviewedBy = parsed.data.actorEmail.trim().toLowerCase();
-    await writeContractApprovals(file);
+    try {
+      await writeContractApprovals(file);
+      // #region agent log
+      fetch('http://127.0.0.1:7334/ingest/99499d10-2452-43bb-b244-1ba866840dd1',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c6061d'},body:JSON.stringify({sessionId:'c6061d',runId:'pre-fix',hypothesisId:'H2',location:'api/src/index.ts:approve-write-ok',message:'writeContractApprovals succeeded',data:{approvalId:item.id,status:item.status},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+    } catch (writeErr) {
+      // #region agent log
+      fetch('http://127.0.0.1:7334/ingest/99499d10-2452-43bb-b244-1ba866840dd1',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c6061d'},body:JSON.stringify({sessionId:'c6061d',runId:'pre-fix',hypothesisId:'H2',location:'api/src/index.ts:approve-write-fail',message:'writeContractApprovals failed',data:{approvalId:item.id,error:writeErr instanceof Error?writeErr.message:String(writeErr)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      throw writeErr;
+    }
+    // #region agent log
+    {
+      const verify = await readContractApprovals();
+      const verifyItem = verify.approvals.find((entry) => entry.id === item.id);
+      fetch('http://127.0.0.1:7334/ingest/99499d10-2452-43bb-b244-1ba866840dd1',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c6061d'},body:JSON.stringify({sessionId:'c6061d',runId:'pre-fix',hypothesisId:'H5',location:'api/src/index.ts:approve-verify-read',message:'post-write status verification',data:{approvalId:item.id,writtenStatus:item.status,rereadStatus:verifyItem?.status??null},timestamp:Date.now()})}).catch(()=>{});
+    }
+    // #endregion
     return response.json({ ok: true });
   } catch (error) {
+    // #region agent log
+    fetch('http://127.0.0.1:7334/ingest/99499d10-2452-43bb-b244-1ba866840dd1',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c6061d'},body:JSON.stringify({sessionId:'c6061d',runId:'pre-fix',hypothesisId:'H4',location:'api/src/index.ts:approve-catch',message:'approve endpoint threw',data:{approvalId:String(request.params.id??''),error:error instanceof Error?error.message:String(error)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     return response.status((error as Error & { statusCode?: number }).statusCode ?? 500).json({
       error: error instanceof Error ? error.message : "Unable to approve contract"
     });

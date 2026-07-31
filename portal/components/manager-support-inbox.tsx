@@ -5,6 +5,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { supportMessageDisplayBody } from "../lib/support-message-meta";
 import { usePortalLanguage } from "./portal-language";
+import { compressChatImage, type ChatAttachment, type PendingChatImage } from "../lib/chat-images";
+import { ChatAttachmentView } from "./chat-attachment";
 
 type SupportConversationListItem = {
   id: string;
@@ -42,6 +44,7 @@ type SupportMessage = {
   body: string;
   pagePath: string | null;
   createdAt: string;
+  attachments?: ChatAttachment[];
 };
 
 function formatTime(value: string) {
@@ -100,10 +103,13 @@ export function ManagerSupportInbox({
   const [selectedConversation, setSelectedConversation] = useState<SupportConversation | null>(null);
   const [messages, setMessages] = useState<SupportMessage[]>([]);
   const [draft, setDraft] = useState("");
+  const [pendingImages, setPendingImages] = useState<PendingChatImage[]>([]);
+  const [compressingImages, setCompressingImages] = useState(false);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressNextRowClickRef = useRef(false);
 
@@ -231,7 +237,7 @@ export function ManagerSupportInbox({
   async function sendReply(event?: React.FormEvent<HTMLFormElement>) {
     event?.preventDefault();
 
-    if (!selectedConversationId || !draft.trim()) return;
+    if (!selectedConversationId || (!draft.trim() && pendingImages.length === 0)) return;
 
     setLoading(true);
     setStatus("");
@@ -243,7 +249,8 @@ export function ManagerSupportInbox({
         body: JSON.stringify({
           conversationId: selectedConversationId,
           operatorEmail,
-          body: draft.trim()
+          body: draft.trim(),
+          attachments: pendingImages
         })
       });
 
@@ -254,6 +261,7 @@ export function ManagerSupportInbox({
       }
 
       setDraft("");
+      setPendingImages([]);
       await loadInbox(selectedConversationId);
     } catch {
       setStatus(t("supportUnableSendReply"));
@@ -413,23 +421,14 @@ export function ManagerSupportInbox({
                     ? `bg-violet-600 text-white ${isFirstInGroup ? "rounded-tr-sm" : ""}`
                     : `bg-blue-500 text-white ${isFirstInGroup ? "rounded-tr-sm" : ""}`
                   : `bg-slate-100 text-slate-900 ${isFirstInGroup ? "rounded-tl-sm" : ""}`
-              } ${operatorIsOwner ? "touch-manipulation select-none" : ""}`}
-              onPointerDown={() => {
-                if (operatorIsOwner) scheduleMessageSheet(message.id);
-              }}
-              onPointerUp={clearLongPressTimer}
-              onPointerCancel={clearLongPressTimer}
-              onPointerLeave={clearLongPressTimer}
-              onContextMenu={(e) => {
-                if (operatorIsOwner) {
-                  e.preventDefault();
-                  setOwnerSheet({ kind: "message", messageId: message.id });
-                }
-              }}
+              } select-text`}
             >
               <p className="whitespace-pre-wrap text-sm leading-relaxed">
                 {message.senderRole === "ASSISTANT" ? supportMessageDisplayBody(message.body) : message.body}
               </p>
+              {message.attachments?.map((attachment) => (
+                <ChatAttachmentView key={attachment.id} attachment={attachment} viewerEmail={operatorEmail} />
+              ))}
               {message.pagePath ? (
                 <p
                   className={`mt-1 text-[10px] ${
@@ -440,6 +439,11 @@ export function ManagerSupportInbox({
                 </p>
               ) : null}
             </div>
+            {operatorIsOwner ? (
+              <button type="button" onClick={() => setOwnerSheet({ kind: "message", messageId: message.id })} className="mt-0.5 px-1 text-[10px] text-slate-400 hover:text-rose-600" title="Delete message">
+                Delete
+              </button>
+            ) : null}
             {isLastInGroup && (
               <div
                 className={`mt-1 flex items-center px-1 ${isStaff ? "justify-end" : "justify-start"}`}
@@ -693,7 +697,40 @@ export function ManagerSupportInbox({
 
               {/* iMessage-style input */}
               <div className="border-t border-slate-100 px-4 py-3">
+                {pendingImages.length > 0 ? (
+                  <div className="mb-2 flex flex-wrap gap-2">
+                    {pendingImages.map((image, index) => (
+                      <button key={`${image.fileName}-${index}`} type="button" onClick={() => setPendingImages((items) => items.filter((_, itemIndex) => itemIndex !== index))} className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
+                        {image.fileName} ×
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
                 <form onSubmit={sendReply} className="flex items-end gap-2">
+                  <input
+                    ref={imageInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={async (event) => {
+                      const files = Array.from(event.target.files ?? []).slice(0, 3 - pendingImages.length);
+                      event.target.value = "";
+                      if (!files.length) return;
+                      setCompressingImages(true);
+                      try {
+                        const compressed = await Promise.all(files.map(compressChatImage));
+                        setPendingImages((items) => [...items, ...compressed].slice(0, 3));
+                      } catch (error) {
+                        setStatus(error instanceof Error ? error.message : "Unable to prepare image.");
+                      } finally {
+                        setCompressingImages(false);
+                      }
+                    }}
+                  />
+                  <button type="button" onClick={() => imageInputRef.current?.click()} disabled={loading || compressingImages || pendingImages.length >= 3} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 text-lg text-slate-600 disabled:opacity-40" title="Attach up to 3 images">
+                    {compressingImages ? "…" : "+"}
+                  </button>
                   <textarea
                     ref={textareaRef}
                     value={draft}
@@ -701,7 +738,7 @@ export function ManagerSupportInbox({
                     onKeyDown={handleKeyDown}
                     rows={1}
                     placeholder={t("messagePlaceholder")}
-                    className="flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-1 focus:ring-blue-200"
+                    className="select-text flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-1 focus:ring-blue-200"
                     style={{ maxHeight: "120px", overflowY: "auto" }}
                     onInput={(e) => {
                       const el = e.currentTarget;
@@ -711,7 +748,7 @@ export function ManagerSupportInbox({
                   />
                   <button
                     type="submit"
-                    disabled={loading || !draft.trim() || !selectedConversationId}
+                    disabled={loading || (!draft.trim() && pendingImages.length === 0) || !selectedConversationId}
                     className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-500 text-white shadow transition hover:bg-blue-600 disabled:opacity-40"
                   >
                     <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">

@@ -67,9 +67,10 @@ Important release safety rules:
 - if the app imports a file that is still untracked, production can boot with `MODULE_NOT_FOUND` even when local dev appears fine
 - if production needs local secrets or env values, sync production env deliberately after code sync
 - for this app, a production refresh is not complete unless these runtime files are preserved or restored:
-  - `api/.env`
-  - `api/.google-oauth.json`
-  - important `api/data/*` files such as caches, staff access, and other operational state
+ - `api/.env`
+ - `api/.google-oauth.json`
+ - important `api/data/*` files such as caches, staff access, and other operational state
+ - `api/data/chat-attachments/` — binary files for support/group chat images (DB rows only store metadata; missing files make past attachments 404)
 - if `api/.google-oauth.json` is missing in production, Google Sheets / Gmail / Calendar startup calls can fail with `Google OAuth tokens are missing`
 
 Production sync rule:
@@ -137,8 +138,10 @@ const nextConfig: NextConfig = {
 | `portal-session.tsx` | Session context (`sessionEmail`, `sessionRole`, `isLoggedIn`) |
 | `portal-language.tsx` | i18n context with `t()` helper (Vietnamese/English) |
 | `cleaning-schedule-client.tsx` | Full cleaning calendar with self-assign, availability, task management; staff can embed via `viewEmail` to open a selected resident’s schedule from manager Tools |
-| `manager-support-inbox.tsx` | iMessage-style support chat for managers |
-| `support-client.tsx` | Resident support chat (tabs: personal, room, floor, branch) |
+| `manager-support-inbox.tsx` | iMessage-style support chat for managers (up to 3 compressed image attachments per message) |
+| `manager-web-lead-inbox.tsx` | Manager **Web AI chat** inbox for www.cozorohome.com guest bot threads; mobile master–detail with back-to-inbox |
+| `support-client.tsx` | Resident support chat (tabs: personal, room, floor, branch; image attachments) |
+| `chat-attachment.tsx` / `lib/chat-images.ts` | Client image compress + attachment thumbnail/viewer |
 | `notification-bell.tsx` | Header bell icon with total unread badge |
 | `notification-center-client.tsx` | Full notifications list page |
 | `contract-extension.tsx` | Near contract end: resident extends with preset months or a **chosen end date**, e-sign; creates a pending approval (no contract email until an owner approves). |
@@ -176,6 +179,8 @@ const nextConfig: NextConfig = {
 | `POST /cleaning/tasks/:id/complete` | Mark task done |
 | `POST /cleaning/tasks/:id/release` | Release task (with penalty calculation) |
 | `GET /support/notifications?email=` | Resident notifications by type (SUPPORT_REPLY, PAYMENT_DUE, NEW_FINE, LAUNDRY_REMINDER, CLEANING_REMINDER) |
+| `GET /support/attachments/:id` | Stream a chat image for an authorized viewer (`email` query); files under `api/data/chat-attachments/` |
+| Support / group message POSTs | Optional `attachments[]` (`dataUrl`, `fileName`, `width`, `height`) — max 3 images, JPEG/PNG/WebP, ~2 MB each after client compress |
 | `GET /manager/support/conversations?operatorEmail=` | Manager inbox list |
 | `GET /manager/support/conversations/:id?operatorEmail=` | Conversation thread |
 | `POST /manager/support/messages` | Send reply as manager |
@@ -264,6 +269,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.8.66 | Support/group chat image attachments (resident + manager; up to 3 compressed images; `ChatAttachment` + `api/data/chat-attachments/`); manager Web AI chat mobile UX (full-width master–detail + back-to-inbox). |
 | 3.8.65 | Staff can open a selected resident’s full cleaning schedule (tasks, unavailability, self-assign, swaps) from client Tools and the bed-diagram quick actions. |
 | 3.8.64 | Monthly D2/D7 bed occupancy snapshots and owner analytics; app-admin AI token/cost analytics; clearer cleaning availability safeguards. |
 | 3.8.63 | Pending registration approvals now let owners, app admins, and managers edit the monthly discount; the original list rent is preserved and the approved contract price and additional terms are recalculated accordingly. |

@@ -338,6 +338,7 @@ model SupportMessage {
   body             String                   @db.Text
   pagePath         String?
   createdAt        DateTime                 @default(now())
+  attachments      ChatAttachment[]
 
   @@index([conversationId, createdAt])
   @@index([senderEmail, createdAt])
@@ -365,8 +366,27 @@ model GroupMessage {
   isAnonymous      Boolean                  @default(false)
   body             String                   @db.Text
   createdAt        DateTime                 @default(now())
+  attachments      ChatAttachment[]
 
   @@index([groupId, createdAt])
+}
+
+model ChatAttachment {
+  id               String          @id @default(cuid())
+  supportMessageId String?
+  supportMessage   SupportMessage? @relation(fields: [supportMessageId], references: [id], onDelete: Cascade)
+  groupMessageId   String?
+  groupMessage     GroupMessage?   @relation(fields: [groupMessageId], references: [id], onDelete: Cascade)
+  storageName      String          @unique
+  fileName         String          @db.VarChar(191)
+  mimeType         String          @db.VarChar(64)
+  byteSize         Int
+  width            Int?
+  height           Int?
+  createdAt        DateTime        @default(now())
+
+  @@index([supportMessageId])
+  @@index([groupMessageId])
 }
 
 model GroupReadState {

@@ -10,6 +10,8 @@ import { ManagerSupportInbox } from "./manager-support-inbox";
 import { ResidentPortalAiBee } from "./resident-portal-ai-bee";
 import { VentHammerGameModal } from "./vent-hammer-game-modal";
 import { formatCozoroDateTime } from "../lib/date-format";
+import { compressChatImage, type ChatAttachment, type PendingChatImage } from "../lib/chat-images";
+import { ChatAttachmentView } from "./chat-attachment";
 
 const SOUND_PREF_KEY = "chat_sound_enabled";
 const POLL_INTERVAL_MS = 10000;
@@ -71,6 +73,7 @@ type SupportMessage = {
   isAnonymous?: boolean;
   pagePath: string | null;
   createdAt: string;
+  attachments?: ChatAttachment[];
 };
 
 type GroupContext = {
@@ -116,6 +119,9 @@ export function SupportClient() {
   const [conversation, setConversation] = useState<SupportConversation | null>(null);
   const [messages, setMessages] = useState<SupportMessage[]>([]);
   const [draft, setDraft] = useState("");
+  const [pendingImages, setPendingImages] = useState<PendingChatImage[]>([]);
+  const [compressingImages, setCompressingImages] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState("");
@@ -386,7 +392,7 @@ export function SupportClient() {
     event.preventDefault();
 
     const body = draft.trim();
-    if (!body) {
+    if (!body && pendingImages.length === 0) {
       setStatus(t("enterMessageFirst", "Please enter a message first."));
       return;
     }
@@ -405,7 +411,8 @@ export function SupportClient() {
           body: JSON.stringify({
             email: sessionEmail.trim().toLowerCase(),
             body,
-            pagePath: window.location.pathname
+            pagePath: window.location.pathname,
+            attachments: pendingImages
           })
         });
       } else {
@@ -421,7 +428,8 @@ export function SupportClient() {
             email: sessionEmail.trim().toLowerCase(),
             groupId: groupId,
             body,
-            isAnonymous
+            isAnonymous,
+            attachments: pendingImages
           })
         });
       }
@@ -433,6 +441,7 @@ export function SupportClient() {
         return;
       }
       setDraft("");
+      setPendingImages([]);
       setStatus(t("messageSent", "Message sent."));
       await loadConversation();
     } catch {
@@ -640,6 +649,9 @@ export function SupportClient() {
                   <p className="whitespace-pre-wrap leading-relaxed">
                     {isAssistant ? supportMessageDisplayBody(message.body) : message.body}
                   </p>
+                  {message.attachments?.map((attachment) => (
+                    <ChatAttachmentView key={attachment.id} attachment={attachment} viewerEmail={sessionEmail.trim().toLowerCase()} />
+                  ))}
                   <div className={`mt-1 text-[9px] ${isMe ? "text-slate-400" : "text-slate-500"}`}>
                     {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </div>
@@ -656,10 +668,43 @@ export function SupportClient() {
           <p className="mb-2 text-center text-[10px] font-bold text-slate-400 animate-pulse">{status}</p>
         )}
         
+        {pendingImages.length > 0 ? (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {pendingImages.map((image, index) => (
+              <button key={`${image.fileName}-${index}`} type="button" onClick={() => setPendingImages((items) => items.filter((_, itemIndex) => itemIndex !== index))} className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
+                {image.fileName} ×
+              </button>
+            ))}
+          </div>
+        ) : null}
         <form 
           onSubmit={handleSubmit}
           className="relative flex items-end gap-2"
         >
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={async (event) => {
+              const files = Array.from(event.target.files ?? []).slice(0, 3 - pendingImages.length);
+              event.target.value = "";
+              if (!files.length) return;
+              setCompressingImages(true);
+              try {
+                const compressed = await Promise.all(files.map(compressChatImage));
+                setPendingImages((items) => [...items, ...compressed].slice(0, 3));
+              } catch (error) {
+                setStatus(error instanceof Error ? error.message : "Unable to prepare image.");
+              } finally {
+                setCompressingImages(false);
+              }
+            }}
+          />
+          <button type="button" onClick={() => imageInputRef.current?.click()} disabled={submitting || compressingImages || pendingImages.length >= 3} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 text-lg disabled:opacity-40" title="Attach up to 3 images">
+            {compressingImages ? "…" : "+"}
+          </button>
           <div className="relative flex-1">
             <textarea
               value={draft}
@@ -672,7 +717,7 @@ export function SupportClient() {
                   void handleSubmit(e as any);
                 }
               }}
-              className="w-full max-h-32 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 pr-10 text-sm focus:border-slate-400 focus:bg-white focus:outline-none transition-all"
+              className="select-text w-full max-h-32 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 pr-10 text-sm focus:border-slate-400 focus:bg-white focus:outline-none transition-all"
             />
             {activeTab !== "personal" && (
               <div className="absolute right-3 top-2.5">
@@ -691,7 +736,7 @@ export function SupportClient() {
           </div>
           <button
             type="submit"
-            disabled={submitting || !draft.trim() || !sessionEmail.trim()}
+            disabled={submitting || (!draft.trim() && pendingImages.length === 0) || !sessionEmail.trim()}
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
           >
             {submitting ? (

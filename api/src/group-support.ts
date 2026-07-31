@@ -3,6 +3,7 @@ import { logAction } from "./action-log.js";
 import { prisma } from "./prisma.js";
 import { resolvePortalLogin } from "./staff-access.js";
 import { getActiveClientByEmail } from "./google-sheets.js";
+import { chatAttachmentSelect, type ChatAttachmentInput } from "./chat-attachments.js";
 
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
@@ -77,7 +78,8 @@ export async function getGroupMessages(input: {
 
   const messages = await prisma.groupMessage.findMany({
     where: { groupId: input.groupId },
-    orderBy: { createdAt: "asc" }
+    orderBy: { createdAt: "asc" },
+    include: { attachments: { select: chatAttachmentSelect } }
   });
 
   return messages.map((message) => {
@@ -110,10 +112,11 @@ export async function postGroupMessage(input: {
   senderEmail: string;
   body: string;
   isAnonymous: boolean;
+  attachments?: ChatAttachmentInput[];
 }) {
   const normalizedSenderEmail = normalizeEmail(input.senderEmail);
   const trimmedBody = input.body.trim();
-  if (!trimmedBody) {
+  if (!trimmedBody && !input.attachments?.length) {
     throw new Error("Message body cannot be empty.");
   }
 
@@ -152,6 +155,13 @@ export async function postGroupMessage(input: {
     }
   });
 
+  const attachments = input.attachments?.length
+    ? await (await import("./chat-attachments.js")).saveChatAttachments({
+        groupMessageId: message.id,
+        attachments: input.attachments
+      })
+    : [];
+
   await logAction({
     actorEmail: normalizedSenderEmail,
     actorName: senderName,
@@ -163,7 +173,7 @@ export async function postGroupMessage(input: {
     details: `anonymous=${input.isAnonymous ? "true" : "false"}`
   });
 
-  return message;
+  return { ...message, attachments };
 }
 
 export async function markGroupRead(input: {

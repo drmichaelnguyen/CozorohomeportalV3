@@ -26,6 +26,7 @@ import { loadOpenHostelBookingAlertsForStaff } from "./hostel-booking-notificati
 import { buildFridgeDrainReminderNotifications } from "./fridge-drain-schedule.js";
 import { isBranchAutomationDisabled, isCleaningTaskAutomationDisabled } from "./branch-closure.js";
 import { prisma } from "./prisma.js";
+import { chatAttachmentSelect, type ChatAttachmentInput } from "./chat-attachments.js";
 import { ASSISTANT_SENDER_EMAIL, runResidentSupportAssistantTurn } from "./resident-support-ai.js";
 import { appendSupportAssistantMetaSuffix } from "./support-assistant-message-meta.js";
 import { requirePortalRole, resolvePortalLogin } from "./staff-access.js";
@@ -159,7 +160,8 @@ export async function getResidentSupportConversation(email: string) {
 
   const messages = await prisma.supportMessage.findMany({
     where: { conversationId: conversation.id },
-    orderBy: { createdAt: "asc" }
+    orderBy: { createdAt: "asc" },
+    include: { attachments: { select: chatAttachmentSelect } }
   });
 
   return { conversation, messages };
@@ -490,7 +492,8 @@ export async function getSupportConversationById(conversationId: string) {
 
   const messages = await prisma.supportMessage.findMany({
     where: { conversationId },
-    orderBy: { createdAt: "asc" }
+    orderBy: { createdAt: "asc" },
+    include: { attachments: { select: chatAttachmentSelect } }
   });
 
   return { conversation, messages };
@@ -1367,11 +1370,12 @@ export async function postResidentSupportMessage(input: {
   email: string;
   body: string;
   pagePath?: string;
+  attachments?: ChatAttachmentInput[];
 }) {
   const normalizedEmail = normalizeEmail(input.email);
   const trimmedBody = input.body.trim();
 
-  if (!trimmedBody) {
+  if (!trimmedBody && !input.attachments?.length) {
     throw new Error("A support message is required.");
   }
 
@@ -1379,7 +1383,7 @@ export async function postResidentSupportMessage(input: {
   const residentName = conversation.residentName ?? (await getResidentName(normalizedEmail));
   clearNotificationCaches(normalizedEmail);
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const message = await tx.supportMessage.create({
       data: {
         conversationId: conversation.id,
@@ -1402,6 +1406,13 @@ export async function postResidentSupportMessage(input: {
 
     return { conversation: updatedConversation, message };
   });
+  const attachments = input.attachments?.length
+    ? await (await import("./chat-attachments.js")).saveChatAttachments({
+        supportMessageId: result.message.id,
+        attachments: input.attachments
+      })
+    : [];
+  return { ...result, message: { ...result.message, attachments } };
 }
 
 export async function tryAppendAssistantAfterResidentMessage(input: {
@@ -1448,11 +1459,12 @@ export async function postOperatorSupportMessage(input: {
   conversationId: string;
   operatorEmail: string;
   body: string;
+  attachments?: ChatAttachmentInput[];
 }) {
   const normalizedOperatorEmail = normalizeEmail(input.operatorEmail);
   const trimmedBody = input.body.trim();
 
-  if (!trimmedBody) {
+  if (!trimmedBody && !input.attachments?.length) {
     throw new Error("A reply message is required.");
   }
 
@@ -1496,14 +1508,21 @@ export async function postOperatorSupportMessage(input: {
     return { conversation: updatedConversation, message };
   });
 
+  const attachments = input.attachments?.length
+    ? await (await import("./chat-attachments.js")).saveChatAttachments({
+        supportMessageId: result.message.id,
+        attachments: input.attachments
+      })
+    : [];
+
   void sendPushToEmail(
     existingConversation.residentEmail,
     "New message from Cozoro",
-    trimmedBody.length > 100 ? trimmedBody.slice(0, 97) + "…" : trimmedBody,
+    trimmedBody ? (trimmedBody.length > 100 ? trimmedBody.slice(0, 97) + "…" : trimmedBody) : "Image attachment",
     "/support"
   ).catch(() => {});
 
-  return result;
+  return { ...result, message: { ...result.message, attachments } };
 }
 
 export async function postOperatorSupportMessageToResident(input: {

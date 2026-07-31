@@ -111,9 +111,25 @@ export function ManagerWebLeadInbox({
 
   const c = detail?.conversation;
 
+  const backToList = (
+    <button
+      type="button"
+      onClick={() => {
+        setSelectedId(null);
+        setDetail(null);
+      }}
+      className="-ml-1 flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100 lg:hidden"
+    >
+      <span aria-hidden="true">←</span>
+      {language === "vi" ? "Hộp thư" : "Inbox"}
+    </button>
+  );
+
   return (
-    <div className="flex h-[min(70vh,720px)] min-h-[420px] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-      <aside className="flex w-full max-w-[320px] flex-col border-r border-slate-200">
+    <div className="flex h-[min(75dvh,720px)] min-h-[420px] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <aside
+        className={`${selectedId ? "hidden" : "flex"} w-full flex-col border-slate-200 lg:flex lg:w-[20rem] lg:shrink-0 lg:border-r`}
+      >
         <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
           <div>
             <p className="text-sm font-semibold text-slate-900">{t("webAiChatTab")}</p>
@@ -155,7 +171,7 @@ export function ManagerWebLeadInbox({
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
-                  <p className="truncate text-sm font-semibold text-slate-900">{label}</p>
+                  <p className="min-w-0 truncate text-sm font-semibold text-slate-900">{label}</p>
                   <span className="shrink-0 text-[10px] text-slate-400">{formatWhen(item.lastMessageAt)}</span>
                 </div>
                 <p className="mt-0.5 truncate text-xs text-slate-500">
@@ -183,39 +199,53 @@ export function ManagerWebLeadInbox({
         </div>
       </aside>
 
-      <section className="flex min-w-0 flex-1 flex-col">
+      <section className={`${selectedId ? "flex" : "hidden"} min-w-0 flex-1 flex-col lg:flex`}>
         {!c ? (
-          <div className="flex flex-1 items-center justify-center p-6 text-sm text-slate-400">
-            {language === "vi" ? "Chọn một hội thoại để xem." : "Select a conversation."}
-          </div>
+          <>
+            {selectedId ? (
+              <header className="border-b border-slate-100 px-3 py-2 lg:hidden">{backToList}</header>
+            ) : null}
+            <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-slate-400">
+              {selectedId
+                ? language === "vi"
+                  ? "Đang tải hội thoại…"
+                  : "Loading conversation…"
+                : language === "vi"
+                  ? "Chọn một hội thoại để xem."
+                  : "Select a conversation."}
+            </div>
+          </>
         ) : (
           <>
-            <header className="border-b border-slate-100 px-4 py-3">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-base font-semibold text-slate-900">
-                    {c.guestName || c.phone || c.facebook || c.conversationKey}
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {[
-                      c.phone ? `☎ ${c.phone}` : null,
-                      c.facebook ? `FB ${c.facebook}` : null,
-                      c.stayMonths ? `${c.stayMonths} mo` : null,
-                      c.occupationHint,
-                      c.preferredBranch,
-                      c.moveInHint
-                    ]
-                      .filter(Boolean)
-                      .join(" · ") || (language === "vi" ? "Chưa có liên hệ" : "No contact yet")}
-                  </p>
-                  {c.lastQuoteVnd != null ? (
-                    <p className="mt-1 text-xs font-medium text-amber-800">
-                      {language === "vi" ? "Báo giá gần nhất" : "Latest quote"}:{" "}
-                      {formatMoney(c.lastQuoteVnd, language)}/mo
+            <header className="border-b border-slate-100 px-3 py-2.5 sm:px-4 sm:py-3">
+              <div className="flex items-start justify-between gap-2 sm:gap-3">
+                <div className="flex min-w-0 flex-1 items-start gap-1.5">
+                  {backToList}
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-900 sm:text-base">
+                      {c.guestName || c.phone || c.facebook || c.conversationKey}
                     </p>
-                  ) : null}
+                    <p className="mt-1 break-words text-xs text-slate-500">
+                      {[
+                        c.phone ? `☎ ${c.phone}` : null,
+                        c.facebook ? `FB ${c.facebook}` : null,
+                        c.stayMonths ? `${c.stayMonths} mo` : null,
+                        c.occupationHint,
+                        c.preferredBranch,
+                        c.moveInHint
+                      ]
+                        .filter(Boolean)
+                        .join(" · ") || (language === "vi" ? "Chưa có liên hệ" : "No contact yet")}
+                    </p>
+                    {c.lastQuoteVnd != null ? (
+                      <p className="mt-1 text-xs font-medium text-amber-800">
+                        {language === "vi" ? "Báo giá gần nhất" : "Latest quote"}:{" "}
+                        {formatMoney(c.lastQuoteVnd, language)}/mo
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex shrink-0 gap-2">
                   {c.status === "OPEN" ? (
                     <button
                       type="button"
@@ -236,11 +266,11 @@ export function ManagerWebLeadInbox({
                 </div>
               </div>
             </header>
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50 px-4 py-4">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50 px-3 py-4 sm:px-4">
               {detail?.messages.map((m) => (
                 <div
                   key={m.id}
-                  className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm leading-relaxed ${
+                  className={`max-w-[85%] whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm leading-relaxed ${
                     m.role === "GUEST"
                       ? "ml-auto bg-teal-600 text-white"
                       : m.role === "STAFF"
