@@ -24,6 +24,7 @@ import {
 import { loadOpenAcComfortAlertsForStaff } from "./ac-comfort-votes.js";
 import { loadOpenHostelBookingAlertsForStaff } from "./hostel-booking-notifications.js";
 import { buildFridgeDrainReminderNotifications } from "./fridge-drain-schedule.js";
+import { listCleaningHeroAwardsForEmail } from "./cleaning-hero-awards.js";
 import { isBranchAutomationDisabled, isCleaningTaskAutomationDisabled } from "./branch-closure.js";
 import { prisma } from "./prisma.js";
 import { chatAttachmentSelect, type ChatAttachmentInput } from "./chat-attachments.js";
@@ -546,7 +547,8 @@ type ResidentNotificationItem = {
     | "CLEANING_REMINDER"
     | "CLEANING_AUDIT_RESULT"
     | "PREPAID_PACKAGE"
-    | "FRIDGE_DRAIN_REMINDER";
+    | "FRIDGE_DRAIN_REMINDER"
+    | "CLEANING_HERO_AWARD";
   title: string;
   body: string;
   createdAt: string | Date;
@@ -891,6 +893,19 @@ async function buildResidentReminderNotifications(email: string) {
         href: "/schedule"
       });
     }
+  }
+
+  const heroAwards = await listCleaningHeroAwardsForEmail(normalizedEmail, { withinDays: 45 });
+  for (const award of heroAwards) {
+    notifications.push({
+      id: `cleaning-hero-${award.id}`,
+      type: "CLEANING_HERO_AWARD",
+      title: award.title,
+      body: `Congrats! You completed the most self-assigned cleaning tasks in ${award.periodKey} (${award.completedCount}). +${award.coinsAwarded.toLocaleString()} coins have been added to your account.`,
+      createdAt: award.awardedAt,
+      unreadCount: 1,
+      href: "/cleaning-schedule"
+    });
   }
 
   if (client) {

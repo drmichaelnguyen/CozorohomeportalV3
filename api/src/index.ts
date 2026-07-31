@@ -52,6 +52,7 @@ import { getAccountLockOverride, setAccountLockOverride } from "./account-lock-o
 import { getClientGroupContext, getGroupMessages, markGroupRead, postGroupMessage } from "./group-support.js";
 import { VAPID_PUBLIC_KEY, savePushSubscription, deletePushSubscription, sendPushToEmail } from "./push.js";
 import { getCleaningRewardSettings, updateCleaningRewardSettings } from "./cleaning-reward-settings.js";
+import { runCleaningHeroAwards } from "./cleaning-hero-awards.js";
 import { getManagerFridgeDrainSchedule, upsertFridgeDrainCleaningDate } from "./fridge-drain-schedule.js";
 import {
   exportDatabaseToGoogleSheet,
@@ -234,6 +235,9 @@ import {
   selfAssignCleaningTask,
   sweepOverdueCleaningTasks,
   sweepMonthlyEvasionPenalties,
+  sweepLeftResidentCleaningSchedules,
+  purgeResidentCleaningSchedule,
+  purgeResidentCleaningScheduleIfIneligible,
   autoScheduleCleaningTasksByJob,
   setCleaningAvailability,
   setBulkCleaningAvailability,
@@ -1183,11 +1187,19 @@ async function runOverdueCleaningSweep(trigger: "startup" | "interval" | "manual
       );
     }
 
+    const leftResidentResult = await sweepLeftResidentCleaningSchedules();
+    if (leftResidentResult.removedTasks > 0) {
+      console.log(
+        `[cleaning-left-resident-sweep] trigger=${trigger} scannedEmails=${leftResidentResult.scannedEmails} purgedEmails=${leftResidentResult.purgedEmails} removedTasks=${leftResidentResult.removedTasks}`
+      );
+    }
+
     return {
       skipped: false,
       missedTaskSweepSkipped: !runMissedTaskSweep,
       ...missedResult,
-      evasion: evasionResult
+      evasion: evasionResult,
+      leftResidents: leftResidentResult
     };
   } finally {
     overdueCleaningSweepRunning = false;
@@ -1359,7 +1371,9 @@ const cleaningRewardSettingsPutSchema = z.object({
       TRASH_D7: z.coerce.number().int().min(0).max(500000).optional()
     })
     .optional(),
-  selfAssignBonusMultiplier: z.coerce.number().min(1).max(3).optional()
+  selfAssignBonusMultiplier: z.coerce.number().min(1).max(5).optional(),
+  selfAssignWeekendMultiplier: z.coerce.number().min(1).max(5).optional(),
+  selfAssignHolidayMultiplier: z.coerce.number().min(1).max(5).optional()
 });
 const fridgeDrainSchedulePutSchema = z.object({
   actorEmail: z.string().email(),
@@ -4301,10 +4315,36 @@ app.post("/staff/clients/set-inactive", async (request, response) => {
     // different codes can collide on the displayed string.
     if (Number.isInteger(rowNumber) && rowNumber >= 2) {
       await updateClientColumnsByRowNumber(rowNumber, { "Hiện còn ở": "-1" }, email || undefined);
+      const targetEmail = email.trim().toLowerCase();
+      if (targetEmail) {
+        await syncClientsFromSheet().catch(() => null);
+        await purgeResidentCleaningScheduleIfIneligible(targetEmail, {
+          reason: "set-inactive"
+        }).catch((error) => {
+          console.warn(
+            `[cleaning-purge] set-inactive failed for ${targetEmail}:`,
+            error instanceof Error ? error.message : error
+          );
+        });
+      }
       return response.json({ ok: true });
     }
     if (!maHd) return response.status(400).json({ error: "maHd or rowNumber is required" });
     await updateClientColumns(maHd, { "Hiện còn ở": "-1" });
+    {
+      const targetEmail = email.trim().toLowerCase();
+      if (targetEmail) {
+        await syncClientsFromSheet().catch(() => null);
+        await purgeResidentCleaningScheduleIfIneligible(targetEmail, {
+          reason: "set-inactive"
+        }).catch((error) => {
+          console.warn(
+            `[cleaning-purge] set-inactive failed for ${targetEmail}:`,
+            error instanceof Error ? error.message : error
+          );
+        });
+      }
+    }
     return response.json({ ok: true });
   } catch (error) {
     return response.status(400).json({ error: error instanceof Error ? error.message : "Unable to mark contract inactive" });
@@ -7585,7 +7625,9 @@ app.put("/manager/cleaning-reward-settings", async (req, res) => {
   try {
     const settings = await updateCleaningRewardSettings(parsed.data.actorEmail, {
       baseRewards: parsed.data.baseRewards,
-      selfAssignBonusMultiplier: parsed.data.selfAssignBonusMultiplier
+      selfAssignBonusMultiplier: parsed.data.selfAssignBonusMultiplier,
+      selfAssignWeekendMultiplier: parsed.data.selfAssignWeekendMultiplier,
+      selfAssignHolidayMultiplier: parsed.data.selfAssignHolidayMultiplier
     });
     return res.json(settings);
   } catch (error) {
@@ -9908,6 +9950,14 @@ app.post("/manager/terminate-contract", async (request, response) => {
   }
   try {
     const record = await terminateContract({ actorEmail, maHd, email, name, branch, bed, depositNote });
+    await purgeResidentCleaningSchedule(String(email).trim().toLowerCase(), {
+      reason: `contract-terminated:${maHd}`
+    }).catch((error) => {
+      console.warn(
+        `[cleaning-purge] terminate-contract failed for ${email}:`,
+        error instanceof Error ? error.message : error
+      );
+    });
     return response.json({ ok: true, record });
   } catch (error) {
     return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to terminate contract" });
@@ -10048,6 +10098,14 @@ app.post("/client/checkout", express.json(), async (request, response) => {
       photos: photos ?? [],
       source: resolvedSource
     });
+    await purgeResidentCleaningSchedule(String(email).trim().toLowerCase(), {
+      reason: `checkout:${resolvedSource}:${maHd}`
+    }).catch((error) => {
+      console.warn(
+        `[cleaning-purge] checkout failed for ${email}:`,
+        error instanceof Error ? error.message : error
+      );
+    });
     const optional = steps?.optionalStepPhotos ?? {};
     const allLocals = [
       ...Object.values(optional).flat(),
@@ -10147,6 +10205,26 @@ app.listen(port, "127.0.0.1", () => {
   }, 6 * 60 * 60 * 1000);
   bedOccupancyTimer.unref();
 
+  void runCleaningHeroAwards().catch((error) => {
+    console.error("[cleaning-hero] startup award run failed", error);
+  });
+  const cleaningHeroTimer = setInterval(() => {
+    void runCleaningHeroAwards().catch((error) => {
+      console.error("[cleaning-hero] scheduled award run failed", error);
+    });
+  }, 6 * 60 * 60 * 1000);
+  cleaningHeroTimer.unref();
+
+  void sweepLeftResidentCleaningSchedules().catch((error) => {
+    console.error("[cleaning-left-resident-sweep] startup failed", error);
+  });
+  const leftResidentCleaningTimer = setInterval(() => {
+    void sweepLeftResidentCleaningSchedules().catch((error) => {
+      console.error("[cleaning-left-resident-sweep] scheduled failed", error);
+    });
+  }, 60 * 60 * 1000);
+  leftResidentCleaningTimer.unref();
+
   void dispatchCleaningReminderPushes("startup").catch((error) => {
     console.error("[cleaning-reminder-push] startup failed", error);
   });
@@ -10198,5 +10276,4 @@ app.listen(port, "127.0.0.1", () => {
   }, autoScheduleIntervalMs);
 
   scheduleTimer.unref();
-
 });

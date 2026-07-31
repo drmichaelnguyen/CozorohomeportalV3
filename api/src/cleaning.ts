@@ -15,6 +15,7 @@ import {
 
 import {
   CONTRACT_CODE_COLUMN,
+  CLIENT_CONTRACT_END_COLUMN,
   ClientRow,
   CleaningCalendarEvent,
   awardCleaningCoinsToSheet,
@@ -23,6 +24,7 @@ import {
   getConfiguredCleaningCalendars,
   createCleaningCalendarEvent,
   getCleaningCalendarTarget,
+  getActiveClientByEmail,
   getManagerFines,
   listCleaningCalendarEvents,
   readCachedClients,
@@ -37,7 +39,13 @@ import {
   inferCorrectionAction,
   recordCleaningScheduleCorrection
 } from "./cleaning-schedule-corrections.js";
-import { getCleaningRewardSettings } from "./cleaning-reward-settings.js";
+import {
+  SELF_ASSIGN_MAX_DAYS_AHEAD,
+  computeCleaningRewardCoins,
+  getCleaningRewardSettings
+} from "./cleaning-reward-settings.js";
+import { daysUntilContractEnd, getTerminationByEmail, listTerminatedEmails } from "./checkout.js";
+import { listVietnamHolidays } from "./vietnam-holidays.js";
 import { prisma } from "./prisma.js";
 
 type ActiveCleaningUser = {
@@ -711,15 +719,39 @@ function mapActiveCleaningUsers(rows: ClientRow[]) {
 async function getActiveCleaningUsers(options?: { emailHint?: string; forceRefresh?: boolean }) {
   const normalizedEmailHint = options?.emailHint?.trim().toLowerCase();
   const initialCache = options?.forceRefresh ? await syncClientsFromSheet() : ((await readCachedClients()) ?? await syncClientsFromSheet());
-  let users = mapActiveCleaningUsers(initialCache.rows ?? []);
+  let users = mapActiveCleaningUsers(initialCache.rows ?? []).filter((user) => !isCleaningContractEnded(user.source));
 
   if (!normalizedEmailHint || users.some((user) => user.email === normalizedEmailHint)) {
-    return users;
+    return filterTerminatedCleaningUsers(users);
   }
 
   const refreshedCache = await syncClientsFromSheet();
-  users = mapActiveCleaningUsers(refreshedCache.rows ?? []);
-  return users;
+  users = mapActiveCleaningUsers(refreshedCache.rows ?? []).filter((user) => !isCleaningContractEnded(user.source));
+  return filterTerminatedCleaningUsers(users);
+}
+
+async function filterTerminatedCleaningUsers(users: ActiveCleaningUser[]): Promise<ActiveCleaningUser[]> {
+  if (users.length === 0) return users;
+  const terminated = await listTerminatedEmails();
+  if (terminated.size === 0) return users;
+  return users.filter((user) => !terminated.has(user.email));
+}
+
+function isCleaningContractEnded(row: ClientRow | null | undefined): boolean {
+  if (!row) return true;
+  const days = daysUntilContractEnd(String(row[CLIENT_CONTRACT_END_COLUMN] ?? ""));
+  return days !== null && days < 0;
+}
+
+/** True when the resident should keep a cleaning schedule (active stay + contract not past end / not terminated). */
+export async function isResidentEligibleForCleaningSchedule(email: string): Promise<boolean> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return false;
+  const termination = await getTerminationByEmail(normalized);
+  if (termination) return false;
+  const client = await getActiveClientByEmail(normalized);
+  if (!client) return false;
+  return !isCleaningContractEnded(client);
 }
 
 async function readCleaningOverviewCacheFile() {
@@ -941,12 +973,18 @@ async function getNearestOpenDatesForUser(input: {
   fromDate: Date;
   floor?: number | null;
   limit?: number;
+  /** Hard cap for suggestion search (inclusive). Defaults to today + self-assign max horizon. */
+  maxDate?: Date;
 }) {
   const suggestions: string[] = [];
   const normalizedFromDate = normalizeCalendarDate(input.fromDate);
   let cursor = addDays(normalizedFromDate, 1);
   const limit = input.limit ?? 5;
-  const searchToDate = addDays(normalizedFromDate, 90);
+  const defaultMax = addDays(normalizeCalendarDate(new Date()), SELF_ASSIGN_MAX_DAYS_AHEAD);
+  const searchToDate = normalizeCalendarDate(input.maxDate ?? defaultMax);
+  if (cursor.getTime() > searchToDate.getTime()) {
+    return suggestions;
+  }
 
   await syncCleaningCalendarWindow(cursor, searchToDate);
 
@@ -1460,10 +1498,12 @@ async function createCleaningTaskRecord(input: {
 }) {
   const normalizedScheduledDate = normalizeCalendarDate(input.scheduledDate);
   const rewardSettings = await getCleaningRewardSettings();
-  let rewardCoins = rewardSettings.baseRewards[input.type];
-  if (input.isSelfAssigned) {
-    rewardCoins = Math.round(rewardCoins * rewardSettings.selfAssignBonusMultiplier);
-  }
+  const { rewardCoins } = computeCleaningRewardCoins(
+    rewardSettings,
+    input.type,
+    normalizedScheduledDate,
+    Boolean(input.isSelfAssigned)
+  );
   const target = getCleaningCalendarTarget(input.type, { floor: input.floor ?? input.user.floor });
   const calendarId: string | null = target?.calendarId ?? null;
   const calendarEventId: string | null = null;
@@ -1796,6 +1836,10 @@ export async function selfAssignCleaningTask(input: {
   if (!isFutureCalendarDate(input.date)) {
     throw new Error("Self-assignment is only available for future dates");
   }
+  const daysAhead = getCalendarDayDiff(new Date(), input.date);
+  if (daysAhead > SELF_ASSIGN_MAX_DAYS_AHEAD) {
+    throw new Error(`Self-assignment is limited to ${SELF_ASSIGN_MAX_DAYS_AHEAD} days in advance`);
+  }
   const normalizedEmail = input.email.trim().toLowerCase();
   const user = await getUserCleaningContext(normalizedEmail);
 
@@ -1890,6 +1934,14 @@ export async function checkSelfAssignCleaningTask(input: {
     return {
       canSubmit: false,
       reason: "Self-assignment is only available for future dates."
+    };
+  }
+
+  const daysAhead = getCalendarDayDiff(new Date(), input.date);
+  if (daysAhead > SELF_ASSIGN_MAX_DAYS_AHEAD) {
+    return {
+      canSubmit: false,
+      reason: `Self-assignment is limited to ${SELF_ASSIGN_MAX_DAYS_AHEAD} days in advance.`
     };
   }
 
@@ -2224,6 +2276,9 @@ async function buildCleaningOverviewForUser(email: string) {
   });
 
   const releasesThisMonth = await countReleasesThisMonth(normalizedEmail);
+  const rewardSettings = await getCleaningRewardSettings();
+  const holidayYear = today.getUTCFullYear();
+  const holidays = listVietnamHolidays(holidayYear - 1, holidayYear + 1);
 
   return {
     user,
@@ -2233,7 +2288,14 @@ async function buildCleaningOverviewForUser(email: string) {
     contractOptOut,
     optOut: optOut ? { month: optOut.month, paymentMethod: optOut.paymentMethod } : null,
     releasesThisMonth,
-    monthlyReleaseLimit: MONTHLY_RELEASE_LIMIT
+    monthlyReleaseLimit: MONTHLY_RELEASE_LIMIT,
+    selfAssignMaxDaysAhead: SELF_ASSIGN_MAX_DAYS_AHEAD,
+    rewardMultipliers: {
+      selfAssign: rewardSettings.selfAssignBonusMultiplier,
+      weekend: rewardSettings.selfAssignWeekendMultiplier,
+      holiday: rewardSettings.selfAssignHolidayMultiplier
+    },
+    holidays
   };
 }
 
@@ -2730,6 +2792,160 @@ export async function adminRemoveCleaningTask(
   });
   await invalidateCleaningOverviewCache(task.userEmail);
   return { id: taskId, removed: true };
+}
+
+async function deleteAssignedCleaningTaskForDeparture(
+  task: {
+    id: string;
+    userEmail: string;
+    type: CleaningTaskType;
+    scheduledDate: Date;
+    calendarId: string | null;
+    calendarEventId: string | null;
+  },
+  reason: string
+) {
+  if (task.calendarId && task.calendarEventId) {
+    try {
+      await deleteCleaningCalendarEvent({
+        calendarId: task.calendarId,
+        eventId: task.calendarEventId
+      });
+    } catch (calErr) {
+      const msg = calErr instanceof Error ? calErr.message : String(calErr);
+      const isGone = /404|410|not found|Resource has been deleted/i.test(msg);
+      if (!isGone) {
+        console.warn(
+          `[cleaning-purge] calendar delete failed for ${task.id}: ${msg}`
+        );
+      }
+    }
+  }
+
+  await deleteCleaningTask({ where: { id: task.id } });
+  await logAction({
+    actorEmail: null,
+    actorName: "System",
+    actorRole: "system",
+    action: "cleaning.task.purge_on_departure",
+    entityType: "CleaningTask",
+    entityId: task.id,
+    entityLabel: `${task.type}|${task.scheduledDate.toISOString().slice(0, 10)}`,
+    details: reason
+  });
+}
+
+/**
+ * Remove today+future ASSIGNED cleaning tasks and cancel open swap requests for a resident.
+ * Used when a contract ends, is terminated, or the resident is marked inactive.
+ */
+export async function purgeResidentCleaningSchedule(
+  email: string,
+  options?: { reason?: string }
+): Promise<{ removedTaskIds: string[]; cancelledSwapIds: string[] }> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) {
+    return { removedTaskIds: [], cancelledSwapIds: [] };
+  }
+
+  const reason = options?.reason?.trim() || "resident-departed";
+  const today = normalizeCalendarDate(new Date());
+  const tasks = await findManyCleaningTasks({
+    where: {
+      userEmail: normalized,
+      status: CleaningTaskStatus.ASSIGNED,
+      scheduledDate: { gte: calendarRangeStart(today) }
+    },
+    orderBy: { scheduledDate: "asc" }
+  });
+
+  const removedTaskIds: string[] = [];
+  for (const task of tasks) {
+    await deleteAssignedCleaningTaskForDeparture(task, reason);
+    removedTaskIds.push(task.id);
+  }
+
+  const pendingSwaps = await prisma.cleaningSwapRequest.findMany({
+    where: {
+      status: CleaningSwapRequestStatus.PENDING,
+      OR: [{ requesterEmail: normalized }, { targetEmail: normalized }]
+    },
+    select: { id: true }
+  });
+  const cancelledSwapIds: string[] = [];
+  if (pendingSwaps.length > 0) {
+    await prisma.cleaningSwapRequest.updateMany({
+      where: { id: { in: pendingSwaps.map((row) => row.id) } },
+      data: { status: CleaningSwapRequestStatus.CANCELLED, cancelledAt: new Date() }
+    });
+    for (const row of pendingSwaps) {
+      cancelledSwapIds.push(row.id);
+    }
+  }
+
+  if (removedTaskIds.length > 0 || cancelledSwapIds.length > 0) {
+    await invalidateCleaningOverviewCache(normalized);
+    console.log(
+      `[cleaning-purge] email=${normalized} removedTasks=${removedTaskIds.length} cancelledSwaps=${cancelledSwapIds.length} reason=${reason}`
+    );
+  }
+
+  return { removedTaskIds, cancelledSwapIds };
+}
+
+/** Purge only when the resident is no longer eligible (inactive / contract ended). */
+export async function purgeResidentCleaningScheduleIfIneligible(
+  email: string,
+  options?: { reason?: string; force?: boolean }
+): Promise<{ removedTaskIds: string[]; cancelledSwapIds: string[]; skipped: boolean }> {
+  const normalized = email.trim().toLowerCase();
+  if (!options?.force) {
+    const eligible = await isResidentEligibleForCleaningSchedule(normalized);
+    if (eligible) {
+      return { removedTaskIds: [], cancelledSwapIds: [], skipped: true };
+    }
+  }
+  const result = await purgeResidentCleaningSchedule(normalized, {
+    reason: options?.reason ?? "contract-ended-or-inactive"
+  });
+  return { ...result, skipped: false };
+}
+
+/**
+ * Safety net: clear future schedules for residents who left or whose contract end date has passed.
+ */
+export async function sweepLeftResidentCleaningSchedules(now = new Date()) {
+  const today = normalizeCalendarDate(now);
+  const futureAssigned = await findManyCleaningTasks({
+    where: {
+      status: CleaningTaskStatus.ASSIGNED,
+      scheduledDate: { gte: calendarRangeStart(today) }
+    },
+    select: { userEmail: true }
+  });
+
+  const emails = [...new Set(futureAssigned.map((task) => task.userEmail.trim().toLowerCase()).filter(Boolean))];
+  let removedTasks = 0;
+  let purgedEmails = 0;
+  const details: Array<{ email: string; removed: number }> = [];
+
+  for (const email of emails) {
+    const result = await purgeResidentCleaningScheduleIfIneligible(email, {
+      reason: "left-resident-cleaning-sweep"
+    });
+    if (result.removedTaskIds.length > 0) {
+      purgedEmails += 1;
+      removedTasks += result.removedTaskIds.length;
+      details.push({ email, removed: result.removedTaskIds.length });
+    }
+  }
+
+  return {
+    scannedEmails: emails.length,
+    purgedEmails,
+    removedTasks,
+    details
+  };
 }
 
 export async function completeCleaningTask(taskId: string, email: string, note?: string, photo?: string) {

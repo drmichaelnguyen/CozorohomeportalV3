@@ -970,7 +970,15 @@ const translations: Record<string, { en: string; vi: string }> = {
   savingAway: { en: "Saving...", vi: "Đang lưu..." },
   taskActionsHeader: { en: "Task Actions", vi: "Thao tác lịch trực" },
   coinsBonusBadge: { en: "+50% Coins Bonus", vi: "+50% Bonus Coin" },
-  selfAssignBonusPercent: { en: "+50%", vi: "+50%" },
+  selfAssignBonusPercent: { en: "x2", vi: "x2" },
+  selfAssignBonusWeekday: { en: "x2", vi: "x2" },
+  selfAssignBonusWeekend: { en: "x2.5 weekend", vi: "x2.5 cuối tuần" },
+  selfAssignBonusHoliday: { en: "x3 holiday", vi: "x3 ngày lễ" },
+  selfAssignMaxDaysAhead: {
+    en: "Self-assignment is limited to 30 days in advance.",
+    vi: "Chỉ được tự đăng ký tối đa 30 ngày trước."
+  },
+  vietnamHolidayLabel: { en: "Vietnam national holiday", vi: "Ngày lễ Việt Nam" },
   noCleaningProfile: { en: "Your cleaning profile hasn't been set up yet. Contact your manager to be added to the system.", vi: "Hồ sơ vệ sinh của bạn chưa được thiết lập. Liên hệ quản lý để được thêm vào hệ thống." },
   takeOver: { en: "Take Over", vi: "Nhận thay" },
   takeOverDesc: { en: "assigned person hasn't completed it yet", vi: "người được giao chưa hoàn thành" },
@@ -1154,13 +1162,15 @@ const translations: Record<string, { en: string; vi: string }> = {
   pwaPromptOpenGuides: { en: "Show steps again on Account", vi: "Xem lại các bước ở trang Tài khoản" },
   toolsCleaningRewardsTitle: { en: "Cleaning schedule coin rewards", vi: "Thưởng coin lịch vệ sinh" },
   toolsCleaningRewardsDesc: {
-    en: "Base coins per task type and the multiplier when a resident self-assigns a slot (e.g. 1.5 = +50%).",
-    vi: "Coin cơ bản theo loại công việc và hệ số khi cư dân tự đăng ký slot (vd: 1.5 = +50%)."
+    en: "Base coins per task type. Self-assign multipliers: weekday x2, weekend x2.5, Vietnam national holiday x3 (vs manager/system assign).",
+    vi: "Coin cơ bản theo loại việc. Hệ số tự đăng ký: ngày thường x2, cuối tuần x2.5, ngày lễ VN x3 (so với quản lý/hệ thống gán)."
   },
   toolsTaskKitchenD2: { en: "Kitchen D2", vi: "Bếp D2" },
   toolsTaskKitchenD7: { en: "Kitchen D7", vi: "Bếp D7" },
   toolsTaskTrashD7: { en: "Trash D7", vi: "Rác D7" },
-  toolsSelfAssignMultiplier: { en: "Self-assign multiplier", vi: "Hệ số tự đăng ký" },
+  toolsSelfAssignMultiplier: { en: "Self-assign weekday multiplier", vi: "Hệ số tự đăng ký (ngày thường)" },
+  toolsSelfAssignWeekendMultiplier: { en: "Self-assign weekend multiplier", vi: "Hệ số tự đăng ký (cuối tuần)" },
+  toolsSelfAssignHolidayMultiplier: { en: "Self-assign holiday multiplier", vi: "Hệ số tự đăng ký (ngày lễ)" },
   toolsSaveCleaningRewards: { en: "Save cleaning rewards", vi: "Lưu thưởng vệ sinh" },
   toolsFridgeDrainTitle: { en: "Fridge drain & clean (shared fridges)", vi: "Xả / vệ sinh tủ lạnh (tủ chung)" },
   toolsFridgeDrainDesc: {

@@ -156,6 +156,12 @@ export async function getTerminationByMaHd(maHd: string): Promise<ContractTermin
   return file.terminations.find((t) => t.maHd === maHd) ?? null;
 }
 
+/** Emails with a recorded contract termination (used to stop cleaning assignments). */
+export async function listTerminatedEmails(): Promise<Set<string>> {
+  const file = await readFile_();
+  return new Set(file.terminations.map((t) => t.email.trim().toLowerCase()).filter(Boolean));
+}
+
 export type CheckoutContext = {
   eligible: boolean;
   reason?: string;

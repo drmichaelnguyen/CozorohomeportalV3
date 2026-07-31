@@ -17,6 +17,8 @@ export type ManagerSettingsToolsClient = {
 type CleaningRewardApi = {
   baseRewards: Record<"KITCHEN_D2" | "KITCHEN_D7" | "TRASH_D7", number>;
   selfAssignBonusMultiplier: number;
+  selfAssignWeekendMultiplier: number;
+  selfAssignHolidayMultiplier: number;
 };
 
 const TASK_KEYS = ["KITCHEN_D2", "KITCHEN_D7", "TRASH_D7"] as const;
@@ -202,7 +204,9 @@ export function ManagerSettingsTools({ normalizedEmail, clients, canManageDbBack
       }
       setCleaningForm({
         baseRewards: { ...data.baseRewards },
-        selfAssignBonusMultiplier: data.selfAssignBonusMultiplier
+        selfAssignBonusMultiplier: data.selfAssignBonusMultiplier,
+        selfAssignWeekendMultiplier: data.selfAssignWeekendMultiplier ?? 2.5,
+        selfAssignHolidayMultiplier: data.selfAssignHolidayMultiplier ?? 3
       });
     } catch (e) {
       setCleaningError(e instanceof Error ? e.message : t("toolsLoadFailed"));
@@ -366,7 +370,9 @@ export function ManagerSettingsTools({ normalizedEmail, clients, canManageDbBack
         body: JSON.stringify({
           actorEmail: normalizedEmail,
           baseRewards: cleaningForm.baseRewards,
-          selfAssignBonusMultiplier: cleaningForm.selfAssignBonusMultiplier
+          selfAssignBonusMultiplier: cleaningForm.selfAssignBonusMultiplier,
+          selfAssignWeekendMultiplier: cleaningForm.selfAssignWeekendMultiplier,
+          selfAssignHolidayMultiplier: cleaningForm.selfAssignHolidayMultiplier
         })
       });
       const data = (await res.json()) as CleaningRewardApi & { error?: string };
@@ -375,7 +381,9 @@ export function ManagerSettingsTools({ normalizedEmail, clients, canManageDbBack
       }
       setCleaningForm({
         baseRewards: { ...data.baseRewards },
-        selfAssignBonusMultiplier: data.selfAssignBonusMultiplier
+        selfAssignBonusMultiplier: data.selfAssignBonusMultiplier,
+        selfAssignWeekendMultiplier: data.selfAssignWeekendMultiplier,
+        selfAssignHolidayMultiplier: data.selfAssignHolidayMultiplier
       });
     } catch (e) {
       setCleaningError(e instanceof Error ? e.message : t("toolsLoadFailed"));
@@ -581,27 +589,71 @@ export function ManagerSettingsTools({ normalizedEmail, clients, canManageDbBack
                 </label>
               ))}
             </div>
-            <label className="block max-w-xs text-sm">
-              <span className="font-medium text-slate-700 dark:text-slate-300">{t("toolsSelfAssignMultiplier")}</span>
-              <input
-                type="number"
-                min={1}
-                max={3}
-                step={0.05}
-                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
-                value={cleaningForm.selfAssignBonusMultiplier}
-                onChange={(e) =>
-                  setCleaningForm((prev) =>
-                    prev
-                      ? {
-                          ...prev,
-                          selfAssignBonusMultiplier: Math.min(3, Math.max(1, Number(e.target.value) || 1))
-                        }
-                      : prev
-                  )
-                }
-              />
-            </label>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <label className="block text-sm">
+                <span className="font-medium text-slate-700 dark:text-slate-300">{t("toolsSelfAssignMultiplier")}</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={5}
+                  step={0.05}
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+                  value={cleaningForm.selfAssignBonusMultiplier}
+                  onChange={(e) =>
+                    setCleaningForm((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            selfAssignBonusMultiplier: Math.min(5, Math.max(1, Number(e.target.value) || 1))
+                          }
+                        : prev
+                    )
+                  }
+                />
+              </label>
+              <label className="block text-sm">
+                <span className="font-medium text-slate-700 dark:text-slate-300">{t("toolsSelfAssignWeekendMultiplier")}</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={5}
+                  step={0.05}
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+                  value={cleaningForm.selfAssignWeekendMultiplier}
+                  onChange={(e) =>
+                    setCleaningForm((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            selfAssignWeekendMultiplier: Math.min(5, Math.max(1, Number(e.target.value) || 1))
+                          }
+                        : prev
+                    )
+                  }
+                />
+              </label>
+              <label className="block text-sm">
+                <span className="font-medium text-slate-700 dark:text-slate-300">{t("toolsSelfAssignHolidayMultiplier")}</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={5}
+                  step={0.05}
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+                  value={cleaningForm.selfAssignHolidayMultiplier}
+                  onChange={(e) =>
+                    setCleaningForm((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            selfAssignHolidayMultiplier: Math.min(5, Math.max(1, Number(e.target.value) || 1))
+                          }
+                        : prev
+                    )
+                  }
+                />
+              </label>
+            </div>
             <button
               type="button"
               disabled={cleaningSaving}

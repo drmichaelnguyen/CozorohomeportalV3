@@ -21,7 +21,8 @@ type ResidentNotification = {
     | "CLEANING_REMINDER"
     | "CLEANING_AUDIT_RESULT"
     | "PREPAID_PACKAGE"
-    | "FRIDGE_DRAIN_REMINDER";
+    | "FRIDGE_DRAIN_REMINDER"
+    | "CLEANING_HERO_AWARD";
   conversationId?: string;
   title: string;
   body: string;

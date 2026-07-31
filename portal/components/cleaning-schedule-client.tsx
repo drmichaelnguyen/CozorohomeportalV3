@@ -5,6 +5,11 @@ import { usePortalSession } from "./portal-session";
 import { usePortalLanguage } from "./portal-language";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { formatCozoroDate, formatCozoroDateTime, formatCozoroMonth } from "../lib/date-format";
+import {
+  getVietnamHoliday,
+  isVietnamNationalHoliday,
+  isWeekendDateKey
+} from "../lib/vietnam-holidays";
 
 type CleaningTask = {
   id: string;
@@ -53,6 +58,13 @@ type CleaningOverview = {
   } | null;
   releasesThisMonth?: number;
   monthlyReleaseLimit?: number;
+  selfAssignMaxDaysAhead?: number;
+  rewardMultipliers?: {
+    selfAssign: number;
+    weekend: number;
+    holiday: number;
+  };
+  holidays?: Array<{ date: string; nameEn: string; nameVi: string }>;
 };
 
 type PendingSelfAssignment = {
@@ -284,6 +296,17 @@ function getSelfAssignAvailability(
     };
   }
 
+  const maxDays = overview.selfAssignMaxDaysAhead ?? 30;
+  const today = startOfDay(new Date());
+  const daysAhead = Math.round((startOfDay(date).getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
+  if (daysAhead > maxDays) {
+    return {
+      available: false,
+      reasonKey: "selfAssignMaxDaysAhead",
+      reasonFallback: `Self-assignment is limited to ${maxDays} days in advance.`
+    };
+  }
+
   const availability = (overview.availability ?? []).find((entry) => sameDay(new Date(entry.date), date));
   if (availability?.type === "UNAVAILABLE") {
     return {
@@ -309,6 +332,22 @@ function getSelfAssignAvailability(
   }
 
   return { available: true };
+}
+
+function formatSelfAssignBonusLabel(
+  date: Date,
+  overview: CleaningOverview | null,
+  t: (key: string, fallback?: string) => string
+) {
+  const dateStr = toApiCalendarDate(date);
+  const multipliers = overview?.rewardMultipliers ?? { selfAssign: 2, weekend: 2.5, holiday: 3 };
+  if (isVietnamNationalHoliday(dateStr) || (overview?.holidays ?? []).some((h) => h.date === dateStr)) {
+    return t("selfAssignBonusHoliday", `x${multipliers.holiday} holiday`);
+  }
+  if (isWeekendDateKey(dateStr)) {
+    return t("selfAssignBonusWeekend", `x${multipliers.weekend} weekend`);
+  }
+  return t("selfAssignBonusWeekday", `x${multipliers.selfAssign}`);
 }
 
 function isAfter8pm() {
@@ -1096,7 +1135,7 @@ export function CleaningScheduleClient({
     [selectedDateSelfAssignByType]
   );
 
-  // Upcoming open slots: rest of this month grouped by task type
+  // Upcoming open slots: within self-assign horizon (max 30 days), capped to end of current month display window
   const upcomingOpenSlots = useMemo(() => {
     if (!overview || allowedTaskTypes.length === 0) return {} as Record<CleaningTask["type"], string[]>;
     const result: Record<string, string[]> = {};
@@ -1104,8 +1143,11 @@ export function CleaningScheduleClient({
       result[type] = [];
     }
     const today = startOfDay(new Date());
+    const maxDays = overview.selfAssignMaxDaysAhead ?? 30;
+    const horizonEnd = addDays(today, maxDays);
     const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-    for (let i = 0; addDays(today, i) <= endOfMonth; i++) {
+    const searchEnd = horizonEnd < endOfMonth ? horizonEnd : endOfMonth;
+    for (let i = 1; addDays(today, i) <= searchEnd; i++) {
       const day = addDays(today, i);
       const dayStr = toApiCalendarDate(day);
       for (const type of allowedTaskTypes) {
@@ -1366,7 +1408,7 @@ export function CleaningScheduleClient({
                               <p className="text-sm font-bold text-amber-900">{t("takeOver", "Take Over")}</p>
                               <p className="text-xs text-amber-700">{prettyTaskType(type)} — {t("takeOverDesc", "assigned person hasn't completed it yet")}</p>
                             </div>
-                            <div className="ml-auto text-[10px] font-bold text-amber-600">{t("selfAssignBonusPercent", "+50%")}</div>
+                            <div className="ml-auto text-[10px] font-bold text-amber-600">{formatSelfAssignBonusLabel(activeMenuDate, overview, t)}</div>
                           </button>
                         );
                       }
@@ -1408,7 +1450,7 @@ export function CleaningScheduleClient({
                           <p className="text-sm font-bold text-emerald-900">Assign Myself</p>
                           <p className="text-xs text-emerald-700">{prettyTaskType(type)}</p>
                         </div>
-                        <div className="ml-auto text-[10px] font-bold text-amber-600">{t("selfAssignBonusPercent", "+50%")}</div>
+                        <div className="ml-auto text-[10px] font-bold text-amber-600">{formatSelfAssignBonusLabel(activeMenuDate, overview, t)}</div>
                       </button>
                     );
                   })}
@@ -1999,11 +2041,19 @@ export function CleaningScheduleClient({
                   const isCurrentMonth = day.getMonth() === calendarFocusDate.getMonth();
                   const isSelected = sameDay(day, selectedDate);
                   const isToday = sameDay(day, new Date());
-                  const isFuture = isFutureDate(day);
                   const dayDateStr = toApiCalendarDate(day);
+                  const holiday =
+                    getVietnamHoliday(dayDateStr) ??
+                    (overview.holidays ?? []).find((entry) => entry.date === dayDateStr) ??
+                    null;
+                  const maxDaysAhead = overview.selfAssignMaxDaysAhead ?? 30;
+                  const daysAhead = Math.round(
+                    (startOfDay(day).getTime() - startOfDay(new Date()).getTime()) / (24 * 60 * 60 * 1000)
+                  );
+                  const withinSelfAssignHorizon = isFutureDate(day) && daysAhead <= maxDaysAhead;
 
-                  // Determine open vs occupied slots for this day
-                  const isAssignable = isTodayOrFuture(day);
+                  // Determine open vs occupied slots for this day (within 30-day self-assign window)
+                  const isAssignable = withinSelfAssignHorizon;
                   const hasOpenSlot = isAssignable && allowedTaskTypes.some((type) => {
                     const isMyTask = tasks.some((t) => t.type === type);
                     const isOccupied = (overview.occupiedSlots ?? []).some(
@@ -2053,6 +2103,7 @@ export function CleaningScheduleClient({
                         setSelfAssignSuggestions([]);
                         setDayNote(availability?.note ?? "");
                       }}
+                      title={holiday ? `${holiday.nameEn} / ${holiday.nameVi}` : undefined}
                       className={[
                         "min-h-[3.5rem] md:min-h-28 rounded-lg border p-1 md:p-2 text-left transition-all",
                         awayMode && isAwaySelected ? "bg-orange-100 border-orange-400 ring-2 ring-orange-400" :
@@ -2060,15 +2111,18 @@ export function CleaningScheduleClient({
                         awayMode ? "hover:bg-orange-50 hover:border-orange-300" :
                         isSelected ? "ring-2 ring-slate-900 border-slate-900" : "hover:border-slate-400",
                         isToday && !awayMode ? "border-slate-400" : "",
+                        !awayMode && holiday && !isSelected ? "bg-rose-50 border-rose-200" :
                         !awayMode && hasOpenSlot && !isSelected ? "bg-emerald-50 border-emerald-300" :
                         !awayMode && hasOccupiedByOthers && !isSelected ? "bg-sky-50 border-sky-300" :
                         isCurrentMonth ? "border-slate-200 bg-white" : "border-slate-100 bg-slate-50"
                       ].filter(Boolean).join(" ")}
                     >
                       <div className="flex items-center justify-between">
-                        <div className={`text-[10px] md:text-xs font-semibold ${isToday ? "text-blue-600" : "text-slate-900"}`}>{day.getDate()}</div>
+                        <div className={`text-[10px] md:text-xs font-semibold ${isToday ? "text-blue-600" : holiday ? "text-rose-700" : "text-slate-900"}`}>{day.getDate()}</div>
                         {awayMode && isAwaySelected ? (
                           <div className="h-1.5 w-1.5 rounded-full bg-orange-500" title="Away" />
+                        ) : holiday ? (
+                          <div className="h-1.5 w-1.5 rounded-full bg-rose-500" title={holiday.nameEn} />
                         ) : availability?.type === "UNAVAILABLE" ? (
                           <div className="h-1.5 w-1.5 rounded-full bg-rose-400" title="Unavailable" />
                         ) : hasOpenSlot ? (
@@ -2078,6 +2132,11 @@ export function CleaningScheduleClient({
                         ) : null}
                       </div>
                       <div className="mt-1 flex flex-wrap gap-0.5">
+                        {!awayMode && holiday ? (
+                          <div className="hidden w-full truncate text-[8px] font-bold uppercase text-rose-600 md:block" title={holiday.nameEn}>
+                            {holiday.nameEn}
+                          </div>
+                        ) : null}
                         {!awayMode && tasks.map((task) => (
                           <div key={task.id} className={`h-1.5 w-1.5 shrink-0 rounded-full md:h-auto md:w-full md:px-1.5 md:py-0.5 md:text-[10px] md:truncate ${task.status === "REJECTED" ? "bg-rose-400 md:bg-rose-100 md:text-rose-700" : task.status === "APPROVED" ? "bg-emerald-500 md:bg-emerald-100 md:text-emerald-800" : "bg-amber-500 md:bg-amber-500 md:text-white"}`}>
                             <span className={`hidden md:inline ${task.status === "REJECTED" ? "line-through" : ""}`}>{prettyTaskType(task.type)}{(task.assignmentSource === "SELF" || task.isSelfAssigned) ? " ★" : task.assignmentSource === "SYSTEM" ? " ⚙" : task.assignmentSource === "MANAGER" ? " 👤" : ""}</span>
@@ -2113,6 +2172,21 @@ export function CleaningScheduleClient({
                   year: "numeric"
                 })}
               </div>
+              {(() => {
+                const selectedKey = toApiCalendarDate(selectedDate);
+                const holiday =
+                  getVietnamHoliday(selectedKey) ??
+                  (overview?.holidays ?? []).find((entry) => entry.date === selectedKey) ??
+                  null;
+                if (!holiday) return null;
+                return (
+                  <p className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-800">
+                    {t("vietnamHolidayLabel", "Vietnam national holiday")}: {holiday.nameEn} / {holiday.nameVi}
+                    {" · "}
+                    {t("selfAssignBonusHoliday", `x${overview?.rewardMultipliers?.holiday ?? 3} holiday`)}
+                  </p>
+                );
+              })()}
 
               <div className="mt-4 rounded-xl border border-slate-200 p-4">
                 <div className="text-xs uppercase tracking-wide text-slate-500">Current status</div>
