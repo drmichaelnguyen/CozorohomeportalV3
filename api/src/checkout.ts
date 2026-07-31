@@ -156,10 +156,34 @@ export async function getTerminationByMaHd(maHd: string): Promise<ContractTermin
   return file.terminations.find((t) => t.maHd === maHd) ?? null;
 }
 
-/** Emails with a recorded contract termination (used to stop cleaning assignments). */
-export async function listTerminatedEmails(): Promise<Set<string>> {
+/** True when the resident has confirmed departure via the checkout form. */
+export async function hasCompletedCheckout(email: string): Promise<boolean> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return false;
+
+  const termination = await getTerminationByEmail(normalized);
+  if (termination?.checkOut) return true;
+
+  const dueFile = await readContractDueCompletions();
+  return dueFile.completions.some((entry) => entry.email.trim().toLowerCase() === normalized);
+}
+
+/** Emails that have completed checkout (confirmed left) — used to stop cleaning schedules. */
+export async function listCheckedOutEmails(): Promise<Set<string>> {
   const file = await readFile_();
-  return new Set(file.terminations.map((t) => t.email.trim().toLowerCase()).filter(Boolean));
+  const emails = new Set<string>();
+  for (const termination of file.terminations) {
+    if (termination.checkOut) {
+      const email = termination.email.trim().toLowerCase();
+      if (email) emails.add(email);
+    }
+  }
+  const dueFile = await readContractDueCompletions();
+  for (const entry of dueFile.completions) {
+    const email = entry.email.trim().toLowerCase();
+    if (email) emails.add(email);
+  }
+  return emails;
 }
 
 export type CheckoutContext = {

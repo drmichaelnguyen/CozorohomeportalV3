@@ -51,6 +51,9 @@ type AdminAvailableUser = {
   availabilityType: "AVAILABLE" | "UNAVAILABLE" | "PREFERRED" | null;
   availabilityCount: number;
   totalTaskCount: number;
+  /** Non-missed tasks of this slot type in the fairness window (shared ranking). */
+  recentTypeTaskCount?: number;
+  correctionPenalty?: number;
   hasSameDayTask: boolean;
   sameDayTasks: Array<{
     id: string;
@@ -61,7 +64,11 @@ type AdminAvailableUser = {
 
 function assignUserPickerLabel(user: AdminAvailableUser, t: (key: string, fallback?: string, params?: Record<string, string>) => string) {
   const bed = user.bedDisplay?.trim() || user.branchId;
-  return `${user.name} — ${bed} | ${t("tasksCount", "tasks {count}", { count: String(user.totalTaskCount) })}`;
+  const recent =
+    typeof user.recentTypeTaskCount === "number"
+      ? t("recentTypeTasksCount", "60d type {count}", { count: String(user.recentTypeTaskCount) })
+      : t("tasksCount", "tasks {count}", { count: String(user.totalTaskCount) });
+  return `${user.name} — ${bed} | ${recent}`;
 }
 
 type AutoAssignPreview = {
@@ -1964,7 +1971,11 @@ export function AdminCleaningClient() {
                                 {t("preferenceLabel")}: {selectedUser.availabilityType ?? t("noneLabel")} |{" "}
                               {t("availabilityScore")}: {selectedUser.availabilityCount}
                               </div>
-                              <div>{t("totalTasksLabel")}: {selectedUser.totalTaskCount}</div>
+                              <div>
+                                {t("recentTypeTasksLabel", "60-day tasks (this type)")}:{" "}
+                                {selectedUser.recentTypeTaskCount ?? "—"} | {t("totalTasksLabel")}:{" "}
+                                {selectedUser.totalTaskCount}
+                              </div>
                               {selectedUser.hasSameDayTask ? (
                                 <div className="mt-2 text-amber-700">
                                   {t("alreadyBookedWarning")}
@@ -2057,7 +2068,8 @@ export function AdminCleaningClient() {
                               </div>
                               <div>
                                 {t("availabilityLabel")}: {entry.user.availabilityType ?? t("noneLabel")} |{" "}
-                                {t("availabilityScore")}: {entry.user.availabilityCount} | {t("totalTasksLabel")}:{" "}
+                                {t("recentTypeTasksLabel", "60-day tasks (this type)")}:{" "}
+                                {entry.user.recentTypeTaskCount ?? "—"} | {t("totalTasksLabel")}:{" "}
                                 {entry.user.totalTaskCount}
                               </div>
                             </>

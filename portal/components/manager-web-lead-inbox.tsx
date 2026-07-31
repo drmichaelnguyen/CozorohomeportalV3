@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
@@ -28,6 +28,12 @@ type WebLeadDetail = {
   messages: Array<{ id: string; role: "GUEST" | "BOT" | "STAFF"; body: string; createdAt: string }>;
 };
 
+type InboxFolder = "potential" | "ai_notes";
+
+function hasPhone(item: Pick<WebLeadListItem, "phone">) {
+  return Boolean(item.phone?.trim());
+}
+
 function formatMoney(vnd: number | null | undefined, lang: string) {
   if (vnd == null) return "—";
   return new Intl.NumberFormat(lang === "vi" ? "vi-VN" : "en-US").format(vnd) + "₫";
@@ -51,10 +57,15 @@ export function ManagerWebLeadInbox({
 }) {
   const { t, language } = usePortalLanguage();
   const [items, setItems] = useState<WebLeadListItem[]>([]);
+  const [folder, setFolder] = useState<InboxFolder>("potential");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<WebLeadDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const potentialItems = useMemo(() => items.filter((item) => hasPhone(item)), [items]);
+  const aiNoteItems = useMemo(() => items.filter((item) => !hasPhone(item)), [items]);
+  const visibleItems = folder === "potential" ? potentialItems : aiNoteItems;
 
   const loadList = useCallback(async () => {
     if (!enabled || !operatorEmail) return;
@@ -85,6 +96,8 @@ export function ManagerWebLeadInbox({
         const data = (await res.json()) as WebLeadDetail & { error?: string };
         if (!res.ok) throw new Error(data.error || "Failed to open");
         setDetail(data);
+        if (hasPhone(data.conversation)) setFolder("potential");
+        else setFolder("ai_notes");
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to open");
       }
@@ -95,6 +108,14 @@ export function ManagerWebLeadInbox({
   useEffect(() => {
     void loadList();
   }, [loadList]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    if (!visibleItems.some((item) => item.id === selectedId)) {
+      setSelectedId(null);
+      setDetail(null);
+    }
+  }, [selectedId, visibleItems]);
 
   async function setStatus(status: "OPEN" | "CLOSED") {
     if (!selectedId || !operatorEmail) return;
@@ -145,17 +166,63 @@ export function ManagerWebLeadInbox({
             {language === "vi" ? "Làm mới" : "Refresh"}
           </button>
         </div>
+
+        <div className="grid grid-cols-2 gap-1 border-b border-slate-100 p-2">
+          <button
+            type="button"
+            onClick={() => setFolder("potential")}
+            className={`rounded-2xl px-2.5 py-2 text-left transition ${
+              folder === "potential" ? "bg-emerald-50 ring-1 ring-emerald-200" : "hover:bg-slate-50"
+            }`}
+          >
+            <p
+              className={`text-[11px] font-semibold ${
+                folder === "potential" ? "text-emerald-800" : "text-slate-700"
+              }`}
+            >
+              {language === "vi" ? "Tiềm năng" : "Potential"}
+            </p>
+            <p className={`mt-0.5 text-[10px] ${folder === "potential" ? "text-emerald-700" : "text-slate-400"}`}>
+              {language === "vi" ? `Có SĐT · ${potentialItems.length}` : `Has phone · ${potentialItems.length}`}
+            </p>
+          </button>
+          <button
+            type="button"
+            onClick={() => setFolder("ai_notes")}
+            className={`rounded-2xl px-2.5 py-2 text-left transition ${
+              folder === "ai_notes" ? "bg-slate-100 ring-1 ring-slate-300" : "hover:bg-slate-50"
+            }`}
+          >
+            <p
+              className={`text-[11px] font-semibold ${
+                folder === "ai_notes" ? "text-slate-800" : "text-slate-700"
+              }`}
+            >
+              {language === "vi" ? "Ghi chú AI" : "AI notes"}
+            </p>
+            <p className={`mt-0.5 text-[10px] ${folder === "ai_notes" ? "text-slate-600" : "text-slate-400"}`}>
+              {language === "vi" ? `Chưa SĐT · ${aiNoteItems.length}` : `No phone · ${aiNoteItems.length}`}
+            </p>
+          </button>
+        </div>
+
         <div className="min-h-0 flex-1 overflow-y-auto">
           {loading && !items.length ? (
             <p className="p-4 text-sm text-slate-400">{language === "vi" ? "Đang tải…" : "Loading…"}</p>
           ) : null}
           {error ? <p className="p-4 text-sm text-rose-600">{error}</p> : null}
-          {!loading && !items.length ? (
+          {!loading && !visibleItems.length ? (
             <p className="p-4 text-sm text-slate-400">
-              {language === "vi" ? "Chưa có hội thoại web AI." : "No web AI conversations yet."}
+              {folder === "potential"
+                ? language === "vi"
+                  ? "Chưa có khách để lại số điện thoại."
+                  : "No chats with a phone number yet."
+                : language === "vi"
+                  ? "Chưa có hội thoại không có SĐT."
+                  : "No phone-less chats yet."}
             </p>
           ) : null}
-          {items.map((item) => {
+          {visibleItems.map((item) => {
             const label =
               item.guestName ||
               item.phone ||
@@ -185,6 +252,15 @@ export function ManagerWebLeadInbox({
                   ) : (
                     <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
                       Open
+                    </span>
+                  )}
+                  {hasPhone(item) ? (
+                    <span className="rounded-full bg-teal-50 px-1.5 py-0.5 text-[10px] font-medium text-teal-800">
+                      {language === "vi" ? "Có SĐT" : "Phone"}
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+                      {language === "vi" ? "Chưa SĐT" : "No phone"}
                     </span>
                   )}
                   {item.lastQuoteVnd != null ? (
@@ -236,6 +312,15 @@ export function ManagerWebLeadInbox({
                       ]
                         .filter(Boolean)
                         .join(" · ") || (language === "vi" ? "Chưa có liên hệ" : "No contact yet")}
+                    </p>
+                    <p className="mt-1 text-[11px] font-medium text-slate-500">
+                      {hasPhone(c)
+                        ? language === "vi"
+                          ? "Thư mục: Tiềm năng (có SĐT)"
+                          : "Folder: Potential (has phone)"
+                        : language === "vi"
+                          ? "Thư mục: Ghi chú AI (chưa SĐT)"
+                          : "Folder: AI notes (no phone)"}
                     </p>
                     {c.lastQuoteVnd != null ? (
                       <p className="mt-1 text-xs font-medium text-amber-800">

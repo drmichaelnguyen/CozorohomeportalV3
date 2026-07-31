@@ -167,6 +167,8 @@ export const CLIENT_BED_COLUMN = "s\u1ed1 gi\u01b0\u1eddng";
 const CLIENT_GENDER_COLUMN = "Gi\u1edbi t\u00ednh";
 export const CLIENT_BRANCH_COLUMN = "Chi nh\u00e1nh Cozoro dorm";
 const CLIENT_PHONE_COLUMN = "S\u1ed1 \u0111i\u1ec7n tho\u1ea1i li\u00ean h\u1ec7";
+const CLIENT_GOVERNMENT_ID_COLUMN = "S\u1ed1 CMND ho\u1eb7c CCCD";
+const CLIENT_EMERGENCY_PHONE_COLUMN = "S\u1ed1 \u0111i\u1ec7n tho\u1ea1i ng\u01b0\u1eddi th\u00e2n (li\u00ean h\u1ec7 khi c\u1ea7n)";
 const CLIENT_CONTRACT_START_COLUMN = "Ng\u00e0y b\u1eaft \u0111\u1ea7u h\u1ee3p \u0111\u1ed3ng";
 export const CLIENT_CONTRACT_END_COLUMN = "Ng\u00e0y h\u1ebft h\u1ea1n h\u1ee3p \u0111\u1ed3ng";
 export const CLIENT_CLEANING_FEE_COLUMN = "Cleaning fee";
@@ -560,6 +562,32 @@ function normalizeHeader(value: string) {
   const trimmed = repairMojibake(value).trim();
   const normalized = trimmed.replace(/\s+/g, " ").toLowerCase();
   return normalizedHeaderAliases.get(normalized) ?? trimmed;
+}
+
+/**
+ * Force Google Sheets / Apps Script USER_ENTERED writes to keep leading zeros
+ * (CCCD/CMND, phone numbers). A leading apostrophe is Sheets' text literal marker
+ * and is not shown when cells are read back via the API.
+ */
+function asGoogleSheetLiteralText(value: string): string {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("'")) return trimmed;
+  return `'${trimmed}`;
+}
+
+function isGoogleSheetLiteralTextColumn(columnName: string): boolean {
+  const header = normalizeHeader(columnName);
+  return (
+    header === normalizeHeader(CLIENT_GOVERNMENT_ID_COLUMN) ||
+    header === normalizeHeader(CLIENT_PHONE_COLUMN) ||
+    header === normalizeHeader(CLIENT_EMERGENCY_PHONE_COLUMN)
+  );
+}
+
+function coerceGoogleSheetLiteralTextValue(columnName: string, value: string): string {
+  if (!isGoogleSheetLiteralTextColumn(columnName)) return value;
+  return asGoogleSheetLiteralText(value);
 }
 
 function columnIndexToLetter(index: number) {
@@ -3182,7 +3210,7 @@ export async function upsertPaidGuestBookingClient(input: PaidGuestBookingClient
     [CLIENT_GENDER_COLUMN]:
       mapBioSexToVietnamese(input.bioSex) || String(existingRow[CLIENT_GENDER_COLUMN] ?? "").trim(),
     [CLIENT_BRANCH_COLUMN]: input.branchId === "D7" ? "7" : "2",
-    [CLIENT_PHONE_COLUMN]: input.guestPhone.trim() ? `'${input.guestPhone.trim()}` : "",
+    [CLIENT_PHONE_COLUMN]: input.guestPhone.trim() ? asGoogleSheetLiteralText(input.guestPhone) : "",
     [CLIENT_BED_COLUMN]: String(input.bedNumber),
     [ACTIVE_STAYING_COLUMN]: "1",
     [CLIENT_CONTRACT_START_COLUMN]: formatClientContractDate(input.checkIn),
@@ -3282,12 +3310,14 @@ export async function submitPublicRegistration(input: PublicRegistrationInput) {
     [CLIENT_NAME_COLUMN]: input.fullName.trim(),
     [CLIENT_GENDER_COLUMN]: mapBioSexToVietnamese(input.sex),
     [CLIENT_BRANCH_COLUMN]: input.branchId === "D7" ? "7" : "2",
-    [CLIENT_PHONE_COLUMN]: input.phone.trim() ? `'${input.phone.trim()}` : "",
+    [CLIENT_PHONE_COLUMN]: input.phone.trim() ? asGoogleSheetLiteralText(input.phone) : "",
     [CLIENT_BED_COLUMN]: String(input.bedNumber),
     [ACTIVE_STAYING_COLUMN]: "",
     ["Ngày tháng năm sinh"]: input.dateOfBirth ? formatClientContractDate(input.dateOfBirth) : "",
     ["Địa chỉ thường trú"]: input.permanentAddress?.trim() ?? "",
-    ["Số CMND hoặc CCCD"]: input.governmentId?.trim() ?? "",
+    [CLIENT_GOVERNMENT_ID_COLUMN]: input.governmentId?.trim()
+      ? asGoogleSheetLiteralText(input.governmentId)
+      : "",
     ["Ngày cấp"]: input.idIssuedDate ? formatClientContractDate(input.idIssuedDate) : "",
     ["Nơi cấp"]: input.idIssuedPlace?.trim() ?? "",
     [CLIENT_CONTRACT_START_COLUMN]: formatClientContractDate(input.contractStartDate),
@@ -3300,7 +3330,9 @@ export async function submitPublicRegistration(input: PublicRegistrationInput) {
     ["ĐỊA CHỈ"]: branchAddress,
     ["Bạn biết đến Cozoro Home qua đâu?"]: input.referralSource?.trim() ?? "",
     ["Điều khoản bổ sung"]: additionalTerms,
-    ["Số điện thoại người thân (liên hệ khi cần)"]: input.emergencyPhone?.trim() ?? "",
+    [CLIENT_EMERGENCY_PHONE_COLUMN]: input.emergencyPhone?.trim()
+      ? asGoogleSheetLiteralText(input.emergencyPhone)
+      : "",
     ["Bạn muốn thanh toán chi phí như thế nào?"]: input.paymentFrequency?.trim() ?? "",
     ["Hiện tại bạn đang là"]: input.currentStatus?.trim() ?? "",
     ["Tên trường bạn đang học hoặc nơi bạn đang làm việc"]: input.schoolOrWorkplace?.trim() ?? "",
@@ -3342,7 +3374,7 @@ export async function submitPublicRegistration(input: PublicRegistrationInput) {
     if (index === activeColIndex) {
       value = "";
     }
-    payload[norm] = value;
+    payload[norm] = coerceGoogleSheetLiteralTextValue(header, value);
   });
 
   payload.clientsignature = input.clientSignatureDataUrl?.trim() ?? "";
@@ -5400,7 +5432,7 @@ export async function updateClientColumnsByRowNumber(
     }
     updateData.push({
       range: `${sheetName}!${toSheetColumn(columnIndex + 1)}${rowNumber}`,
-      values: [[value]]
+      values: [[coerceGoogleSheetLiteralTextValue(column, value)]]
     });
   }
 
@@ -5463,7 +5495,7 @@ export async function updateClientColumns(maHd: string, values: Record<string, s
 
     updateData.push({
       range: `${sheetName}!${toSheetColumn(columnIndex + 1)}${rowIndex + 1}`,
-      values: [[value]]
+      values: [[coerceGoogleSheetLiteralTextValue(column, value)]]
     });
   }
 
@@ -6112,7 +6144,7 @@ export async function extendClientContract(
       value = "Có";
     }
 
-    payload[norm] = value;
+    payload[norm] = coerceGoogleSheetLiteralTextValue(header, value);
   });
 
   payload["clientsignature"] = approval?.clientSignatureDataUrl?.trim() ?? "";
@@ -6420,7 +6452,7 @@ export async function transferClientContract(
       value = "Có";
     }
 
-    payload[norm] = value;
+    payload[norm] = coerceGoogleSheetLiteralTextValue(header, value);
   });
 
   payload["clientsignature"] = approval?.clientSignatureDataUrl?.trim() ?? "";

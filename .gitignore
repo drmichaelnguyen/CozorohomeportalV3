@@ -26,3 +26,6 @@ guest-booking-standalone/data
 backups/
 # Pre-deploy full backups: tracked folder is backup/; contents ignored via backup/.gitignore
 bot/knowledge/mapping-variable.md
+
+# Local pnpm content-addressable store (never commit)
+.pnpm-store/

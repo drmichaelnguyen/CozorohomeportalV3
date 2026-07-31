@@ -9950,14 +9950,6 @@ app.post("/manager/terminate-contract", async (request, response) => {
   }
   try {
     const record = await terminateContract({ actorEmail, maHd, email, name, branch, bed, depositNote });
-    await purgeResidentCleaningSchedule(String(email).trim().toLowerCase(), {
-      reason: `contract-terminated:${maHd}`
-    }).catch((error) => {
-      console.warn(
-        `[cleaning-purge] terminate-contract failed for ${email}:`,
-        error instanceof Error ? error.message : error
-      );
-    });
     return response.json({ ok: true, record });
   } catch (error) {
     return response.status(403).json({ error: error instanceof Error ? error.message : "Unable to terminate contract" });

@@ -974,6 +974,21 @@ const translations: Record<string, { en: string; vi: string }> = {
   selfAssignBonusWeekday: { en: "x2", vi: "x2" },
   selfAssignBonusWeekend: { en: "x2.5 weekend", vi: "x2.5 cuối tuần" },
   selfAssignBonusHoliday: { en: "x3 holiday", vi: "x3 ngày lễ" },
+  selfAssignPromoEyebrow: { en: "Cleaning · earn more", vi: "Vệ sinh · kiếm thêm coin" },
+  selfAssignPromoTitle: { en: "Self-assign for higher coins", vi: "Tự đăng ký để nhận nhiều coin hơn" },
+  selfAssignPromoBody: {
+    en: "Claim open cleaning slots yourself to earn more coins than system or manager assignment: weekday x2, weekend x2.5, Vietnam holiday x3.",
+    vi: "Tự đăng ký lịch vệ sinh trên lịch trống để nhận nhiều coin hơn so với khi hệ thống hoặc quản lý phân công: ngày thường x2, cuối tuần x2.5, ngày lễ VN x3."
+  },
+  selfAssignPromoWeekdayLabel: { en: "Weekday", vi: "Ngày thường" },
+  selfAssignPromoWeekendLabel: { en: "Weekend", vi: "Cuối tuần" },
+  selfAssignPromoHolidayLabel: { en: "Holiday", vi: "Ngày lễ" },
+  selfAssignPromoHint: {
+    en: "Open Schedule, tap a green open date, then Assign Myself. This tip shows only occasionally.",
+    vi: "Mở Lịch, chạm ngày trống (xanh), rồi Tự đăng ký. Gợi ý này chỉ hiện thỉnh thoảng."
+  },
+  selfAssignPromoCta: { en: "Open schedule", vi: "Mở lịch vệ sinh" },
+  selfAssignPromoDismiss: { en: "Not now", vi: "Để sau" },
   selfAssignMaxDaysAhead: {
     en: "Self-assignment is limited to 30 days in advance.",
     vi: "Chỉ được tự đăng ký tối đa 30 ngày trước."
@@ -1078,14 +1093,14 @@ const translations: Record<string, { en: string; vi: string }> = {
   // Auto-scheduling help (EN + VI)
   autoScheduleHelpTitle: { en: "How does auto-scheduling work?", vi: "Lịch tự động hoạt động như thế nào?" },
   autoScheduleHelp: {
-    en: "The system automatically fills empty cleaning slots every day. Here is how it picks who gets assigned:\n\n1. Eligibility — only active long-term residents of the correct branch and floor are considered. Residents who opted out for the month or have a contract cleaning exemption are skipped.\n2. Availability — residents marked Unavailable on that date are excluded. Residents marked Preferred are placed at the top of the list.\n3. Fairness — among eligible residents, the one with the fewest cleaning tasks in the past 60 days is picked first. This spreads duty evenly over time.\n4. No double-booking — a resident who already has a task on the same day will not receive a second one.\n\nIf you are assigned automatically (shown as ⚙ System), it means you had no preference set and were the most \"underdue\" eligible resident that day. You can still self-assign earlier to claim a date of your choice before the system fills it.",
-    vi: "Hệ thống tự động lấp đầy các lịch trực vệ sinh còn trống mỗi ngày. Cách chọn người được phân công:\n\n1. Đủ điều kiện — chỉ xét cư dân dài hạn đang hoạt động đúng chi nhánh và tầng. Cư dân đã opt-out tháng này hoặc có hợp đồng miễn vệ sinh sẽ bị bỏ qua.\n2. Lịch rảnh — cư dân đã đánh dấu Không rảnh vào ngày đó sẽ bị loại. Cư dân đánh dấu Ưu tiên sẽ được xét trước.\n3. Công bằng — trong số các cư dân đủ điều kiện, người có ít lịch trực nhất trong 60 ngày qua sẽ được chọn. Cách này phân bổ đều theo thời gian.\n4. Không trùng lịch — cư dân đã có lịch trực vào cùng ngày sẽ không bị phân công thêm.\n\nNếu bạn được phân công tự động (hiển thị ⚙ System), nghĩa là bạn chưa đặt ưu tiên và là cư dân \"nợ nhiều nhất\" đủ điều kiện hôm đó. Bạn vẫn có thể tự đăng ký trước để chọn ngày mình muốn."
+    en: "The system automatically fills empty cleaning slots every day. Here is how it picks who gets assigned:\n\n1. Eligibility — only active long-term residents of the correct branch and floor are considered. Residents who opted out for the month or have a contract cleaning exemption are skipped.\n2. Availability — residents marked Unavailable on that date are excluded. Preferred ranks first, then Available, then unmarked (marking Available improves priority vs staying silent).\n3. Fairness — among eligible residents, the one with the fewest tasks of *this slot type* (kitchen vs trash counted separately) in the past 60 days is picked first. Manager correction feedback can softly demote someone who was repeatedly reassigned away.\n4. No double-booking — a resident who already has a task on the same day will not receive a second one.\n\nManager assign / bulk preview use the same ranking as the background auto-scheduler. If you are assigned automatically (shown as ⚙ System), you were the most \"underdue\" eligible resident for that slot type. You can still self-assign earlier to claim a date of your choice before the system fills it.",
+    vi: "Hệ thống tự động lấp đầy các lịch trực vệ sinh còn trống mỗi ngày. Cách chọn người được phân công:\n\n1. Đủ điều kiện — chỉ xét cư dân dài hạn đang hoạt động đúng chi nhánh và tầng. Cư dân đã opt-out tháng này hoặc có hợp đồng miễn vệ sinh sẽ bị bỏ qua.\n2. Lịch rảnh — cư dân đã đánh dấu Không rảnh vào ngày đó sẽ bị loại. Ưu tiên xếp trước, rồi Rảnh, rồi chưa đánh dấu (đánh dấu Rảnh giúp ưu tiên hơn so với để trống).\n3. Công bằng — trong số cư dân đủ điều kiện, người có ít lịch *cùng loại* nhất (bếp và rác tính riêng) trong 60 ngày qua sẽ được chọn. Phản hồi sửa lịch của quản lý có thể hạ nhẹ ưu tiên người bị đổi đi nhiều lần.\n4. Không trùng lịch — cư dân đã có lịch trực vào cùng ngày sẽ không bị phân công thêm.\n\nQuản lý giao tay / xem trước giao hàng loạt dùng cùng thứ tự xếp hạng với bộ lập lịch tự động. Nếu bạn được phân công tự động (hiển thị ⚙ System), nghĩa là bạn là cư dân \"nợ nhiều nhất\" đủ điều kiện cho loại lịch đó. Bạn vẫn có thể tự đăng ký trước để chọn ngày mình muốn."
   },
   // Release/removal help (EN + VI — updated to mention swap)
   removalHelpTitle: { en: "Removal and reassignment rules", vi: "Quy tắc hủy và phân công lại" },
   removalHelp: {
-    en: "When you remove yourself from a task, the system immediately finds a replacement from available residents, then tries to auto-assign you to the next open slot of the same type within 15 days.\n\nFine tiers (full fine = 10,000 VND):\n• 5+ days ahead → No fine\n• 1–4 days ahead → 50% fine (5,000 VND)\n• Same day → 75% fine (7,500 VND)\n• Past date → Cannot release\n\nMonthly limit: max 3 removals per calendar month.\nException: self-assigned + released 5+ days ahead → no fine and does not count against the monthly limit.\n\nTip: Use \"Find swap partner\" instead of removing directly. You can offer coins to incentivise another resident to take your slot — no auto-fine, no monthly limit used.",
-    vi: "Khi bạn hủy đăng ký, hệ thống ngay lập tức tìm người thay thế từ các cư dân rảnh, rồi tự động xếp bạn vào lịch trống tiếp theo cùng loại trong vòng 15 ngày.\n\nMức phạt (phạt đầy đủ = 10.000 VND):\n• Trước 5+ ngày → Không phạt\n• Trước 1–4 ngày → Phạt 50% (5.000 VND)\n• Cùng ngày → Phạt 75% (7.500 VND)\n• Ngày đã qua → Không thể hủy\n\nGiới hạn tháng: tối đa 3 lần hủy mỗi tháng.\nNgoại lệ: tự đăng ký + hủy trước 5+ ngày → không phạt và không tính vào giới hạn tháng.\n\nGợi ý: Dùng \"Tìm người đổi lịch\" thay vì hủy trực tiếp. Bạn có thể đề nghị coin để khuyến khích cư dân khác nhận lịch của bạn — không bị phạt tự động, không dùng giới hạn tháng."
+    en: "When you remove yourself from a task, the system immediately finds a replacement using the same fairness ranking as auto-schedule, then may place you on a later open slot of the same type within 15 days — only if you are the most underdue eligible resident for that later slot (so release does not dump you onto the next empty day unfairly).\n\nFine tiers (full fine = 10,000 VND):\n• 5+ days ahead → No fine\n• 1–4 days ahead → 50% fine (5,000 VND)\n• Same day → 75% fine (7,500 VND)\n• Past date → Cannot release\n\nMonthly limit: max 3 removals per calendar month.\nException: self-assigned + released 5+ days ahead → no fine and does not count against the monthly limit.\n\nTip: Use \"Find swap partner\" instead of removing directly. You can offer coins to incentivise another resident to take your slot — no auto-fine, no monthly limit used.",
+    vi: "Khi bạn hủy đăng ký, hệ thống ngay lập tức tìm người thay thế theo cùng thứ tự công bằng với lịch tự động, rồi có thể xếp bạn vào lịch trống cùng loại trong vòng 15 ngày — chỉ khi bạn là cư dân \"nợ nhiều nhất\" đủ điều kiện cho lịch đó (tránh bị đẩy vào ngày trống kế tiếp một cách không công bằng).\n\nMức phạt (phạt đầy đủ = 10.000 VND):\n• Trước 5+ ngày → Không phạt\n• Trước 1–4 ngày → Phạt 50% (5.000 VND)\n• Cùng ngày → Phạt 75% (7.500 VND)\n• Ngày đã qua → Không thể hủy\n\nGiới hạn tháng: tối đa 3 lần hủy mỗi tháng.\nNgoại lệ: tự đăng ký + hủy trước 5+ ngày → không phạt và không tính vào giới hạn tháng.\n\nGợi ý: Dùng \"Tìm người đổi lịch\" thay vì hủy trực tiếp. Bạn có thể đề nghị coin để khuyến khích cư dân khác nhận lịch của bạn — không bị phạt tự động, không dùng giới hạn tháng."
   },
   pastTasksTitle: { en: "Past Tasks", vi: "Lịch trực đã qua" },
   pastTasksShow: { en: "Show past tasks", vi: "Hiện lịch đã qua" },
@@ -1475,6 +1490,8 @@ const translations: Record<string, { en: string; vi: string }> = {
   preferenceLabel: { en: "Preference", vi: "Ưu tiên" },
   availabilityScore: { en: "Availability score", vi: "Điểm khả dụng" },
   totalTasksLabel: { en: "Total tasks", vi: "Tổng công việc" },
+  recentTypeTasksLabel: { en: "60-day tasks (this type)", vi: "Công việc 60 ngày (loại này)" },
+  recentTypeTasksCount: { en: "60d type {count}", vi: "60n loại {count}" },
   alreadyBookedWarning: { en: "Warning: this user already has task(s) on this date.", vi: "Cảnh báo: người dùng này đã có công việc trong ngày này." },
   assignAnyway: { en: "Assign anyway", vi: "Vẫn giao việc" },
   adminWarning: { en: "Admin warning", vi: "Cảnh báo quản trị" },

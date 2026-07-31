@@ -15,7 +15,6 @@ import {
 
 import {
   CONTRACT_CODE_COLUMN,
-  CLIENT_CONTRACT_END_COLUMN,
   ClientRow,
   CleaningCalendarEvent,
   awardCleaningCoinsToSheet,
@@ -44,7 +43,7 @@ import {
   computeCleaningRewardCoins,
   getCleaningRewardSettings
 } from "./cleaning-reward-settings.js";
-import { daysUntilContractEnd, getTerminationByEmail, listTerminatedEmails } from "./checkout.js";
+import { hasCompletedCheckout, listCheckedOutEmails } from "./checkout.js";
 import { listVietnamHolidays } from "./vietnam-holidays.js";
 import { prisma } from "./prisma.js";
 
@@ -86,6 +85,10 @@ type CleaningAvailableUser = {
   availabilityType: CleaningAvailabilityType | null;
   availabilityCount: number;
   totalTaskCount: number;
+  /** Non-missed tasks of this slot's type in the fairness window (display + shared rank). */
+  recentTypeTaskCount: number;
+  /** Soft demotion from recent manager corrections that removed this person from a slot. */
+  correctionPenalty: number;
   hasSameDayTask: boolean;
   sameDayTasks: Array<{
     id: string;
@@ -93,6 +96,11 @@ type CleaningAvailableUser = {
     scheduledDate: Date;
   }>;
 };
+
+/** Fairness lookback for auto-assign / manager ranking (days). */
+const CLEANING_FAIRNESS_LOOKBACK_DAYS = 60;
+/** Soft demotion window for manager correction feedback (days). */
+const CLEANING_CORRECTION_PENALTY_LOOKBACK_DAYS = 60;
 
 const CONTRACT_CLEANING_FEE_VND = 100000;
 
@@ -719,39 +727,35 @@ function mapActiveCleaningUsers(rows: ClientRow[]) {
 async function getActiveCleaningUsers(options?: { emailHint?: string; forceRefresh?: boolean }) {
   const normalizedEmailHint = options?.emailHint?.trim().toLowerCase();
   const initialCache = options?.forceRefresh ? await syncClientsFromSheet() : ((await readCachedClients()) ?? await syncClientsFromSheet());
-  let users = mapActiveCleaningUsers(initialCache.rows ?? []).filter((user) => !isCleaningContractEnded(user.source));
+  let users = mapActiveCleaningUsers(initialCache.rows ?? []);
 
   if (!normalizedEmailHint || users.some((user) => user.email === normalizedEmailHint)) {
-    return filterTerminatedCleaningUsers(users);
+    return filterCheckedOutCleaningUsers(users);
   }
 
   const refreshedCache = await syncClientsFromSheet();
-  users = mapActiveCleaningUsers(refreshedCache.rows ?? []).filter((user) => !isCleaningContractEnded(user.source));
-  return filterTerminatedCleaningUsers(users);
+  users = mapActiveCleaningUsers(refreshedCache.rows ?? []);
+  return filterCheckedOutCleaningUsers(users);
 }
 
-async function filterTerminatedCleaningUsers(users: ActiveCleaningUser[]): Promise<ActiveCleaningUser[]> {
+async function filterCheckedOutCleaningUsers(users: ActiveCleaningUser[]): Promise<ActiveCleaningUser[]> {
   if (users.length === 0) return users;
-  const terminated = await listTerminatedEmails();
-  if (terminated.size === 0) return users;
-  return users.filter((user) => !terminated.has(user.email));
+  const checkedOut = await listCheckedOutEmails();
+  if (checkedOut.size === 0) return users;
+  return users.filter((user) => !checkedOut.has(user.email));
 }
 
-function isCleaningContractEnded(row: ClientRow | null | undefined): boolean {
-  if (!row) return true;
-  const days = daysUntilContractEnd(String(row[CLIENT_CONTRACT_END_COLUMN] ?? ""));
-  return days !== null && days < 0;
-}
-
-/** True when the resident should keep a cleaning schedule (active stay + contract not past end / not terminated). */
+/**
+ * True when the resident should keep a cleaning schedule.
+ * Expired contract end dates alone do NOT remove eligibility — only confirmed checkout
+ * (or no remaining active client row) does.
+ */
 export async function isResidentEligibleForCleaningSchedule(email: string): Promise<boolean> {
   const normalized = email.trim().toLowerCase();
   if (!normalized) return false;
-  const termination = await getTerminationByEmail(normalized);
-  if (termination) return false;
+  if (await hasCompletedCheckout(normalized)) return false;
   const client = await getActiveClientByEmail(normalized);
-  if (!client) return false;
-  return !isCleaningContractEnded(client);
+  return Boolean(client);
 }
 
 async function readCleaningOverviewCacheFile() {
@@ -1037,20 +1041,132 @@ async function getNearestOpenDatesForUser(input: {
   return suggestions;
 }
 
-async function getRecentTaskCounts(since: Date): Promise<Map<string, number>> {
+/**
+ * Per-type fairness counts for the last N days.
+ * Key: `${emailLower}|${CleaningTaskType}` → non-MISSED task count for that type only.
+ * Separating kitchen vs trash prevents D7 dual-duty stacking from looking "fair" globally.
+ */
+function recentTypeTaskCountKey(email: string, type: CleaningTaskType) {
+  return `${email.trim().toLowerCase()}|${type}`;
+}
+
+function getRecentTypeTaskCount(counts: Map<string, number>, email: string, type: CleaningTaskType) {
+  return counts.get(recentTypeTaskCountKey(email, type)) ?? 0;
+}
+
+function bumpRecentTypeTaskCount(counts: Map<string, number>, email: string, type: CleaningTaskType) {
+  const key = recentTypeTaskCountKey(email, type);
+  counts.set(key, (counts.get(key) ?? 0) + 1);
+}
+
+async function getRecentTaskCountsByType(since: Date): Promise<Map<string, number>> {
   const tasks = await prisma.cleaningTask.findMany({
     where: {
       scheduledDate: { gte: since },
       status: { not: CleaningTaskStatus.MISSED }
     },
-    select: { userEmail: true }
+    select: { userEmail: true, type: true }
   });
   const counts = new Map<string, number>();
-  for (const { userEmail } of tasks) {
-    const key = userEmail.toLowerCase();
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+  for (const { userEmail, type } of tasks) {
+    bumpRecentTypeTaskCount(counts, userEmail, type);
   }
   return counts;
+}
+
+/**
+ * Soft demotion for people managers recently corrected *away* from a slot.
+ * Heavier weight for overlap / over-assigned reasons. Used only as a tie-break after
+ * availability + per-type fairness — never excludes someone.
+ */
+async function getCorrectionPenalties(since: Date): Promise<Map<string, number>> {
+  const rows = await prisma.cleaningScheduleCorrection.findMany({
+    where: {
+      createdAt: { gte: since },
+      previousUserEmail: { not: null }
+    },
+    select: {
+      previousUserEmail: true,
+      reasons: {
+        select: {
+          reason: { select: { code: true } }
+        }
+      }
+    }
+  });
+
+  const penalties = new Map<string, number>();
+  for (const row of rows) {
+    const email = (row.previousUserEmail ?? "").trim().toLowerCase();
+    if (!email) continue;
+    const codes = new Set(row.reasons.map((link) => link.reason.code).filter(Boolean));
+    let weight = 1;
+    if (
+      codes.has("overlap") ||
+      codes.has("overlap_random") ||
+      codes.has("over_assigned_week") ||
+      codes.has("wrong_person")
+    ) {
+      weight = 2;
+    }
+    penalties.set(email, (penalties.get(email) ?? 0) + weight);
+  }
+  return penalties;
+}
+
+type CleaningRankable = {
+  email: string;
+  name: string;
+  availabilityType?: CleaningAvailabilityType | null;
+  hasSameDayTask?: boolean;
+};
+
+/**
+ * Shared ranking used by background auto-schedule, manager bulk assign, manager
+ * available-users list (incl. bulk preview), release replacement, and swap candidates.
+ *
+ * Order:
+ * 1. Same-day conflict last (when flagged)
+ * 2. Availability: Preferred → Available → unmarked
+ * 3. Fewest non-missed tasks of *this slot type* in the fairness window
+ * 4. Lower correction penalty (manager fix feedback)
+ * 5. Name
+ */
+function compareCleaningCandidateRank(
+  left: CleaningRankable,
+  right: CleaningRankable,
+  options: {
+    type: CleaningTaskType;
+    recentTaskCounts: Map<string, number>;
+    correctionPenalties?: Map<string, number>;
+  }
+) {
+  const leftSameDay = Boolean(left.hasSameDayTask);
+  const rightSameDay = Boolean(right.hasSameDayTask);
+  if (leftSameDay !== rightSameDay) {
+    return leftSameDay ? 1 : -1;
+  }
+
+  const availabilityDelta =
+    getAvailabilityScore(left.availabilityType ?? undefined) -
+    getAvailabilityScore(right.availabilityType ?? undefined);
+  if (availabilityDelta !== 0) {
+    return availabilityDelta;
+  }
+
+  const leftCount = getRecentTypeTaskCount(options.recentTaskCounts, left.email, options.type);
+  const rightCount = getRecentTypeTaskCount(options.recentTaskCounts, right.email, options.type);
+  if (leftCount !== rightCount) {
+    return leftCount - rightCount;
+  }
+
+  const leftPenalty = options.correctionPenalties?.get(left.email.trim().toLowerCase()) ?? 0;
+  const rightPenalty = options.correctionPenalties?.get(right.email.trim().toLowerCase()) ?? 0;
+  if (leftPenalty !== rightPenalty) {
+    return leftPenalty - rightPenalty;
+  }
+
+  return left.name.localeCompare(right.name);
 }
 
 async function getAssignableCandidates(
@@ -1060,9 +1176,12 @@ async function getAssignableCandidates(
   type: CleaningTaskType,
   occupiedTasks: Array<{ userEmail: string; scheduledDate: Date }>,
   floor?: number | null,
-  recentTaskCounts?: Map<string, number>
+  recentTaskCounts?: Map<string, number>,
+  correctionPenalties?: Map<string, number>
 ) {
   const normalizedDateKey = normalizeCalendarDate(scheduledDate).toISOString();
+  const counts = recentTaskCounts ?? new Map<string, number>();
+  const penalties = correctionPenalties ?? new Map<string, number>();
 
   return activeUsers
     .filter((user) => {
@@ -1083,21 +1202,11 @@ async function getAssignableCandidates(
     .sort((left, right) => {
       const leftAvailability = availabilityMap.get(`${left.email}|${normalizedDateKey}`);
       const rightAvailability = availabilityMap.get(`${right.email}|${normalizedDateKey}`);
-      const availabilityDelta =
-        getAvailabilityScore(leftAvailability?.type) - getAvailabilityScore(rightAvailability?.type);
-
-      if (availabilityDelta !== 0) {
-        return availabilityDelta;
-      }
-
-      // Sort by recent task count (last 60 days) — least work first
-      const leftCount = recentTaskCounts?.get(left.email) ?? 0;
-      const rightCount = recentTaskCounts?.get(right.email) ?? 0;
-      if (leftCount !== rightCount) {
-        return leftCount - rightCount;
-      }
-
-      return left.name.localeCompare(right.name);
+      return compareCleaningCandidateRank(
+        { email: left.email, name: left.name, availabilityType: leftAvailability?.type ?? null },
+        { email: right.email, name: right.name, availabilityType: rightAvailability?.type ?? null },
+        { type, recentTaskCounts: counts, correctionPenalties: penalties }
+      );
     });
 }
 
@@ -1176,6 +1285,15 @@ async function assignTaskToUser(input: {
       throw new Error("That cleaning slot is already assigned to another user");
     }
 
+    const isSelfAssigned = input.isSelfAssigned ?? false;
+    const rewardSettings = await getCleaningRewardSettings();
+    const { rewardCoins } = computeCleaningRewardCoins(
+      rewardSettings,
+      input.type,
+      normalizedTaskDate,
+      isSelfAssigned
+    );
+
       const reassignedTask = await updateCleaningTask({
         where: { id: existingSlot.id },
         data: {
@@ -1183,8 +1301,9 @@ async function assignTaskToUser(input: {
           userName: input.user.name,
           branchId: input.user.branchId,
           floor: slotFloor,
-          isSelfAssigned: input.isSelfAssigned ?? false,
-          assignmentSource: input.assignmentSource ?? (input.isSelfAssigned ? CleaningAssignmentSource.SELF : undefined),
+          rewardCoins,
+          isSelfAssigned,
+          assignmentSource: input.assignmentSource ?? (isSelfAssigned ? CleaningAssignmentSource.SELF : undefined),
           assignedByEmail: input.assignedByEmail ?? undefined,
           assignedByName: input.assignedByName ?? undefined
         }
@@ -1867,7 +1986,7 @@ export async function selfAssignCleaningTask(input: {
     throw new Error("This date is marked unavailable");
   }
 
-  const selfAssignMonth = `${normalizedTaskDate.getFullYear()}-${String(normalizedTaskDate.getMonth() + 1).padStart(2, "0")}`;
+  const selfAssignMonth = cleaningMonthKeyFromDate(normalizedTaskDate);
   const contractOptOut = await getContractCleaningOptOutByContractCode(getUserContractCode(user));
   if (contractOptOut) {
     throw new Error("You are opted out of cleaning for this contract.");
@@ -1981,7 +2100,7 @@ export async function checkSelfAssignCleaningTask(input: {
     };
   }
 
-  const checkMonth = `${normalizedTaskDate.getFullYear()}-${String(normalizedTaskDate.getMonth() + 1).padStart(2, "0")}`;
+  const checkMonth = cleaningMonthKeyFromDate(normalizedTaskDate);
   const contractOptOut = await getContractCleaningOptOutByContractCode(getUserContractCode(user));
   if (contractOptOut) {
     return {
@@ -2269,7 +2388,7 @@ async function buildCleaningOverviewForUser(email: string) {
     floor: task.floor
   }));
 
-  const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  const currentMonth = cleaningMonthKeyFromDate(today);
   const contractOptOut = await getContractCleaningOptOutByContractCode(getUserContractCode(user));
   const optOut = await prisma.cleaningOptOut.findFirst({
     where: { userEmail: normalizedEmail, month: currentMonth }
@@ -2434,15 +2553,22 @@ export async function getAvailableUsersForAdminSlot(input: {
       }
     }
   });
-  const allAvailability = await prisma.cleaningAvailability.findMany({
-    where: {
-      type: {
-        in: [CleaningAvailabilityType.AVAILABLE, CleaningAvailabilityType.PREFERRED]
+  const fairnessSince = addDays(normalizeCalendarDate(new Date()), -CLEANING_FAIRNESS_LOOKBACK_DAYS);
+  const correctionSince = addDays(normalizeCalendarDate(new Date()), -CLEANING_CORRECTION_PENALTY_LOOKBACK_DAYS);
+  const [recentTaskCounts, correctionPenalties, allAvailability, allTasks] = await Promise.all([
+    getRecentTaskCountsByType(fairnessSince),
+    getCorrectionPenalties(correctionSince),
+    prisma.cleaningAvailability.findMany({
+      where: {
+        type: {
+          in: [CleaningAvailabilityType.AVAILABLE, CleaningAvailabilityType.PREFERRED]
+        }
       }
-    }
-  });
-  const allTasks = await findManyCleaningTasks({});
+    }),
+    findManyCleaningTasks({})
+  ]);
   const normalizedDateKey = normalizeCalendarDate(normalizedDate).toISOString();
+  const slotFloor = input.type === CleaningTaskType.TRASH_D7 ? input.floor : null;
 
   const candidates: CleaningAvailableUser[] = [];
 
@@ -2457,7 +2583,7 @@ export async function getAvailableUsersForAdminSlot(input: {
       continue;
     }
 
-    if (!isUserEligibleForCleaningSlot(user, input.type, input.type === CleaningTaskType.TRASH_D7 ? input.floor : null)) {
+    if (!isUserEligibleForCleaningSlot(user, input.type, slotFloor)) {
       continue;
     }
 
@@ -2485,32 +2611,20 @@ export async function getAvailableUsersForAdminSlot(input: {
       availabilityType,
       availabilityCount,
       totalTaskCount,
+      recentTypeTaskCount: getRecentTypeTaskCount(recentTaskCounts, user.email, input.type),
+      correctionPenalty: correctionPenalties.get(user.email.toLowerCase()) ?? 0,
       hasSameDayTask: sameDayTasks.length > 0,
       sameDayTasks
     });
   }
 
-  return candidates.sort((left, right) => {
-    if (left.hasSameDayTask !== right.hasSameDayTask) {
-      return left.hasSameDayTask ? 1 : -1;
-    }
-
-    const availabilityDelta =
-      getAvailabilityScore(left.availabilityType ?? undefined) - getAvailabilityScore(right.availabilityType ?? undefined);
-    if (availabilityDelta !== 0) {
-      return availabilityDelta;
-    }
-
-    if (left.availabilityCount !== right.availabilityCount) {
-      return right.availabilityCount - left.availabilityCount;
-    }
-
-    if (left.totalTaskCount !== right.totalTaskCount) {
-      return left.totalTaskCount - right.totalTaskCount;
-    }
-
-    return left.name.localeCompare(right.name);
-  });
+  return candidates.sort((left, right) =>
+    compareCleaningCandidateRank(left, right, {
+      type: input.type,
+      recentTaskCounts,
+      correctionPenalties
+    })
+  );
 }
 
 export async function adminAssignCleaningTask(input: {
@@ -2644,7 +2758,12 @@ export async function adminAutoAssignCleaningSlots(input: {
   const activeUsers = (await getActiveCleaningUsers()).filter((user) => !isHostelShortTermCleaningUser(user));
   const contractOptOutLookup = await getContractCleaningOptOutLookup(activeUsers.map((user) => getUserContractCode(user)));
   const eligibleActiveUsers = activeUsers.filter((user) => !contractOptOutLookup.has(getUserContractCode(user)));
-  const recentTaskCounts = await getRecentTaskCounts(addDays(today, -60));
+  const fairnessSince = addDays(today, -CLEANING_FAIRNESS_LOOKBACK_DAYS);
+  const correctionSince = addDays(today, -CLEANING_CORRECTION_PENALTY_LOOKBACK_DAYS);
+  const [recentTaskCounts, correctionPenalties] = await Promise.all([
+    getRecentTaskCountsByType(fairnessSince),
+    getCorrectionPenalties(correctionSince)
+  ]);
   const results: CleaningTaskRecord[] = [];
   const reservedEmails = new Set<string>();
 
@@ -2691,7 +2810,8 @@ export async function adminAutoAssignCleaningSlots(input: {
       input.type,
       occupiedTasks,
       input.type === CleaningTaskType.TRASH_D7 ? input.floor : undefined,
-      recentTaskCounts
+      recentTaskCounts,
+      correctionPenalties
     ).then((entries) => entries.filter((user) => !reservedEmails.has(user.email)));
     const selectedUser = candidates[0];
     if (!selectedUser) {
@@ -2721,7 +2841,7 @@ export async function adminAutoAssignCleaningSlots(input: {
       details: `target=${assignedTask.userEmail}`
     });
     reservedEmails.add(selectedUser.email);
-    recentTaskCounts.set(selectedUser.email, (recentTaskCounts.get(selectedUser.email) ?? 0) + 1);
+    bumpRecentTypeTaskCount(recentTaskCounts, selectedUser.email, input.type);
     results.push(assignedTask);
   }
 
@@ -2906,13 +3026,14 @@ export async function purgeResidentCleaningScheduleIfIneligible(
     }
   }
   const result = await purgeResidentCleaningSchedule(normalized, {
-    reason: options?.reason ?? "contract-ended-or-inactive"
+    reason: options?.reason ?? "confirmed-departure-or-inactive"
   });
   return { ...result, skipped: false };
 }
 
 /**
- * Safety net: clear future schedules for residents who left or whose contract end date has passed.
+ * Safety net: clear future schedules only for residents who confirmed checkout
+ * or no longer have an active client row.
  */
 export async function sweepLeftResidentCleaningSchedules(now = new Date()) {
   const today = normalizeCalendarDate(now);
@@ -3583,8 +3704,7 @@ export async function setBulkCleaningAvailability(input: {
 }
 
 function currentYearMonth() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  return cleaningMonthKeyFromDate(normalizeCalendarDate(new Date()));
 }
 
 export async function getCleaningOptOutForEmail(email: string, month?: string) {
@@ -3705,12 +3825,15 @@ export async function getOptedOutEmailsForMonth(month: string): Promise<Set<stri
 }
 
 // Auto-schedule all cleaning slots for the next `horizonDays` days.
-// Algorithm: for each empty slot, assign the eligible user with the least
-// tasks in the last 60 days who has no other task that day and is not
-// unavailable / opted out.
+// Uses the shared candidate ranking (see docs/cleaning-auto-assign.md).
 export async function autoScheduleCleaningTasks(horizonDays = 15) {
   const today = normalizeCalendarDate(new Date());
-  const recentTaskCounts = await getRecentTaskCounts(addDays(today, -60));
+  const fairnessSince = addDays(today, -CLEANING_FAIRNESS_LOOKBACK_DAYS);
+  const correctionSince = addDays(today, -CLEANING_CORRECTION_PENALTY_LOOKBACK_DAYS);
+  const [recentTaskCounts, correctionPenalties] = await Promise.all([
+    getRecentTaskCountsByType(fairnessSince),
+    getCorrectionPenalties(correctionSince)
+  ]);
   const activeUsers = (await getActiveCleaningUsers()).filter((user) => !isHostelShortTermCleaningUser(user));
   const contractOptOutLookup = await getContractCleaningOptOutLookup(activeUsers.map((user) => getUserContractCode(user)));
   const calendarDefs = await getConfiguredCleaningCalendars();
@@ -3735,9 +3858,11 @@ export async function autoScheduleCleaningTasks(horizonDays = 15) {
 
   for (let d = 1; d <= horizonDays; d++) {
     const date = addDays(today, d);
-    const month = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+    const month = cleaningMonthKeyFromDate(date);
     const optedOut = await getOptedOut(month);
-    const eligibleUsers = activeUsers.filter((u) => !optedOut.has(u.email));
+    const eligibleUsers = activeUsers.filter(
+      (u) => !optedOut.has(u.email) && !contractOptOutLookup.has(getUserContractCode(u))
+    );
 
     const dayTasks = await findManyCleaningTasks({
       where: {
@@ -3762,7 +3887,8 @@ export async function autoScheduleCleaningTasks(horizonDays = 15) {
         def.type,
         dayTasks,
         def.floor,
-        recentTaskCounts
+        recentTaskCounts,
+        correctionPenalties
       );
 
       if (candidates.length === 0) {
@@ -3788,10 +3914,7 @@ export async function autoScheduleCleaningTasks(horizonDays = 15) {
 
       // Keep dayTasks fresh so subsequent slots for this day see up-to-date occupiedTasks.
       dayTasks.push(assignedTask);
-
-      // Update in-memory counts so the same user isn't over-assigned within this run
-      const key = user.email.toLowerCase();
-      recentTaskCounts.set(key, (recentTaskCounts.get(key) ?? 0) + 1);
+      bumpRecentTypeTaskCount(recentTaskCounts, user.email, def.type);
 
       await invalidateCleaningOverviewCache(user.email);
       results.created++;
@@ -3824,7 +3947,12 @@ export async function autoScheduleCleaningTasksByJob(
 
   const today = normalizeCalendarDate(new Date());
   const maxHorizonDays = Math.max(...activeJobs.map((job) => job.horizonDays));
-  const recentTaskCounts = await getRecentTaskCounts(addDays(today, -60));
+  const fairnessSince = addDays(today, -CLEANING_FAIRNESS_LOOKBACK_DAYS);
+  const correctionSince = addDays(today, -CLEANING_CORRECTION_PENALTY_LOOKBACK_DAYS);
+  const [recentTaskCounts, correctionPenalties] = await Promise.all([
+    getRecentTaskCountsByType(fairnessSince),
+    getCorrectionPenalties(correctionSince)
+  ]);
   const activeUsers = (await getActiveCleaningUsers()).filter((user) => !isHostelShortTermCleaningUser(user));
   const contractOptOutLookup = await getContractCleaningOptOutLookup(activeUsers.map((user) => getUserContractCode(user)));
 
@@ -3840,7 +3968,7 @@ export async function autoScheduleCleaningTasksByJob(
 
   for (let d = 1; d <= maxHorizonDays; d++) {
     const date = addDays(today, d);
-    const month = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+    const month = cleaningMonthKeyFromDate(date);
     const optedOut = await getOptedOut(month);
     const eligibleUsers = activeUsers.filter(
       (u) => !optedOut.has(u.email) && !contractOptOutLookup.has(getUserContractCode(u))
@@ -3869,7 +3997,8 @@ export async function autoScheduleCleaningTasksByJob(
         job.type,
         dayTasks,
         job.floor,
-        recentTaskCounts
+        recentTaskCounts,
+        correctionPenalties
       );
 
       if (candidates.length === 0) {
@@ -3895,9 +4024,7 @@ export async function autoScheduleCleaningTasksByJob(
 
       // Keep dayTasks fresh so subsequent jobs for this day use up-to-date occupiedTasks.
       dayTasks.push(assignedTask);
-
-      const key = user.email.toLowerCase();
-      recentTaskCounts.set(key, (recentTaskCounts.get(key) ?? 0) + 1);
+      bumpRecentTypeTaskCount(recentTaskCounts, user.email, job.type);
       await invalidateCleaningOverviewCache(user.email);
       results.created++;
     }
@@ -3906,8 +4033,10 @@ export async function autoScheduleCleaningTasksByJob(
   return results;
 }
 
-// After a user releases a task, find the next open slot of the same type
-// within 15 days after the released slot date and assign them to it.
+// After a user releases a task, try to place them on a later open slot of the
+// same type within 15 days — but only when they are the most underdue eligible
+// candidate for that slot (shared fairness ranking). Avoids dumping releasers
+// onto the next empty day when others are more underdue.
 async function autoReassignReleasedUser(input: {
   email: string;
   releasedDate: Date;
@@ -3920,10 +4049,19 @@ async function autoReassignReleasedUser(input: {
   const user = await getUserCleaningContext(normalizedEmail);
   if (!user || isHostelShortTermCleaningUser(user)) return;
 
+  const fairnessSince = addDays(normalizeCalendarDate(new Date()), -CLEANING_FAIRNESS_LOOKBACK_DAYS);
+  const correctionSince = addDays(normalizeCalendarDate(new Date()), -CLEANING_CORRECTION_PENALTY_LOOKBACK_DAYS);
+  const activeUsers = (await getActiveCleaningUsers()).filter((entry) => !isHostelShortTermCleaningUser(entry));
+  const [recentTaskCounts, correctionPenalties, contractOptOutLookup] = await Promise.all([
+    getRecentTaskCountsByType(fairnessSince),
+    getCorrectionPenalties(correctionSince),
+    getContractCleaningOptOutLookup(activeUsers.map((entry) => getUserContractCode(entry)))
+  ]);
+
   let cursor = addDays(normalizedReleasedDate, 1);
 
   while (cursor.getTime() <= horizon.getTime()) {
-    const month = `${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}`;
+    const month = cleaningMonthKeyFromDate(cursor);
     const optedOut = await getOptedOutEmailsForMonth(month);
     if (optedOut.has(normalizedEmail)) {
       cursor = addDays(cursor, 1);
@@ -3943,23 +4081,29 @@ async function autoReassignReleasedUser(input: {
       continue;
     }
 
-    // Check user is not marked unavailable on this date
-    const availabilityMap = await getAvailabilityMap(cursor, cursor);
-    const normalizedDateKey = normalizeCalendarDate(cursor).toISOString();
-    const availability = availabilityMap.get(`${normalizedEmail}|${normalizedDateKey}`);
-    if (availability?.type === CleaningAvailabilityType.UNAVAILABLE) {
-      cursor = addDays(cursor, 1);
-      continue;
-    }
-
-    // Check no same-day task already
-    const sameDayTask = await findFirstCleaningTask({
+    const dayTasks = await findManyCleaningTasks({
       where: {
-        userEmail: normalizedEmail,
         scheduledDate: { gte: calendarRangeStart(cursor), lte: calendarRangeEnd(cursor) }
       }
     });
-    if (sameDayTask) {
+    const availabilityMap = await getAvailabilityMap(cursor, cursor);
+    const eligibleUsers = activeUsers.filter(
+      (entry) => !optedOut.has(entry.email) && !contractOptOutLookup.has(getUserContractCode(entry))
+    );
+
+    const candidates = await getAssignableCandidates(
+      eligibleUsers,
+      availabilityMap,
+      cursor,
+      input.type,
+      dayTasks,
+      input.floor,
+      recentTaskCounts,
+      correctionPenalties
+    );
+
+    // Only re-place when the releaser is the top fairness pick for this open slot.
+    if (candidates[0]?.email.toLowerCase() !== normalizedEmail) {
       cursor = addDays(cursor, 1);
       continue;
     }
@@ -3976,7 +4120,7 @@ async function autoReassignReleasedUser(input: {
     return;
   }
 
-  console.warn("[autoReassignReleasedUser] No open slot found within horizon", {
+  console.warn("[autoReassignReleasedUser] No underdue open slot found within horizon", {
     email: normalizedEmail,
     type: input.type,
     releasedDate: normalizedReleasedDate.toISOString().slice(0, 10),
@@ -4000,7 +4144,7 @@ export class CleaningSwapError extends Error {
 
 /**
  * Returns eligible residents who could take over the given task.
- * Reuses getAvailableUsersForAdminSlot — same opt-out + availability logic.
+ * Reuses getAvailableUsersForAdminSlot — same shared fairness ranking.
  */
 export async function getSwapCandidates(taskId: string, requesterEmail: string) {
   const normalizedEmail = requesterEmail.trim().toLowerCase();

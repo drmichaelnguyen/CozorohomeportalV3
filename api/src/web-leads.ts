@@ -36,12 +36,19 @@ export async function syncWebLeadTurn(input: WebLeadSyncPayload) {
   }
 
   const now = new Date();
+  const nextPhone = input.phone !== undefined ? trimOrNull(input.phone, 48) : undefined;
+  const nextFacebook = input.facebook !== undefined ? trimOrNull(input.facebook, 191) : undefined;
+  const nextOtherContact =
+    input.otherContact !== undefined ? trimOrNull(input.otherContact, 255) : undefined;
+  const nextGuestName = input.guestName !== undefined ? trimOrNull(input.guestName, 120) : undefined;
+
   const data: Prisma.WebLeadConversationUpdateInput = {
     lastMessageAt: now,
-    ...(input.guestName !== undefined ? { guestName: trimOrNull(input.guestName, 120) } : {}),
-    ...(input.phone !== undefined ? { phone: trimOrNull(input.phone, 48) } : {}),
-    ...(input.facebook !== undefined ? { facebook: trimOrNull(input.facebook, 191) } : {}),
-    ...(input.otherContact !== undefined ? { otherContact: trimOrNull(input.otherContact, 255) } : {}),
+    // Keep contact sticky so a later blank sync does not drop a potential customer back to AI notes.
+    ...(nextGuestName ? { guestName: nextGuestName } : {}),
+    ...(nextPhone ? { phone: nextPhone } : {}),
+    ...(nextFacebook ? { facebook: nextFacebook } : {}),
+    ...(nextOtherContact ? { otherContact: nextOtherContact } : {}),
     ...(input.preferredBranch !== undefined
       ? { preferredBranch: trimOrNull(input.preferredBranch, 8) }
       : {}),
@@ -74,10 +81,10 @@ export async function syncWebLeadTurn(input: WebLeadSyncPayload) {
       conversationKey,
       status: WebLeadConversationStatus.OPEN,
       lastMessageAt: now,
-      guestName: trimOrNull(input.guestName, 120),
-      phone: trimOrNull(input.phone, 48),
-      facebook: trimOrNull(input.facebook, 191),
-      otherContact: trimOrNull(input.otherContact, 255),
+      guestName: nextGuestName ?? null,
+      phone: nextPhone ?? null,
+      facebook: nextFacebook ?? null,
+      otherContact: nextOtherContact ?? null,
       preferredBranch: trimOrNull(input.preferredBranch, 8),
       stayMonths:
         typeof input.stayMonths === "number" && Number.isFinite(input.stayMonths)

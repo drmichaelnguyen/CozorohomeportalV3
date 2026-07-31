@@ -20,6 +20,7 @@ import { RentDueBlockingOverlay } from "./rent-due-blocking-overlay";
 import { AddToHomeScreenPrompt } from "./add-to-home-screen-prompt";
 import { BranchBroadcastPrompt } from "./branch-broadcast-prompt";
 import { PaymentRequirementPrompt } from "./payment-requirement-prompt";
+import { SelfAssignPromoPopup } from "./self-assign-promo-popup";
 
 function SiteChrome({ children }: { children: React.ReactNode }) {
   const { language, setLanguage, t } = usePortalLanguage();
@@ -300,6 +301,7 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
         <PaymentRequirementPrompt email={sessionEmail} enabled={!isStaffSession} />
       ) : null}
       <CleaningReminderPopup />
+      <SelfAssignPromoPopup />
       <RentDueBlockingOverlay />
       <AddToHomeScreenPrompt />
       <VersionBadge />

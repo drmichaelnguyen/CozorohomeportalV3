@@ -259,12 +259,14 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 - **Self-assign**: residents can claim open slots for future dates only, **max 30 days ahead**
 - **Self-assign coin multipliers** (vs manager/system base reward): weekday **x2**, weekend **x2.5**, Vietnam national holiday **x3** (holiday calendar on cleaning UI; holiday wins over weekend)
 - **Cozoro Hero awards** (highest completed self-assign count in the period, excluding rejected): month **+30,000**, quarter **+50,000**, year **+100,000** ("Cozoro Hero of the Year"); coins + Notification Center notice; awards closed periods once
-- **Contract end cleanup**: when a resident is terminated, checks out, is set inactive (−1 with no remaining active row), or their contract end date has passed, today+future ASSIGNED cleaning tasks (and open swaps) are removed automatically; terminated/expired residents are excluded from auto-schedule
+- **Contract end cleanup**: cleaning schedule is removed only after the resident **confirms they left** (checkout form), or when staff mark them inactive (−1 with no remaining active row). An expired contract end date alone does **not** remove tasks while the account stays active.
 - **Take Over**: if today is after 20:00 and an assigned resident hasn't completed the task, others can take over
 - **Task types**: `KITCHEN_D2`, `KITCHEN_D7`, `TRASH_D7`
-- **Completion window**: `KITCHEN_D7` = 17:00â€“23:00 on assigned date; others = any time that day
-- **Release penalties**: 5+ days ahead = no fine; 1â€“4 days = 50%; same day = 75%; past = no release
+- **Completion window**: `KITCHEN_D7` = 17:00–23:00 on assigned date; others = any time that day
+- **Release penalties**: 5+ days ahead = no fine; 1–4 days = 50%; same day = 75%; past = no release
 - **Calendar colors**: green = open slot, blue = taken by another resident, amber dot = your task, rose = Vietnam national holiday
+- **Auto / manager ranking** (shared): Preferred → Available → unmarked, then fewest **per-type** tasks in 60 days, then soft demotion from recent manager corrections, then name. Background auto, manager available-users list, bulk preview/commit, release replacement, and swap candidates all use this order. Full write-up: [`docs/cleaning-auto-assign.md`](docs/cleaning-auto-assign.md).
+- **Post-release re-place**: releaser is only put on a later same-type open slot within 15 days if they are the top underdue candidate for that slot (not blindly the next empty day).
 
 ---
 
@@ -272,7 +274,10 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
-| 3.8.68 | Self-assign coin multipliers (x2 weekday / x2.5 weekend / x3 VN national holidays with calendar markers), 30-day self-assign horizon, Cozoro Hero awards (30k/50k/100k) with auto coin grant + notifications; auto-purge cleaning schedule on contract terminate, checkout, set-inactive, or expired end date (hourly safety sweep). |
+| 3.9.0 | Self-assign encouragement: occasional in-app coin promo (~every 4 days / 1–2× per week) plus Cozoro Assistant/Bee one-liner side jokes about higher self-assign rates (weekday x2 / weekend x2.5 / VN holiday x3). |
+| 3.8.70 | Cleaning assign: one shared ranking for auto, manager list/bulk preview, release fill, and swaps; per-type 60-day fairness (kitchen vs trash); soft correction demotion; post-release re-place only when releaser is top underdue pick; reassign recalculates reward coins; algorithm documented in `docs/cleaning-auto-assign.md`. |
+| 3.8.69 | Cleaning schedule purge only after confirmed departure (checkout form) or set-inactive — expired contract end / terminate alone no longer clears tasks while the account stays active. |
+| 3.8.68 | Self-assign coin multipliers (x2 weekday / x2.5 weekend / x3 VN national holidays with calendar markers), 30-day self-assign horizon, Cozoro Hero awards (30k/50k/100k) with auto coin grant + notifications; auto-purge cleaning schedule on checkout / set-inactive (not merely expired end date). |
 | 3.8.66 | Support/group chat image attachments (resident + manager; up to 3 compressed images; `ChatAttachment` + `api/data/chat-attachments/`); manager Web AI chat mobile UX (full-width master–detail + back-to-inbox). |
 | 3.8.65 | Staff can open a selected resident’s full cleaning schedule (tasks, unavailability, self-assign, swaps) from client Tools and the bed-diagram quick actions. |
 | 3.8.64 | Monthly D2/D7 bed occupancy snapshots and owner analytics; app-admin AI token/cost analytics; clearer cleaning availability safeguards. |
