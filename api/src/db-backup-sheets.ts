@@ -41,6 +41,7 @@ const DATE_FIELDS = new Set([
   "paidAt",
   "rentCoinRedeemAt",
   "paidRecordedAt",
+  "nextPaymentDate",
   "confirmedAt",
   "lastAppNotifyAt",
   "lastEmailNotifyAt",
@@ -83,6 +84,7 @@ type TableDelegateName =
   | "gateParkingTicket"
   | "monthlyRentStatus"
   | "prepaidPackageBilling"
+  | "accountNextPayment"
   | "branchPricingSettings"
   | "bedParkingFeeOverride"
   | "parkingPricingTier"
@@ -341,6 +343,19 @@ const BACKUP_TABLES: BackupTableDef[] = [
       "lastEmailNotifyAt",
       "createdAt",
       "updatedAt"
+    ]
+  },
+  {
+    tabName: "AccountNextPayment",
+    delegate: "accountNextPayment",
+    fields: [
+      "email",
+      "nextPaymentDate",
+      "planKind",
+      "sourceContractCode",
+      "updatedBy",
+      "updatedAt",
+      "createdAt"
     ]
   },
   {

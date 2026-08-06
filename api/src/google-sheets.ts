@@ -6,6 +6,15 @@ import { calendar_v3, google } from "googleapis";
 import { repairMojibake, repairUnknownText } from "./text-encoding.js";
 import { isBranchAutomationDisabled } from "./branch-closure.js";
 import { compressFineEvidence } from "./fine-evidence-compress.js";
+import {
+  PAYMENT_NEXT_PAYMENT_DATE_COLUMN,
+  detectPaymentPlanKind,
+  defaultNextPaymentDate,
+  formatSheetDateDdMmYyyy,
+  parseSheetDateDdMmYyyy,
+  type PaymentPlanKind
+} from "./next-payment-date.js";
+import { getAccountNextPaymentDate, upsertAccountNextPayment } from "./account-next-payment.js";
 
 const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID ?? "";
 const paymentsSpreadsheetId = process.env.GOOGLE_PAYMENT_SPREADSHEET_ID ?? spreadsheetId;
@@ -190,6 +199,7 @@ const PAYMENT_PURPOSE_COLUMN = "M\u1ee4C \u0110\u00cdCH";
 const PAYMENT_DETAILS_COLUMN = "M\u1ee4C \u0110\u00cdCH - GHI R\u00d5";
 const PAYMENT_PAYER_COLUMN = "NG\u01af\u1edcI \u0110\u00d3NG TI\u1ec0N";
 const PAYMENT_RECEIVER_COLUMN = "NG\u01af\u1edCI NH\u1eacN TI\u1ec0N";
+const CLIENT_PACKAGE_EXPIRY_COLUMN = "Ng\u00e0y h\u1ebft h\u1ea1n g\u00f3i \u0111\u00e3 thanh to\u00e1n";
 const FINE_EMAIL_COLUMN = "EMAIL";
 const FINE_TIMESTAMP_COLUMN = COINS_TIMESTAMP_COLUMN;
 const FINE_AMOUNT_COLUMN = "CHI PH\u00cd THANH TO\u00c1N CHO VI PH\u1ea0M";
@@ -1449,6 +1459,83 @@ export async function recordPaymentReceipt(data: {
     range: `${paymentsSheetName}!A:G`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values }
+  });
+}
+
+/** Customer-facing payment receipt email (manager create / create-manual). */
+export async function sendPaymentReceiptCustomerEmail(input: {
+  to: string;
+  clientName: string;
+  amount: number;
+  purpose: string;
+  details?: string;
+  payer?: string;
+  receiver?: string;
+  contractCode?: string;
+  branch?: string;
+  bed?: string;
+}) {
+  const to = input.to.trim().toLowerCase();
+  if (!to) {
+    throw new Error("Customer email is required to send the receipt.");
+  }
+
+  const amountVi = `${Math.round(input.amount).toLocaleString("vi-VN")} VND`;
+  const amountEn = `${Math.round(input.amount).toLocaleString("en-US")} VND`;
+  const purpose = input.purpose.trim() || "Payment";
+  const details = input.details?.trim() || "";
+  const payer = input.payer?.trim() || input.clientName.trim() || to;
+  const receiver = input.receiver?.trim() || "";
+  const contractCode = input.contractCode?.trim() || "";
+  const branch = input.branch?.trim() || "";
+  const bed = input.bed?.trim() || "";
+  const when = new Date().toLocaleString("vi-VN");
+  const name = input.clientName.trim() || to;
+
+  const subject = `[Cozoro Home] Biên nhận thanh toán / Payment receipt: ${purpose}`;
+  const body = [
+    `Xin chào ${name},`,
+    "",
+    "Cozoro Home đã ghi nhận thanh toán của bạn.",
+    "",
+    "Chi tiết biên nhận:",
+    `- Mục đích: ${purpose}`,
+    ...(details ? [`- Ghi chú: ${details}`] : []),
+    `- Số tiền: ${amountVi}`,
+    `- Người nộp: ${payer}`,
+    ...(receiver ? [`- Người nhận tiền: ${receiver}`] : []),
+    ...(contractCode ? [`- Mã HĐ: ${contractCode}`] : []),
+    ...(branch ? [`- Chi nhánh: ${branch}`] : []),
+    ...(bed ? [`- Số giường: ${bed}`] : []),
+    `- Email: ${to}`,
+    `- Ngày: ${when}`,
+    "",
+    "---",
+    "",
+    `Dear ${name},`,
+    "",
+    "Cozoro Home has recorded your payment.",
+    "",
+    "Receipt details:",
+    `- Purpose: ${purpose}`,
+    ...(details ? [`- Notes: ${details}`] : []),
+    `- Amount: ${amountEn}`,
+    `- Payer: ${payer}`,
+    ...(receiver ? [`- Received by: ${receiver}`] : []),
+    ...(contractCode ? [`- Contract code: ${contractCode}`] : []),
+    ...(branch ? [`- Branch: ${branch}`] : []),
+    ...(bed ? [`- Bed: ${bed}`] : []),
+    `- Email: ${to}`,
+    `- Date: ${when}`,
+    "",
+    "Cảm ơn bạn đã đồng hành cùng Cozoro Home!",
+    "Thank you for staying with Cozoro Home!"
+  ].join("\n");
+
+  await sendGmailReceipt({
+    to,
+    subject,
+    body
   });
 }
 
@@ -4166,6 +4253,10 @@ export async function managerCreatePaymentReceipt(input: {
   discountAmount?: number;
   discountCondition?: string;
   allowZeroAmount?: boolean;
+  /** dd/mm/yyyy or yyyy-mm-dd; defaults from client payment plan when omitted */
+  nextPaymentDate?: string;
+  /** Override plan kind used for default next payment date */
+  planKind?: PaymentPlanKind;
 }) {
   if (!spreadsheetId) {
     throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
@@ -4183,6 +4274,19 @@ export async function managerCreatePaymentReceipt(input: {
     throw new Error("Payment amount must be greater than 0.");
   }
 
+  const purpose = input.purpose.trim();
+  const details = input.details?.trim() ?? "";
+  const payer = input.payer?.trim() || client.name || client.email;
+  const receiver = input.receiver?.trim() ?? "";
+  const branch = normalizeClientBranch(input.branch?.trim() ?? client.branch ?? "");
+  const planKind =
+    input.planKind ??
+    detectPaymentPlanKind(String(client.row?.["Bạn muốn thanh toán chi phí như thế nào?"] ?? ""));
+  const resolvedNextPaymentDate = resolveNextPaymentDateInput(
+    input.nextPaymentDate,
+    planKind
+  );
+
   await appendPaymentSheetRow({
     [PAYMENT_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(new Date()),
     [CONTRACT_CODE_COLUMN]: client.maHd,
@@ -4190,20 +4294,60 @@ export async function managerCreatePaymentReceipt(input: {
     [CLIENT_NAME_COLUMN]: client.name,
     [CLIENT_BED_COLUMN]: client.bed,
     [PAYMENT_AMOUNT_COLUMN]: String(amount),
-    [PAYMENT_PURPOSE_COLUMN]: input.purpose.trim(),
-    [PAYMENT_DETAILS_COLUMN]: input.details?.trim() ?? "",
-    [PAYMENT_PAYER_COLUMN]: input.payer?.trim() || client.name || client.email,
-    [PAYMENT_RECEIVER_COLUMN]: input.receiver?.trim() ?? "",
-    ["Chi nhánh Dorm"]: normalizeClientBranch(input.branch?.trim() ?? client.branch ?? "").replace("D", ""),
-    ["Địa chỉ email người nhận"]: input.recipientEmail?.trim() ?? client.email,
+    [PAYMENT_PURPOSE_COLUMN]: purpose,
+    [PAYMENT_DETAILS_COLUMN]: details,
+    [PAYMENT_PAYER_COLUMN]: payer,
+    [PAYMENT_RECEIVER_COLUMN]: receiver,
+    ["Chi nhánh Dorm"]: branch.replace("D", ""),
+    // Keep sheet column for staff/operator tracking; customer email is client.email.
+    ["Địa chỉ email người nhận"]: input.recipientEmail?.trim() || client.email,
     ["Cozoro Member"]: input.memberTier?.trim() ?? client.recordedMember ?? "",
     ["Số Coins hiện có"]: input.currentCoins?.trim() ?? String(client.currentCoins ?? ""),
     ["Số tiền hưởng ưu đãi"]: input.discountAmount != null ? String(input.discountAmount) : "",
-    ["Điều kiện hưởng ưu đãi"]: input.discountCondition?.trim() ?? ""
+    ["Điều kiện hưởng ưu đãi"]: input.discountCondition?.trim() ?? "",
+    [PAYMENT_NEXT_PAYMENT_DATE_COLUMN]: resolvedNextPaymentDate
   });
 
+  try {
+    await updateClientColumns(client.maHd, {
+      [CLIENT_PACKAGE_EXPIRY_COLUMN]: resolvedNextPaymentDate
+    });
+  } catch (error) {
+    console.warn(
+      `[payments/create] could not sync client package expiry for ${client.maHd}:`,
+      error instanceof Error ? error.message : error
+    );
+  }
+
+  try {
+    await upsertAccountNextPayment({
+      email: client.email,
+      nextPaymentDateDdMmYyyy: resolvedNextPaymentDate,
+      planKind,
+      sourceContractCode: client.maHd,
+      updatedBy: input.receiver?.trim() || input.recipientEmail?.trim() || null
+    });
+  } catch (error) {
+    console.warn(
+      `[payments/create] could not upsert AccountNextPayment for ${client.email}:`,
+      error instanceof Error ? error.message : error
+    );
+  }
+
   return {
-    ok: true
+    ok: true as const,
+    clientEmail: client.email.trim().toLowerCase(),
+    clientName: client.name,
+    amount,
+    purpose,
+    details,
+    payer,
+    receiver,
+    contractCode: client.maHd,
+    branch,
+    bed: client.bed,
+    nextPaymentDate: resolvedNextPaymentDate,
+    planKind
   };
 }
 
@@ -4223,6 +4367,8 @@ export async function managerCreateManualPaymentReceipt(input: {
   contractCode?: string;
   bed?: string;
   allowZeroAmount?: boolean;
+  nextPaymentDate?: string;
+  planKind?: PaymentPlanKind;
 }) {
   if (!spreadsheetId) {
     throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
@@ -4239,6 +4385,12 @@ export async function managerCreateManualPaymentReceipt(input: {
   const fullName = input.fullName.trim();
   const email = input.recipientEmail.trim().toLowerCase();
   const bed = input.bed?.trim() ?? "0";
+  const purpose = input.purpose.trim();
+  const details = input.details?.trim() ?? "";
+  const payer = input.payer?.trim() || fullName || email;
+  const receiver = input.receiver?.trim() ?? "";
+  const planKind = input.planKind ?? "monthly";
+  const resolvedNextPaymentDate = resolveNextPaymentDateInput(input.nextPaymentDate, planKind);
 
   await appendPaymentSheetRow({
     [PAYMENT_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(new Date()),
@@ -4247,18 +4399,117 @@ export async function managerCreateManualPaymentReceipt(input: {
     [CLIENT_NAME_COLUMN]: fullName,
     [CLIENT_BED_COLUMN]: bed,
     [PAYMENT_AMOUNT_COLUMN]: String(amount),
-    [PAYMENT_PURPOSE_COLUMN]: input.purpose.trim(),
-    [PAYMENT_DETAILS_COLUMN]: input.details?.trim() ?? "",
-    [PAYMENT_PAYER_COLUMN]: input.payer?.trim() || fullName || email,
-    [PAYMENT_RECEIVER_COLUMN]: input.receiver?.trim() ?? "",
+    [PAYMENT_PURPOSE_COLUMN]: purpose,
+    [PAYMENT_DETAILS_COLUMN]: details,
+    [PAYMENT_PAYER_COLUMN]: payer,
+    [PAYMENT_RECEIVER_COLUMN]: receiver,
     ["Chi nhánh Dorm"]: normalizedBranch.replace("D", ""),
     ["Địa chỉ email người nhận"]: email,
     ["Cozoro Member"]: input.memberTier?.trim() ?? "",
     ["Số Coins hiện có"]: input.currentCoins?.trim() ?? "",
     ["Số tiền hưởng ưu đãi"]: input.discountAmount != null ? String(input.discountAmount) : "",
-    ["Điều kiện hưởng ưu đãi"]: input.discountCondition?.trim() ?? ""
+    ["Điều kiện hưởng ưu đãi"]: input.discountCondition?.trim() ?? "",
+    [PAYMENT_NEXT_PAYMENT_DATE_COLUMN]: resolvedNextPaymentDate
   });
-  return { ok: true, contractCode };
+
+  try {
+    await upsertAccountNextPayment({
+      email,
+      nextPaymentDateDdMmYyyy: resolvedNextPaymentDate,
+      planKind,
+      sourceContractCode: contractCode,
+      updatedBy: receiver || null
+    });
+  } catch (error) {
+    console.warn(
+      `[payments/create-manual] could not upsert AccountNextPayment for ${email}:`,
+      error instanceof Error ? error.message : error
+    );
+  }
+
+  return {
+    ok: true as const,
+    contractCode,
+    clientEmail: email,
+    clientName: fullName,
+    amount,
+    purpose,
+    details,
+    payer,
+    receiver,
+    branch: normalizedBranch,
+    bed,
+    nextPaymentDate: resolvedNextPaymentDate,
+    planKind
+  };
+}
+
+function resolveNextPaymentDateInput(
+  raw: string | undefined,
+  planKind: PaymentPlanKind
+): string {
+  const trimmed = raw?.trim() ?? "";
+  if (trimmed) {
+    const fromHtml = /^\d{4}-\d{2}-\d{2}$/.test(trimmed)
+      ? (() => {
+          const [y, m, d] = trimmed.split("-").map((part) => Number.parseInt(part, 10));
+          return new Date(y, m - 1, d);
+        })()
+      : null;
+    const parsed = fromHtml && !Number.isNaN(fromHtml.getTime()) ? fromHtml : parseSheetDateDdMmYyyy(trimmed);
+    if (parsed) {
+      return formatSheetDateDdMmYyyy(parsed);
+    }
+    throw new Error("Invalid next_payment_date. Use dd/mm/yyyy or yyyy-mm-dd.");
+  }
+  return formatSheetDateDdMmYyyy(defaultNextPaymentDate({ planKind }));
+}
+
+/** Latest account next payment date: Prisma → BIÊN NHẬN → client package expiry → 1st next month. */
+export async function resolveAccountNextPaymentDate(input: {
+  email: string;
+  clientPackageExpiry?: string | null;
+}): Promise<{
+  nextPaymentDate: string | null;
+  source: "db" | "payment_receipt" | "client_package_expiry" | "first_of_next_month";
+}> {
+  const fromDb = await getAccountNextPaymentDate(input.email);
+  if (fromDb) {
+    return { nextPaymentDate: fromDb.nextPaymentDate, source: "db" };
+  }
+
+  const payments = await getPaymentsForEmail(input.email);
+  for (const entry of payments) {
+    const raw =
+      entry.row[PAYMENT_NEXT_PAYMENT_DATE_COLUMN] ??
+      entry.row["next_payment_date"] ??
+      "";
+    const parsed = parseSheetDateDdMmYyyy(String(raw));
+    if (parsed) {
+      return {
+        nextPaymentDate: formatSheetDateDdMmYyyy(parsed),
+        source: "payment_receipt"
+      };
+    }
+  }
+
+  const fromClient = parseSheetDateDdMmYyyy(input.clientPackageExpiry ?? "");
+  if (fromClient) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (fromClient.getTime() >= today.getTime()) {
+      return {
+        nextPaymentDate: formatSheetDateDdMmYyyy(fromClient),
+        source: "client_package_expiry"
+      };
+    }
+  }
+
+  const firstNext = defaultNextPaymentDate({ planKind: "monthly" });
+  return {
+    nextPaymentDate: formatSheetDateDdMmYyyy(firstNext),
+    source: "first_of_next_month"
+  };
 }
 
 export async function upgradeCozoroMemberByCoins(input: {
@@ -4959,7 +5210,19 @@ async function appendPaymentSheetRow(entry: Record<string, string>) {
     throw new Error("The payments sheet is empty");
   }
 
-  const headers = (values[0] ?? []).map((value) => normalizeHeader(String(value)));
+  let headers = (values[0] ?? []).map((value) => normalizeHeader(String(value)));
+  const nextPaymentHeaderNorm = normalizeHeader(PAYMENT_NEXT_PAYMENT_DATE_COLUMN);
+  if (!headers.some((header) => header === nextPaymentHeaderNorm)) {
+    const nextColIndex = headers.length;
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: paymentsSpreadsheetId,
+      range: `${paymentsSheetName}!${toSheetColumn(nextColIndex + 1)}1`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: [[PAYMENT_NEXT_PAYMENT_DATE_COLUMN]] }
+    });
+    headers = [...headers, nextPaymentHeaderNorm];
+  }
+
   const row = headers.map((header) => valueForSheetHeader(entry, header));
 
   await sheets.spreadsheets.values.append({

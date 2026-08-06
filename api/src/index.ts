@@ -100,6 +100,7 @@ import {
 import { 
   createAutomaticFineForEmail,
   sendGmailReceipt,
+  sendPaymentReceiptCustomerEmail,
   sendFineTicketEmail,
   syncClientsFromSheet,
   submitPublicRegistration,
@@ -122,6 +123,7 @@ import {
   managerAdjustCoins,
   managerCreatePaymentReceipt,
   managerCreateManualPaymentReceipt,
+  resolveAccountNextPaymentDate,
   managerCreateFine,
   managerResolveFineDispute,
   payFineByCoins,
@@ -1433,7 +1435,9 @@ const managerPaymentReceiptCreateSchema = z.object({
   memberTier: z.string().trim().optional(),
   currentCoins: z.string().trim().optional(),
   discountAmount: z.coerce.number().int().nonnegative().optional(),
-  discountCondition: z.string().trim().optional()
+  discountCondition: z.string().trim().optional(),
+  nextPaymentDate: z.string().trim().optional(),
+  planKind: z.enum(["monthly", "3month", "6month"]).optional()
 });
 const managerManualPaymentReceiptCreateSchema = z.object({
   actorEmail: z.string().email(),
@@ -1450,7 +1454,9 @@ const managerManualPaymentReceiptCreateSchema = z.object({
   discountAmount: z.coerce.number().int().nonnegative().optional(),
   discountCondition: z.string().trim().optional(),
   contractCode: z.string().trim().max(120).optional(),
-  bed: z.string().trim().max(20).optional()
+  bed: z.string().trim().max(20).optional(),
+  nextPaymentDate: z.string().trim().optional(),
+  planKind: z.enum(["monthly", "3month", "6month"]).optional()
 });
 const managerBranchBroadcastSchema = z.object({
   actorEmail: z.string().email(),
@@ -2401,6 +2407,9 @@ app.post("/internal/guest-bookings/import-paid", async (request, response) => {
       checkOut: parsed.data.checkOut,
       pricingTotal: parsed.data.pricingTotal,
       notes: mergedNotes
+    });
+    await purgeResidentCleaningSchedule(parsed.data.guestEmail.trim().toLowerCase(), {
+      reason: "hostel-short-term-excluded"
     });
 
     let stripeReceipt: { created: boolean; amountVnd: number; paymentIntentId: string } | null = null;
@@ -4744,13 +4753,14 @@ app.post("/manager/payments/create", async (request, response) => {
       }
     }
 
-      const result = await runWithWriteGuard({
-        key: createWriteGuardKey("/manager/payments/create", {
-          ...parsed.data,
-          receiver
-        }),
-        duplicateMessage: "This payment receipt was just submitted. Please wait a few seconds.",
-        action: () => managerCreatePaymentReceipt({
+    const result = await runWithWriteGuard({
+      key: createWriteGuardKey("/manager/payments/create", {
+        ...parsed.data,
+        receiver
+      }),
+      duplicateMessage: "This payment receipt was just submitted. Please wait a few seconds.",
+        action: () =>
+        managerCreatePaymentReceipt({
           maHd: parsed.data.maHd,
           amount: parsed.data.amount,
           purpose: parsed.data.purpose,
@@ -4762,16 +4772,40 @@ app.post("/manager/payments/create", async (request, response) => {
           memberTier: parsed.data.memberTier,
           currentCoins: parsed.data.currentCoins,
           discountAmount: parsed.data.discountAmount,
-          discountCondition: parsed.data.discountCondition
+          discountCondition: parsed.data.discountCondition,
+          nextPaymentDate: parsed.data.nextPaymentDate,
+          planKind: parsed.data.planKind
         })
+    });
+
+    let emailSent = false;
+    let emailError: string | undefined;
+    try {
+      await sendPaymentReceiptCustomerEmail({
+        to: result.clientEmail,
+        clientName: result.clientName,
+        amount: result.amount,
+        purpose: result.purpose,
+        details: result.details,
+        payer: result.payer,
+        receiver: result.receiver,
+        contractCode: result.contractCode,
+        branch: result.branch,
+        bed: result.bed
       });
-      return response.status(201).json(result);
+      emailSent = true;
     } catch (error) {
-      return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
-        error: error instanceof Error ? error.message : "Unable to create payment receipt"
-      });
+      emailError = error instanceof Error ? error.message : "Unable to send receipt email";
+      console.error("[payments/create] receipt email failed:", emailError);
     }
-  });
+
+    return response.status(201).json({ ...result, emailSent, emailError });
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
+      error: error instanceof Error ? error.message : "Unable to create payment receipt"
+    });
+  }
+});
 
 app.post("/manager/payments/create-manual", async (request, response) => {
   const parsed = managerManualPaymentReceiptCreateSchema.safeParse(request.body);
@@ -4812,10 +4846,34 @@ app.post("/manager/payments/create-manual", async (request, response) => {
           discountAmount: parsed.data.discountAmount,
           discountCondition: parsed.data.discountCondition,
           contractCode: parsed.data.contractCode,
-          bed: parsed.data.bed
+          bed: parsed.data.bed,
+          nextPaymentDate: parsed.data.nextPaymentDate,
+          planKind: parsed.data.planKind
         })
     });
-    return response.status(201).json(result);
+
+    let emailSent = false;
+    let emailError: string | undefined;
+    try {
+      await sendPaymentReceiptCustomerEmail({
+        to: result.clientEmail,
+        clientName: result.clientName,
+        amount: result.amount,
+        purpose: result.purpose,
+        details: result.details,
+        payer: result.payer,
+        receiver: result.receiver,
+        contractCode: result.contractCode,
+        branch: result.branch,
+        bed: result.bed
+      });
+      emailSent = true;
+    } catch (error) {
+      emailError = error instanceof Error ? error.message : "Unable to send receipt email";
+      console.error("[payments/create-manual] receipt email failed:", emailError);
+    }
+
+    return response.status(201).json({ ...result, emailSent, emailError });
   } catch (error) {
     return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
       error: error instanceof Error ? error.message : "Unable to create manual payment receipt"
@@ -6613,7 +6671,8 @@ app.post("/pay-rent", async (req, res) => {
       discountCondition:
         discountCondition ||
         `Rent payment ${targetMonth}; surcharge ${Math.round(breakdown.tenureSurchargeRate * 100)}%; manager discount ${Number(managerDiscountVnd) || 0}`,
-      allowZeroAmount: true
+      allowZeroAmount: true,
+      planKind: "monthly"
     });
 
     // Send Gmail Receipt
@@ -7454,6 +7513,7 @@ app.get("/rent-paid-status", async (req, res) => {
 
     const client = clientCache?.rows.find((r) => (r["Địa chỉ email"] ?? "").toLowerCase() === email);
     if (!client) {
+      const nextPayment = await resolveAccountNextPaymentDate({ email });
       return res.json({
         email,
         month,
@@ -7464,12 +7524,18 @@ app.get("/rent-paid-status", async (req, res) => {
         rentCoinRedeemAt: record?.rentCoinRedeemAt?.toISOString() ?? null,
         breakdown: null,
         onPrepaidPlan: false,
+        nextPaymentDate: nextPayment.nextPaymentDate,
+        nextPaymentDateSource: nextPayment.source,
         blockingRentDuePopupEnabled: portalUx.blockingRentDuePopupEnabled
       });
     }
 
     const paymentPlan = String(client["Bạn muốn thanh toán chi phí như thế nào?"] ?? "");
     const onPrepaidPlan = paymentPlan.includes("03 tháng") || paymentPlan.includes("06 tháng");
+    const nextPayment = await resolveAccountNextPaymentDate({
+      email,
+      clientPackageExpiry: client["Ngày hết hạn gói đã thanh toán"] ?? null
+    });
 
     if (onPrepaidPlan || (record?.isPaid ?? false)) {
       const baseEstimate = onPrepaidPlan ? await computePrepaidNextPaymentEstimate(client, month) : null;
@@ -7504,6 +7570,8 @@ app.get("/rent-paid-status", async (req, res) => {
         breakdown: null,
         onPrepaidPlan,
         prepaidNextPaymentEstimate,
+        nextPaymentDate: nextPayment.nextPaymentDate,
+        nextPaymentDateSource: nextPayment.source,
         blockingRentDuePopupEnabled: portalUx.blockingRentDuePopupEnabled
       });
     }
@@ -7521,6 +7589,8 @@ app.get("/rent-paid-status", async (req, res) => {
       rentCoinRedeemAt: record?.rentCoinRedeemAt?.toISOString() ?? null,
       breakdown,
       onPrepaidPlan: false,
+      nextPaymentDate: nextPayment.nextPaymentDate,
+      nextPaymentDateSource: nextPayment.source,
       blockingRentDuePopupEnabled: portalUx.blockingRentDuePopupEnabled
     });
   } catch (error) {
@@ -9756,6 +9826,9 @@ app.post("/manager/short-term/bookings/:id/confirm", async (request, response) =
       pricingTotal: booking.pricing.total,
       notes: `Confirmed by ${actorEmail} | Source: ${booking.source ?? "hostel site"} | Booking ID: ${booking.id}`
     });
+    await purgeResidentCleaningSchedule(booking.email.trim().toLowerCase(), {
+      reason: "hostel-short-term-excluded"
+    });
 
     // Create portal auth with phone digits as initial password
     const initialPassword = (booking.phone ?? "").replace(/\D+/g, "") || "cozoro2024";
@@ -9819,6 +9892,9 @@ app.post("/manager/short-term/bookings", async (request, response) => {
         source ? `Source: ${source}` : "",
         paymentStatus ? `Payment: ${paymentStatus}` : "",
       ].filter(Boolean).join(" | ")
+    });
+    await purgeResidentCleaningSchedule(email.trim().toLowerCase(), {
+      reason: "hostel-short-term-excluded"
     });
     const initialPassword = phone.replace(/\D+/g, "") || "cozoro2024";
     await upsertStoredPassword(email.trim().toLowerCase(), initialPassword, { mustChangePassword: true });

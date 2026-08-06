@@ -989,6 +989,15 @@ const translations: Record<string, { en: string; vi: string }> = {
   },
   selfAssignPromoCta: { en: "Open schedule", vi: "Mở lịch vệ sinh" },
   selfAssignPromoDismiss: { en: "Not now", vi: "Để sau" },
+  hostelCleaningExcludedTitle: { en: "Cleaning schedule not required", vi: "Không cần lịch vệ sinh" },
+  hostelCleaningExcludedBody: {
+    en: "Hostel short-term guests are not included in the resident cleaning schedule. Laundry and payment info remain available on this Schedule page.",
+    vi: "Khách hostel ngắn hạn không nằm trong lịch vệ sinh của cư dân dài hạn. Thông tin giặt và thanh toán vẫn xem được ở trang Lịch."
+  },
+  hostelCleaningExcludedShort: {
+    en: "Hostel guests are not assigned cleaning duties.",
+    vi: "Khách hostel không được phân công lịch vệ sinh."
+  },
   selfAssignMaxDaysAhead: {
     en: "Self-assignment is limited to 30 days in advance.",
     vi: "Chỉ được tự đăng ký tối đa 30 ngày trước."

@@ -93,6 +93,9 @@ export type RentPaidStatusPayload = {
   prepaidNextPaymentEstimate?: PrepaidNextPaymentEstimatePayload | null;
   breakdown: RentBreakdownPayload | null;
   blockingRentDuePopupEnabled?: boolean;
+  /** Account next payment date from latest BIÊN NHẬN `next_payment_date` (dd/mm/yyyy). */
+  nextPaymentDate?: string | null;
+  nextPaymentDateSource?: "db" | "payment_receipt" | "client_package_expiry" | "first_of_next_month";
 };
 
 export function formatBillingMonthLabel(month: string, _language: "en" | "vi"): string {

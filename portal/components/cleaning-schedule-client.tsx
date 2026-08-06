@@ -65,6 +65,8 @@ type CleaningOverview = {
     holiday: number;
   };
   holidays?: Array<{ date: string; nameEn: string; nameVi: string }>;
+  cleaningExcluded?: boolean;
+  cleaningExcludedReason?: string;
 };
 
 type PendingSelfAssignment = {
@@ -1237,7 +1239,21 @@ export function CleaningScheduleClient({
         {message ? <p className="mt-4 text-sm text-slate-700">{message}</p> : null}
       </section>
 
-      {nextCleaningCardTask && (
+      {overview?.cleaningExcluded ? (
+        <section className="rounded-2xl border border-slate-200 bg-slate-50 p-6 shadow-sm">
+          <h2 className="text-lg font-semibold text-slate-900">
+            {t("hostelCleaningExcludedTitle", "Cleaning schedule not required")}
+          </h2>
+          <p className="mt-2 text-sm text-slate-600">
+            {t(
+              "hostelCleaningExcludedBody",
+              "Hostel short-term guests are not included in the resident cleaning schedule. Laundry and payment info remain available on this Schedule page."
+            )}
+          </p>
+        </section>
+      ) : null}
+
+      {!overview?.cleaningExcluded && nextCleaningCardTask && (
         <section className="rounded-2xl border border-amber-200 bg-amber-50/50 p-6 shadow-sm">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div className="flex items-center gap-3">
@@ -1335,7 +1351,7 @@ export function CleaningScheduleClient({
         </div>
       )}
 
-      {overview ? (
+      {overview && !overview.cleaningExcluded ? (
         <>
           {activeMenuDate && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm animate-in fade-in duration-200">

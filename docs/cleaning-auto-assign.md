@@ -20,7 +20,7 @@ Implementation lives mainly in `api/src/cleaning.ts` (`compareCleaningCandidateR
 
 For a given calendar slot (`type` + date + trash floor when `TRASH_D7`):
 
-1. **Eligibility** — active long-term client (not hostel `SHORTTERM-*` for auto/bulk), correct branch/floor, not monthly opt-out, not contract cleaning opt-out, not `UNAVAILABLE` that day (manager may `force` on manual assign only).
+1. **Eligibility** — active long-term client (not hostel `SHORTTERM-*`), correct branch/floor, not monthly opt-out, not contract cleaning opt-out, not `UNAVAILABLE` that day (manager may `force` on manual assign only).
 2. **Same-day** — anyone who already has a cleaning task that calendar day ranks last / is excluded from auto-fill.
 3. **Availability tier** — `PREFERRED` → `AVAILABLE` → unmarked. Marking Available beats staying silent; Preferred beats Available.
 4. **Per-type fairness (60 days)** — fewest non-`MISSED` tasks of **this slot type** first. Kitchen and trash counts are separate so D7 dual-duty does not stack into one global “already busy” score.
@@ -36,13 +36,21 @@ Counts include future `ASSIGNED` tasks in the window so self-assign ahead of tim
 - Self-assign: future dates only, max 30 days; weekday/weekend/holiday coin multipliers vs base system/manager reward.
 - Post-release auto-place for the releaser: search same type/floor open slots within **15 days after** the released date; place only when the releaser would be `candidates[0]` under the shared ranking.
 
+## Hostel short-term guests
+
+Guests with contract code `SHORTTERM-*` are excluded from the cleaning schedule entirely:
+
+- Not in `getActiveCleaningUsers` (auto/bulk/manual candidate pools, self-assign, swaps, availability)
+- `isResidentEligibleForCleaningSchedule` returns false (left-resident sweep / overview purge leftover tasks)
+- Creating or confirming a hostel guest clears any existing cleaning tasks for that email
+- Portal Schedule still shows laundry/payment; cleaning UI shows a not-required notice
+
 ## Manager overrides
 
 Manual assign may:
 
 - Reassign an existing filled slot
 - `force` past `UNAVAILABLE` or same-day double book (requires correction feedback when fixing SYSTEM / force)
-- Assign hostel short-term guests (auto/bulk still exclude them)
 
 Reassign recalculates `rewardCoins` from current settings and the new `isSelfAssigned` flag so SELF multipliers do not stick after a manager/system overwrite.
 

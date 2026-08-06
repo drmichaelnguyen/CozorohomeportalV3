@@ -542,6 +542,22 @@ model PrepaidPackageBilling {
   @@index([residentEmail, confirmed])
 }
 
+/// Per-account next payment due date (source of truth for portal next-payment date; mirrored from BIÊN NHẬN next_payment_date).
+model AccountNextPayment {
+  email             String   @id @db.VarChar(255)
+  /// Calendar date only (no time)
+  nextPaymentDate   DateTime @db.Date
+  /// monthly | 3month | 6month
+  planKind          String?  @db.VarChar(20)
+  /// Optional MÃ HD / MANUAL-* from the receipt that set this date
+  sourceContractCode String? @db.VarChar(120)
+  updatedBy         String?  @db.VarChar(255)
+  updatedAt         DateTime @updatedAt
+  createdAt         DateTime @default(now())
+
+  @@index([nextPaymentDate])
+}
+
 // ── Unified Pricing ──────────────────────────────────────────────────────────
 
 // Per-branch configurable fees set by owner

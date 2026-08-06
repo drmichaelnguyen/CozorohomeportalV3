@@ -193,7 +193,8 @@ const nextConfig: NextConfig = {
 | `POST /manager/contract-approvals/:id/approve` | **Owner, app_admin** â€” run sheet/bridge workflow; marks approved. |
 | `POST /manager/contract-approvals/:id/reject` | **Owner, app_admin** â€” marks rejected (stays in queue for visibility). |
 | `POST /manager/rent-paid-status` | Staff rent status toggle now also supports owner/app_admin partial monthly component tracking (`componentUnpaid`) for rent/parking/gate/laundry/fines. |
-| `POST /manager/payments/create-manual` | **Manager, owner, app_admin** â€” create payment receipt for a person not in current client DB; branch/receiver can be prefilled by UI branch tools. |
+| `POST /manager/payments/create` | **Manager, owner, app_admin** — create payment receipt for an existing client; emails the customer after sheet write (`emailSent` / `emailError` in response). |
+| `POST /manager/payments/create-manual` | **Manager, owner, app_admin** — create payment receipt for a person not in current client DB; branch/receiver can be prefilled by UI branch tools; emails the customer after sheet write (`emailSent` / `emailError` in response). |
 | `POST /manager/branch-broadcast` | **Manager, owner, app_admin** â€” push a branch-wide message to all active clients in D2/D7 and queue first-open prompt notices. |
 | `GET /clients/branch-broadcasts/pending?email=` | Resident fetches unread branch prompts queued after branch broadcasts. |
 | `POST /clients/branch-broadcasts/:id/read` | Resident acknowledges a branch prompt so it no longer appears on next app open. |
@@ -259,7 +260,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 - **Self-assign**: residents can claim open slots for future dates only, **max 30 days ahead**
 - **Self-assign coin multipliers** (vs manager/system base reward): weekday **x2**, weekend **x2.5**, Vietnam national holiday **x3** (holiday calendar on cleaning UI; holiday wins over weekend)
 - **Cozoro Hero awards** (highest completed self-assign count in the period, excluding rejected): month **+30,000**, quarter **+50,000**, year **+100,000** ("Cozoro Hero of the Year"); coins + Notification Center notice; awards closed periods once
-- **Contract end cleanup**: cleaning schedule is removed only after the resident **confirms they left** (checkout form), or when staff mark them inactive (−1 with no remaining active row). An expired contract end date alone does **not** remove tasks while the account stays active.
+- **Contract end cleanup**: cleaning schedule is removed only after the resident **confirms they left** (checkout form), or when staff mark them inactive (−1 with no remaining active row). An expired contract end date alone does **not** remove tasks while the account stays active. Hostel short-term guests (`SHORTTERM-*`) are never on the cleaning schedule.
 - **Take Over**: if today is after 20:00 and an assigned resident hasn't completed the task, others can take over
 - **Task types**: `KITCHEN_D2`, `KITCHEN_D7`, `TRASH_D7`
 - **Completion window**: `KITCHEN_D7` = 17:00–23:00 on assigned date; others = any time that day
@@ -274,6 +275,10 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.5 | Prisma `AccountNextPayment` model (per-email next payment date); receipt writes upsert DB + BIÊN NHẬN `next_payment_date`; `/rent-paid-status` prefers DB then sheet. |
+| 3.9.4 | BIÊN NHẬN `next_payment_date` column: written on manager/manual/rent receipts (auto-added if missing); defaults monthly→1st next month, 3-mo→+3, 6-mo→+7; staff-editable on create forms; synced to client `Ngày hết hạn gói đã thanh toán`; resident account next payment date prefers latest receipt value via `/rent-paid-status`. |
+| 3.9.3 | Manager payment receipts (existing client + Branch Tools manual/new-customer) now email the customer via Gmail after the BIÊN NHẬN sheet write; UI reports email success/failure. Staff display name set for Du Ái Phụng so blank Receiver falls back to `DU ÁI PHỤNG (BQT)`. |
+| 3.9.2 | Hostel short-term guests (`SHORTTERM-*`) excluded from cleaning schedule: no auto/manual/self-assign, leftover tasks purged on guest import and overview; portal shows not-required notice (Schedule laundry/payment unchanged). |
 | 3.9.1 | Notification Center deep links: staff support notifications open `/manager?view=support_chat&chat=…` (and auto-select that thread); resident `/support?chat=…` selects the personal tab. Fixes clicks that previously landed on manager Overview with no conversation. |
 | 3.9.0 | Self-assign encouragement: occasional in-app coin promo (~every 4 days / 1–2× per week) plus Cozoro Assistant/Bee one-liner side jokes about higher self-assign rates (weekday x2 / weekend x2.5 / VN holiday x3). |
 | 3.8.70 | Cleaning assign: one shared ranking for auto, manager list/bulk preview, release fill, and swaps; per-type 60-day fairness (kitchen vs trash); soft correction demotion; post-release re-place only when releaser is top underdue pick; reassign recalculates reward coins; algorithm documented in `docs/cleaning-auto-assign.md`. |

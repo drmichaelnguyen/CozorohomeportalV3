@@ -8,6 +8,7 @@ import { usePortalSession } from "./portal-session";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { isContractExpiryAccessLimited, isResidentPortalAccessLimited } from "../lib/account-lock-status";
 import { useAccountLockOverride } from "../hooks/use-account-lock-override";
+import { isShortTermContractCode } from "../lib/resident-guides-types";
 
 type NavBadges = {
   laundry: number;   // schedule button top-right
@@ -228,6 +229,11 @@ export function MobileNav() {
     return client?.["Hiện còn ở"] === "-1";
   }, [client, sessionRole]);
 
+  const isHostelGuest = useMemo(() => {
+    if (sessionRole !== "user") return false;
+    return isShortTermContractCode(client?.["MÃ HD"]);
+  }, [client, sessionRole]);
+
   const isManagerWorkspace =
     (sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin") &&
     (pathname.startsWith("/manager") || pathname.startsWith("/admin-cleaning"));
@@ -253,7 +259,7 @@ export function MobileNav() {
       href: "/schedule",
       label: t("schedule", "Schedule"),
       badgeRight: badges.laundry,
-      badgeLeft: badges.cleaning,
+      badgeLeft: isHostelGuest ? 0 : badges.cleaning,
       disabled: isRemoved,
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">

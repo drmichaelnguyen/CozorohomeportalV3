@@ -29,6 +29,12 @@ import {
   type AccountLockOverride
 } from "../lib/account-lock-status";
 import { isContractExpired, parseVietnamDate } from "../lib/contract-utils";
+import {
+  defaultNextPaymentDate,
+  formatHtmlDateInput,
+  planMonthsToAdd,
+  type PaymentPlanKind
+} from "../lib/next-payment-date";
 import { formatCozoroDate, formatCozoroDateTime } from "../lib/date-format";
 import { resolveCurrentCoinsBalance } from "../lib/resolve-current-coins";
 import { AdminCleaningClient } from "./admin-cleaning-client";
@@ -2886,6 +2892,8 @@ export function ManagerClient({
   const [manualReceiptDiscountCondition, setManualReceiptDiscountCondition] = useState("");
   const [manualReceiptContractCode, setManualReceiptContractCode] = useState("");
   const [manualReceiptBed, setManualReceiptBed] = useState("");
+  const [manualReceiptNextPaymentDate, setManualReceiptNextPaymentDate] = useState("");
+  const [manualReceiptPlanKind, setManualReceiptPlanKind] = useState<"monthly" | "3month" | "6month">("monthly");
   const [branchBroadcastTitle, setBranchBroadcastTitle] = useState("CozoroHome Notice");
   const [branchBroadcastMessage, setBranchBroadcastMessage] = useState("");
   const [settingInactive, setSettingInactive] = useState<Record<string, boolean>>({});
@@ -2993,6 +3001,8 @@ export function ManagerClient({
   const [paymentPurposeSelections, setPaymentPurposeSelections] = useState<string[]>([]);
   const [paymentPurposeOpen, setPaymentPurposeOpen] = useState(false);
   const [paymentPurposeRows, setPaymentPurposeRows] = useState<Record<string, string>[]>([]);
+  const [paymentNextPaymentDate, setPaymentNextPaymentDate] = useState("");
+  const [paymentPlanKind, setPaymentPlanKind] = useState<"monthly" | "3month" | "6month">("monthly");
   const [paymentDetails, setPaymentDetails] = useState("");
   const [paymentPayer, setPaymentPayer] = useState("");
   const [paymentBranch, setPaymentBranch] = useState("");
@@ -4579,6 +4589,10 @@ export function ManagerClient({
     setBranchToolsTab(null);
     setBranchToolsOpen(true);
     if (!manualReceiptPurpose) setManualReceiptPurpose("Rent");
+    if (!manualReceiptNextPaymentDate) {
+      setManualReceiptPlanKind("monthly");
+      setManualReceiptNextPaymentDate(formatHtmlDateInput(defaultNextPaymentDate({ planKind: "monthly" })));
+    }
   }
 
   async function submitManualReceiptForNewClient() {
@@ -4607,7 +4621,9 @@ export function ManagerClient({
         discountCondition: manualReceiptDiscountCondition.trim() || undefined,
         branch: selectedBranch,
         contractCode: manualReceiptContractCode.trim() || undefined,
-        bed: manualReceiptBed.trim() || undefined
+        bed: manualReceiptBed.trim() || undefined,
+        nextPaymentDate: manualReceiptNextPaymentDate || undefined,
+        planKind: manualReceiptPlanKind
       },
       "Manual receipt created successfully.",
       async () => {
@@ -4619,6 +4635,8 @@ export function ManagerClient({
         setManualReceiptDetails("");
         setManualReceiptContractCode("");
         setManualReceiptBed("");
+        setManualReceiptPlanKind("monthly");
+        setManualReceiptNextPaymentDate(formatHtmlDateInput(defaultNextPaymentDate({ planKind: "monthly" })));
       }
     );
   }
@@ -5571,6 +5589,9 @@ export function ManagerClient({
     setPaymentRecipientEmail(normalizedEmail);
     setPaymentMemberTier(client?.recordedMember ?? "");
     setPaymentCurrentCoins(client?.currentCoins ?? "");
+    const planKind = prepaidPlanType(client?.row) as PaymentPlanKind;
+    setPaymentPlanKind(planKind);
+    setPaymentNextPaymentDate(formatHtmlDateInput(defaultNextPaymentDate({ planKind })));
   }, [selectedMaHd, clients, normalizedEmail]);
 
   useEffect(() => {
@@ -5902,7 +5923,11 @@ export function ManagerClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
       });
-      const data = (await response.json()) as { error?: string };
+      const data = (await response.json()) as {
+        error?: string;
+        emailSent?: boolean;
+        emailError?: string;
+      };
       if (!response.ok) {
         setStatus(data.error ?? t("requestFailed"));
         return;
@@ -5912,7 +5937,15 @@ export function ManagerClient({
       }
       setEditingId("");
       setEditValues({});
-      setStatus(successMessage);
+      if (data.emailSent === false) {
+        setStatus(
+          `${successMessage} Receipt saved, but email failed${data.emailError ? `: ${data.emailError}` : "."}`
+        );
+      } else if (data.emailSent === true) {
+        setStatus(`${successMessage} Receipt email sent.`);
+      } else {
+        setStatus(successMessage);
+      }
     } catch {
       setStatus(t("requestFailed"));
     } finally {
@@ -10046,6 +10079,39 @@ export function ManagerClient({
                           Điều kiện hưởng ưu đãi
                           <input type="text" value={paymentDiscountCondition} onChange={(event) => setPaymentDiscountCondition(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" placeholder="VD: Member Gold" />
                         </label>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <label className="block text-sm font-medium text-slate-700">
+                            Plan type (for next payment default)
+                            <select
+                              value={paymentPlanKind}
+                              onChange={(event) => {
+                                const planKind = event.target.value as PaymentPlanKind;
+                                setPaymentPlanKind(planKind);
+                                setPaymentNextPaymentDate(formatHtmlDateInput(defaultNextPaymentDate({ planKind })));
+                              }}
+                              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                            >
+                              <option value="monthly">Monthly → 1st of next month</option>
+                              <option value="3month">3-month plan → +3 months</option>
+                              <option value="6month">6-month plan → +7 months (6+1)</option>
+                            </select>
+                          </label>
+                          <label className="block text-sm font-medium text-slate-700">
+                            next_payment_date
+                            <input
+                              type="date"
+                              value={paymentNextPaymentDate}
+                              onChange={(event) => setPaymentNextPaymentDate(event.target.value)}
+                              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                            />
+                            <span className="mt-1 block text-[11px] font-normal text-slate-500">
+                              Editable. Defaults from plan type
+                              {paymentPlanKind !== "monthly"
+                                ? ` (+${planMonthsToAdd(paymentPlanKind)} months).`
+                                : " (1st next month)."}
+                            </span>
+                          </label>
+                        </div>
                         <button
                           type="button"
                           onClick={() => {
@@ -10069,7 +10135,9 @@ export function ManagerClient({
                                 memberTier: paymentMemberTier,
                                 currentCoins: paymentCurrentCoins,
                                 discountAmount: paymentDiscountAmount ? Number(paymentDiscountAmount) : undefined,
-                                discountCondition: paymentDiscountCondition
+                                discountCondition: paymentDiscountCondition,
+                                nextPaymentDate: paymentNextPaymentDate || undefined,
+                                planKind: paymentPlanKind
                               },
                               t("paymentReceiptCreated"),
                               async () => {
@@ -13691,6 +13759,31 @@ export function ManagerClient({
                     <input value={manualReceiptDiscountCondition} onChange={(e) => setManualReceiptDiscountCondition(e.target.value)} placeholder="Discount condition (optional)" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
                     <input value={manualReceiptBed} onChange={(e) => setManualReceiptBed(e.target.value)} placeholder="Bed (optional, default 0)" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
                     <input value={manualReceiptContractCode} onChange={(e) => setManualReceiptContractCode(e.target.value)} placeholder="Contract code override (optional)" className="rounded-lg border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
+                    <label className="block text-sm text-slate-700 sm:col-span-1">
+                      Plan type
+                      <select
+                        value={manualReceiptPlanKind}
+                        onChange={(e) => {
+                          const planKind = e.target.value as PaymentPlanKind;
+                          setManualReceiptPlanKind(planKind);
+                          setManualReceiptNextPaymentDate(formatHtmlDateInput(defaultNextPaymentDate({ planKind })));
+                        }}
+                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      >
+                        <option value="monthly">Monthly → 1st next month</option>
+                        <option value="3month">3-month → +3 months</option>
+                        <option value="6month">6-month → +7 months</option>
+                      </select>
+                    </label>
+                    <label className="block text-sm text-slate-700 sm:col-span-1">
+                      next_payment_date
+                      <input
+                        type="date"
+                        value={manualReceiptNextPaymentDate}
+                        onChange={(e) => setManualReceiptNextPaymentDate(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      />
+                    </label>
                     <textarea value={manualReceiptDetails} onChange={(e) => setManualReceiptDetails(e.target.value)} placeholder="Details (optional)" rows={3} className="rounded-lg border border-slate-300 px-3 py-2 text-sm sm:col-span-2" />
                     <datalist id="manual-receipt-receiver-options">
                       {manualReceiptReceiverSuggestions.map((option) => (

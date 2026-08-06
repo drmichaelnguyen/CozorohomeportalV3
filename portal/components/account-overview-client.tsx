@@ -805,6 +805,9 @@ export function AccountOverviewClient() {
       return null;
     }
 
+    const fromReceipt = parseFlexibleDate(rentPaidStatus?.nextPaymentDate);
+    if (fromReceipt) return fromReceipt;
+
     const expiry = parseFlexibleDate(clientWithDerivedRoom?.["Ngày hết hạn gói đã thanh toán"]);
     const today = startOfDay(new Date());
 
@@ -813,7 +816,7 @@ export function AccountOverviewClient() {
     }
 
     return expiry;
-  }, [client, clientWithDerivedRoom]);
+  }, [client, clientWithDerivedRoom, rentPaidStatus?.nextPaymentDate]);
   const currentCoins = useMemo(() => {
     let earned = 0;
     let used = 0;

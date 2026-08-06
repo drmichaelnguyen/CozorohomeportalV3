@@ -13,6 +13,7 @@ import { isContractExpiryAccessLimited } from "../lib/account-lock-status";
 import { useAccountLockOverride } from "../hooks/use-account-lock-override";
 import type { RentPaidStatusPayload } from "../lib/rent-paid-status";
 import { formatCozoroDate, formatCozoroDateTime, formatCozoroMonth } from "../lib/date-format";
+import { isShortTermContractCode } from "../lib/resident-guides-types";
 
 type ClientRecord = Record<string, string>;
 
@@ -38,6 +39,7 @@ type CleaningTask = {
 
 type CleaningOverview = {
   tasks: CleaningTask[];
+  cleaningExcluded?: boolean;
 };
 
 type FineEntry = {
@@ -242,6 +244,10 @@ export function HomeDashboardClient() {
     return client?.["Hiện còn ở"] === "-1";
   }, [client]);
 
+  const isHostelGuest = useMemo(() => {
+    return isShortTermContractCode(client?.["MÃ HD"]);
+  }, [client]);
+
   async function loadDashboard() {
     if (!activeEmail) {
       setMessage(t("signInToView", "Sign in first to view your dashboard."));
@@ -347,6 +353,8 @@ export function HomeDashboardClient() {
   const floorLabel = deriveFloorLabel(branchId, roomLabel);
 
   const nextPaymentDate = useMemo(() => {
+    const fromReceipt = parseFlexibleDate(rentStatus?.nextPaymentDate);
+    if (fromReceipt) return fromReceipt;
     const expiry = parseFlexibleDate(client?.["Ngày hết hạn gói đã thanh toán"]);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -356,7 +364,7 @@ export function HomeDashboardClient() {
     }
 
     return expiry;
-  }, [client]);
+  }, [client, rentStatus?.nextPaymentDate]);
 
   const nextLaundry = useMemo(
     () =>
@@ -643,14 +651,18 @@ export function HomeDashboardClient() {
             <div className={`rounded-3xl border border-amber-200 bg-amber-50 p-5 shadow-sm sm:p-6 ${isExpired ? "lg:col-span-2" : ""}`}>
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-lg font-semibold text-slate-900">{t("nextCleaning", "Next Cleaning")}</h2>
-                {!isExpired && (
+                {!isExpired && !isHostelGuest && !(cleaningOverview?.cleaningExcluded) && (
                   <Link href="/cleaning-schedule" className="text-sm font-medium text-amber-800">
                     {t("openCleaning", "Open cleaning")}
                   </Link>
                 )}
               </div>
 
-              {!nextCleaning ? (
+              {isHostelGuest || cleaningOverview?.cleaningExcluded ? (
+                <p className="mt-5 text-sm text-slate-600">
+                  {t("hostelCleaningExcludedShort", "Hostel guests are not assigned cleaning duties.")}
+                </p>
+              ) : !nextCleaning ? (
                 <p className="mt-5 text-sm text-slate-600">{t("clearForNow", "You are clear for now.")}</p>
               ) : (
                 <div className="mt-5 space-y-3">

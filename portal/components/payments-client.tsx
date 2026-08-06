@@ -41,9 +41,21 @@ function getNextMonthFirstDate() {
   return new Date(now.getFullYear(), now.getMonth() + 1, 1);
 }
 
-function computeNextPaymentDate(client: ClientRecord | null) {
+function computeNextPaymentDate(
+  client: ClientRecord | null,
+  receiptNextPaymentDate?: string | null
+) {
   if (!client) {
     return null;
+  }
+
+  const fromReceipt = parseFlexibleDate(receiptNextPaymentDate);
+  if (fromReceipt) {
+    return {
+      date: fromReceipt,
+      label: "Receipt next payment",
+      source: "next_payment_date"
+    };
   }
 
   const expiry = parseFlexibleDate(client[PACKAGE_EXPIRY_COLUMN]);
@@ -350,7 +362,10 @@ export function PaymentsClient() {
     setVisibleEntriesCount(DEFAULT_VISIBLE_ENTRIES);
   }, [DEFAULT_VISIBLE_ENTRIES, dayFilter, monthFilter, purposeFilter, sortDirection, yearFilter]);
 
-  const nextPayment = useMemo(() => computeNextPaymentDate(client), [client]);
+  const nextPayment = useMemo(
+    () => computeNextPaymentDate(client, rentPaidStatus?.nextPaymentDate),
+    [client, rentPaidStatus?.nextPaymentDate]
+  );
   const nextPaymentDate = nextPayment?.date ?? null;
 
   return (

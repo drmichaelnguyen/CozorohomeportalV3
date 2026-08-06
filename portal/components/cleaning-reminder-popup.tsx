@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
+import { isShortTermContractCode } from "../lib/resident-guides-types";
 import { usePortalSession } from "./portal-session";
 
 type ReminderNotification = {
@@ -71,6 +72,7 @@ export function CleaningReminderPopup() {
   const pathname = usePathname();
   const [loading, setLoading] = useState(true);
   const [reminders, setReminders] = useState<ReminderNotification[]>([]);
+  const [isHostelGuest, setIsHostelGuest] = useState(false);
   const normalizedEmail = sessionEmail.trim().toLowerCase();
   const isResidentSession =
     isSessionLoaded &&
@@ -81,6 +83,26 @@ export function CleaningReminderPopup() {
     sessionRole !== "app_admin" &&
     sessionRole !== "mechanic";
   const isNotificationsPage = pathname === "/notifications";
+
+  useEffect(() => {
+    if (!isResidentSession || !normalizedEmail) {
+      setIsHostelGuest(false);
+      return;
+    }
+    let active = true;
+    fetch(`${API_BASE_URL}/clients?email=${encodeURIComponent(normalizedEmail)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: Record<string, string> | null) => {
+        if (!active) return;
+        setIsHostelGuest(isShortTermContractCode(data?.["MÃ HD"]));
+      })
+      .catch(() => {
+        if (active) setIsHostelGuest(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [isResidentSession, normalizedEmail]);
 
   useEffect(() => {
     let active = true;
@@ -107,9 +129,11 @@ export function CleaningReminderPopup() {
           return;
         }
 
-        const reminderNotifications = (data.notifications ?? []).filter((notification): notification is ReminderNotification =>
-          isReminderNotification(normalizedEmail, notification)
-        );
+        const reminderNotifications = (data.notifications ?? [])
+          .filter((notification): notification is ReminderNotification =>
+            isReminderNotification(normalizedEmail, notification)
+          )
+          .filter((notification) => !(isHostelGuest && notification.type === "CLEANING_REMINDER"));
 
         if (active) {
           setReminders(reminderNotifications);
@@ -140,7 +164,7 @@ export function CleaningReminderPopup() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [isResidentSession, normalizedEmail, isNotificationsPage]);
+  }, [isResidentSession, normalizedEmail, isNotificationsPage, isHostelGuest]);
 
   const visibleReminders = useMemo(() => reminders.slice(0, 3), [reminders]);
 

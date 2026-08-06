@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { API_BASE_URL } from "../lib/api-base-url";
+import { isShortTermContractCode } from "../lib/resident-guides-types";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 
@@ -42,6 +44,7 @@ export function SelfAssignPromoPopup() {
   const { sessionEmail, sessionRole, isLoggedIn, isSessionLoaded } = usePortalSession();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [isHostelGuest, setIsHostelGuest] = useState(false);
 
   const normalizedEmail = sessionEmail.trim().toLowerCase();
   const isResidentSession =
@@ -56,7 +59,27 @@ export function SelfAssignPromoPopup() {
   const onSchedulePage = pathname === "/schedule" || pathname === "/cleaning-schedule";
 
   useEffect(() => {
-    if (!isResidentSession || !normalizedEmail || onSchedulePage) {
+    if (!isResidentSession || !normalizedEmail) {
+      setIsHostelGuest(false);
+      return;
+    }
+    let active = true;
+    fetch(`${API_BASE_URL}/clients?email=${encodeURIComponent(normalizedEmail)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: Record<string, string> | null) => {
+        if (!active) return;
+        setIsHostelGuest(isShortTermContractCode(data?.["MÃ HD"]));
+      })
+      .catch(() => {
+        if (active) setIsHostelGuest(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [isResidentSession, normalizedEmail]);
+
+  useEffect(() => {
+    if (!isResidentSession || !normalizedEmail || onSchedulePage || isHostelGuest) {
       setOpen(false);
       return;
     }
@@ -74,7 +97,7 @@ export function SelfAssignPromoPopup() {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [isResidentSession, normalizedEmail, onSchedulePage]);
+  }, [isResidentSession, normalizedEmail, onSchedulePage, isHostelGuest]);
 
   function dismiss() {
     markPromoDismissed(normalizedEmail);

@@ -67,6 +67,11 @@ export function NextPaymentPreviewClient() {
   }, [sessionEmail]);
 
   const nextPaymentDate = useMemo(() => {
+    const fromReceipt = rentPaidStatus?.nextPaymentDate
+      ? parseVietnamDate(rentPaidStatus.nextPaymentDate)
+      : null;
+    if (fromReceipt) return fromReceipt;
+
     const expiry = packageExpiryRaw ? parseVietnamDate(packageExpiryRaw) : null;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -76,7 +81,7 @@ export function NextPaymentPreviewClient() {
     }
 
     return expiry;
-  }, [packageExpiryRaw]);
+  }, [packageExpiryRaw, rentPaidStatus?.nextPaymentDate]);
 
   if (loading) {
     return <div className="animate-pulse rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 h-24" />;

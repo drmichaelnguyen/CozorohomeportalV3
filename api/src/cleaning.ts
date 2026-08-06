@@ -730,32 +730,47 @@ async function getActiveCleaningUsers(options?: { emailHint?: string; forceRefre
   let users = mapActiveCleaningUsers(initialCache.rows ?? []);
 
   if (!normalizedEmailHint || users.some((user) => user.email === normalizedEmailHint)) {
-    return filterCheckedOutCleaningUsers(users);
+    return filterCleaningEligibleUsers(users);
   }
 
   const refreshedCache = await syncClientsFromSheet();
   users = mapActiveCleaningUsers(refreshedCache.rows ?? []);
-  return filterCheckedOutCleaningUsers(users);
+  return filterCleaningEligibleUsers(users);
 }
 
-async function filterCheckedOutCleaningUsers(users: ActiveCleaningUser[]): Promise<ActiveCleaningUser[]> {
-  if (users.length === 0) return users;
+async function filterCleaningEligibleUsers(users: ActiveCleaningUser[]): Promise<ActiveCleaningUser[]> {
+  const withoutHostel = users.filter((user) => !isHostelShortTermCleaningUser(user));
+  if (withoutHostel.length === 0) return withoutHostel;
   const checkedOut = await listCheckedOutEmails();
-  if (checkedOut.size === 0) return users;
-  return users.filter((user) => !checkedOut.has(user.email));
+  if (checkedOut.size === 0) return withoutHostel;
+  return withoutHostel.filter((user) => !checkedOut.has(user.email));
+}
+
+function isHostelShortTermContractCode(contractCode: string | null | undefined) {
+  return String(contractCode ?? "")
+    .trim()
+    .toUpperCase()
+    .startsWith("SHORTTERM");
+}
+
+async function isHostelShortTermGuestEmail(email: string): Promise<boolean> {
+  const client = await getActiveClientByEmail(email.trim().toLowerCase());
+  return Boolean(client && isHostelShortTermContractCode(client[CONTRACT_CODE_COLUMN]));
 }
 
 /**
  * True when the resident should keep a cleaning schedule.
- * Expired contract end dates alone do NOT remove eligibility — only confirmed checkout
- * (or no remaining active client row) does.
+ * Expired contract end dates alone do NOT remove eligibility — only confirmed checkout,
+ * hostel short-term guests (`SHORTTERM-*`), or no remaining active client row does.
  */
 export async function isResidentEligibleForCleaningSchedule(email: string): Promise<boolean> {
   const normalized = email.trim().toLowerCase();
   if (!normalized) return false;
   if (await hasCompletedCheckout(normalized)) return false;
   const client = await getActiveClientByEmail(normalized);
-  return Boolean(client);
+  if (!client) return false;
+  if (isHostelShortTermContractCode(client[CONTRACT_CODE_COLUMN])) return false;
+  return true;
 }
 
 async function readCleaningOverviewCacheFile() {
@@ -878,8 +893,7 @@ function getAllowedTaskTypesForUser(user: ActiveCleaningUser): CleaningTaskType[
 }
 
 function isHostelShortTermCleaningUser(user: ActiveCleaningUser) {
-  const contractCode = (user.source[CONTRACT_CODE_COLUMN] ?? "").trim().toUpperCase();
-  return contractCode.startsWith("SHORTTERM-");
+  return isHostelShortTermContractCode(user.source[CONTRACT_CODE_COLUMN]);
 }
 
 function getUserContractCode(user: Pick<ActiveCleaningUser, "source"> | null | undefined) {
@@ -1960,6 +1974,9 @@ export async function selfAssignCleaningTask(input: {
     throw new Error(`Self-assignment is limited to ${SELF_ASSIGN_MAX_DAYS_AHEAD} days in advance`);
   }
   const normalizedEmail = input.email.trim().toLowerCase();
+  if (await isHostelShortTermGuestEmail(normalizedEmail)) {
+    throw new Error("Hostel short-term guests are not included in the cleaning schedule");
+  }
   const user = await getUserCleaningContext(normalizedEmail);
 
   if (!user) {
@@ -2065,6 +2082,12 @@ export async function checkSelfAssignCleaningTask(input: {
   }
 
   const normalizedEmail = input.email.trim().toLowerCase();
+  if (await isHostelShortTermGuestEmail(normalizedEmail)) {
+    return {
+      canSubmit: false,
+      reason: "Hostel short-term guests are not included in the cleaning schedule."
+    };
+  }
   const user = await getUserCleaningContext(normalizedEmail);
   if (!user) {
     return {
@@ -2444,6 +2467,34 @@ async function fetchFreshOccupiedSlots(normalizedEmail: string) {
 
 export async function getCleaningOverviewForUser(email: string, options?: { forceRefresh?: boolean }) {
   const normalizedEmail = email.trim().toLowerCase();
+
+  const activeClient = await getActiveClientByEmail(normalizedEmail);
+  if (activeClient && isHostelShortTermContractCode(activeClient[CONTRACT_CODE_COLUMN])) {
+    await purgeResidentCleaningSchedule(normalizedEmail, {
+      reason: "hostel-short-term-excluded"
+    });
+    const rewardSettings = await getCleaningRewardSettings();
+    return {
+      user: null,
+      tasks: [],
+      availability: [],
+      occupiedSlots: [],
+      contractOptOut: null,
+      optOut: null,
+      releasesThisMonth: 0,
+      monthlyReleaseLimit: MONTHLY_RELEASE_LIMIT,
+      selfAssignMaxDaysAhead: SELF_ASSIGN_MAX_DAYS_AHEAD,
+      rewardMultipliers: {
+        selfAssign: rewardSettings.selfAssignBonusMultiplier,
+        weekend: rewardSettings.selfAssignWeekendMultiplier,
+        holiday: rewardSettings.selfAssignHolidayMultiplier
+      },
+      holidays: [],
+      cleaningExcluded: true as const,
+      cleaningExcludedReason: "hostel_short_term" as const
+    };
+  }
+
   const memoryCached = cleaningOverviewMemoryCache.get(normalizedEmail);
   const fileCache = await readCleaningOverviewCacheFile();
   const fileCached = fileCache?.entries?.[normalizedEmail];
@@ -2452,20 +2503,20 @@ export async function getCleaningOverviewForUser(email: string, options?: { forc
     if (memoryCached) {
       // occupiedSlots depends on all users' tasks — always fetch fresh to avoid stale slot visibility
       const occupiedSlots = await fetchFreshOccupiedSlots(normalizedEmail);
-      return { ...memoryCached, occupiedSlots };
+      return { ...memoryCached, occupiedSlots, cleaningExcluded: false as const };
     }
 
     if (fileCached) {
       cleaningOverviewMemoryCache.set(normalizedEmail, fileCached);
       const occupiedSlots = await fetchFreshOccupiedSlots(normalizedEmail);
-      return { ...fileCached, occupiedSlots };
+      return { ...fileCached, occupiedSlots, cleaningExcluded: false as const };
     }
   }
 
   try {
     const overview = await buildCleaningOverviewForUser(normalizedEmail);
     await saveCleaningOverviewToCache(normalizedEmail, overview);
-    return overview;
+    return { ...overview, cleaningExcluded: false as const };
   } catch (error) {
     if (memoryCached) {
       return memoryCached;
@@ -2640,7 +2691,11 @@ export async function adminAssignCleaningTask(input: {
   if (!isFutureCalendarDate(input.date)) {
     throw new Error("Admin assignment is only available for future dates");
   }
-  const user = await getUserCleaningContext(input.email);
+  const normalizedEmail = input.email.trim().toLowerCase();
+  if (await isHostelShortTermGuestEmail(normalizedEmail)) {
+    throw new Error("Hostel short-term guests cannot be assigned cleaning tasks");
+  }
+  const user = await getUserCleaningContext(normalizedEmail);
   if (!user) {
     throw new Error("Active user not found for admin assignment");
   }
@@ -3684,6 +3739,9 @@ export async function setBulkCleaningAvailability(input: {
   }
   const userContext = await getUserCleaningContext(normalizedEmail);
   if (!userContext) {
+    if (await isHostelShortTermGuestEmail(normalizedEmail)) {
+      throw new Error("Hostel short-term guests are not included in the cleaning schedule");
+    }
     throw new Error("Active user not found for cleaning availability");
   }
 
