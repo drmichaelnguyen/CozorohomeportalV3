@@ -6,6 +6,7 @@ import { getAccountStatus, type AccountLockOverride } from "../lib/account-lock-
 import { InlineHelp } from "./inline-help";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
+import { MaintenanceReportModal } from "./maintenance-report-modal";
 
 const API_TIMEOUT_MS = 6000;
 
@@ -294,6 +295,7 @@ export function ControllerClient({
   >({});
   const [cookerTakeoverConfirm, setCookerTakeoverConfirm] = useState<Record<string, boolean>>({});
   const [cookerReserveAt, setCookerReserveAt] = useState<Record<string, string>>({});
+  const [cookerReportFor, setCookerReportFor] = useState<{ location: string; device: string } | null>(null);
   const [activeLaundryBooking, setActiveLaundryBooking] = useState<LaundryBooking | null>(null);
   const [nextLaundryBooking, setNextLaundryBooking] = useState<LaundryBooking | null>(null);
   const [triggeringLaundry, setTriggeringLaundry] = useState(false);
@@ -1301,14 +1303,29 @@ export function ControllerClient({
                             onChange={(file) => setCookerPhoto(unit.cooker.id, "on", file)}
                             language={language}
                           />
-                          <button
-                            type="button"
-                            onClick={() => void turnCookerOn(unit.cooker.id)}
-                            disabled={isBlocked || busy || !photos.on || !takeoverReady}
-                            className="w-full rounded-xl bg-rose-600 py-3 text-sm font-bold text-white shadow-lg shadow-rose-100 hover:bg-rose-700 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            {submittingOn ? t("cookerTurningOn") : t("cookerTurnOn")}
-                          </button>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void turnCookerOn(unit.cooker.id)}
+                              disabled={isBlocked || busy || !photos.on || !takeoverReady}
+                              className="min-w-0 flex-1 rounded-xl bg-rose-600 py-3 text-sm font-bold text-white shadow-lg shadow-rose-100 hover:bg-rose-700 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {submittingOn ? t("cookerTurningOn") : t("cookerTurnOn")}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setCookerReportFor({
+                                  location: `Kitchen Branch ${cookerContext.branchId}`,
+                                  device: unit.cooker.label || t("cookerUnitLabel", undefined, { n: unit.cooker.number })
+                                })
+                              }
+                              disabled={isBlocked}
+                              className="shrink-0 rounded-xl border border-rose-300 bg-white px-4 py-3 text-sm font-bold text-rose-800 hover:bg-rose-50 disabled:opacity-50"
+                            >
+                              {t("cookerReportIssue")}
+                            </button>
+                          </div>
                         </div>
                       ) : unit.isMine ? (
                         <div className="mt-4 space-y-3">
@@ -1443,6 +1460,23 @@ export function ControllerClient({
             )}
           </section>
         </div>
+      ) : null}
+
+      {cookerContext ? (
+        <MaintenanceReportModal
+          open={Boolean(cookerReportFor)}
+          email={activeEmail}
+          name={cookerContext.name}
+          branch={cookerContext.branchId}
+          locationOptions={[
+            { value: `Kitchen Branch ${cookerContext.branchId}`, label: t("kitchen", "Kitchen") },
+            { value: `Laundry Branch ${cookerContext.branchId}`, label: t("laundryArea", "Laundry Area") }
+          ]}
+          initialLocation={cookerReportFor?.location}
+          initialDevice={cookerReportFor?.device}
+          onClose={() => setCookerReportFor(null)}
+          onSuccess={() => setMessage(t("reportSuccess"))}
+        />
       ) : null}
     </div>
   );

@@ -1728,6 +1728,7 @@ const translations: Record<string, { en: string; vi: string }> = {
   cookerCameraRequired: { en: "This device has no camera API. Use a phone browser to take a live photo.", vi: "Thiết bị này không có camera. Hãy dùng trình duyệt điện thoại để chụp ảnh." },
   cookerCameraDenied: { en: "Camera access is required. Allow the camera, then take a live photo of the cooker/kitchen.", vi: "Cần quyền camera. Hãy cho phép camera rồi chụp ảnh bếp/nhà bếp." },
   cookerTurnOn: { en: "TURN COOKER ON", vi: "BẬT BẾP" },
+  cookerReportIssue: { en: "REPORT", vi: "BÁO CÁO" },
   cookerTurnOff: { en: "TURN COOKER OFF", vi: "TẮT BẾP" },
   cookerTurningOn: { en: "Turning on...", vi: "Đang bật..." },
   cookerTurningOff: { en: "Turning off...", vi: "Đang tắt..." },

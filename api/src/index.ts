@@ -7927,7 +7927,7 @@ app.get("/manager/ai-usage-analytics", async (req, res) => {
   const actorEmail = String(req.query.actorEmail ?? "").trim().toLowerCase();
   const days = Math.min(365, Math.max(1, Number.parseInt(String(req.query.days ?? "30"), 10) || 30));
   try {
-    await requirePortalRole(actorEmail, ["app_admin"], "App admin only.");
+    await requirePortalRole(actorEmail, ["owner", "app_admin"], "Owner or app admin only.");
     return res.json(await getAiUsageAnalytics(days));
   } catch (error) {
     return res.status((error as Error & { statusCode?: number }).statusCode ?? 403).json({

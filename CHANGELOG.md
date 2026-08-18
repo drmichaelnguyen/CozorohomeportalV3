@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.9.11] - 2026-08-18
+
+- **Cooker check-in report**: Next to Turn On, residents can open the existing maintenance Report form with Kitchen location and that cooker already filled in.
+- **AI usage for owners**: Owners can open Settings → AI usage (previously app admin only).
+- **AI usage by type**: Analytics splits text chat vs computer vision (tokens, image count, estimated cost) so future vision features can be tracked separately.
+
 ## [3.9.10] - 2026-08-18
 
 - **Cooker photos are live camera only**: Residents take one in-app camera photo that shows both the cooker and the kitchen (and one cleaned photo to turn off). Gallery uploads are not offered.

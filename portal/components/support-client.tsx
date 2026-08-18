@@ -12,6 +12,7 @@ import { VentHammerGameModal } from "./vent-hammer-game-modal";
 import { formatCozoroDateTime } from "../lib/date-format";
 import { compressChatImage, type ChatAttachment, type PendingChatImage } from "../lib/chat-images";
 import { ChatAttachmentView } from "./chat-attachment";
+import { MaintenanceReportModal } from "./maintenance-report-modal";
 
 const SOUND_PREF_KEY = "chat_sound_enabled";
 const POLL_INTERVAL_MS = 10000;
@@ -134,11 +135,6 @@ export function SupportClient() {
 
   // Maintenance reporting modal state
   const [showReportModal, setShowReportModal] = useState(false);
-  const [reportLocation, setReportLocation] = useState("");
-  const [reportIssue, setReportIssue] = useState("");
-  const [reportMachine, setReportMachine] = useState("");
-  const [customLocation, setCustomLocation] = useState("");
-  const [isReporting, setIsReporting] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastMessageIdRef = useRef<string | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -454,50 +450,6 @@ export function SupportClient() {
     }
   }
 
-  async function handleReportSubmit() {
-    const finalLocation = reportLocation === "OTHER" ? customLocation : reportLocation;
-    if (!finalLocation || !reportIssue) {
-      setStatus(t("fillRequiredFields", "Please fill in location and issue description."));
-      return;
-    }
-
-    setIsReporting(true);
-    setStatus("");
-    try {
-      const response = await fetch(`${API_BASE_URL}/client/maintenance/report`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: sessionEmail.trim().toLowerCase(),
-          location: finalLocation,
-          issue: reportIssue,
-          machineDevice: reportMachine || undefined
-        })
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        setStatus(data.error || t("unableToSubmitReport", "Unable to submit report."));
-        return;
-      }
-
-      setStatus(t("reportSuccess", "Report submitted successfully! 5000 coins added to your account."));
-      setShowReportModal(false);
-      setReportLocation("");
-      setCustomLocation("");
-      setReportIssue("");
-      setReportMachine("");
-      
-      // Send a system message to the chat
-      setDraft(t("reportedIssueSystemMsg", `[System] Reported maintenance issue: ${reportIssue} at ${finalLocation}${reportMachine ? ` (${reportMachine})` : ""}`));
-      // We don't auto-submit the message, let the user see the success first
-    } catch {
-      setStatus(t("unableToSubmitReport", "Unable to submit report."));
-    } finally {
-      setIsReporting(false);
-    }
-  }
-
   if (staffOnlyMode) {
     return (
       <ManagerSupportInbox
@@ -754,84 +706,39 @@ export function SupportClient() {
       </footer>
 
       {/* Modals moved outside flex box for better layering */}
-      {showReportModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm animate-in fade-in duration-300">
-          <div className="w-full max-w-lg overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl animate-in zoom-in-95 duration-300">
-            {/* Modal content stays mostly the same but styled better */}
-            <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900">{t("maintenanceReport", "Maintenance Report")}</h2>
-                <p className="text-xs text-slate-500">{t("reportSubtext", "Submit a ticket to earn 5000 coins.")}</p>
-              </div>
-              <button onClick={() => setShowReportModal(false)} className="rounded-full p-1 hover:bg-slate-200">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="h-5 w-5 text-slate-400">
-                  <path d="M18 6L6 18M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            
-            <div className="p-6 space-y-4">
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t("location", "Location")}</label>
-                <select
-                  value={reportLocation}
-                  onChange={(e) => setReportLocation(e.target.value)}
-                  className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm focus:border-slate-500 focus:outline-none"
-                >
-                  <option value="">{t("selectLocation", "Select location...")}</option>
-                  <option value={`Room ${groupContext?.roomLabel || "N/A"}`}>{t("myRoom", "My Room")} ({groupContext?.roomLabel || "..."})</option>
-                  <option value={`Kitchen Branch ${groupContext?.branchId || "N/A"}`}>{t("kitchen", "Kitchen")}</option>
-                  <option value={`Laundry Branch ${groupContext?.branchId || "N/A"}`}>{t("laundryArea", "Laundry Area")}</option>
-                  <option value={`Bathroom Floor ${groupContext?.floor || "N/A"}`}>{t("bathroom", "Bathroom")}</option>
-                  <option value="OTHER">{t("otherLocation", "Other...")}</option>
-                </select>
-              </div>
-
-              {reportLocation === "OTHER" && (
-                <input
-                  type="text"
-                  placeholder={t("specificLocationPlaceholder", "e.g. Balcony 3rd floor...")}
-                  value={customLocation}
-                  onChange={(e) => setCustomLocation(e.target.value)}
-                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-slate-500 focus:outline-none"
-                />
-              )}
-
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t("machineDevice", "Device (Optional)")}</label>
-                <input
-                  type="text"
-                  placeholder={t("machinePlaceholder", "e.g. Washer D7, AC...")}
-                  value={reportMachine}
-                  onChange={(e) => setReportMachine(e.target.value)}
-                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-slate-500 focus:outline-none"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t("issueDescription", "Issue Description")}</label>
-                <textarea
-                  placeholder={t("issuePlaceholder", "What's wrong?")}
-                  value={reportIssue}
-                  onChange={(e) => setReportIssue(e.target.value)}
-                  rows={3}
-                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-slate-500 focus:outline-none"
-                />
-              </div>
-
-              <div className="pt-2">
-                <button
-                  onClick={() => void handleReportSubmit()}
-                  disabled={isReporting || (!reportLocation && !customLocation) || !reportIssue}
-                  className="w-full rounded-2xl bg-slate-900 py-3 text-sm font-bold text-white shadow-lg transition-all hover:bg-slate-800 disabled:opacity-50"
-                >
-                  {isReporting ? t("submitting", "Submitting...") : t("submitReport", "Submit Maintenance Ticket")}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <MaintenanceReportModal
+        open={showReportModal}
+        email={sessionEmail.trim().toLowerCase()}
+        branch={groupContext?.branchId}
+        locationOptions={[
+          {
+            value: `Room ${groupContext?.roomLabel || "N/A"}`,
+            label: `${t("myRoom", "My Room")} (${groupContext?.roomLabel || "..."})`
+          },
+          {
+            value: `Kitchen Branch ${groupContext?.branchId || "N/A"}`,
+            label: t("kitchen", "Kitchen")
+          },
+          {
+            value: `Laundry Branch ${groupContext?.branchId || "N/A"}`,
+            label: t("laundryArea", "Laundry Area")
+          },
+          {
+            value: `Bathroom Floor ${groupContext?.floor || "N/A"}`,
+            label: t("bathroom", "Bathroom")
+          }
+        ]}
+        onClose={() => setShowReportModal(false)}
+        onSuccess={({ location, issue, device }) => {
+          setStatus(t("reportSuccess", "Report submitted successfully! 5000 coins added to your account."));
+          setDraft(
+            t(
+              "reportedIssueSystemMsg",
+              `[System] Reported maintenance issue: ${issue} at ${location}${device ? ` (${device})` : ""}`
+            )
+          );
+        }}
+      />
       <VentHammerGameModal
         open={ventHammerOpen}
         onOpenChange={setVentHammerOpen}

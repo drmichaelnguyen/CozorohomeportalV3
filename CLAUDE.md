@@ -284,6 +284,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.11 | Cooker check-in Report button; owners can view AI usage; analytics splits text chat vs computer vision tokens/cost. |
 | 3.9.10 | Cooker inspection is one live camera photo of cooker + kitchen (gallery uploads blocked); cooker controller shows a Beta badge. |
 | 3.9.9 | Cooker leftover-on safety takeover (first 2 reminders, then fine), 30-minute reservations (3 days ahead, max 1 hour/day), and staff photo inspection to send reminders or fines. |
 | 3.9.8 | Kitchen has Cooker 1 and Cooker 2, each with independent photo on/off, leftover-on fine, and IFTTT ON/OFF events. |

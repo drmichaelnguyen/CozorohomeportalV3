@@ -165,12 +165,14 @@ model AiUsageEvent {
   provider            String
   model               String
   feature             String
+  modality            String   @default("text")
   actorEmail          String?
   promptTokens        Int      @default(0)
   outputTokens        Int      @default(0)
   thinkingTokens      Int      @default(0)
   cachedTokens        Int      @default(0)
   totalTokens         Int      @default(0)
+  imageCount          Int      @default(0)
   estimatedCostMicros Int      @default(0)
   pricingVersion      String
   status              String   @default("SUCCESS")
@@ -180,6 +182,7 @@ model AiUsageEvent {
   @@index([createdAt])
   @@index([feature, createdAt])
   @@index([model, createdAt])
+  @@index([modality, createdAt])
 }
 
 model BedOccupancySnapshot {

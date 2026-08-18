@@ -2857,6 +2857,7 @@ export function ManagerClient({
   const canCreatePaymentReceipt =
     sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin";
   const canEditRentCoinUsage = isOwnerSession || isAppAdminSession;
+  const canViewAiUsage = isOwnerSession || isAppAdminSession;
   const canSendDepositRefundEmail =
     sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin";
 
@@ -11363,7 +11364,7 @@ export function ManagerClient({
                   {managerSettingsMainSection === "tools"
                     ? t("settingsToolsDesc")
                     : managerSettingsMainSection === "ai_usage"
-                      ? "Token measurement and estimated AI cost analytics."
+                      ? "Token and estimated cost by text chat vs computer vision."
                     : managerSettingsMainSection === "resident_guides"
                       ? t("settingsResidentGuidesDesc")
                       : pricingSettingsTab === "referral"
@@ -11391,7 +11392,7 @@ export function ManagerClient({
               ) : null}
             </div>
             <div className="mt-5 flex flex-wrap gap-2">
-              {(["pricing", "resident_guides", "tools", ...(isAppAdminSession ? ["ai_usage" as const] : [])] as const).map((sec) => (
+              {(["pricing", "resident_guides", "tools", ...(canViewAiUsage ? ["ai_usage" as const] : [])] as const).map((sec) => (
                 <button
                   key={sec}
                   type="button"
@@ -12721,7 +12722,7 @@ export function ManagerClient({
             />
           ) : null}
 
-          {managerSettingsMainSection === "ai_usage" && isAppAdminSession ? (
+          {managerSettingsMainSection === "ai_usage" && canViewAiUsage ? (
             <AdminAiUsageAnalytics actorEmail={normalizedEmail} />
           ) : null}
 
