@@ -1675,19 +1675,45 @@ const translations: Record<string, { en: string; vi: string }> = {
   kitchenAppliances: { en: "Kitchen Appliances", vi: "Thiết bị nhà bếp" },
   controllerHistoryTitle: { en: "Controller History", vi: "Lịch sử điều khiển" },
   controllerHistoryDesc: { en: "Recent AC, laundry, airfryer, microwave, and cooker actions across the app.", vi: "Các hành động gần đây của máy lạnh, máy giặt, nồi chiên không dầu, lò vi sóng và bếp." },
+  cookerSectionTitle: { en: "Kitchen cookers", vi: "Bếp nấu" },
+  cookerUnitLabel: { en: "Cooker {n}", vi: "Bếp {n}" },
   cookerIntro: {
-    en: "Shared kitchen cooker. Take inspection photos of the cooker and kitchen before turning it on, then a cleaned photo to turn it off.",
-    vi: "Bếp dùng chung. Chụp ảnh kiểm tra bếp và nhà bếp trước khi bật, rồi chụp ảnh đã dọn sạch để tắt."
+    en: "Two shared kitchen cookers. Photograph the cooker and kitchen before turning on. Each session is 30 minutes. You can reserve a slot up to 3 days ahead (max 1 hour / 2 sessions per day). After you turn off, others can use it.",
+    vi: "Hai bếp dùng chung. Chụp ảnh bếp và nhà bếp trước khi bật. Mỗi lượt 30 phút. Có thể đặt chỗ trước tối đa 3 ngày (tối đa 1 giờ / 2 lượt mỗi ngày). Sau khi tắt, người khác có thể dùng."
   },
   cookerFineWarning: {
-    en: "If you forget to turn it off within {minutes} minutes, you may receive a {amount} VND fine.",
-    vi: "Nếu quên tắt trong vòng {minutes} phút, bạn có thể bị phạt {amount} VND."
+    en: "If you leave it on past {minutes} minutes, the first 2 times are a safety reminder with no fine. After that a {amount} VND ticket can be issued.",
+    vi: "Nếu quên tắt quá {minutes} phút, 2 lần đầu chỉ nhắc nhở an toàn (không phạt). Từ lần sau có thể bị lập phiếu phạt {amount} VND."
   },
+  cookerStrikeStatus: { en: "Leftover-on incidents on your account: {count}", vi: "Số lần quên tắt trên tài khoản: {count}" },
   cookerLastUse: { en: "Last use", vi: "Lượt gần nhất" },
   cookerLastUser: { en: "Last user", vi: "Người dùng gần nhất" },
   cookerTurnOffBy: { en: "Turn off by", vi: "Phải tắt trước" },
   cookerYouAreUsing: { en: "You have the cooker on. Clean up and turn it off when finished.", vi: "Bạn đang bật bếp. Hãy dọn sạch và tắt khi dùng xong." },
   cookerInUseBy: { en: "{name} currently has the cooker on.", vi: "{name} đang bật bếp." },
+  cookerSafetyTakeover: { en: "Safety takeover", vi: "Tiếp nhận vì an toàn" },
+  cookerTakeoverConfirm: {
+    en: "I confirm nobody is using this cooker. The previous user who did not turn it off will get an automatic safety reminder (first 2 times) or a fine after that.",
+    vi: "Tôi xác nhận không có ai đang dùng bếp này. Người trước quên tắt sẽ bị nhắc tự động (2 lần đầu) hoặc phạt từ lần sau."
+  },
+  cookerReservedBy: { en: "Reserved now by {name}.", vi: "{name} đang giữ chỗ bếp này." },
+  cookerYourSlot: { en: "This is your reserved slot. You can turn it on now.", vi: "Đây là lượt bạn đã đặt. Bạn có thể bật bếp." },
+  cookerWalkUpBlocked: { en: "This cooker is reserved. Wait for the slot to end, or book your own 30-minute session.", vi: "Bếp này đã được đặt. Đợi hết giờ hoặc đặt lượt 30 phút của bạn." },
+  cookerReserveTitle: { en: "Reserve a 30-minute session", vi: "Đặt lượt 30 phút" },
+  cookerReserveHint: {
+    en: "Book up to {days} days ahead. Max {sessions} sessions ({minutes} minutes each, 1 hour/day). Others cannot turn it on during your slot. Checking out (turn off) frees it immediately.",
+    vi: "Đặt trước tối đa {days} ngày. Tối đa {sessions} lượt ({minutes} phút mỗi lượt, 1 giờ/ngày). Người khác không bật được trong giờ của bạn. Tắt bếp là trả chỗ ngay."
+  },
+  cookerReserveStart: { en: "Start time", vi: "Giờ bắt đầu" },
+  cookerReserveButton: { en: "RESERVE COOKER", vi: "ĐẶT BẾP" },
+  cookerReserving: { en: "Reserving...", vi: "Đang đặt..." },
+  cookerReserved: { en: "Cooker reserved. Only you can turn it on during that time.", vi: "Đã đặt bếp. Chỉ bạn được bật trong khung giờ đó." },
+  cookerReserveFailed: { en: "Unable to reserve the cooker.", vi: "Không đặt được bếp." },
+  cookerMyReservations: { en: "Your cooker reservations", vi: "Lượt bếp bạn đã đặt" },
+  cookerCancelReservation: { en: "Cancel", vi: "Hủy" },
+  cookerReservationCancelled: { en: "Reservation cancelled.", vi: "Đã hủy lượt đặt bếp." },
+  cookerCancelFailed: { en: "Unable to cancel that reservation.", vi: "Không hủy được lượt đặt." },
+  cookerCheckoutHint: { en: "Turn off with a cleaned photo to check out so others can use it.", vi: "Tắt kèm ảnh đã dọn để trả chỗ, người khác mới dùng được." },
   cookerPreUsePhotos: { en: "Pre-use inspection photos *", vi: "Ảnh kiểm tra trước khi dùng *" },
   cookerPostUsePhoto: { en: "Cleaned after use *", vi: "Ảnh đã dọn sau khi dùng *" },
   cookerPhotoCooker: { en: "Photo of the cooker", vi: "Ảnh bếp" },
@@ -1701,6 +1727,37 @@ const translations: Record<string, { en: string; vi: string }> = {
   cookerTurnedOff: { en: "Cooker turned off. Thank you for cleaning up.", vi: "Đã tắt bếp. Cảm ơn bạn đã dọn sạch." },
   cookerTurnOnFailed: { en: "Unable to turn the cooker on.", vi: "Không bật được bếp." },
   cookerTurnOffFailed: { en: "Unable to turn the cooker off.", vi: "Không tắt được bếp." },
+  cookerInspectPhotos: { en: "Inspect photos", vi: "Xem ảnh kiểm tra" },
+  cookerInspectionTitle: { en: "Kitchen cooker photo inspection", vi: "Kiểm tra ảnh bếp" },
+  cookerInspectionDesc: {
+    en: "Review cooker and kitchen photos, then send a safety reminder (no fine) or create a leftover-on fine ticket. Photos can be attached to the fine.",
+    vi: "Xem ảnh bếp và nhà bếp, rồi gửi nhắc nhở an toàn (không phạt) hoặc lập phiếu phạt quên tắt. Ảnh có thể đính kèm phiếu phạt."
+  },
+  cookerInspectionEmpty: { en: "No cooker sessions found for this cooker yet.", vi: "Chưa có lượt dùng bếp này." },
+  cookerInspectionLoadFailed: { en: "Unable to load cooker inspection photos.", vi: "Không tải được ảnh kiểm tra bếp." },
+  cookerInspectionInUse: { en: "Currently on", vi: "Đang bật" },
+  cookerInspectionEnded: { en: "Turned off", vi: "Đã tắt" },
+  cookerInspectionOverdue: { en: "Overdue", vi: "Quá hạn" },
+  cookerAlreadyFined: { en: "Fine already issued", vi: "Đã phạt" },
+  cookerAlreadyReminded: { en: "Already reminded", vi: "Đã nhắc" },
+  cookerNoPhotosYet: { en: "No inspection photos on this session.", vi: "Lượt này chưa có ảnh kiểm tra." },
+  cookerPhotoKindCooker: { en: "Cooker", vi: "Bếp" },
+  cookerPhotoKindKitchen: { en: "Kitchen", vi: "Nhà bếp" },
+  cookerPhotoKindCleaned: { en: "Cleaned after use", vi: "Đã dọn" },
+  cookerSendReminder: { en: "Send reminder", vi: "Gửi nhắc nhở" },
+  cookerCreateFine: { en: "Create fine ticket", vi: "Lập phiếu phạt" },
+  cookerSendingTicket: { en: "Sending...", vi: "Đang gửi..." },
+  cookerConfirmReminder: {
+    en: "Send a safety leftover-on reminder to {name}? No fine will be created.",
+    vi: "Gửi nhắc nhở an toàn quên tắt bếp cho {name}? Sẽ không lập phiếu phạt."
+  },
+  cookerConfirmFine: {
+    en: "Create a {amount} VND leftover-on fine for {name} from these kitchen photos?",
+    vi: "Lập phiếu phạt {amount} VND vì quên tắt bếp cho {name} từ các ảnh này?"
+  },
+  cookerReminderSent: { en: "Safety reminder sent.", vi: "Đã gửi nhắc nhở an toàn." },
+  cookerFineCreated: { en: "Fine ticket created from the inspection photos.", vi: "Đã lập phiếu phạt từ ảnh kiểm tra." },
+  cookerTicketFailed: { en: "Unable to send that cooker ticket.", vi: "Không gửi được phiếu bếp." },
   refreshHistory: { en: "Refresh History", vi: "Cập nhật lịch sử" },
   noControllerHistory: { en: "No controller actions have been logged yet.", vi: "Chưa có nhật ký điều khiển nào được ghi lại." },
   confirmImportBooking: { en: "Confirm & Import Booking", vi: "Xác nhận & Nhập lượt đặt" },

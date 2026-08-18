@@ -22,7 +22,8 @@ type ResidentNotification = {
     | "CLEANING_AUDIT_RESULT"
     | "PREPAID_PACKAGE"
     | "FRIDGE_DRAIN_REMINDER"
-    | "CLEANING_HERO_AWARD";
+    | "CLEANING_HERO_AWARD"
+    | "COOKER_LEFT_ON";
   conversationId?: string;
   title: string;
   body: string;

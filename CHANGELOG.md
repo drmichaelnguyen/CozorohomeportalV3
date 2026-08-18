@@ -1,5 +1,15 @@
 # Changelog
 
+## [3.9.9] - 2026-08-18
+
+- **Cooker safety takeover**: If a cooker is still on from another resident, the next user can confirm nobody is using it, start a new 30-minute session, and the previous user is ticketed automatically for safety (first 2 leftover-on incidents are reminders only; later incidents can be fined).
+- **Cooker reservations**: Residents can reserve a cooker up to 3 days ahead, 30 minutes per session, max 1 hour/day (2 sessions). Only the reserver can turn it on during that slot; turning off checks out the reservation so others can use it.
+- **Staff kitchen photo inspection**: Managers, owners, and app admins can open cooker/kitchen inspection photos from Controller and send a safety reminder or create a leftover-on fine ticket from those pictures.
+
+## [3.9.8] - 2026-08-18
+
+- **Two kitchen cookers**: Controller now has Cooker 1 and Cooker 2, each with its own on/off, inspection photos, leftover-on fine, and IFTTT ON/OFF webhook slots.
+
 ## [3.9.7] - 2026-08-18
 
 - **Kitchen cooker controller**: Residents turn the shared cooker on/off from the Controller tab. Turn-on requires inspection photos of the cooker and kitchen; turn-off requires a cleaned-after-use photo. Photos are compressed to JPG and stored on the API server for 60 days. Leaving the cooker on past the time limit can create a fine ticket. IFTTT ON/OFF webhooks follow the AC pattern (events filled in later).

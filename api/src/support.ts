@@ -24,7 +24,7 @@ import {
 import { loadOpenAcComfortAlertsForStaff } from "./ac-comfort-votes.js";
 import { loadOpenHostelBookingAlertsForStaff } from "./hostel-booking-notifications.js";
 import { buildFridgeDrainReminderNotifications } from "./fridge-drain-schedule.js";
-import { listCleaningHeroAwardsForEmail } from "./cleaning-hero-awards.js";
+import { listCookerLeftoverNoticesForEmail } from "./cooker-controller.js";
 import { isBranchAutomationDisabled, isCleaningTaskAutomationDisabled } from "./branch-closure.js";
 import { prisma } from "./prisma.js";
 import { chatAttachmentSelect, type ChatAttachmentInput } from "./chat-attachments.js";
@@ -548,7 +548,8 @@ type ResidentNotificationItem = {
     | "CLEANING_AUDIT_RESULT"
     | "PREPAID_PACKAGE"
     | "FRIDGE_DRAIN_REMINDER"
-    | "CLEANING_HERO_AWARD";
+    | "CLEANING_HERO_AWARD"
+    | "COOKER_LEFT_ON";
   title: string;
   body: string;
   createdAt: string | Date;
@@ -1010,6 +1011,29 @@ export async function listResidentSupportNotifications(email: string) {
     }
   } catch {
     // If client has no group context (not an active resident), skip group notifications
+  }
+
+  try {
+    const cookerNotices = await listCookerLeftoverNoticesForEmail(normalizedEmail);
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    for (const notice of cookerNotices) {
+      if (new Date(notice.createdAt).getTime() < weekAgo) {
+        continue;
+      }
+      notifications.push({
+        id: `cooker-left-on-${notice.id}`,
+        type: "COOKER_LEFT_ON",
+        title: notice.fined ? "Cooker left-on fine" : "Cooker left-on reminder",
+        body: notice.fined
+          ? `${notice.cookerLabel} was left on. A fine ticket was created for safety (incident ${notice.strike}).`
+          : `${notice.cookerLabel} was left on. Safety reminder ${notice.strike} of 2 — the next time may be a fine.`,
+        createdAt: notice.createdAt,
+        unreadCount: 1,
+        href: "/controller"
+      });
+    }
+  } catch {
+    // cooker notices are best-effort
   }
 
   return writeNotificationCache(residentNotificationCache, normalizedEmail, {

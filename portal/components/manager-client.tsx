@@ -156,6 +156,32 @@ type SmartDevice = {
   lastRequestedAction?: string;
 };
 
+type CookerInspectionPhoto = {
+  fileName: string;
+  kind: "cooker" | "kitchen" | "cleaned";
+  uploadedAt: string;
+};
+
+type CookerInspectionSession = {
+  sessionId: string;
+  deviceId: string;
+  cookerLabel: string;
+  cookerNumber: 1 | 2;
+  branchId: string;
+  startedAt: string;
+  startedByEmail: string;
+  startedByName: string;
+  endedAt: string | null;
+  inUse: boolean;
+  overdue: boolean;
+  leftoverStrikes: number;
+  leftoverFineIssued: boolean;
+  leftoverWarningOnly: boolean;
+  leftoverTicketed: boolean;
+  closedReason: string | null;
+  photos: CookerInspectionPhoto[];
+};
+
 type ControllerHistoryEntry = {
   id: string;
   timestamp: string;
@@ -3397,6 +3423,12 @@ export function ManagerClient({
   const [airfryers, setAirfryers] = useState<SmartDevice[]>([]);
   const [microwaves, setMicrowaves] = useState<SmartDevice[]>([]);
   const [cookers, setCookers] = useState<SmartDevice[]>([]);
+  const [cookerInspectionOpen, setCookerInspectionOpen] = useState<string | null>(null);
+  const [cookerInspections, setCookerInspections] = useState<CookerInspectionSession[]>([]);
+  const [cookerInspectionMeta, setCookerInspectionMeta] = useState({ leftoverFineVnd: 50000, leftoverReminderLimit: 2 });
+  const [cookerInspectionLoading, setCookerInspectionLoading] = useState(false);
+  const [cookerInspectionTicketPending, setCookerInspectionTicketPending] = useState<string | null>(null);
+  const [cookerInspectionLightbox, setCookerInspectionLightbox] = useState<string | null>(null);
   const [controllerLoading, setControllerLoading] = useState(false);
   const [controllerGroupCollapsed, setControllerGroupCollapsed] = useState<Record<string, boolean>>({});
   const [showControllerHistory, setShowControllerHistory] = useState(false);
@@ -5877,6 +5909,86 @@ export function ManagerClient({
         delete next[actionKey];
         return next;
       });
+    }
+  };
+
+  const cookerPhotoUrl = (fileName: string) =>
+    `${API_BASE_URL}/controller/cooker/photo/${encodeURIComponent(fileName)}?email=${encodeURIComponent(normalizedEmail)}`;
+
+  const loadCookerInspections = async (deviceId?: string | null) => {
+    if (!normalizedEmail) {
+      return;
+    }
+    setCookerInspectionLoading(true);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/manager/controller/cooker/inspections?actorEmail=${encodeURIComponent(normalizedEmail)}&limit=40`
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || t("cookerInspectionLoadFailed"));
+      }
+      const inspections = (data.inspections || []) as CookerInspectionSession[];
+      setCookerInspections(deviceId && deviceId !== "all" ? inspections.filter((item) => item.deviceId === deviceId) : inspections);
+      setCookerInspectionMeta({
+        leftoverFineVnd: Number(data.leftoverFineVnd) || 50000,
+        leftoverReminderLimit: Number(data.leftoverReminderLimit) || 2
+      });
+    } catch (error) {
+      setControllerFeedback("cooker-inspect", {
+        tone: "error",
+        message: error instanceof Error ? error.message : t("cookerInspectionLoadFailed")
+      });
+    } finally {
+      setCookerInspectionLoading(false);
+    }
+  };
+
+  const openCookerInspection = (deviceId: string) => {
+    setCookerInspectionOpen(deviceId);
+    void loadCookerInspections(deviceId);
+  };
+
+  const ticketCookerInspection = async (session: CookerInspectionSession, action: "reminder" | "fine") => {
+    const confirmText =
+      action === "fine"
+        ? t("cookerConfirmFine", undefined, {
+            name: session.startedByName || session.startedByEmail,
+            amount: cookerInspectionMeta.leftoverFineVnd.toLocaleString()
+          })
+        : t("cookerConfirmReminder", undefined, { name: session.startedByName || session.startedByEmail });
+    if (!window.confirm(confirmText)) {
+      return;
+    }
+    const pendingKey = `${session.sessionId}:${action}`;
+    setCookerInspectionTicketPending(pendingKey);
+    try {
+      const response = await fetch(`${API_BASE_URL}/manager/controller/cooker/inspections/ticket`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actorEmail: normalizedEmail,
+          sessionId: session.sessionId,
+          action,
+          amount: action === "fine" ? cookerInspectionMeta.leftoverFineVnd : undefined
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || t("cookerTicketFailed"));
+      }
+      setControllerFeedback("cooker-inspect", {
+        tone: "success",
+        message: action === "fine" ? t("cookerFineCreated") : t("cookerReminderSent")
+      });
+      await loadCookerInspections(cookerInspectionOpen);
+    } catch (error) {
+      setControllerFeedback("cooker-inspect", {
+        tone: "error",
+        message: error instanceof Error ? error.message : t("cookerTicketFailed")
+      });
+    } finally {
+      setCookerInspectionTicketPending(null);
     }
   };
 
@@ -13752,6 +13864,13 @@ export function ManagerClient({
                                                     {feedback.message}
                                                   </div>
                                                 ) : null}
+                                                <button
+                                                  type="button"
+                                                  onClick={() => openCookerInspection(cooker.id)}
+                                                  className="mt-2 w-full rounded-lg border border-rose-200 bg-white py-1.5 text-[11px] font-bold text-rose-800 hover:border-rose-400"
+                                                >
+                                                  {t("cookerInspectPhotos")}
+                                                </button>
                                               </div>
                                             );
                                           })}
@@ -13814,6 +13933,141 @@ export function ManagerClient({
           ) : null}
 
         </section>
+      ) : null}
+
+      {cookerInspectionOpen ? (
+        <div className="fixed inset-0 z-[190] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
+          <div className="flex max-h-[92vh] w-full max-w-3xl flex-col rounded-t-3xl bg-white shadow-xl sm:max-h-[88vh] sm:rounded-3xl">
+            <div className="flex items-start justify-between gap-4 border-b border-rose-100 bg-rose-50 px-5 py-4">
+              <div>
+                <h3 className="text-base font-semibold text-rose-950">{t("cookerInspectionTitle")}</h3>
+                <p className="mt-1 text-xs text-rose-800">{t("cookerInspectionDesc")}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setCookerInspectionOpen(null);
+                  setCookerInspectionLightbox(null);
+                }}
+                className="rounded-full border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-900"
+              >
+                {t("closeLabel")}
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+              {controllerActionFeedback["cooker-inspect"] ? (
+                <div
+                  className={`mb-3 rounded-lg px-3 py-2 text-sm ${
+                    controllerActionFeedback["cooker-inspect"].tone === "success"
+                      ? "bg-emerald-50 text-emerald-800"
+                      : "bg-rose-50 text-rose-800"
+                  }`}
+                >
+                  {controllerActionFeedback["cooker-inspect"].message}
+                </div>
+              ) : null}
+              {cookerInspectionLoading ? (
+                <p className="text-sm text-slate-500">{t("refreshing")}</p>
+              ) : cookerInspections.length === 0 ? (
+                <p className="text-sm text-slate-500">{t("cookerInspectionEmpty")}</p>
+              ) : (
+                <div className="space-y-4">
+                  {cookerInspections.map((session) => {
+                    const reminderPending = cookerInspectionTicketPending === `${session.sessionId}:reminder`;
+                    const finePending = cookerInspectionTicketPending === `${session.sessionId}:fine`;
+                    return (
+                      <div key={session.sessionId} className="rounded-2xl border border-slate-200 p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <p className="font-semibold text-slate-900">
+                              {session.cookerLabel} · {session.branchId}
+                            </p>
+                            <p className="mt-1 text-sm text-slate-700">
+                              {session.startedByName || session.startedByEmail} · {session.startedByEmail}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {formatDateTime(session.startedAt)}
+                              {session.endedAt ? ` → ${formatDateTime(session.endedAt)}` : ""}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-600">
+                              {session.inUse ? t("cookerInspectionInUse") : t("cookerInspectionEnded")}
+                              {session.overdue ? ` · ${t("cookerInspectionOverdue")}` : ""}
+                              {` · ${t("cookerStrikeStatus", undefined, { count: session.leftoverStrikes })}`}
+                            </p>
+                          </div>
+                          {session.leftoverFineIssued ? (
+                            <span className="rounded-full bg-rose-100 px-2 py-1 text-[11px] font-bold text-rose-800">
+                              {t("cookerAlreadyFined")}
+                            </span>
+                          ) : session.leftoverTicketed ? (
+                            <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-bold text-amber-800">
+                              {t("cookerAlreadyReminded")}
+                            </span>
+                          ) : null}
+                        </div>
+                        {session.photos.length > 0 ? (
+                          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                            {session.photos.map((photo) => {
+                              const src = cookerPhotoUrl(photo.fileName);
+                              const kindLabel =
+                                photo.kind === "kitchen"
+                                  ? t("cookerPhotoKindKitchen")
+                                  : photo.kind === "cleaned"
+                                    ? t("cookerPhotoKindCleaned")
+                                    : t("cookerPhotoKindCooker");
+                              return (
+                                <button
+                                  key={photo.fileName}
+                                  type="button"
+                                  onClick={() => setCookerInspectionLightbox(src)}
+                                  className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-left"
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={src} alt={kindLabel} className="h-28 w-full object-cover" />
+                                  <span className="block px-2 py-1 text-[11px] font-medium text-slate-600">{kindLabel}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="mt-3 text-xs text-slate-500">{t("cookerNoPhotosYet")}</p>
+                        )}
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void ticketCookerInspection(session, "reminder")}
+                            disabled={Boolean(cookerInspectionTicketPending) || session.leftoverTicketed}
+                            className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900 disabled:opacity-50"
+                          >
+                            {reminderPending ? t("cookerSendingTicket") : t("cookerSendReminder")}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void ticketCookerInspection(session, "fine")}
+                            disabled={Boolean(cookerInspectionTicketPending) || session.leftoverFineIssued}
+                            className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+                          >
+                            {finePending ? t("cookerSendingTicket") : t("cookerCreateFine")}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+          {cookerInspectionLightbox ? (
+            <button
+              type="button"
+              className="absolute inset-0 z-[191] flex items-center justify-center bg-black/70 p-4"
+              onClick={() => setCookerInspectionLightbox(null)}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={cookerInspectionLightbox} alt="" className="max-h-full max-w-full rounded-xl object-contain" />
+            </button>
+          ) : null}
+        </div>
       ) : null}
 
       {clientTransferModalOpen && selectedClient && canReviewContractApprovals ? (
