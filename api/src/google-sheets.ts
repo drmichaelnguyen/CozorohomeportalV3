@@ -217,6 +217,24 @@ const FINE_BED_COLUMN = "S\u1ed0 GI\u01af\u1edcNG";
 const FINE_CREATOR_COLUMN = "NG\u01af\u1edCI L\u1eACP PHI\u1ebeU";
 const FINE_LOCATION_COLUMN = "V\u1eca TR\u00cd PH\u00c1T HI\u1ec6N VI PH\u1ea0M";
 const FINE_IMAGE_COLUMN = "H\u00ccNH \u1ea2NH";
+const FINE_TIMESTAMP_COLUMN_TYPO = "\u0110\u1ea4U TH\u1edcI GIAN";
+
+function fineTimestampCandidates(row: Record<string, string>): string[] {
+  return [row[FINE_TIMESTAMP_COLUMN], row[FINE_TIMESTAMP_COLUMN_TYPO], row[FINE_CREATED_AT_COLUMN]]
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+}
+
+function fineRowMatchesIdentity(
+  row: Record<string, string>,
+  input: { email?: string; timestamp: string; content: string }
+): boolean {
+  const emailOk =
+    !input.email ||
+    String(row[FINE_EMAIL_COLUMN] ?? "").trim().toLowerCase() === input.email.trim().toLowerCase();
+  const contentOk = String(row[FINE_CONTENT_COLUMN] ?? "").trim() === input.content.trim();
+  return emailOk && contentOk && fineTimestampCandidates(row).includes(input.timestamp.trim());
+}
 
 const blockedClientUpdateColumns = new Set([
   "Äá»‹a chá»‰ email - Hidden"
@@ -4055,10 +4073,11 @@ export async function payFineByCoins(input: {
   }
 
   const entries = await getFinesForEmail(normalizedEmail);
-  const fineEntry = entries.find(
-    (entry) =>
-      (entry.row[FINE_TIMESTAMP_COLUMN] ?? "").trim() === input.timestamp.trim() &&
-      (entry.row[FINE_CONTENT_COLUMN] ?? "").trim() === input.content.trim()
+  const fineEntry = entries.find((entry) =>
+    fineRowMatchesIdentity(entry.row, {
+      timestamp: input.timestamp,
+      content: input.content
+    })
   );
 
   if (!fineEntry) {
@@ -5195,6 +5214,27 @@ export async function awardVentHammerGameCoinsToSheet(input: {
   return { currentCoins: nextCoins };
 }
 
+async function ensurePaymentsNextPaymentDateColumn(
+  sheets: Awaited<ReturnType<typeof getAuthorizedSheetsClient>>,
+  headers: string[]
+): Promise<string[]> {
+  const nextPaymentHeaderNorm = normalizeHeader(PAYMENT_NEXT_PAYMENT_DATE_COLUMN);
+  if (headers.some((header) => header === nextPaymentHeaderNorm)) {
+    return headers;
+  }
+  if (!paymentsSpreadsheetId) {
+    throw new Error("GOOGLE_PAYMENT_SPREADSHEET_ID is not configured");
+  }
+  const nextColIndex = headers.length;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: paymentsSpreadsheetId,
+    range: `${paymentsSheetName}!${toSheetColumn(nextColIndex + 1)}1`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [[PAYMENT_NEXT_PAYMENT_DATE_COLUMN]] }
+  });
+  return [...headers, nextPaymentHeaderNorm];
+}
+
 async function appendPaymentSheetRow(entry: Record<string, string>) {
   if (!paymentsSpreadsheetId) {
     throw new Error("GOOGLE_PAYMENT_SPREADSHEET_ID is not configured");
@@ -5211,17 +5251,7 @@ async function appendPaymentSheetRow(entry: Record<string, string>) {
   }
 
   let headers = (values[0] ?? []).map((value) => normalizeHeader(String(value)));
-  const nextPaymentHeaderNorm = normalizeHeader(PAYMENT_NEXT_PAYMENT_DATE_COLUMN);
-  if (!headers.some((header) => header === nextPaymentHeaderNorm)) {
-    const nextColIndex = headers.length;
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: paymentsSpreadsheetId,
-      range: `${paymentsSheetName}!${toSheetColumn(nextColIndex + 1)}1`,
-      valueInputOption: "USER_ENTERED",
-      requestBody: { values: [[PAYMENT_NEXT_PAYMENT_DATE_COLUMN]] }
-    });
-    headers = [...headers, nextPaymentHeaderNorm];
-  }
+  headers = await ensurePaymentsNextPaymentDateColumn(sheets, headers);
 
   const row = headers.map((header) => valueForSheetHeader(entry, header));
 
@@ -5331,7 +5361,7 @@ async function updateSheetRowColumns(input: {
     throw new Error(`The ${input.rowLabel} sheet is empty`);
   }
 
-  const headers = (sheetValues[0] ?? []).map((value) => normalizeHeader(String(value)));
+  let headers = (sheetValues[0] ?? []).map((value) => normalizeHeader(String(value)));
   const rowIndex = sheetValues.findIndex((row, index) =>
     index > 0 && input.findRow(headers, row.map((value) => String(value)), index)
   );
@@ -5342,7 +5372,23 @@ async function updateSheetRowColumns(input: {
 
   const updateData: Array<{ range: string; values: string[][] }> = [];
   for (const [column, value] of updates) {
-    const columnIndex = headers.findIndex((header) => header === column);
+    const want = normalizeHeader(column);
+    let columnIndex = headers.findIndex(
+      (header) =>
+        header === column ||
+        header === want ||
+        header.replace(/\s+/g, " ").toLowerCase() === String(column).replace(/\s+/g, " ").toLowerCase()
+    );
+
+    // Auto-add next_payment_date on BIÊN NHẬN when editing older receipts.
+    if (
+      columnIndex === -1 &&
+      input.rowLabel === "payments" &&
+      want === normalizeHeader(PAYMENT_NEXT_PAYMENT_DATE_COLUMN)
+    ) {
+      headers = await ensurePaymentsNextPaymentDateColumn(sheets, headers);
+      columnIndex = headers.findIndex((header) => header === normalizeHeader(PAYMENT_NEXT_PAYMENT_DATE_COLUMN));
+    }
 
     if (columnIndex === -1) {
       throw new Error(`Column "${column}" was not found in the ${input.rowLabel} sheet`);
@@ -5403,13 +5449,34 @@ export async function updatePaymentSheetEntry(input: {
   amount?: string;
   purpose?: string;
   values: Record<string, string>;
+  updatedBy?: string | null;
 }) {
   const normalizedEmail = input.email.trim().toLowerCase();
+  const values = { ...input.values };
+
+  const nextPaymentRaw =
+    values[PAYMENT_NEXT_PAYMENT_DATE_COLUMN] ??
+    values["next_payment_date"] ??
+    "";
+  let resolvedNextPaymentDate: string | null = null;
+  if (String(nextPaymentRaw).trim()) {
+    resolvedNextPaymentDate = resolveNextPaymentDateInput(String(nextPaymentRaw), "monthly");
+    values[PAYMENT_NEXT_PAYMENT_DATE_COLUMN] = resolvedNextPaymentDate;
+    // Drop alternate key casing so we only write one column.
+    for (const key of Object.keys(values)) {
+      if (
+        key !== PAYMENT_NEXT_PAYMENT_DATE_COLUMN &&
+        key.replace(/\s+/g, " ").toLowerCase() === "next_payment_date"
+      ) {
+        delete values[key];
+      }
+    }
+  }
 
   await updateSheetRowColumns({
     range: `${paymentsSheetName}!A:AMJ`,
     rowLabel: "payments",
-    values: input.values,
+    values,
     syncAfterUpdate: syncPaymentsFromSheet,
     targetSpreadsheetId: paymentsSpreadsheetId,
     findRow: (headers, row) => {
@@ -5425,9 +5492,69 @@ export async function updatePaymentSheetEntry(input: {
     }
   });
 
+  if (resolvedNextPaymentDate) {
+    try {
+      await setAccountNextPaymentForEmail({
+        email: normalizedEmail,
+        nextPaymentDateDdMmYyyy: resolvedNextPaymentDate,
+        updatedBy: input.updatedBy ?? null,
+        syncClientSheet: true
+      });
+    } catch (error) {
+      console.warn(
+        `[payments/update] could not sync AccountNextPayment for ${normalizedEmail}:`,
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+
   return {
-    ok: true
+    ok: true,
+    nextPaymentDate: resolvedNextPaymentDate
   };
+}
+
+/** Upsert Prisma AccountNextPayment and optionally sync client sheet package expiry. */
+export async function setAccountNextPaymentForEmail(input: {
+  email: string;
+  nextPaymentDateDdMmYyyy: string;
+  planKind?: PaymentPlanKind | null;
+  sourceContractCode?: string | null;
+  updatedBy?: string | null;
+  syncClientSheet?: boolean;
+}) {
+  const email = input.email.trim().toLowerCase();
+  const nextPaymentDateDdMmYyyy = resolveNextPaymentDateInput(
+    input.nextPaymentDateDdMmYyyy,
+    input.planKind ?? "monthly"
+  );
+
+  await upsertAccountNextPayment({
+    email,
+    nextPaymentDateDdMmYyyy,
+    planKind: input.planKind ?? null,
+    sourceContractCode: input.sourceContractCode ?? null,
+    updatedBy: input.updatedBy ?? null
+  });
+
+  if (input.syncClientSheet !== false) {
+    const client = await getActiveClientByEmail(email);
+    const maHd = String(client?.[CONTRACT_CODE_COLUMN] ?? "").trim();
+    if (maHd) {
+      try {
+        await updateClientColumns(maHd, {
+          [CLIENT_PACKAGE_EXPIRY_COLUMN]: nextPaymentDateDdMmYyyy
+        });
+      } catch (error) {
+        console.warn(
+          `[account-next-payment] could not sync client package expiry for ${maHd}:`,
+          error instanceof Error ? error.message : error
+        );
+      }
+    }
+  }
+
+  return { ok: true as const, email, nextPaymentDate: nextPaymentDateDdMmYyyy };
 }
 
 export async function updateFineSheetEntry(input: {
@@ -5445,11 +5572,11 @@ export async function updateFineSheetEntry(input: {
     syncAfterUpdate: syncFinesFromSheet,
     findRow: (headers, row) => {
       const mappedRow = mapRow(headers, row) as unknown as FineRow;
-      return (
-        mappedRow[FINE_EMAIL_COLUMN]?.trim().toLowerCase() === normalizedEmail &&
-        (mappedRow[FINE_TIMESTAMP_COLUMN] ?? "").trim() === input.timestamp.trim() &&
-        (mappedRow[FINE_CONTENT_COLUMN] ?? "").trim() === input.content.trim()
-      );
+      return fineRowMatchesIdentity(mappedRow, {
+        email: normalizedEmail,
+        timestamp: input.timestamp,
+        content: input.content
+      });
     }
   });
 
@@ -5611,11 +5738,11 @@ async function updateFineSheetCell(input: {
       return false;
     }
     const mappedRow = mapRow(headers, row.map((value) => String(value))) as unknown as FineRow;
-    return (
-      mappedRow[FINE_EMAIL_COLUMN]?.trim().toLowerCase() === input.email.trim().toLowerCase() &&
-      (mappedRow[FINE_TIMESTAMP_COLUMN] ?? "").trim() === input.timestamp.trim() &&
-      (mappedRow[FINE_CONTENT_COLUMN] ?? "").trim() === input.content.trim()
-    );
+    return fineRowMatchesIdentity(mappedRow, {
+      email: input.email,
+      timestamp: input.timestamp,
+      content: input.content
+    });
   });
 
   if (rowIndex === -1) {

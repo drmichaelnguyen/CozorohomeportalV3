@@ -83,3 +83,10 @@ export function parseSheetDateDdMmYyyy(value: string | null | undefined): Date |
   parsed.setHours(0, 0, 0, 0);
   return parsed;
 }
+
+export function formatSheetDateDdMmYyyy(value: Date): string {
+  const day = String(value.getDate()).padStart(2, "0");
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const year = String(value.getFullYear());
+  return `${day}/${month}/${year}`;
+}

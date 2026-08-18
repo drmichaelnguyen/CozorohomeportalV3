@@ -5,7 +5,10 @@ import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 import { formatCozoroDateTime } from "../lib/date-format";
-const TIMESTAMP_COLUMN = "Dấu thời gian";
+const TIMESTAMP_COLUMN = "DẤU THỜI GIAN";
+const TIMESTAMP_COLUMN_TITLE = "Dấu thời gian";
+const TIMESTAMP_COLUMN_TYPO = "ĐẤU THỜI GIAN";
+const CREATED_AT_COLUMN = "THỜI ĐIỂM LẬP PHIẾU";
 const EMAIL_COLUMN = "EMAIL";
 const AMOUNT_COLUMN = "CHI PHÍ THANH TOÁN CHO VI PHẠM";
 const STATUS_COLUMN = "ĐÃ THANH TOÁN?";
@@ -14,6 +17,15 @@ const DESCRIPTION_COLUMN = "MÔ TẢ VI PHẠM";
 const DUE_COLUMN = "HẠN THANH TOÁN";
 const DISPUTE_COLUMN = "Khieu nai tu khach hang";
 const IMAGE_COLUMN = "HÌNH ẢNH";
+
+function getFineTimestamp(row: Record<string, string>) {
+  return (
+    String(row[TIMESTAMP_COLUMN] ?? "").trim() ||
+    String(row[TIMESTAMP_COLUMN_TYPO] ?? "").trim() ||
+    String(row[TIMESTAMP_COLUMN_TITLE] ?? "").trim() ||
+    String(row[CREATED_AT_COLUMN] ?? "").trim()
+  );
+}
 
 function FineEvidencePreview({ url }: { url: string }) {
   const trimmed = url.trim();
@@ -220,21 +232,22 @@ export function FinesClient() {
       return;
     }
 
-    const fineKey = `${entry.row[EMAIL_COLUMN]}-${entry.row[TIMESTAMP_COLUMN]}-${entry.row[CONTENT_COLUMN]}`;
+    const fineKey = `${entry.row[EMAIL_COLUMN]}-${getFineTimestamp(entry.row)}-${entry.row[CONTENT_COLUMN]}`;
     setPayingFineKey(fineKey);
     setMessage("");
 
     try {
+      const payPayload = {
+        email: activeEmail,
+        timestamp: getFineTimestamp(entry.row),
+        content: entry.row[CONTENT_COLUMN]
+      };
       const response = await fetch(`${API_BASE_URL}/fines/pay-by-coins`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({
-          email: activeEmail,
-          timestamp: entry.row[TIMESTAMP_COLUMN],
-          content: entry.row[CONTENT_COLUMN]
-        })
+        body: JSON.stringify(payPayload)
       });
       const data = await readJsonSafely<{ error?: string }>(response);
 
@@ -258,7 +271,7 @@ export function FinesClient() {
       return;
     }
 
-    const fineKey = `${entry.row[EMAIL_COLUMN]}-${entry.row[TIMESTAMP_COLUMN]}-${entry.row[CONTENT_COLUMN]}`;
+    const fineKey = `${entry.row[EMAIL_COLUMN]}-${getFineTimestamp(entry.row)}-${entry.row[CONTENT_COLUMN]}`;
     const disputeText = (disputeDrafts[fineKey] ?? "").trim();
     if (!disputeText) {
       setMessage("Enter your dispute first.");
@@ -276,7 +289,7 @@ export function FinesClient() {
         },
         body: JSON.stringify({
           email: activeEmail,
-          timestamp: entry.row[TIMESTAMP_COLUMN],
+          timestamp: getFineTimestamp(entry.row),
           content: entry.row[CONTENT_COLUMN],
           disputeText
         })
@@ -475,7 +488,7 @@ export function FinesClient() {
                       <div>
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Dấu thời gian</div>
                         <div className="mt-1 text-sm text-slate-900">
-                          {entry.parsedTimestamp ? formatCozoroDateTime(entry.parsedTimestamp) : entry.row[TIMESTAMP_COLUMN] ?? "-"}
+                          {entry.parsedTimestamp ? formatCozoroDateTime(entry.parsedTimestamp) : getFineTimestamp(entry.row) || "-"}
                         </div>
                       </div>
                       <div>
@@ -524,14 +537,14 @@ export function FinesClient() {
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Dispute</div>
                         <textarea
                           value={
-                            disputeDrafts[`${entry.row[EMAIL_COLUMN]}-${entry.row[TIMESTAMP_COLUMN]}-${entry.row[CONTENT_COLUMN]}`] ??
+                            disputeDrafts[`${entry.row[EMAIL_COLUMN]}-${getFineTimestamp(entry.row)}-${entry.row[CONTENT_COLUMN]}`] ??
                             entry.row[DISPUTE_COLUMN] ??
                             ""
                           }
                           onChange={(event) =>
                             setDisputeDrafts((current) => ({
                               ...current,
-                              [`${entry.row[EMAIL_COLUMN]}-${entry.row[TIMESTAMP_COLUMN]}-${entry.row[CONTENT_COLUMN]}`]:
+                              [`${entry.row[EMAIL_COLUMN]}-${getFineTimestamp(entry.row)}-${entry.row[CONTENT_COLUMN]}`]:
                                 event.target.value
                             }))
                           }
@@ -542,12 +555,12 @@ export function FinesClient() {
                           type="button"
                           onClick={() => void submitDisputeNow(entry)}
                           disabled={
-                            disputingFineKey === `${entry.row[EMAIL_COLUMN]}-${entry.row[TIMESTAMP_COLUMN]}-${entry.row[CONTENT_COLUMN]}` ||
-                            !(disputeDrafts[`${entry.row[EMAIL_COLUMN]}-${entry.row[TIMESTAMP_COLUMN]}-${entry.row[CONTENT_COLUMN]}`] ?? entry.row[DISPUTE_COLUMN] ?? "").trim()
+                            disputingFineKey === `${entry.row[EMAIL_COLUMN]}-${getFineTimestamp(entry.row)}-${entry.row[CONTENT_COLUMN]}` ||
+                            !(disputeDrafts[`${entry.row[EMAIL_COLUMN]}-${getFineTimestamp(entry.row)}-${entry.row[CONTENT_COLUMN]}`] ?? entry.row[DISPUTE_COLUMN] ?? "").trim()
                           }
                           className="mt-3 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 disabled:opacity-60"
                         >
-                          {disputingFineKey === `${entry.row[EMAIL_COLUMN]}-${entry.row[TIMESTAMP_COLUMN]}-${entry.row[CONTENT_COLUMN]}`
+                          {disputingFineKey === `${entry.row[EMAIL_COLUMN]}-${getFineTimestamp(entry.row)}-${entry.row[CONTENT_COLUMN]}`
                             ? "Submitting..."
                             : "Submit dispute"}
                         </button>
@@ -565,10 +578,10 @@ export function FinesClient() {
                           <button
                             type="button"
                             onClick={() => void payFineNow(entry)}
-                            disabled={payingFineKey === `${entry.row[EMAIL_COLUMN]}-${entry.row[TIMESTAMP_COLUMN]}-${entry.row[CONTENT_COLUMN]}`}
+                            disabled={payingFineKey === `${entry.row[EMAIL_COLUMN]}-${getFineTimestamp(entry.row)}-${entry.row[CONTENT_COLUMN]}`}
                             className="mt-3 rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
                           >
-                            {payingFineKey === `${entry.row[EMAIL_COLUMN]}-${entry.row[TIMESTAMP_COLUMN]}-${entry.row[CONTENT_COLUMN]}`
+                            {payingFineKey === `${entry.row[EMAIL_COLUMN]}-${getFineTimestamp(entry.row)}-${entry.row[CONTENT_COLUMN]}`
                               ? "Paying..."
                               : "Pay by coins"}
                           </button>

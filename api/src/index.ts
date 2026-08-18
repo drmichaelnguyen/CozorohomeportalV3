@@ -154,6 +154,7 @@ import {
   updateLaundryMachineSettings,
   setLaundryMachineMaintenanceMode,
   updatePaymentSheetEntry,
+  setAccountNextPaymentForEmail,
   deletePaymentSheetEntry,
   readCachedMaintenance,
   reportMaintenanceTicket,
@@ -1348,8 +1349,8 @@ const privilegedAcCommandSchema = z.object({
   action: z.enum(["ON", "OFF"])
 });
 const fineCoinPaymentSchema = z.object({
-  email: z.string().email(),
-  timestamp: z.string().min(1),
+  email: z.string().trim().email(),
+  timestamp: z.string().trim().min(1),
   content: z.string().min(1)
 });
 const fineDisputeSchema = z.object({
@@ -1588,6 +1589,13 @@ const staffPaymentUpdateSchema = z.object({
   amount: z.string().optional(),
   purpose: z.string().optional(),
   values: z.record(z.string(), z.string())
+});
+const managerAccountNextPaymentSchema = z.object({
+  actorEmail: z.string().email(),
+  email: z.string().email(),
+  nextPaymentDate: z.string().min(1),
+  planKind: z.enum(["monthly", "3month", "6month"]).optional(),
+  maHd: z.string().optional()
 });
 const staffCoinDeleteSchema = z.object({
   actorEmail: z.string().email(),
@@ -4430,6 +4438,33 @@ app.post("/staff/client-sheet-update", async (request, response) => {
       duplicateMessage: "The same client update was just submitted. Please wait a few seconds.",
       action: () => updateClientColumns(parsed.data.maHd, normalizedValues)
     });
+
+    const packageExpiryKey = Object.keys(normalizedValues).find((key) => {
+      const n = key.replace(/\s+/g, " ").toLowerCase();
+      return n.includes("hết hạn gói") || n.includes("het han goi");
+    });
+    const packageExpiryRaw = packageExpiryKey ? String(normalizedValues[packageExpiryKey] ?? "").trim() : "";
+    if (packageExpiryRaw) {
+      try {
+        const managerClients = await getManagerClients();
+        const client = managerClients.find((entry) => entry.maHd === parsed.data.maHd);
+        if (client?.email) {
+          await setAccountNextPaymentForEmail({
+            email: client.email,
+            nextPaymentDateDdMmYyyy: packageExpiryRaw,
+            sourceContractCode: parsed.data.maHd,
+            updatedBy: parsed.data.actorEmail,
+            syncClientSheet: false
+          });
+        }
+      } catch (error) {
+        console.warn(
+          `[client-sheet-update] could not sync AccountNextPayment for ${parsed.data.maHd}:`,
+          error instanceof Error ? error.message : error
+        );
+      }
+    }
+
     return response.json(cache);
   } catch (error) {
     return response.status((error as Error & { statusCode?: number }).statusCode ?? 403).json({
@@ -4531,7 +4566,8 @@ app.post("/staff/payments/update", async (request, response) => {
         timestamp: parsed.data.timestamp,
         amount: parsed.data.amount,
         purpose: parsed.data.purpose,
-        values: parsed.data.values
+        values: parsed.data.values,
+        updatedBy: parsed.data.actorEmail
       })
     });
     return response.json(result);
@@ -6831,6 +6867,11 @@ app.get("/manager/rent-paid-status", async (req, res) => {
     where: { email_month: { email, month } }
   });
   const componentUnpaid = await getRentComponentUnpaid(email, month);
+  const clientRow = await getActiveClientByEmail(email);
+  const nextPayment = await resolveAccountNextPaymentDate({
+    email,
+    clientPackageExpiry: clientRow?.["Ngày hết hạn gói đã thanh toán"] ?? null
+  });
   return res.json({
     email,
     month,
@@ -6850,8 +6891,45 @@ app.get("/manager/rent-paid-status", async (req, res) => {
     applyCoinsTowardRent: record?.applyCoinsTowardRent ?? false,
     rentCoinRedeemCoins: record?.rentCoinRedeemCoins ?? null,
     rentCoinRedeemValueVnd: record?.rentCoinRedeemValueVnd ?? null,
-    rentCoinRedeemAt: record?.rentCoinRedeemAt?.toISOString() ?? null
+    rentCoinRedeemAt: record?.rentCoinRedeemAt?.toISOString() ?? null,
+    nextPaymentDate: nextPayment.nextPaymentDate,
+    nextPaymentDateSource: nextPayment.source
   });
+});
+
+app.post("/manager/account-next-payment", async (req, res) => {
+  const parsed = managerAccountNextPaymentSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "actorEmail, email, and nextPaymentDate are required" });
+  }
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only Cozoro team members can edit next payment date."
+    );
+    const result = await runWithWriteGuard({
+      key: createWriteGuardKey("/manager/account-next-payment", {
+        email: parsed.data.email,
+        nextPaymentDate: parsed.data.nextPaymentDate
+      }),
+      duplicateMessage: "The same next payment date update was just submitted. Please wait a few seconds.",
+      action: () =>
+        setAccountNextPaymentForEmail({
+          email: parsed.data.email,
+          nextPaymentDateDdMmYyyy: parsed.data.nextPaymentDate,
+          planKind: parsed.data.planKind ?? null,
+          sourceContractCode: parsed.data.maHd ?? null,
+          updatedBy: parsed.data.actorEmail,
+          syncClientSheet: true
+        })
+    });
+    return res.json(result);
+  } catch (error) {
+    return res.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
+      error: error instanceof Error ? error.message : "Unable to update next payment date"
+    });
+  }
 });
 
 app.get("/manager/rent-breakdown-overrides", async (req, res) => {

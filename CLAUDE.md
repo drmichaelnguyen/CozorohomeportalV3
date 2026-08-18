@@ -275,6 +275,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.6 | Edit `next_payment_date` on existing payment receipts; staff can set next payment date on client Payment plan panel (`POST /manager/account-next-payment` syncs DB + package expiry). |
 | 3.9.5 | Prisma `AccountNextPayment` model (per-email next payment date); receipt writes upsert DB + BIÊN NHẬN `next_payment_date`; `/rent-paid-status` prefers DB then sheet. |
 | 3.9.4 | BIÊN NHẬN `next_payment_date` column: written on manager/manual/rent receipts (auto-added if missing); defaults monthly→1st next month, 3-mo→+3, 6-mo→+7; staff-editable on create forms; synced to client `Ngày hết hạn gói đã thanh toán`; resident account next payment date prefers latest receipt value via `/rent-paid-status`. |
 | 3.9.3 | Manager payment receipts (existing client + Branch Tools manual/new-customer) now email the customer via Gmail after the BIÊN NHẬN sheet write; UI reports email success/failure. Staff display name set for Du Ái Phụng so blank Receiver falls back to `DU ÁI PHỤNG (BQT)`. |

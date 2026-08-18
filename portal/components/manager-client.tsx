@@ -32,6 +32,9 @@ import { isContractExpired, parseVietnamDate } from "../lib/contract-utils";
 import {
   defaultNextPaymentDate,
   formatHtmlDateInput,
+  parseHtmlDateInput,
+  parseSheetDateDdMmYyyy,
+  PAYMENT_NEXT_PAYMENT_DATE_COLUMN,
   planMonthsToAdd,
   type PaymentPlanKind
 } from "../lib/next-payment-date";
@@ -303,7 +306,8 @@ const PAYMENT_COMPACT_COLUMNS = [
   "SỐ TIỀN",
   "MỤC ĐÍCH",
   "MỤC ĐÍCH - GHI RÕ",
-  "Địa chỉ email người nhận"
+  "Địa chỉ email người nhận",
+  "next_payment_date"
 ] as const;
 
 const PAYMENT_ANALYTICS_DIMENSIONS: Array<{ key: PaymentAnalyticsDimension; label: string }> = [
@@ -639,6 +643,10 @@ function getPaymentRowValue(row: Record<string, string>, column: (typeof PAYMENT
       return String(row.EMAIL ?? row["Địa chỉ email"] ?? "").trim();
     case "Số giường":
       return String(row["Số giường"] ?? row.BED ?? "").trim();
+    case "next_payment_date":
+      return String(
+        row[PAYMENT_NEXT_PAYMENT_DATE_COLUMN] ?? row["next_payment_date"] ?? ""
+      ).trim();
     default:
       return String(row[column] ?? "").trim();
   }
@@ -884,10 +892,17 @@ type PaymentPlanSummary = {
   isDue: boolean;              // overdue or no payment recorded this month
 };
 
-function derivePaymentPlanSummary(row: Record<string, string>, rentPaidStatus: boolean | null): PaymentPlanSummary {
+function derivePaymentPlanSummary(
+  row: Record<string, string>,
+  rentPaidStatus: boolean | null,
+  accountNextPaymentDate?: string | null
+): PaymentPlanSummary {
   const expiryRaw = row["Ngày hết hạn gói đã thanh toán"] ?? "";
   const packageExpiry = parseLooseDate(expiryRaw);
   const contractEnd = parseLooseDate(row["Ngày hết hạn hợp đồng"] ?? "");
+  const accountNext =
+    parseSheetDateDdMmYyyy(accountNextPaymentDate ?? "") ??
+    parseLooseDate(accountNextPaymentDate ?? "");
   const now = new Date();
   now.setHours(0, 0, 0, 0);
 
@@ -896,10 +911,12 @@ function derivePaymentPlanSummary(row: Record<string, string>, rentPaidStatus: b
     planType === "6month" ? "6-month plan" : planType === "3month" ? "3-month plan" : "Monthly";
 
   let nextPaymentDate: Date;
-  if (planType !== "monthly") {
+  if (accountNext) {
+    nextPaymentDate = accountNext;
+  } else if (planType !== "monthly") {
     nextPaymentDate = packageExpiry ?? contractEnd ?? new Date(now.getFullYear(), now.getMonth() + 1, 1);
   } else {
-    nextPaymentDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    nextPaymentDate = packageExpiry ?? new Date(now.getFullYear(), now.getMonth() + 1, 1);
   }
 
   let isDue = false;
@@ -2908,6 +2925,9 @@ export function ManagerClient({
   const [finePaidSavingKey, setFinePaidSavingKey] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<StatsTab>("laundry");
   const [rentPaidStatus, setRentPaidStatus] = useState<boolean | null>(null);
+  const [accountNextPaymentDate, setAccountNextPaymentDate] = useState<string | null>(null);
+  const [profileNextPaymentHtml, setProfileNextPaymentHtml] = useState("");
+  const [profileNextPaymentSaving, setProfileNextPaymentSaving] = useState(false);
   const [rentComponentUnpaid, setRentComponentUnpaid] = useState<{
     rentSubtotal: boolean;
     parking: boolean;
@@ -4865,6 +4885,8 @@ export function ManagerClient({
     const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
     setRentPaidMonth(month);
     setRentPaidStatus(null);
+    setAccountNextPaymentDate(null);
+    setProfileNextPaymentHtml("");
     setRentCoinRedeemInfo(null);
     setInfoRentBreakdown(null);
     setInfoManagerDiscount("0");
@@ -4892,8 +4914,13 @@ export function ManagerClient({
           rentCoinRedeemCoins?: number | null;
           rentCoinRedeemValueVnd?: number | null;
           rentCoinRedeemAt?: string | null;
+          nextPaymentDate?: string | null;
         };
         setRentPaidStatus(data.isPaid);
+        const nextRaw = String(data.nextPaymentDate ?? "").trim();
+        setAccountNextPaymentDate(nextRaw || null);
+        const nextParsed = parseSheetDateDdMmYyyy(nextRaw) ?? parseLooseDate(nextRaw);
+        setProfileNextPaymentHtml(nextParsed ? formatHtmlDateInput(nextParsed) : "");
         setRentComponentUnpaid({
           rentSubtotal: data.componentUnpaid?.rentSubtotal === true,
           parking: data.componentUnpaid?.parking === true,
@@ -8046,13 +8073,17 @@ export function ManagerClient({
                   }
                 >
                 {(() => {
-                  const ps = derivePaymentPlanSummary(selectedClient.row ?? {}, rentPaidStatus);
+                  const ps = derivePaymentPlanSummary(
+                    selectedClient.row ?? {},
+                    rentPaidStatus,
+                    accountNextPaymentDate
+                  );
                   const expiryStr = ps.packageExpiry
                     ? formatCozoroDate(ps.packageExpiry, { day: "2-digit", month: "short", year: "numeric" })
                     : null;
                   const nextStr = formatCozoroDate(ps.nextPaymentDate, { day: "2-digit", month: "short", year: "numeric" });
                   return (
-                    <div className={`rounded-2xl border p-4 ${ps.isDue ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-slate-50"}`}>
+                    <div className={`rounded-2xl border p-4 space-y-3 ${ps.isDue ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-slate-50"}`}>
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="space-y-1">
                           <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("paymentPlanLabel")}</div>
@@ -8081,6 +8112,44 @@ export function ManagerClient({
                             <span className="font-semibold">{nextStr}</span>
                           </div>
                         </div>
+                      </div>
+                      <div className="flex flex-wrap items-end gap-3 border-t border-slate-200/80 pt-3">
+                        <label className="block min-w-[12rem] flex-1 text-sm font-medium text-slate-700">
+                          {t("editNextPaymentDateLabel")}
+                          <input
+                            type="date"
+                            value={profileNextPaymentHtml}
+                            onChange={(event) => setProfileNextPaymentHtml(event.target.value)}
+                            className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          disabled={profileNextPaymentSaving || !profileNextPaymentHtml || !selectedClient.email}
+                          onClick={() => {
+                            if (!selectedClient.email || !profileNextPaymentHtml) return;
+                            setProfileNextPaymentSaving(true);
+                            void postJson(
+                              `${API_BASE_URL}/manager/account-next-payment`,
+                              {
+                                actorEmail: normalizedEmail,
+                                email: selectedClient.email,
+                                nextPaymentDate: profileNextPaymentHtml,
+                                maHd: selectedClient.maHd
+                              },
+                              t("nextPaymentDateUpdated"),
+                              async () => {
+                                await Promise.all([
+                                  loadRentPaidStatus(selectedClient.email),
+                                  loadClients(true)
+                                ]);
+                              }
+                            ).finally(() => setProfileNextPaymentSaving(false));
+                          }}
+                          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                        >
+                          {profileNextPaymentSaving ? t("savingLabel") : t("saveNextPaymentDate")}
+                        </button>
                       </div>
                     </div>
                   );
@@ -10991,7 +11060,31 @@ export function ManagerClient({
                                 </div>
                               ) : (
                                 <div className="flex items-center gap-2">
-                                  <button type="button" onClick={() => { setEditingId(`${activeTab}:${key}`); setEditValues(entry.row); }} className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700">Edit</button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingId(`${activeTab}:${key}`);
+                                      if (activeTab === "payments") {
+                                        const existing =
+                                          entry.row[PAYMENT_NEXT_PAYMENT_DATE_COLUMN] ??
+                                          entry.row["next_payment_date"] ??
+                                          "";
+                                        const fallback =
+                                          accountNextPaymentDate ||
+                                          selectedClient?.row?.["Ngày hết hạn gói đã thanh toán"] ||
+                                          "";
+                                        setEditValues({
+                                          ...entry.row,
+                                          [PAYMENT_NEXT_PAYMENT_DATE_COLUMN]: existing || fallback || ""
+                                        });
+                                      } else {
+                                        setEditValues(entry.row);
+                                      }
+                                    }}
+                                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
+                                  >
+                                    Edit
+                                  </button>
                                   <button type="button" onClick={() => setConfirmDeleteId(`${activeTab}:${key}`)} className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600">Remove</button>
                                 </div>
                               )}
@@ -11015,12 +11108,38 @@ export function ManagerClient({
                   return (
                     <div key={key} className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
                       <div className="grid gap-3 md:grid-cols-2">
-                        {Object.keys(editValues).map((field) => (
-                          <label key={field} className="block text-sm font-medium text-slate-700">
-                            {field}
-                            <input type="text" value={editValues[field] ?? ""} onChange={(event) => setEditValues((current) => ({ ...current, [field]: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
-                          </label>
-                        ))}
+                        {Object.keys(editValues).map((field) => {
+                          const isNextPaymentDate =
+                            activeTab === "payments" &&
+                            field.replace(/\s+/g, " ").toLowerCase() === "next_payment_date";
+                          if (isNextPaymentDate) {
+                            const raw = editValues[field] ?? "";
+                            const parsed = parseSheetDateDdMmYyyy(raw) ?? parseHtmlDateInput(raw) ?? parseLooseDate(raw);
+                            const dateValue = parsed ? formatHtmlDateInput(parsed) : /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "";
+                            return (
+                              <label key={field} className="block text-sm font-medium text-slate-700 md:col-span-2">
+                                {t("editNextPaymentDateLabel")}
+                                <input
+                                  type="date"
+                                  value={dateValue}
+                                  onChange={(event) =>
+                                    setEditValues((current) => ({
+                                      ...current,
+                                      [PAYMENT_NEXT_PAYMENT_DATE_COLUMN]: event.target.value
+                                    }))
+                                  }
+                                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+                                />
+                              </label>
+                            );
+                          }
+                          return (
+                            <label key={field} className="block text-sm font-medium text-slate-700">
+                              {field}
+                              <input type="text" value={editValues[field] ?? ""} onChange={(event) => setEditValues((current) => ({ ...current, [field]: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
+                            </label>
+                          );
+                        })}
                         <div className="md:col-span-2 flex gap-3">
                           <button
                             type="button"
@@ -11034,7 +11153,12 @@ export function ManagerClient({
                                     : { actorEmail: normalizedEmail, email: entry.row.EMAIL ?? selectedClient?.email ?? "", timestamp: entry.row["DẤU THỜI GIAN"] ?? entry.row["ĐẤU THỜI GIAN"] ?? "", content: entry.row["NỘI DUNG VI PHẠM"] ?? "", values: editValues },
                                 `${activeTab[0].toUpperCase() + activeTab.slice(1)} entry updated.`,
                                 async () => {
-                                  if (selectedClient) await loadWorkspace(activeTab, selectedClient.maHd);
+                                  if (selectedClient) {
+                                    await loadWorkspace(activeTab, selectedClient.maHd);
+                                    if (activeTab === "payments") {
+                                      await loadRentPaidStatus(selectedClient.email);
+                                    }
+                                  }
                                 }
                               )
                             }
