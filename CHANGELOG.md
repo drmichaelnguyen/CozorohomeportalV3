@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.9.10] - 2026-08-18
+
+- **Cooker photos are live camera only**: Residents take one in-app camera photo that shows both the cooker and the kitchen (and one cleaned photo to turn off). Gallery uploads are not offered.
+- **Cooker controller is marked Beta** in the resident Controller tab and manager kitchen cooker cards.
+
 ## [3.9.9] - 2026-08-18
 
 - **Cooker safety takeover**: If a cooker is still on from another resident, the next user can confirm nobody is using it, start a new 30-minute session, and the previous user is ticketed automatically for safety (first 2 leftover-on incidents are reminders only; later incidents can be fined).

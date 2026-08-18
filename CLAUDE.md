@@ -188,7 +188,7 @@ const nextConfig: NextConfig = {
 | `POST /manager/support/conversations/:id/read` | Mark conversation read |
 | `GET /clients/laundry-bookings?email=` | Resident laundry bookings |
 | `GET /controller/cooker?email=` | Resident kitchen cooker status (on/off, reservations, photos required to toggle) |
-| `POST /controller/cooker/on` | Turn cooker on with compressed cooker + kitchen inspection photos (`confirmUnused` for leftover-on takeover) |
+| `POST /controller/cooker/on` | Turn cooker on with one compressed live photo of the cooker and kitchen (`confirmUnused` for leftover-on takeover) |
 | `POST /controller/cooker/off` | Turn cooker off with a cleaned-after-use photo (checks out a reservation) |
 | `POST /controller/cooker/reserve` | Reserve a 30-minute cooker slot (max 3 days ahead, 2 sessions/day) |
 | `POST /controller/cooker/reservations/cancel` | Cancel own unused cooker reservation |
@@ -284,6 +284,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.10 | Cooker inspection is one live camera photo of cooker + kitchen (gallery uploads blocked); cooker controller shows a Beta badge. |
 | 3.9.9 | Cooker leftover-on safety takeover (first 2 reminders, then fine), 30-minute reservations (3 days ahead, max 1 hour/day), and staff photo inspection to send reminders or fines. |
 | 3.9.8 | Kitchen has Cooker 1 and Cooker 2, each with independent photo on/off, leftover-on fine, and IFTTT ON/OFF events. |
 | 3.9.7 | Kitchen cooker on Controller: photo inspection on/off, local compressed JPGs kept 60 days, leftover-on fine, AC-style IFTTT ON/OFF webhook stubs. |

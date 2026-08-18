@@ -1359,7 +1359,7 @@ const cookerOnSchema = z.object({
   email: z.string().email(),
   machineId: z.string().trim().min(1),
   cookerPhoto: cookerPhotoSchema,
-  kitchenPhoto: cookerPhotoSchema,
+  kitchenPhoto: cookerPhotoSchema.optional(),
   confirmUnused: z.boolean().optional()
 });
 const cookerOffSchema = z.object({
@@ -3917,7 +3917,7 @@ app.get("/controller/cooker", async (request, response) => {
 app.post("/controller/cooker/on", async (request, response) => {
   const parsed = cookerOnSchema.safeParse(request.body);
   if (!parsed.success) {
-    return response.status(400).json({ error: "Email, cooker id, and cooker plus kitchen photos are required" });
+    return response.status(400).json({ error: "Email, cooker id, and a live inspection photo are required" });
   }
   try {
     const result = await startCookerUse(parsed.data);
@@ -3931,7 +3931,7 @@ app.post("/controller/cooker/on", async (request, response) => {
       deviceLabel: result.cooker.label,
       branchId: result.session.branchId,
       action: "ON",
-      details: parsed.data.confirmUnused ? "safety takeover + pre-use photos" : "pre-use cooker + kitchen photos",
+      details: parsed.data.confirmUnused ? "safety takeover + pre-use photo" : "pre-use cooker and kitchen photo",
       timestamp: result.session.startedAt
     });
     return response.json(result);

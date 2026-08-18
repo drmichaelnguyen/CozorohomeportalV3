@@ -13838,7 +13838,12 @@ export function ManagerClient({
                                             return (
                                               <div key={cooker.id} className="rounded-xl border border-rose-100 bg-rose-50/30 p-3">
                                                 <div className="flex justify-between items-start">
-                                                  <div className="text-sm font-bold text-rose-900">{cooker.label}</div>
+                                                  <div className="text-sm font-bold text-rose-900">
+                                                    {cooker.label}{" "}
+                                                    <span className="ml-1 rounded-full bg-rose-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-rose-800">
+                                                      {t("cookerBetaBadge")}
+                                                    </span>
+                                                  </div>
                                                   <div className={`h-2 w-2 rounded-full mt-1 ${cooker.lastRequestedAction === "ON" ? "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]" : "bg-slate-300"}`} />
                                                 </div>
                                                 <div className="mt-3 flex gap-2">
@@ -13940,7 +13945,12 @@ export function ManagerClient({
           <div className="flex max-h-[92vh] w-full max-w-3xl flex-col rounded-t-3xl bg-white shadow-xl sm:max-h-[88vh] sm:rounded-3xl">
             <div className="flex items-start justify-between gap-4 border-b border-rose-100 bg-rose-50 px-5 py-4">
               <div>
-                <h3 className="text-base font-semibold text-rose-950">{t("cookerInspectionTitle")}</h3>
+                <h3 className="flex flex-wrap items-center gap-2 text-base font-semibold text-rose-950">
+                  {t("cookerInspectionTitle")}
+                  <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-rose-800">
+                    {t("cookerBetaBadge")}
+                  </span>
+                </h3>
                 <p className="mt-1 text-xs text-rose-800">{t("cookerInspectionDesc")}</p>
               </div>
               <button

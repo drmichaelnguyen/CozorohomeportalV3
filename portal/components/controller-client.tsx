@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { getAccountStatus, type AccountLockOverride } from "../lib/account-lock-status";
 import { InlineHelp } from "./inline-help";
@@ -290,7 +290,7 @@ export function ControllerClient({
   const [startingAirFryer, setStartingAirFryer] = useState(false);
   const [cookerSubmitting, setCookerSubmitting] = useState<{ id: string; action: "ON" | "OFF" | "RESERVE" | "CANCEL" } | null>(null);
   const [cookerPhotos, setCookerPhotos] = useState<
-    Record<string, { on: File | null; kitchen: File | null; cleaned: File | null }>
+    Record<string, { on: File | null; cleaned: File | null }>
   >({});
   const [cookerTakeoverConfirm, setCookerTakeoverConfirm] = useState<Record<string, boolean>>({});
   const [cookerReserveAt, setCookerReserveAt] = useState<Record<string, string>>({});
@@ -568,15 +568,14 @@ export function ControllerClient({
   }
 
   function cookerPhotoState(machineId: string) {
-    return cookerPhotos[machineId] ?? { on: null, kitchen: null, cleaned: null };
+    return cookerPhotos[machineId] ?? { on: null, cleaned: null };
   }
 
-  function setCookerPhoto(machineId: string, key: "on" | "kitchen" | "cleaned", file: File | null) {
+  function setCookerPhoto(machineId: string, key: "on" | "cleaned", file: File | null) {
     setCookerPhotos((current) => ({
       ...current,
       [machineId]: {
         on: current[machineId]?.on ?? null,
-        kitchen: current[machineId]?.kitchen ?? null,
         cleaned: current[machineId]?.cleaned ?? null,
         [key]: file
       }
@@ -585,16 +584,13 @@ export function ControllerClient({
 
   async function turnCookerOn(machineId: string) {
     const photos = cookerPhotoState(machineId);
-    if (!activeEmail || !photos.on || !photos.kitchen) {
+    if (!activeEmail || !photos.on) {
       return;
     }
     setCookerSubmitting({ id: machineId, action: "ON" });
     setMessage("");
     try {
-      const [cookerPhoto, kitchenPhoto] = await Promise.all([
-        fileToCookerPhoto(photos.on),
-        fileToCookerPhoto(photos.kitchen)
-      ]);
+      const cookerPhoto = await fileToCookerPhoto(photos.on);
       await fetchJsonLong<{ ok: true }>(`${API_BASE_URL}/controller/cooker/on`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -602,7 +598,6 @@ export function ControllerClient({
           email: activeEmail,
           machineId,
           cookerPhoto,
-          kitchenPhoto,
           confirmUnused: Boolean(cookerTakeoverConfirm[machineId])
         })
       });
@@ -612,7 +607,7 @@ export function ControllerClient({
       setCookerContext(updated);
       setCookerPhotos((current) => ({
         ...current,
-        [machineId]: { on: null, kitchen: null, cleaned: current[machineId]?.cleaned ?? null }
+        [machineId]: { on: null, cleaned: current[machineId]?.cleaned ?? null }
       }));
       setCookerTakeoverConfirm((current) => ({ ...current, [machineId]: false }));
       setMessage(t("cookerTurnedOn"));
@@ -746,7 +741,14 @@ export function ControllerClient({
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <h1 className="text-3xl font-semibold text-slate-900">{title}</h1>
+        <h1 className="flex flex-wrap items-center gap-2 text-3xl font-semibold text-slate-900">
+          {title}
+          {showCookerSection && !showAcSection && !showAirFryerSection && !showMicrowaveSection ? (
+            <span className="rounded-full bg-rose-100 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-rose-800">
+              {t("cookerBetaBadge")}
+            </span>
+          ) : null}
+        </h1>
       </div>
 
       {isBlocked && blockReason ? (
@@ -1133,7 +1135,12 @@ export function ControllerClient({
 
           {showCookerSection && cookerContext?.eligible && cookerContext.cookers.length > 0 ? (
             <section className="rounded-2xl border border-rose-200 bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-semibold text-slate-900">{t("cookerSectionTitle")}</h2>
+              <h2 className="flex flex-wrap items-center gap-2 text-xl font-semibold text-slate-900">
+                {t("cookerSectionTitle")}
+                <span className="rounded-full bg-rose-100 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-rose-800">
+                  {t("cookerBetaBadge")}
+                </span>
+              </h2>
               <p className="mt-2 text-sm text-slate-700">{t("cookerIntro")}</p>
               <p className="mt-2 text-xs font-medium text-rose-800">
                 {t("cookerFineWarning", undefined, {
@@ -1294,16 +1301,10 @@ export function ControllerClient({
                             onChange={(file) => setCookerPhoto(unit.cooker.id, "on", file)}
                             language={language}
                           />
-                          <CookerPhotoPicker
-                            label={t("cookerPhotoKitchen")}
-                            file={photos.kitchen}
-                            onChange={(file) => setCookerPhoto(unit.cooker.id, "kitchen", file)}
-                            language={language}
-                          />
                           <button
                             type="button"
                             onClick={() => void turnCookerOn(unit.cooker.id)}
-                            disabled={isBlocked || busy || !photos.on || !photos.kitchen || !takeoverReady}
+                            disabled={isBlocked || busy || !photos.on || !takeoverReady}
                             className="w-full rounded-xl bg-rose-600 py-3 text-sm font-bold text-white shadow-lg shadow-rose-100 hover:bg-rose-700 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             {submittingOn ? t("cookerTurningOn") : t("cookerTurnOn")}
@@ -1447,18 +1448,27 @@ export function ControllerClient({
   );
 }
 
+function stopMediaStream(stream: MediaStream | null) {
+  stream?.getTracks().forEach((track) => track.stop());
+}
+
 function CookerPhotoPicker({
   label,
   file,
-  onChange,
-  language
+  onChange
 }: {
   label: string;
   file: File | null;
   onChange: (file: File | null) => void;
   language: "en" | "vi";
 }) {
+  const { t } = usePortalLanguage();
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState("");
   const preview = file ? URL.createObjectURL(file) : null;
+
   useEffect(() => {
     if (!preview) {
       return;
@@ -1466,27 +1476,129 @@ function CookerPhotoPicker({
     return () => URL.revokeObjectURL(preview);
   }, [preview]);
 
+  useEffect(() => {
+    if (!cameraOpen) {
+      return;
+    }
+    const video = videoRef.current;
+    if (video && streamRef.current) {
+      video.srcObject = streamRef.current;
+      void video.play().catch(() => {
+        setCameraError(t("cookerCameraDenied"));
+      });
+    }
+    return () => {
+      stopMediaStream(streamRef.current);
+      streamRef.current = null;
+      if (video) {
+        video.srcObject = null;
+      }
+    };
+  }, [cameraOpen, t]);
+
+  async function openCamera() {
+    setCameraError("");
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError(t("cookerCameraRequired"));
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 960 }
+        }
+      });
+      streamRef.current = stream;
+      setCameraOpen(true);
+    } catch {
+      setCameraError(t("cookerCameraDenied"));
+    }
+  }
+
+  function closeCamera() {
+    setCameraOpen(false);
+  }
+
+  function capturePhoto() {
+    const video = videoRef.current;
+    if (!video || video.videoWidth < 8 || video.videoHeight < 8) {
+      setCameraError(t("cookerCameraDenied"));
+      return;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      setCameraError(t("cookerCameraDenied"));
+      return;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          setCameraError(t("cookerCameraDenied"));
+          return;
+        }
+        onChange(new File([blob], `cooker-live-${Date.now()}.jpg`, { type: "image/jpeg" }));
+        setCameraOpen(false);
+      },
+      "image/jpeg",
+      0.85
+    );
+  }
+
   return (
-    <label className="block cursor-pointer rounded-xl border border-dashed border-rose-300 bg-white p-3">
+    <div className="rounded-xl border border-dashed border-rose-300 bg-white p-3">
       <span className="text-sm font-semibold text-slate-900">{label}</span>
-      <input
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="mt-2 block w-full text-xs text-slate-600"
-        onChange={(event) => {
-          onChange(event.target.files?.[0] ?? null);
-          event.target.value = "";
-        }}
-      />
+      <p className="mt-1 text-xs text-slate-500">{t("cookerCameraOnlyHint")}</p>
       {preview ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={preview} alt="" className="mt-3 h-28 w-full rounded-lg object-cover" />
-      ) : (
-        <p className="mt-2 text-xs text-slate-500">
-          {language === "vi" ? "Chụp ảnh bằng camera điện thoại." : "Take a photo with your phone camera."}
-        </p>
-      )}
-    </label>
+      ) : null}
+      {cameraError ? <p className="mt-2 text-xs font-medium text-rose-700">{cameraError}</p> : null}
+      <button
+        type="button"
+        onClick={() => void openCamera()}
+        className="mt-3 w-full rounded-lg bg-rose-600 py-2 text-xs font-bold text-white hover:bg-rose-700"
+      >
+        {file ? t("cookerRetakePhoto") : t("cookerTakePhoto")}
+      </button>
+
+      {cameraOpen ? (
+        <div className="fixed inset-0 z-[220] flex items-end justify-center bg-black/70 p-0 sm:items-center sm:p-4">
+          <div className="flex w-full max-w-md flex-col rounded-t-3xl bg-slate-950 p-4 text-white sm:rounded-3xl">
+            <p className="text-sm font-semibold">{label}</p>
+            <p className="mt-1 text-xs text-slate-300">{t("cookerCameraOnlyHint")}</p>
+            <video
+              ref={videoRef}
+              autoPlay
+              muted
+              playsInline
+              className="mt-3 h-72 w-full rounded-2xl bg-black object-cover"
+            />
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={closeCamera}
+                className="rounded-xl border border-slate-500 py-3 text-sm font-semibold text-slate-100"
+              >
+                {t("cookerCameraClose")}
+              </button>
+              <button
+                type="button"
+                onClick={capturePhoto}
+                className="rounded-xl bg-rose-600 py-3 text-sm font-bold text-white"
+              >
+                {t("cookerCapturePhoto")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }

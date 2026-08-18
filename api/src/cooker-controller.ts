@@ -622,7 +622,7 @@ export async function startCookerUse(input: {
   email: string;
   machineId: string;
   cookerPhoto: CookerPhotoInput;
-  kitchenPhoto: CookerPhotoInput;
+  kitchenPhoto?: CookerPhotoInput;
   confirmUnused?: boolean;
 }) {
   const context = await getUserCookerContext(input.email);
@@ -713,8 +713,7 @@ export async function startCookerUse(input: {
   };
 
   const cookerPhoto = await savePhoto(input.cookerPhoto, "cooker", session.id, context.email);
-  const kitchenPhoto = await savePhoto(input.kitchenPhoto, "kitchen", session.id, context.email);
-  session.onPhotos = [cookerPhoto, kitchenPhoto];
+  session.onPhotos = [cookerPhoto];
 
   await triggerCookerIfttt(device, "ON", context.email);
 
