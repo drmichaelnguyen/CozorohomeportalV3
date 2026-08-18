@@ -12,7 +12,7 @@ export type ControllerHistoryEntry = {
   actorRole: "manager" | "resident";
   actorEmail: string | null;
   actorName: string;
-  deviceType: "ac" | "laundry" | "airfryer" | "microwave";
+  deviceType: "ac" | "laundry" | "airfryer" | "microwave" | "cooker";
   deviceId: string;
   deviceLabel: string;
   branchId: string;

@@ -1,5 +1,9 @@
 # Changelog
 
+## [3.9.7] - 2026-08-18
+
+- **Kitchen cooker controller**: Residents turn the shared cooker on/off from the Controller tab. Turn-on requires inspection photos of the cooker and kitchen; turn-off requires a cleaned-after-use photo. Photos are compressed to JPG and stored on the API server for 60 days. Leaving the cooker on past the time limit can create a fine ticket. IFTTT ON/OFF webhooks follow the AC pattern (events filled in later).
+
 ## [3.8.65] - 2026-07-30
 
 - **Staff resident cleaning schedule**: Managers, owners, and app admins can open a selected client’s full cleaning schedule from **🧰 Tools → Cleaning schedule** (also from the bed-diagram quick actions). The popup reuses the resident cleaning calendar for that user: tasks, unavailability / Mark Away, self-assign options, swaps, and related schedule controls.

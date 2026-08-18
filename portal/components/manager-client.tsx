@@ -162,7 +162,7 @@ type ControllerHistoryEntry = {
   actorRole: "manager" | "resident";
   actorEmail: string | null;
   actorName: string;
-  deviceType: "ac" | "laundry" | "airfryer" | "microwave";
+  deviceType: "ac" | "laundry" | "airfryer" | "microwave" | "cooker";
   deviceId: string;
   deviceLabel: string;
   branchId: string;
@@ -3396,6 +3396,7 @@ export function ManagerClient({
   const [laundryMachines, setLaundryMachines] = useState<any[]>([]);
   const [airfryers, setAirfryers] = useState<SmartDevice[]>([]);
   const [microwaves, setMicrowaves] = useState<SmartDevice[]>([]);
+  const [cookers, setCookers] = useState<SmartDevice[]>([]);
   const [controllerLoading, setControllerLoading] = useState(false);
   const [controllerGroupCollapsed, setControllerGroupCollapsed] = useState<Record<string, boolean>>({});
   const [showControllerHistory, setShowControllerHistory] = useState(false);
@@ -5749,6 +5750,7 @@ export function ManagerClient({
         setLaundryMachines(data.laundry || []);
         setAirfryers(data.airfryers || []);
         setMicrowaves(data.microwaves || []);
+        setCookers(data.cookers || []);
       }
     } catch (err) {
       console.error("Failed to fetch devices", err);
@@ -5819,6 +5821,52 @@ export function ManagerClient({
         });
       }
     } catch (err) {
+      setControllerFeedback(actionKey, {
+        tone: "error",
+        message: t("networkErrorAc")
+      });
+    } finally {
+      setControllerActionPending((current) => {
+        const next = { ...current };
+        delete next[actionKey];
+        return next;
+      });
+    }
+  };
+
+  const handleCookerControl = async (machineId: string, action: "ON" | "OFF") => {
+    const actionKey = `cooker:${machineId}`;
+    if (!window.confirm(t("manualOverrideWarning").replace("{id}", `${machineId} ${action}`))) {
+      return;
+    }
+    setControllerActionPending((current) => ({ ...current, [actionKey]: action }));
+    try {
+      const response = await fetch(`${API_BASE_URL}/manager/controller/cooker/command`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actorEmail: sessionEmail.trim().toLowerCase() || undefined,
+          machineId,
+          action
+        })
+      });
+      if (response.ok) {
+        void fetchDevices();
+        if (showControllerHistory) {
+          void fetchControllerHistory();
+        }
+        setControllerFeedback(actionKey, {
+          tone: "success",
+          message: `${machineId} ${action} sent successfully.`
+        });
+      } else {
+        const data = await response.json();
+        setControllerFeedback(actionKey, {
+          tone: "error",
+          message: data.error || t("failedControlAc")
+        });
+      }
+    } catch {
       setControllerFeedback(actionKey, {
         tone: "error",
         message: t("networkErrorAc")
@@ -13413,6 +13461,7 @@ export function ManagerClient({
                     const branchLaundry = laundryMachines.filter((m) => m.branchId === branch);
                     const branchAirfryers = airfryers.filter((af) => af.branchId === branch);
                     const branchMicrowaves = microwaves.filter((m) => m.branchId === branch);
+                    const branchCookers = cookers.filter((c) => c.branchId === branch);
 
                     // Group AC rooms by floor
                     const floorMap = new Map<string, any[]>();
@@ -13602,8 +13651,8 @@ export function ManagerClient({
                               </div>
                             )}
 
-                            {/* Common Area (kitchen: air fryers, microwave) */}
-                            {(branchAirfryers.length > 0 || branchMicrowaves.length > 0) && (
+                            {/* Common Area (kitchen: air fryers, microwave, cooker) */}
+                            {(branchAirfryers.length > 0 || branchMicrowaves.length > 0 || branchCookers.length > 0) && (
                               <div>
                                 <div className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">{t("kitchenTitle")}</div>
                                 {(() => {
@@ -13662,6 +13711,42 @@ export function ManagerClient({
                                                 >
                                                   {pendingAction ? t("triggering") : t("trigger")}
                                                 </button>
+                                                {feedback ? (
+                                                  <div className={`mt-2 text-xs font-medium ${feedback.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}>
+                                                    {feedback.message}
+                                                  </div>
+                                                ) : null}
+                                              </div>
+                                            );
+                                          })}
+                                          {branchCookers.map((cooker) => {
+                                            const actionKey = `cooker:${cooker.id}`;
+                                            const pendingAction = controllerActionPending[actionKey];
+                                            const feedback = controllerActionFeedback[actionKey];
+                                            return (
+                                              <div key={cooker.id} className="rounded-xl border border-rose-100 bg-rose-50/30 p-3">
+                                                <div className="flex justify-between items-start">
+                                                  <div className="text-sm font-bold text-rose-900">{cooker.label}</div>
+                                                  <div className={`h-2 w-2 rounded-full mt-1 ${cooker.lastRequestedAction === "ON" ? "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]" : "bg-slate-300"}`} />
+                                                </div>
+                                                <div className="mt-3 flex gap-2">
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => void handleCookerControl(cooker.id, "ON")}
+                                                    disabled={Boolean(pendingAction)}
+                                                    className={`flex-1 rounded-lg py-1.5 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-60 ${cooker.lastRequestedAction === "ON" ? "bg-rose-600 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-rose-500 hover:text-rose-600"}`}
+                                                  >
+                                                    {pendingAction === "ON" ? "..." : "ON"}
+                                                  </button>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => void handleCookerControl(cooker.id, "OFF")}
+                                                    disabled={Boolean(pendingAction)}
+                                                    className={`flex-1 rounded-lg py-1.5 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-60 ${cooker.lastRequestedAction === "OFF" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-700 hover:border-slate-400"}`}
+                                                  >
+                                                    {pendingAction === "OFF" ? "..." : "OFF"}
+                                                  </button>
+                                                </div>
                                                 {feedback ? (
                                                   <div className={`mt-2 text-xs font-medium ${feedback.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}>
                                                     {feedback.message}

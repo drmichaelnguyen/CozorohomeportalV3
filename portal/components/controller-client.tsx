@@ -75,6 +75,56 @@ type AirFryerContext = {
 
 type MicrowaveContext = AirFryerContext;
 
+type CookerPhotoRecord = {
+  fileName: string;
+  kind: "cooker" | "kitchen" | "cleaned";
+  uploadedAt: string;
+};
+
+type CookerSession = {
+  id: string;
+  branchId: "D2" | "D7";
+  startedAt: string;
+  startedByEmail: string;
+  startedByName: string;
+  lastRequestedAction: "ON" | "OFF";
+  lastRequestedAt: string;
+  endedAt: string | null;
+  leftoverFineIssuedAt: string | null;
+  leftoverFineAmount: number | null;
+  onPhotos?: CookerPhotoRecord[];
+  offPhotos?: CookerPhotoRecord[];
+};
+
+type CookerContext = {
+  email: string;
+  name: string;
+  branchId: "D2" | "D7";
+  eligible: boolean;
+  cooker: {
+    id: string;
+    label: string;
+    iftttConfigured: boolean;
+    maxOnMinutes: number;
+    leftoverFineVnd: number;
+  } | null;
+  status: {
+    inUse: boolean;
+    availableNow: boolean;
+    isMine: boolean;
+    overdue: boolean;
+    turnOffDeadlineAt: string | null;
+    currentUse: CookerSession | null;
+    lastUse: CookerSession | null;
+  };
+};
+
+type CookerPhotoPayload = {
+  fileName: string;
+  mimeType: string;
+  dataBase64: string;
+};
+
 type LaundryBooking = {
   id: string;
   calendarId: string;
@@ -115,6 +165,48 @@ async function fetchJson<T>(url: string, init?: RequestInit) {
   }
 }
 
+async function fetchJsonLong<T>(url: string, init?: RequestInit, timeoutMs = 45000) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    const data = (await response.json()) as T;
+    if (!response.ok) {
+      const errorMessage =
+        typeof data === "object" && data !== null && "error" in data && typeof data.error === "string"
+          ? data.error
+          : "Request failed";
+      throw new Error(errorMessage);
+    }
+    return data;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("API request timed out. Check that the API is running.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function fileToCookerPhoto(file: File): Promise<CookerPhotoPayload> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Unable to read photo"));
+    reader.readAsDataURL(file);
+  });
+  const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
+  if (!match) {
+    throw new Error("Invalid photo");
+  }
+  return {
+    fileName: file.name || "photo.jpg",
+    mimeType: match[1] || file.type || "image/jpeg",
+    dataBase64: match[2]!
+  };
+}
+
 function formatTimestamp(value: string | null, language: "en" | "vi") {
   if (!value) {
     return language === "vi" ? "Chưa có" : "Not yet";
@@ -133,11 +225,13 @@ export function ControllerClient({
   showAcSection = true,
   showAirFryerSection = true,
   showMicrowaveSection = true,
+  showCookerSection = true,
   title = "Room Controller"
 }: {
   showAcSection?: boolean;
   showAirFryerSection?: boolean;
   showMicrowaveSection?: boolean;
+  showCookerSection?: boolean;
   title?: string;
 }) {
   const { language, t } = usePortalLanguage();
@@ -146,9 +240,14 @@ export function ControllerClient({
   const [context, setContext] = useState<ControllerContext | null>(null);
   const [airFryerContext, setAirFryerContext] = useState<AirFryerContext | null>(null);
   const [microwaveContext, setMicrowaveContext] = useState<MicrowaveContext | null>(null);
+  const [cookerContext, setCookerContext] = useState<CookerContext | null>(null);
   const [loading, setLoading] = useState(false);
   const [submittingAction, setSubmittingAction] = useState<"ON" | "OFF" | null>(null);
   const [startingAirFryer, setStartingAirFryer] = useState(false);
+  const [cookerSubmitting, setCookerSubmitting] = useState<"ON" | "OFF" | null>(null);
+  const [cookerOnPhoto, setCookerOnPhoto] = useState<File | null>(null);
+  const [kitchenOnPhoto, setKitchenOnPhoto] = useState<File | null>(null);
+  const [cleanedOffPhoto, setCleanedOffPhoto] = useState<File | null>(null);
   const [activeLaundryBooking, setActiveLaundryBooking] = useState<LaundryBooking | null>(null);
   const [nextLaundryBooking, setNextLaundryBooking] = useState<LaundryBooking | null>(null);
   const [triggeringLaundry, setTriggeringLaundry] = useState(false);
@@ -186,6 +285,10 @@ export function ControllerClient({
         requests.push(fetchJson<MicrowaveContext>(`${API_BASE_URL}/controller/microwave/d2?email=${encodeURIComponent(resolvedEmail)}`));
       }
 
+      if (showCookerSection) {
+        requests.push(fetchJson<CookerContext>(`${API_BASE_URL}/controller/cooker?email=${encodeURIComponent(resolvedEmail)}`));
+      }
+
       const results = await Promise.all(requests);
       let offset = 0;
 
@@ -208,6 +311,13 @@ export function ControllerClient({
         offset += 1;
       } else {
         setMicrowaveContext(null);
+      }
+
+      if (showCookerSection) {
+        setCookerContext(results[offset] as CookerContext);
+        offset += 1;
+      } else {
+        setCookerContext(null);
       }
 
       const [laundryData, clientResult, overrideResult] = await Promise.allSettled([
@@ -234,6 +344,7 @@ export function ControllerClient({
       setContext(null);
       setAirFryerContext(null);
       setMicrowaveContext(null);
+      setCookerContext(null);
       setActiveLaundryBooking(null);
       setNextLaundryBooking(null);
       setAccountLockOverride(null);
@@ -248,12 +359,13 @@ export function ControllerClient({
       setContext(null);
       setAirFryerContext(null);
       setMicrowaveContext(null);
+      setCookerContext(null);
       setActiveEmail("");
       return;
     }
 
     void loadControllerContext();
-  }, [sessionEmail, showAcSection, showAirFryerSection, showMicrowaveSection]);
+  }, [sessionEmail, showAcSection, showAirFryerSection, showMicrowaveSection, showCookerSection]);
 
   async function sendCommand(action: "ON" | "OFF") {
     if (!activeEmail) {
@@ -409,6 +521,62 @@ export function ControllerClient({
     }
   }
 
+  async function turnCookerOn() {
+    if (!activeEmail || !cookerOnPhoto || !kitchenOnPhoto) {
+      return;
+    }
+    setCookerSubmitting("ON");
+    setMessage("");
+    try {
+      const [cookerPhoto, kitchenPhoto] = await Promise.all([
+        fileToCookerPhoto(cookerOnPhoto),
+        fileToCookerPhoto(kitchenOnPhoto)
+      ]);
+      await fetchJsonLong<{ ok: true }>(`${API_BASE_URL}/controller/cooker/on`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: activeEmail, cookerPhoto, kitchenPhoto })
+      });
+      const updated = await fetchJson<CookerContext>(
+        `${API_BASE_URL}/controller/cooker?email=${encodeURIComponent(activeEmail)}`
+      );
+      setCookerContext(updated);
+      setCookerOnPhoto(null);
+      setKitchenOnPhoto(null);
+      setMessage(t("cookerTurnedOn"));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : t("cookerTurnOnFailed"));
+    } finally {
+      setCookerSubmitting(null);
+    }
+  }
+
+  async function turnCookerOff() {
+    if (!activeEmail || !cleanedOffPhoto) {
+      return;
+    }
+    setCookerSubmitting("OFF");
+    setMessage("");
+    try {
+      const cleanedPhoto = await fileToCookerPhoto(cleanedOffPhoto);
+      await fetchJsonLong<{ ok: true }>(`${API_BASE_URL}/controller/cooker/off`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: activeEmail, cleanedPhoto })
+      });
+      const updated = await fetchJson<CookerContext>(
+        `${API_BASE_URL}/controller/cooker?email=${encodeURIComponent(activeEmail)}`
+      );
+      setCookerContext(updated);
+      setCleanedOffPhoto(null);
+      setMessage(t("cookerTurnedOff"));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : t("cookerTurnOffFailed"));
+    } finally {
+      setCookerSubmitting(null);
+    }
+  }
+
   async function triggerLaundry() {
     if (!activeEmail || !activeLaundryBooking) {
       return;
@@ -486,7 +654,7 @@ export function ControllerClient({
         {message ? <p className="mt-3 text-sm text-slate-600">{message}</p> : null}
       </div>
 
-      {context || airFryerContext ? (
+      {context || airFryerContext || microwaveContext || cookerContext ? (
         <div className="space-y-6">
           {showAcSection && context ? (
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -841,6 +1009,112 @@ export function ControllerClient({
             </section>
           ) : null}
 
+          {showCookerSection && cookerContext?.eligible && cookerContext.cooker ? (
+            <section className="rounded-2xl border border-rose-200 bg-white p-6 shadow-sm">
+              <h2 className="text-xl font-semibold text-slate-900">{cookerContext.cooker.label}</h2>
+              <p className="mt-2 text-sm text-slate-700">{t("cookerIntro")}</p>
+              <p className="mt-2 text-xs font-medium text-rose-800">
+                {t("cookerFineWarning", undefined, {
+                  minutes: cookerContext.cooker.maxOnMinutes,
+                  amount: cookerContext.cooker.leftoverFineVnd.toLocaleString(language === "vi" ? "vi-VN" : "en-US")
+                })}
+              </p>
+
+              <div className="mt-4 grid gap-3 text-sm text-slate-900 md:grid-cols-2">
+                <div>
+                  <span className="font-medium">{language === "vi" ? "Trạng thái" : "Status"}:</span>{" "}
+                  {cookerContext.status.inUse
+                    ? language === "vi"
+                      ? "Đang bật"
+                      : "Currently on"
+                    : language === "vi"
+                      ? "Đang tắt"
+                      : "Currently off"}
+                </div>
+                <div>
+                  <span className="font-medium">{t("cookerLastUse")}:</span>{" "}
+                  {formatTimestamp(cookerContext.status.lastUse?.startedAt ?? null, language)}
+                </div>
+                <div>
+                  <span className="font-medium">{t("cookerLastUser")}:</span>{" "}
+                  {cookerContext.status.lastUse?.startedByName || cookerContext.status.lastUse?.startedByEmail || "—"}
+                </div>
+                {cookerContext.status.turnOffDeadlineAt ? (
+                  <div>
+                    <span className="font-medium">{t("cookerTurnOffBy")}:</span>{" "}
+                    {formatTimestamp(cookerContext.status.turnOffDeadlineAt, language)}
+                  </div>
+                ) : null}
+              </div>
+
+              {cookerContext.status.currentUse ? (
+                <div className={`mt-5 rounded-xl border p-4 text-sm ${cookerContext.status.overdue ? "border-rose-300 bg-rose-50 text-rose-900" : "border-amber-200 bg-amber-50 text-slate-900"}`}>
+                  <p className="font-semibold">
+                    {cookerContext.status.isMine
+                      ? t("cookerYouAreUsing")
+                      : t("cookerInUseBy", undefined, {
+                          name:
+                            cookerContext.status.currentUse.startedByName ||
+                            cookerContext.status.currentUse.startedByEmail
+                        })}
+                  </p>
+                  <p className="mt-1">
+                    {language === "vi" ? "Bắt đầu" : "Started"}:{" "}
+                    {formatTimestamp(cookerContext.status.currentUse.startedAt, language)}
+                  </p>
+                </div>
+              ) : null}
+
+              {!cookerContext.status.inUse ? (
+                <div className="mt-5 space-y-4 rounded-xl border border-rose-200 bg-rose-50/40 p-4">
+                  <p className="text-xs font-bold uppercase tracking-tight text-rose-900">{t("cookerPreUsePhotos")}</p>
+                  <CookerPhotoPicker
+                    label={t("cookerPhotoCooker")}
+                    file={cookerOnPhoto}
+                    onChange={setCookerOnPhoto}
+                    language={language}
+                  />
+                  <CookerPhotoPicker
+                    label={t("cookerPhotoKitchen")}
+                    file={kitchenOnPhoto}
+                    onChange={setKitchenOnPhoto}
+                    language={language}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void turnCookerOn()}
+                    disabled={isBlocked || cookerSubmitting !== null || !cookerOnPhoto || !kitchenOnPhoto}
+                    className="w-full rounded-xl bg-rose-600 py-3 text-sm font-bold text-white shadow-lg shadow-rose-100 hover:bg-rose-700 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {cookerSubmitting === "ON"
+                      ? t("cookerTurningOn")
+                      : t("cookerTurnOn")}
+                  </button>
+                </div>
+              ) : cookerContext.status.isMine ? (
+                <div className="mt-5 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs font-bold uppercase tracking-tight text-slate-900">{t("cookerPostUsePhoto")}</p>
+                  <CookerPhotoPicker
+                    label={t("cookerPhotoCleaned")}
+                    file={cleanedOffPhoto}
+                    onChange={setCleanedOffPhoto}
+                    language={language}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void turnCookerOff()}
+                    disabled={isBlocked || cookerSubmitting !== null || !cleanedOffPhoto}
+                    className="w-full rounded-xl bg-slate-900 py-3 text-sm font-bold text-white hover:bg-slate-800 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {cookerSubmitting === "OFF"
+                      ? t("cookerTurningOff")
+                      : t("cookerTurnOff")}
+                  </button>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+
           <section className="rounded-2xl border border-sky-200 bg-white p-6 shadow-sm">
             <h2 className="text-xl font-semibold text-slate-900">
               {language === "vi" ? "Máy giặt & sấy tự phục vụ" : "Self-service Laundry"}
@@ -916,5 +1190,49 @@ export function ControllerClient({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function CookerPhotoPicker({
+  label,
+  file,
+  onChange,
+  language
+}: {
+  label: string;
+  file: File | null;
+  onChange: (file: File | null) => void;
+  language: "en" | "vi";
+}) {
+  const preview = file ? URL.createObjectURL(file) : null;
+  useEffect(() => {
+    if (!preview) {
+      return;
+    }
+    return () => URL.revokeObjectURL(preview);
+  }, [preview]);
+
+  return (
+    <label className="block cursor-pointer rounded-xl border border-dashed border-rose-300 bg-white p-3">
+      <span className="text-sm font-semibold text-slate-900">{label}</span>
+      <input
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="mt-2 block w-full text-xs text-slate-600"
+        onChange={(event) => {
+          onChange(event.target.files?.[0] ?? null);
+          event.target.value = "";
+        }}
+      />
+      {preview ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={preview} alt="" className="mt-3 h-28 w-full rounded-lg object-cover" />
+      ) : (
+        <p className="mt-2 text-xs text-slate-500">
+          {language === "vi" ? "Chụp ảnh bằng camera điện thoại." : "Take a photo with your phone camera."}
+        </p>
+      )}
+    </label>
   );
 }

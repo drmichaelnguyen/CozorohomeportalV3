@@ -167,6 +167,7 @@ const nextConfig: NextConfig = {
 | `src/index.ts` | Express app entry, all route registrations |
 | `src/cleaning.ts` | Cleaning schedule logic (self-assign, availability, tasks) |
 | `src/google-sheets.ts` | Google Sheets integration |
+| `src/cooker-controller.ts` | Kitchen cooker on/off, photo inspection, 60-day JPG storage, leftover-on fine |
 | `prisma/schema.prisma` | Database schema |
 
 **Key API endpoints:**
@@ -186,6 +187,10 @@ const nextConfig: NextConfig = {
 | `POST /manager/support/messages` | Send reply as manager |
 | `POST /manager/support/conversations/:id/read` | Mark conversation read |
 | `GET /clients/laundry-bookings?email=` | Resident laundry bookings |
+| `GET /controller/cooker?email=` | Resident kitchen cooker status (on/off, photos required to toggle) |
+| `POST /controller/cooker/on` | Turn cooker on with compressed cooker + kitchen inspection photos |
+| `POST /controller/cooker/off` | Turn cooker off with a cleaned-after-use photo |
+| `POST /manager/controller/cooker/command` | Staff ON/OFF override (IFTTT events optional until configured) |
 | `GET /staff/clients/duplicates?actorEmail=` | List clients with multiple active rows in the sheet |
 | `POST /staff/clients/set-inactive` | Set a specific contract row (by maHd) to Hiá»‡n cÃ²n á»Ÿ = âˆ’1 |
 | `POST /clients/contracts/extend` | Resident contract extension: body includes `email` and `newContractEndDate` (`dd/mm/yyyy`) or legacy `extensionMonths`; writes a **pending** entry to contract-approvals JSON (duplicate guard for pending extension per email). |
@@ -275,6 +280,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.7 | Kitchen cooker on Controller: photo inspection on/off, local compressed JPGs kept 60 days, leftover-on fine, AC-style IFTTT ON/OFF webhook stubs. |
 | 3.9.6 | Edit `next_payment_date` on existing payment receipts; staff can set next payment date on client Payment plan panel (`POST /manager/account-next-payment` syncs DB + package expiry). |
 | 3.9.5 | Prisma `AccountNextPayment` model (per-email next payment date); receipt writes upsert DB + BIÊN NHẬN `next_payment_date`; `/rent-paid-status` prefers DB then sheet. |
 | 3.9.4 | BIÊN NHẬN `next_payment_date` column: written on manager/manual/rent receipts (auto-added if missing); defaults monthly→1st next month, 3-mo→+3, 6-mo→+7; staff-editable on create forms; synced to client `Ngày hết hạn gói đã thanh toán`; resident account next payment date prefers latest receipt value via `/rent-paid-status`. |
