@@ -653,6 +653,26 @@ function findRowValue(row: Record<string, string>, fragments: string[]) {
   return String(match?.[1] ?? "").trim();
 }
 
+function getCoinReceiverLabel(row: Record<string, string>, t: (key: string, fallback?: string) => string) {
+  const name = findRowValue(row, ["ten"]) || row["Tên"] || row["TEN"] || "";
+  const email =
+    findRowValue(row, ["email"]) ||
+    row["Địa chỉ email"] ||
+    row["EMAIL"] ||
+    row["Địa chỉ email - Hidden"] ||
+    "";
+  if (name && email) {
+    return `${name} · ${email}`;
+  }
+  if (name) {
+    return name;
+  }
+  if (email) {
+    return email;
+  }
+  return t("unknownLabel", "Unknown");
+}
+
 /** Sheet header for "ĐÃ THANH TOÁN?" — keys vary slightly by export; match by normalized letters. */
 function findFinePaidStatusColumnKey(row: Record<string, string>): string | null {
   return (
@@ -2188,12 +2208,13 @@ function OwnerAnalyticsDashboard({
           ...row,
           __timestamp: getPaymentAnalyticsTimestamp(row),
           __branch: normalizeBranchLabel(findRowValue(row, ["chinhanh"]) || row["Chi nhánh Dorm"] || ""),
+          __receiver: getCoinReceiverLabel(row, t),
           __actor: findRowValue(row, ["nguoithaotac"]) || row["Người thao tác"] || t("systemLabel"),
           __event: findRowValue(row, ["sukien"]) || row["Sự kiện"] || "-",
           __amount: String(findRowValue(row, ["coins"]) || row.COINS || row["COINS"] || "0")
         }))
         .sort((left, right) => new Date(right.__timestamp).getTime() - new Date(left.__timestamp).getTime()),
-    [coinsRows]
+    [coinsRows, t]
   );
 
   const finesAnalyticsRows = useMemo(
@@ -2320,13 +2341,14 @@ function OwnerAnalyticsDashboard({
           metricLabel={t("analyticsCoinsTab")}
           metricMode="sum"
           dimensions={[
+            { key: "receiver", label: t("dimReceiver") },
             { key: "actor", label: t("dimActor") },
             { key: "branch", label: t("dimBranch") },
             { key: "event", label: t("dimEvent") },
             { key: "year", label: t("dimYear") },
             { key: "month", label: t("dimMonth") }
           ]}
-          defaultOrder={["actor", "branch", "event", "year", "month"]}
+          defaultOrder={["receiver", "actor", "branch", "event", "year", "month"]}
           allLabel={t("analyticsAllCoinEntries")}
           emptyMessage={coinsError || t("analyticsEmptyCoin")}
           tableTitle={t("analyticsAllCoinEntries")}
@@ -2335,9 +2357,11 @@ function OwnerAnalyticsDashboard({
             { key: "coin", label: t("colCoin"), getValue: (row) => row.__amount || t("noValueLabel") },
             { key: "event", label: t("colEvent"), getValue: (row) => translateCoinEvent(row.__event, t) },
             { key: "actor", label: t("colActor"), getValue: (row) => row.__actor || t("noValueLabel") },
+            { key: "receiver", label: t("colReceiver"), getValue: (row) => row.__receiver || t("noValueLabel") },
             { key: "branch", label: t("colBranch"), getValue: (row) => row.__branch || t("noValueLabel") }
           ]}
           getField={(row, dimension) => {
+            if (dimension === "receiver") return row.__receiver || t("unknownLabel");
             if (dimension === "actor") return row.__actor || t("unknownLabel");
             if (dimension === "branch") return row.__branch || t("unknownLabel");
             if (dimension === "event") return row.__event || t("unknownLabel");

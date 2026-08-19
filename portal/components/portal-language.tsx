@@ -2289,6 +2289,7 @@ const translations: Record<string, { en: string; vi: string }> = {
   colCoin: { en: "Coins", vi: "Coin" },
   colEvent: { en: "Event", vi: "Sự kiện" },
   colActor: { en: "Actor", vi: "Người thực hiện" },
+  colReceiver: { en: "Receiver", vi: "Người nhận" },
   colBranch: { en: "Branch", vi: "Chi nhánh" },
   colAmount: { en: "Amount", vi: "Số tiền" },
   colContent: { en: "Content", vi: "Nội dung" },
