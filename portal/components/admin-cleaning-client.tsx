@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
+import { RewardedCleaningReviewClient } from "./rewarded-cleaning-review-client";
 const PRIVILEGED_EMAILS = new Set(["cozorohome@gmail.com", "dr.trongto@gmail.com"]);
 const DEFAULT_PRIVILEGED_EMAIL = "cozorohome@gmail.com";
 const OVERDUE_ASSIGNED_PAGE_SIZE = 5;
@@ -1382,6 +1383,7 @@ export function AdminCleaningClient() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
+      <RewardedCleaningReviewClient />
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
         <div className="flex items-center gap-2">
           <h1 className="text-2xl font-semibold text-slate-900">{t("adminCleaningHeader")}</h1>

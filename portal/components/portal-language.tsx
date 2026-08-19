@@ -998,6 +998,74 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "Hostel guests are not assigned cleaning duties.",
     vi: "Khách hostel không được phân công lịch vệ sinh."
   },
+  rewardedCleaningTitle: { en: "Rewarded cleaning", vi: "Vệ sinh có thưởng coin" },
+  rewardedCleaningDesc: {
+    en: "Take before photos, clean or organize a shared site, then upload after photos. AI compares the improvement and staff approve coin rewards (minimum {min} coins). One site per day.",
+    vi: "Chụp ảnh trước, dọn/vệ sinh khu vực chung, rồi tải ảnh sau. AI so sánh mức cải thiện và quản lý duyệt thưởng coin (tối thiểu {min} coin). Mỗi khu vực tối đa 1 lần/ngày."
+  },
+  rewardedCleaningStepBefore: { en: "Step 1 — Before photos", vi: "Bước 1 — Ảnh trước" },
+  rewardedCleaningStepBeforeDesc: {
+    en: "Pick the site and capture up to 3 photos before you start cleaning.",
+    vi: "Chọn khu vực và chụp tối đa 3 ảnh trước khi bắt đầu dọn."
+  },
+  rewardedCleaningStepAfter: { en: "Step 2 — After photos", vi: "Bước 2 — Ảnh sau" },
+  rewardedCleaningStepAfterDesc: {
+    en: "Finish cleaning {site}, then upload up to 3 after photos.",
+    vi: "Dọn xong {site}, rồi tải tối đa 3 ảnh sau."
+  },
+  rewardedCleaningSite: { en: "Site", vi: "Khu vực" },
+  rewardedCleaningChooseSite: { en: "Choose a site…", vi: "Chọn khu vực…" },
+  rewardedCleaningAddSite: { en: "Add a site not in the list", vi: "Thêm khu vực chưa có trong danh sách" },
+  rewardedCleaningNewSitePlaceholder: { en: "e.g. Room 1.2 corridor", vi: "vd. hành lang phòng 1.2" },
+  rewardedCleaningAddSiteBtn: { en: "Add", vi: "Thêm" },
+  rewardedCleaningSiteAdded: { en: "Site added to the list.", vi: "Đã thêm khu vực vào danh sách." },
+  rewardedCleaningNoteOptional: { en: "Note (optional)", vi: "Ghi chú (tùy chọn)" },
+  rewardedCleaningBeforeNotePlaceholder: { en: "What needs cleaning?", vi: "Cần dọn gì?" },
+  rewardedCleaningAfterNotePlaceholder: { en: "What did you clean or organize?", vi: "Bạn đã dọn/sắp xếp gì?" },
+  rewardedCleaningSaveBefore: { en: "Save before photos", vi: "Lưu ảnh trước" },
+  rewardedCleaningSubmitForReview: { en: "Submit for review", vi: "Gửi duyệt" },
+  rewardedCleaningBeforeRequired: { en: "Choose a site and add at least one before photo.", vi: "Chọn khu vực và thêm ít nhất một ảnh trước." },
+  rewardedCleaningAfterRequired: { en: "Add at least one after photo to finish.", vi: "Thêm ít nhất một ảnh sau để hoàn tất." },
+  rewardedCleaningBeforeSaved: {
+    en: "Before photos saved. Clean the area, then come back to upload after photos.",
+    vi: "Đã lưu ảnh trước. Dọn khu vực rồi quay lại tải ảnh sau."
+  },
+  rewardedCleaningSubmitted: {
+    en: "Submitted for staff review. A manager will decide the coin reward.",
+    vi: "Đã gửi duyệt. Quản lý sẽ quyết định số coin thưởng."
+  },
+  rewardedCleaningSubmittedWithAi: {
+    en: "Submitted for staff review. AI note: {note}",
+    vi: "Đã gửi duyệt. Ghi chú AI: {note}"
+  },
+  rewardedCleaningMaxPhotos: { en: "You can attach up to {count} photos.", vi: "Tối đa {count} ảnh." },
+  rewardedCleaningPhotoReadError: { en: "Unable to read the selected photo.", vi: "Không đọc được ảnh đã chọn." },
+  rewardedCleaningYourBeforePhotos: { en: "Your before photos", vi: "Ảnh trước của bạn" },
+  rewardedCleaningHistory: { en: "Your submissions", vi: "Lịch sử gửi duyệt" },
+  rewardedCleaningStatusAwaitingAfter: { en: "Waiting for after photos", vi: "Chờ ảnh sau" },
+  rewardedCleaningStatusPendingReview: { en: "Pending staff review", vi: "Chờ quản lý duyệt" },
+  rewardedCleaningStatusApproved: { en: "Approved", vi: "Đã duyệt" },
+  rewardedCleaningStatusRejected: { en: "Not rewarded", vi: "Không thưởng" },
+  rewardedCleaningAiEligible: { en: "AI: likely eligible", vi: "AI: có khả năng đủ điều kiện" },
+  rewardedCleaningAiNotEligible: { en: "AI: unlikely eligible", vi: "AI: khó đủ điều kiện" },
+  rewardedCleaningAiSkipped: { en: "AI: manual review", vi: "AI: duyệt thủ công" },
+  rewardedCleaningAiSuggested: { en: "AI suggests {coins} coins", vi: "AI gợi ý {coins} coin" },
+  rewardedCleaningStaffNote: { en: "Staff note", vi: "Ghi chú quản lý" },
+  rewardedCleaningReviewTitle: { en: "Rewarded cleaning review", vi: "Duyệt vệ sinh có thưởng" },
+  rewardedCleaningReviewDesc: {
+    en: "Review resident before/after photos. AI suggests eligibility; you decide the final coin reward (minimum 5,000).",
+    vi: "Xem ảnh trước/sau của cư dân. AI gợi ý mức đủ điều kiện; bạn quyết định coin thưởng (tối thiểu 5.000)."
+  },
+  rewardedCleaningReviewEmpty: { en: "No pending rewarded cleaning submissions.", vi: "Không có hồ sơ vệ sinh có thưởng đang chờ." },
+  rewardedCleaningReviewApproved: { en: "Reward approved.", vi: "Đã duyệt thưởng." },
+  rewardedCleaningReviewRejected: { en: "Submission rejected.", vi: "Đã từ chối." },
+  rewardedCleaningBeforeNoteLabel: { en: "Before note", vi: "Ghi chú trước" },
+  rewardedCleaningAfterNoteLabel: { en: "After note", vi: "Ghi chú sau" },
+  rewardedCleaningBeforePhotos: { en: "Before", vi: "Trước" },
+  rewardedCleaningAfterPhotos: { en: "After", vi: "Sau" },
+  rewardedCleaningRewardCoins: { en: "Reward coins", vi: "Coin thưởng" },
+  rewardedCleaningApproveReward: { en: "Approve reward", vi: "Duyệt thưởng" },
+  rewardedCleaningReject: { en: "Reject", vi: "Từ chối" },
   selfAssignMaxDaysAhead: {
     en: "Self-assignment is limited to 30 days in advance.",
     vi: "Chỉ được tự đăng ký tối đa 30 ngày trước."

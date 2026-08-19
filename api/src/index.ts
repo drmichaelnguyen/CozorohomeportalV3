@@ -297,6 +297,19 @@ import {
   getCleaningAiBenchmarkSettings,
   updateCleaningAiBenchmarkSettings
 } from "./cleaning-ai-benchmark.js";
+import {
+  addRewardedCleaningSite,
+  auditRewardedCleaningSubmission,
+  getRewardedCleaningOverview,
+  listRewardedCleaningReviewQueue,
+  listRewardedCleaningSites,
+  submitRewardedCleaningAfter,
+  submitRewardedCleaningBefore
+} from "./rewarded-cleaning.js";
+import {
+  canViewRewardedCleaningPhoto,
+  readRewardedCleaningPhotoBytes
+} from "./rewarded-cleaning-photos.js";
 import { logAction } from "./action-log.js";
 import { prisma } from "./prisma.js";
 import { billingPeriodMonthForGateSession, markGateParkingTicketsPaidForBilling } from "./gate-parking-tickets.js";
@@ -1846,6 +1859,33 @@ const cleaningAiBenchmarkSettingsPutSchema = z.object({
   accuracyThresholdPercent: z.coerce.number().int().min(50).max(100).optional(),
   minSampleSize: z.coerce.number().int().min(10).max(10_000).optional(),
   autoSkipManualAuditEnabled: z.boolean().optional()
+});
+const rewardedCleaningPhotoSchema = z.object({
+  fileName: z.string().min(1),
+  mimeType: z.string().min(1),
+  dataBase64: z.string().min(1)
+});
+const rewardedCleaningBeforeSchema = z.object({
+  email: z.string().email(),
+  siteId: z.string().min(1),
+  note: z.string().optional(),
+  photos: z.array(rewardedCleaningPhotoSchema).min(1).max(3)
+});
+const rewardedCleaningAfterSchema = z.object({
+  email: z.string().email(),
+  note: z.string().optional(),
+  photos: z.array(rewardedCleaningPhotoSchema).min(1).max(3)
+});
+const rewardedCleaningAddSiteSchema = z.object({
+  email: z.string().email(),
+  name: z.string().min(2).max(191),
+  branchId: z.enum(["D2", "D7"]).optional()
+});
+const rewardedCleaningAuditSchema = z.object({
+  actorEmail: z.string().email(),
+  approve: z.boolean(),
+  rewardCoins: z.coerce.number().int().min(5000).optional(),
+  note: z.string().optional()
 });
 const releaseCleaningSchema = z.object({
   email: z.string().email()
@@ -8250,6 +8290,146 @@ app.put("/manager/cleaning/ai-benchmark-settings", async (req, res) => {
     return res.json({ settings, autoSkipReady: report.autoSkipReady, autoSkipActive: report.autoSkipActive });
   } catch (error) {
     return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+app.get("/rewarded-cleaning/me", async (request, response) => {
+  const email = String(request.query.email ?? "").trim().toLowerCase();
+  if (!email) {
+    return response.status(400).json({ error: "email query parameter is required" });
+  }
+  try {
+    const overview = await getRewardedCleaningOverview(email);
+    return response.json(overview);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to load rewarded cleaning overview"
+    });
+  }
+});
+
+app.get("/rewarded-cleaning/sites", async (request, response) => {
+  const email = String(request.query.email ?? "").trim().toLowerCase();
+  const branchId = String(request.query.branchId ?? "").trim();
+  if (!email) {
+    return response.status(400).json({ error: "email query parameter is required" });
+  }
+  try {
+    const sites = await listRewardedCleaningSites({
+      email,
+      branchId: branchId || undefined
+    });
+    return response.json({ sites });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to list cleaning sites"
+    });
+  }
+});
+
+app.post("/rewarded-cleaning/sites", async (request, response) => {
+  const parsed = rewardedCleaningAddSiteSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid site payload" });
+  }
+  try {
+    const site = await addRewardedCleaningSite(parsed.data);
+    return response.json({ site });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to add cleaning site"
+    });
+  }
+});
+
+app.post("/rewarded-cleaning/submissions/before", async (request, response) => {
+  const parsed = rewardedCleaningBeforeSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid before submission payload" });
+  }
+  try {
+    const submission = await submitRewardedCleaningBefore(parsed.data);
+    return response.json({ submission });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to submit before photos"
+    });
+  }
+});
+
+app.post("/rewarded-cleaning/submissions/:id/after", async (request, response) => {
+  const parsed = rewardedCleaningAfterSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid after submission payload" });
+  }
+  try {
+    const submission = await submitRewardedCleaningAfter({
+      ...parsed.data,
+      submissionId: String(request.params.id ?? "")
+    });
+    return response.json({ submission });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to submit after photos"
+    });
+  }
+});
+
+app.get("/rewarded-cleaning/photos/:storageName", async (request, response) => {
+  const email = String(request.query.email ?? "").trim().toLowerCase();
+  const storageName = String(request.params.storageName ?? "");
+  if (!email) {
+    return response.status(400).json({ error: "email query parameter is required" });
+  }
+  try {
+    const allowed = await canViewRewardedCleaningPhoto(storageName, email);
+    if (!allowed) {
+      return response.status(403).json({ error: "You do not have access to this photo." });
+    }
+    const bytes = await readRewardedCleaningPhotoBytes(storageName);
+    response.setHeader("Content-Type", "image/jpeg");
+    response.setHeader("Cache-Control", "private, max-age=3600");
+    return response.send(bytes);
+  } catch (error) {
+    return response.status(404).json({
+      error: error instanceof Error ? error.message : "Photo not found"
+    });
+  }
+});
+
+app.get("/manager/rewarded-cleaning/review-queue", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "").trim();
+  if (!actorEmail) {
+    return response.status(400).json({ error: "actorEmail is required" });
+  }
+  try {
+    const queue = await listRewardedCleaningReviewQueue(actorEmail);
+    return response.json({ queue, count: queue.length });
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Forbidden"
+    });
+  }
+});
+
+app.post("/manager/rewarded-cleaning/submissions/:id/audit", async (request, response) => {
+  const parsed = rewardedCleaningAuditSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid audit payload" });
+  }
+  try {
+    const submission = await auditRewardedCleaningSubmission({
+      submissionId: String(request.params.id ?? ""),
+      reviewerEmail: parsed.data.actorEmail,
+      approve: parsed.data.approve,
+      rewardCoins: parsed.data.rewardCoins,
+      note: parsed.data.note
+    });
+    return response.json({ submission });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to audit submission";
+    const status = message.includes("Staff only") || message.includes("Forbidden") ? 403 : 400;
+    return response.status(status).json({ error: message });
   }
 });
 
