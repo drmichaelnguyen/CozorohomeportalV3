@@ -64,6 +64,7 @@ type CleaningTask = {
 
 type CleaningOverview = {
   tasks: CleaningTask[];
+  photoRequiredTaskTypes?: CleaningTask["type"][];
 };
 
 type PaymentEntry = {
@@ -506,7 +507,8 @@ export function AccountOverviewClient() {
 
       if (cleaningResponse.ok) {
         setCleaningOverview({
-          tasks: cleaningPayload?.tasks ?? []
+          tasks: cleaningPayload?.tasks ?? [],
+          photoRequiredTaskTypes: cleaningPayload?.photoRequiredTaskTypes ?? []
         });
       }
 
@@ -877,6 +879,11 @@ export function AccountOverviewClient() {
       .filter((task) => task.status === "ASSIGNED" && getCleaningLateDeadline(task).getTime() >= Date.now())
       .sort((left, right) => left.scheduledDate.localeCompare(right.scheduledDate))[0] ?? null;
   }, [cleaningOverview]);
+
+  const nextCleaningNeedsPhotos = Boolean(
+    nextCleaningTask &&
+      cleaningOverview?.photoRequiredTaskTypes?.includes(nextCleaningTask.type)
+  );
   const memberProgram = useMemo(
     () =>
       buildCozoroMemberProgram({
@@ -1223,21 +1230,30 @@ export function AccountOverviewClient() {
                         </div>
                       </div>
                     ) : null}
-                    <button
-                      type="button"
-                      onClick={() => void markCleaningTaskDone(nextCleaningTask.id)}
-                      disabled={
-                        completingCleaningTaskId === nextCleaningTask.id ||
-                        (!canCompleteCleaningTaskNow(nextCleaningTask) && !canCompleteCleaningTaskLate(nextCleaningTask))
-                      }
-                      className={`mt-3 w-full rounded-lg px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:bg-slate-300 ${canCompleteCleaningTaskLate(nextCleaningTask) ? "bg-amber-600 hover:bg-amber-700" : "bg-slate-900 hover:bg-slate-800"}`}
-                    >
-                      {completingCleaningTaskId === nextCleaningTask.id
-                        ? "Submitting..."
-                        : canCompleteCleaningTaskLate(nextCleaningTask)
-                          ? "Mark done (late - 50% coins)"
-                          : "Mark done"}
-                    </button>
+                    {nextCleaningNeedsPhotos ? (
+                      <Link
+                        href="/cleaning-schedule"
+                        className={`mt-3 inline-flex w-full items-center justify-center rounded-lg px-4 py-2 text-sm font-semibold text-white transition ${canCompleteCleaningTaskLate(nextCleaningTask) ? "bg-amber-600 hover:bg-amber-700" : "bg-slate-900 hover:bg-slate-800"}`}
+                      >
+                        Add photos on Cleaning Schedule
+                      </Link>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void markCleaningTaskDone(nextCleaningTask.id)}
+                        disabled={
+                          completingCleaningTaskId === nextCleaningTask.id ||
+                          (!canCompleteCleaningTaskNow(nextCleaningTask) && !canCompleteCleaningTaskLate(nextCleaningTask))
+                        }
+                        className={`mt-3 w-full rounded-lg px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:bg-slate-300 ${canCompleteCleaningTaskLate(nextCleaningTask) ? "bg-amber-600 hover:bg-amber-700" : "bg-slate-900 hover:bg-slate-800"}`}
+                      >
+                        {completingCleaningTaskId === nextCleaningTask.id
+                          ? "Submitting..."
+                          : canCompleteCleaningTaskLate(nextCleaningTask)
+                            ? "Mark done (late - 50% coins)"
+                            : "Mark done"}
+                      </button>
+                    )}
                   </>
                 ) : null}
               </div>
