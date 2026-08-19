@@ -67,6 +67,12 @@ import { getClientGroupContext, getGroupMessages, markGroupRead, postGroupMessag
 import { VAPID_PUBLIC_KEY, savePushSubscription, deletePushSubscription, sendPushToEmail } from "./push.js";
 import { getCleaningRewardSettings, updateCleaningRewardSettings } from "./cleaning-reward-settings.js";
 import { runCleaningHeroAwards } from "./cleaning-hero-awards.js";
+import {
+  listPendingBranchBroadcasts,
+  markBranchBroadcastRead,
+  queueBranchBroadcast
+} from "./branch-broadcasts.js";
+import { markCleaningHeroAnnouncementRead } from "./cleaning-hero-announcements.js";
 import { getManagerFridgeDrainSchedule, upsertFridgeDrainCleaningDate } from "./fridge-drain-schedule.js";
 import {
   exportDatabaseToGoogleSheet,
@@ -395,7 +401,6 @@ const app = express();
 const port = Number(process.env.PORT) || 4000; // AntiGravity: Use env PORT if available, default to 4000
 const GUEST_AUTH_RATE_PATH = path.join(process.cwd(), "data", "guest-auth-rate.json");
 const CONTRACT_APPROVALS_PATH = path.join(process.cwd(), "data", "contract-approvals.json");
-const BRANCH_BROADCASTS_PATH = path.join(process.cwd(), "data", "branch-broadcasts.json");
 const PAYMENT_REQUIREMENT_NOTICES_PATH = path.join(process.cwd(), "data", "payment-requirement-notices.json");
 const GUEST_AUTH_MIN_INTERVAL_MS = 60 * 1000;
 const GUEST_AUTH_MAX_PER_EMAIL_PER_HOUR = 3;
@@ -459,17 +464,6 @@ type PendingContractApproval = {
   };
 };
 type ContractApprovalsFile = { approvals: PendingContractApproval[] };
-type BranchBroadcastNotice = {
-  id: string;
-  branch: "D2" | "D7";
-  title: string;
-  body: string;
-  sentAt: string;
-  sentBy: string;
-  recipientEmails: string[];
-  readBy: string[];
-};
-type BranchBroadcastsFile = { notices: BranchBroadcastNotice[] };
 type PaymentRequirementNotice = {
   id: string;
   title: string;
@@ -494,21 +488,6 @@ async function readContractApprovals(): Promise<ContractApprovalsFile> {
 async function writeContractApprovals(file: ContractApprovalsFile): Promise<void> {
   await mkdir(path.dirname(CONTRACT_APPROVALS_PATH), { recursive: true });
   await writeFile(CONTRACT_APPROVALS_PATH, JSON.stringify(file, null, 2), "utf8");
-}
-
-async function readBranchBroadcasts(): Promise<BranchBroadcastsFile> {
-  try {
-    const raw = await readFile(BRANCH_BROADCASTS_PATH, "utf8");
-    const parsed = JSON.parse(raw) as BranchBroadcastsFile;
-    return { notices: Array.isArray(parsed.notices) ? parsed.notices : [] };
-  } catch {
-    return { notices: [] };
-  }
-}
-
-async function writeBranchBroadcasts(file: BranchBroadcastsFile): Promise<void> {
-  await mkdir(path.dirname(BRANCH_BROADCASTS_PATH), { recursive: true });
-  await writeFile(BRANCH_BROADCASTS_PATH, JSON.stringify(file, null, 2), "utf8");
 }
 
 async function readPaymentRequirementNotices(): Promise<PaymentRequirementNoticesFile> {
@@ -8766,21 +8745,13 @@ app.post("/manager/branch-broadcast", async (request, response) => {
       await sendPushToEmail(email, parsed.data.title.trim(), parsed.data.body.trim(), "/");
     }
 
-    const file = await readBranchBroadcasts();
-    file.notices.unshift({
-      id: randomUUID(),
+    await queueBranchBroadcast({
       branch: parsed.data.branch,
       title: parsed.data.title.trim(),
       body: parsed.data.body.trim(),
-      sentAt: new Date().toISOString(),
       sentBy: parsed.data.actorEmail.trim().toLowerCase(),
-      recipientEmails,
-      readBy: []
+      recipientEmails
     });
-    if (file.notices.length > 200) {
-      file.notices = file.notices.slice(0, 200);
-    }
-    await writeBranchBroadcasts(file);
 
     return response.json({ ok: true, attempted: recipientEmails.length });
   } catch (error) {
@@ -8801,17 +8772,7 @@ app.get("/clients/branch-broadcasts/pending", async (request, response) => {
       return response.json({ notices: [] });
     }
     const branch = normalizeClientBranch(String(matched[CLIENT_BRANCH_COLUMN] ?? ""));
-    const file = await readBranchBroadcasts();
-    const notices = file.notices
-      .filter((n) => n.branch === branch && n.recipientEmails.includes(email) && !n.readBy.includes(email))
-      .slice(0, 3)
-      .map((n) => ({
-        id: n.id,
-        title: n.title,
-        body: n.body,
-        sentAt: n.sentAt,
-        branch: n.branch
-      }));
+    const notices = await listPendingBranchBroadcasts(email, branch);
     return response.json({ notices });
   } catch (error) {
     return response.status(500).json({ error: error instanceof Error ? error.message : "Unable to load notices" });
@@ -8825,21 +8786,32 @@ app.post("/clients/branch-broadcasts/:id/read", async (request, response) => {
   }
   try {
     const email = parsed.data.email.trim().toLowerCase();
-    const file = await readBranchBroadcasts();
-    const notice = file.notices.find((n) => n.id === request.params.id);
-    if (!notice) {
+    const ok = await markBranchBroadcastRead(String(request.params.id), email);
+    if (!ok) {
       return response.status(404).json({ error: "Notice not found" });
-    }
-    if (!notice.recipientEmails.includes(email)) {
-      return response.status(403).json({ error: "This notice is not available for this account." });
-    }
-    if (!notice.readBy.includes(email)) {
-      notice.readBy.push(email);
-      await writeBranchBroadcasts(file);
     }
     return response.json({ ok: true });
   } catch (error) {
     return response.status(500).json({ error: error instanceof Error ? error.message : "Unable to mark notice as read" });
+  }
+});
+
+app.post("/clients/cleaning-hero-announcements/:id/read", async (request, response) => {
+  const parsed = residentBroadcastReadSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid read payload" });
+  }
+  try {
+    const email = parsed.data.email.trim().toLowerCase();
+    const ok = await markCleaningHeroAnnouncementRead(String(request.params.id), email);
+    if (!ok) {
+      return response.status(404).json({ error: "Announcement not found" });
+    }
+    return response.json({ ok: true });
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to mark announcement as read"
+    });
   }
 });
 

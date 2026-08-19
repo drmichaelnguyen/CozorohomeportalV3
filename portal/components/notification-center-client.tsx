@@ -23,6 +23,7 @@ type ResidentNotification = {
     | "PREPAID_PACKAGE"
     | "FRIDGE_DRAIN_REMINDER"
     | "CLEANING_HERO_AWARD"
+    | "CLEANING_HERO_ANNOUNCEMENT"
     | "COOKER_LEFT_ON";
   conversationId?: string;
   title: string;
@@ -176,6 +177,30 @@ export function NotificationCenterClient() {
           <div className="space-y-3">
             {notifications.map((notification) => {
               const href = (notification as StaffNotification | ResidentNotification).href || (isAdminSession ? "/manager?view=support_chat" : "/support");
+              const residentNotification = !isAdminSession ? (notification as ResidentNotification) : null;
+              const heroAnnouncementId =
+                residentNotification?.type === "CLEANING_HERO_ANNOUNCEMENT"
+                  ? residentNotification.id.replace(/^cleaning-hero-announcement-/, "")
+                  : null;
+
+              async function markHeroAnnouncementRead() {
+                if (!heroAnnouncementId || !normalizedEmail) {
+                  return;
+                }
+                try {
+                  await fetch(
+                    `${API_BASE_URL}/clients/cleaning-hero-announcements/${encodeURIComponent(heroAnnouncementId)}/read`,
+                    {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ email: normalizedEmail })
+                    }
+                  );
+                } catch {
+                  // non-blocking
+                }
+              }
+
               if (isAdminSession && (notification as StaffNotification).type === "AC_COMFORT") {
                 const n = notification as StaffNotification;
                 return (
@@ -257,12 +282,21 @@ export function NotificationCenterClient() {
                 <Link
                   key={notification.id}
                   href={href}
+                  onClick={() => {
+                    void markHeroAnnouncementRead();
+                  }}
                   className="block rounded-2xl border border-slate-200 bg-slate-50 p-4 transition hover:border-sky-200 hover:bg-white"
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <div className="text-sm font-semibold text-slate-900">{notification.title}</div>
-                      <p className="mt-2 text-sm text-slate-600">{notification.body}</p>
+                      <p
+                        className={`mt-2 text-sm text-slate-600 ${
+                          residentNotification?.type === "CLEANING_HERO_ANNOUNCEMENT" ? "whitespace-pre-wrap" : ""
+                        }`}
+                      >
+                        {notification.body}
+                      </p>
                       {!isAdminSession &&
                       notification.type === "PAYMENT_DUE" &&
                       rentPaidStatus?.breakdown &&
