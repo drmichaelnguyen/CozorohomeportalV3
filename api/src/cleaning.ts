@@ -53,6 +53,11 @@ import {
   type CleaningPhotoInput
 } from "./cleaning-photos.js";
 import { runCleaningTaskPhotoVerification } from "./cleaning-photo-verification.js";
+import {
+  CLEANING_AI_AUTO_REVIEWER,
+  maybeAutoApproveEligibleCleaningTask,
+  recordCleaningAiBenchmark
+} from "./cleaning-ai-benchmark.js";
 
 type ActiveCleaningUser = {
   email: string;
@@ -3220,42 +3225,54 @@ export async function completeCleaningTask(
   const finalTask =
     (await findUniqueCleaningTask({ where: { id: taskId } })) ?? updated;
 
+  const autoGate = await maybeAutoApproveEligibleCleaningTask(taskId);
+  let resolvedTask = finalTask;
+  if (autoGate.autoApproved) {
+    resolvedTask = await auditCleaningTask({
+      taskId,
+      reviewer: CLEANING_AI_AUTO_REVIEWER,
+      decision: CleaningAuditDecision.APPROVE,
+      note: autoGate.note
+    });
+  }
+
   await logAction({
     actorEmail: email.trim().toLowerCase(),
     actorName: task.userName ?? task.userEmail,
     actorRole: "resident",
     action: "cleaning.task.complete",
     entityType: "CleaningTask",
-    entityId: finalTask.id,
-    entityLabel: `${finalTask.type}|${finalTask.scheduledDate.toISOString().slice(0, 10)}`,
-    details: isLate ? "late=true" : "late=false"
+    entityId: resolvedTask.id,
+    entityLabel: `${resolvedTask.type}|${resolvedTask.scheduledDate.toISOString().slice(0, 10)}`,
+    details: isLate ? "late=true" : autoGate.autoApproved ? "auto_approved=true" : "late=false"
   });
 
-  if (finalTask.calendarId && finalTask.calendarEventId) {
-    const target = getCleaningCalendarTarget(finalTask.type, { floor: finalTask.floor });
+  if (resolvedTask.calendarId && resolvedTask.calendarEventId) {
+    const target = getCleaningCalendarTarget(resolvedTask.type, { floor: resolvedTask.floor });
     if (target) {
       await updateCleaningCalendarEvent({
-        calendarId: finalTask.calendarId,
-        eventId: finalTask.calendarEventId,
+        calendarId: resolvedTask.calendarId,
+        eventId: resolvedTask.calendarEventId,
         title: target.title,
-        scheduledDate: finalTask.scheduledDate,
-        userEmail: finalTask.userEmail,
-        userName: finalTask.userName,
-        branchId: finalTask.branchId,
-        floor: finalTask.floor,
-        rewardCoins: finalTask.rewardCoins,
-        type: finalTask.type,
-        status: CleaningTaskStatus.DONE_PENDING_AUDIT,
-        completedAt: finalTask.completedAt,
-        completionNote: finalTask.completionNote,
-        completionPhoto: finalTask.completionPhoto,
-        auditorNote: finalTask.auditorNote
+        scheduledDate: resolvedTask.scheduledDate,
+        userEmail: resolvedTask.userEmail,
+        userName: resolvedTask.userName,
+        branchId: resolvedTask.branchId,
+        floor: resolvedTask.floor,
+        rewardCoins: resolvedTask.rewardCoins,
+        type: resolvedTask.type,
+        status: resolvedTask.status,
+        completedAt: resolvedTask.completedAt,
+        completionNote: resolvedTask.completionNote,
+        completionPhoto: resolvedTask.completionPhoto,
+        auditorNote: resolvedTask.auditorNote,
+        reviewedBy: autoGate.autoApproved ? CLEANING_AI_AUTO_REVIEWER : undefined
       });
     }
   }
 
-  await invalidateCleaningOverviewCache(finalTask.userEmail);
-  return finalTask;
+  await invalidateCleaningOverviewCache(resolvedTask.userEmail);
+  return resolvedTask;
 }
 
 export async function auditCleaningTask(input: {
@@ -3343,6 +3360,19 @@ export async function auditCleaningTask(input: {
     });
 
     return updated;
+  });
+
+  await recordCleaningAiBenchmark({
+    task: {
+      id: task.id,
+      type: task.type,
+      branchId: task.branchId,
+      floor: task.floor,
+      aiVerdict: task.aiVerdict,
+      aiScore: task.aiScore
+    },
+    humanDecision: input.decision,
+    reviewer: input.reviewer
   });
 
   if (updatedTask.calendarId && updatedTask.calendarEventId) {

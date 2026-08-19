@@ -936,7 +936,7 @@ export function CleaningScheduleClient({
             : undefined
         })
       });
-      const data = await readJsonSafely<{ error?: string; aiVerdict?: string; aiNote?: string }>(response);
+      const data = await readJsonSafely<{ error?: string; aiVerdict?: string; aiNote?: string; status?: string }>(response);
 
       if (!response.ok) {
         setMessage(data.error ?? "Unable to mark task done.");
@@ -952,7 +952,9 @@ export function CleaningScheduleClient({
         return next;
       });
       await loadOverview(activeEmail, { refresh: true });
-      if (data.aiVerdict === "ELIGIBLE") {
+      if (data.status === "APPROVED") {
+        setMessage("Task verified by AI and coins approved automatically.");
+      } else if (data.aiVerdict === "ELIGIBLE") {
         setMessage("Task submitted. AI verified your photos — staff will confirm coins shortly.");
       } else if (data.aiVerdict === "NOT_ELIGIBLE") {
         setMessage(

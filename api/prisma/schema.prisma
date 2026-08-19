@@ -303,6 +303,25 @@ model CleaningCompletionPhoto {
   @@index([taskId, sortOrder])
 }
 
+/// AI vs human cleaning audit comparison for accuracy benchmarking.
+model CleaningAiBenchmark {
+  id             String                @id @default(cuid())
+  taskId         String
+  taskType       CleaningTaskType
+  branchId       String
+  floor          Int?
+  aiVerdict      CleaningAiVerdict
+  aiScore        Int?
+  humanDecision  CleaningAuditDecision
+  aiMatchedHuman Boolean
+  reviewer       String
+  createdAt      DateTime              @default(now())
+
+  @@index([createdAt])
+  @@index([taskType, branchId, createdAt])
+  @@index([aiMatchedHuman, createdAt])
+}
+
 /// Reusable checkbox options for why staff corrected auto-schedule (seeded + staff-added).
 model CleaningScheduleCorrectionReason {
   id        String   @id @default(cuid())

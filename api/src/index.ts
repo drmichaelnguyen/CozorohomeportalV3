@@ -292,6 +292,11 @@ import {
   readCleaningPhotoBytes,
   uploadCleaningReferencePhotos
 } from "./cleaning-photos.js";
+import {
+  getCleaningAiBenchmarkReport,
+  getCleaningAiBenchmarkSettings,
+  updateCleaningAiBenchmarkSettings
+} from "./cleaning-ai-benchmark.js";
 import { logAction } from "./action-log.js";
 import { prisma } from "./prisma.js";
 import { billingPeriodMonthForGateSession, markGateParkingTicketsPaidForBilling } from "./gate-parking-tickets.js";
@@ -1834,6 +1839,13 @@ const cleaningPhotoUploadSchema = z.object({
     )
     .min(1)
     .max(5)
+});
+const cleaningAiBenchmarkSettingsPutSchema = z.object({
+  actorEmail: z.string().email(),
+  evaluationWindowDays: z.coerce.number().int().min(7).max(365).optional(),
+  accuracyThresholdPercent: z.coerce.number().int().min(50).max(100).optional(),
+  minSampleSize: z.coerce.number().int().min(10).max(10_000).optional(),
+  autoSkipManualAuditEnabled: z.boolean().optional()
 });
 const releaseCleaningSchema = z.object({
   email: z.string().email()
@@ -8180,6 +8192,64 @@ app.get("/cleaning/photos/:storageName", async (request, response) => {
     return response.status(404).json({
       error: error instanceof Error ? error.message : "Cleaning photo not found"
     });
+  }
+});
+
+app.get("/manager/cleaning/ai-benchmark", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim();
+  const daysRaw = req.query.days;
+
+  if (!actorEmail) {
+    return res.status(400).json({ error: "actorEmail is required" });
+  }
+
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const days =
+      daysRaw == null || daysRaw === ""
+        ? undefined
+        : Number.parseInt(String(daysRaw), 10);
+    if (days != null && (!Number.isFinite(days) || days <= 0)) {
+      return res.status(400).json({ error: "Invalid days" });
+    }
+    const report = await getCleaningAiBenchmarkReport(days != null ? { days } : undefined);
+    return res.json(report);
+  } catch (error) {
+    return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+app.get("/manager/cleaning/ai-benchmark-settings", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim();
+  if (!actorEmail) {
+    return res.status(400).json({ error: "actorEmail is required" });
+  }
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const settings = await getCleaningAiBenchmarkSettings();
+    const report = await getCleaningAiBenchmarkReport();
+    return res.json({ settings, autoSkipReady: report.autoSkipReady, autoSkipActive: report.autoSkipActive });
+  } catch (error) {
+    return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+app.put("/manager/cleaning/ai-benchmark-settings", async (req, res) => {
+  const parsed = cleaningAiBenchmarkSettingsPutSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid AI benchmark settings payload" });
+  }
+  try {
+    const settings = await updateCleaningAiBenchmarkSettings(parsed.data.actorEmail, {
+      evaluationWindowDays: parsed.data.evaluationWindowDays,
+      accuracyThresholdPercent: parsed.data.accuracyThresholdPercent,
+      minSampleSize: parsed.data.minSampleSize,
+      autoSkipManualAuditEnabled: parsed.data.autoSkipManualAuditEnabled
+    });
+    const report = await getCleaningAiBenchmarkReport();
+    return res.json({ settings, autoSkipReady: report.autoSkipReady, autoSkipActive: report.autoSkipActive });
+  } catch (error) {
+    return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
   }
 });
 
