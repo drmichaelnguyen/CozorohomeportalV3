@@ -1,6 +1,7 @@
 /**
- * Resident-only **Cozoro Bee** chat (Messages tab) — Gemini 2.5 Flash.
- * Prefers `GEMINI_RESIDENT_PORTAL_AI_API_KEY`; if unset, falls back to `GEMINI_API_KEY` (same as manager / support AI).
+ * Resident-only **Cozoro Bee** chat (Messages tab).
+ * Prefers 9router (`NINE_ROUTER_API_KEY`, gpt-5) when configured; otherwise Gemini 2.5 Flash
+ * (`GEMINI_RESIDENT_PORTAL_AI_API_KEY` or `GEMINI_API_KEY`).
  *
  * Tools only return data scoped to the authenticated resident email (server-enforced).
  */
@@ -8,7 +9,8 @@
 import { CleaningAvailabilityType } from "@prisma/client";
 
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
-import { recordGeminiUsage, type GeminiUsageMetadata } from "./ai-usage.js";
+import { recordGeminiUsage } from "./ai-usage.js";
+import { completeToolChatRound, type LlmChatContent } from "./llm-tool-chat.js";
 import { appendAiToolInvocation, appendAiTrainingExchange } from "./ai-training-log.js";
 import { tryFounderEasterEggReply } from "./cozoro-founder-easter-egg.js";
 import {
@@ -39,8 +41,7 @@ import { getPortalUxSettings } from "./portal-ux-settings.js";
 import { resolvePortalLogin } from "./staff-access.js";
 import {
   geminiCapacityReply,
-  geminiModelDoesNotKnowReply,
-  isGeminiCapacityOrRateLimit
+  geminiModelDoesNotKnowReply
 } from "./gemini-capacity-reply.js";
 
 export type ResidentPortalAiMessage = {
@@ -49,28 +50,6 @@ export type ResidentPortalAiMessage = {
 };
 
 type UiLanguage = "en" | "vi";
-
-function residentGeminiEndpoint(): string {
-  const dedicated = process.env.GEMINI_RESIDENT_PORTAL_AI_API_KEY?.trim();
-  const shared = process.env.GEMINI_API_KEY?.trim();
-  const key = dedicated || shared;
-  if (!key) {
-    throw new Error(
-      "Gemini API key is not configured for Cozoro Bee (set GEMINI_RESIDENT_PORTAL_AI_API_KEY or GEMINI_API_KEY)"
-    );
-  }
-  return `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
-}
-
-type GeminiPart =
-  | { text: string }
-  | { functionCall: { name: string; args: Record<string, unknown> } }
-  | { functionResponse: { name: string; response: Record<string, unknown> } };
-
-type GeminiContent = {
-  role: "user" | "model";
-  parts: GeminiPart[];
-};
 
 type GeminiTool = {
   functionDeclarations: Array<{
@@ -82,18 +61,6 @@ type GeminiTool = {
       required?: string[];
     };
   }>;
-};
-
-type GeminiResponse = {
-  candidates?: Array<{
-    content: {
-      role: string;
-      parts: GeminiPart[];
-    };
-    finishReason?: string;
-  }>;
-  error?: { message: string; code?: number; status?: string };
-  usageMetadata?: GeminiUsageMetadata;
 };
 
 function clipJson(value: unknown, maxLen: number): string {
@@ -712,7 +679,7 @@ export async function handleResidentPortalAiChat(
   const systemPrompt = buildSystemPrompt(language, residentEmail.trim().toLowerCase());
 
   const limitedHistory = history.slice(-AI_CHAT_CONTEXT_MESSAGE_LIMIT);
-  const contents: GeminiContent[] = limitedHistory.map((msg) => ({
+  const contents: LlmChatContent[] = limitedHistory.map((msg) => ({
     role: msg.role,
     parts: [{ text: msg.text }]
   }));
@@ -721,47 +688,37 @@ export async function handleResidentPortalAiChat(
   let maxRounds = 8;
 
   while (maxRounds-- > 0) {
-    const body = {
-      system_instruction: { parts: [{ text: systemPrompt }] },
+    const requestStartedAt = Date.now();
+    const round = await completeToolChatRound({
+      systemPrompt,
       contents,
       tools: TOOLS,
-      tool_config: { function_calling_config: { mode: "AUTO" } },
-      generation_config: {
-        temperature: 0.25,
-        max_output_tokens: 1024
-      }
-    };
-
-    const requestStartedAt = Date.now();
-    const res = await fetch(residentGeminiEndpoint(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
+      temperature: 0.25,
+      maxOutputTokens: 1024,
+      geminiKind: "resident"
     });
-
-    const raw = await res.text();
-    let data: GeminiResponse;
-    try {
-      data = JSON.parse(raw) as GeminiResponse;
-    } catch {
-      void recordGeminiUsage({
-        feature: "resident_portal",
-        actorEmail: normalizedEmail,
-        status: "INVALID_RESPONSE",
-        latencyMs: Date.now() - requestStartedAt
-      });
-      throw new Error("Cozoro Bee: invalid response from AI gateway.");
-    }
 
     void recordGeminiUsage({
       feature: "resident_portal",
       actorEmail: normalizedEmail,
-      usage: data.usageMetadata,
-      status: isGeminiCapacityOrRateLimit(res, data) ? "RATE_LIMITED" : data.error || !res.ok ? "ERROR" : "SUCCESS",
+      usage: round.usage,
+      provider: round.provider,
+      model: round.model,
+      status: round.rateLimited
+        ? "RATE_LIMITED"
+        : round.errorMessage || round.invalidJson
+          ? round.invalidJson
+            ? "INVALID_RESPONSE"
+            : "ERROR"
+          : "SUCCESS",
       latencyMs: Date.now() - requestStartedAt
     });
 
-    if (isGeminiCapacityOrRateLimit(res, data)) {
+    if (round.invalidJson) {
+      throw new Error("Cozoro Bee: invalid response from AI gateway.");
+    }
+
+    if (round.rateLimited) {
       const lastUser = [...history].reverse().find((m) => m.role === "user");
       const reply = geminiCapacityReply(language);
       void appendAiTrainingExchange({
@@ -770,17 +727,16 @@ export async function handleResidentPortalAiChat(
         language,
         userText: lastUser?.text ?? "",
         modelText: reply,
-        meta: { geminiQuotaExceeded: true }
+        meta: { geminiQuotaExceeded: true, provider: round.provider }
       });
       return { reply };
     }
 
-    if (data.error) {
-      throw new Error(data.error.message ?? "Gemini error");
+    if (round.errorMessage) {
+      throw new Error(round.errorMessage);
     }
 
-    const candidate = data.candidates?.[0];
-    if (!candidate?.content?.parts?.length) {
+    if (round.emptyCandidate || (!round.functionCall && !round.text)) {
       const lastUser = [...history].reverse().find((m) => m.role === "user");
       const reply = geminiModelDoesNotKnowReply(language);
       void appendAiTrainingExchange({
@@ -791,21 +747,16 @@ export async function handleResidentPortalAiChat(
         modelText: reply,
         meta: {
           emptyCandidate: true,
-          finishReason: candidate?.finishReason ?? null,
-          httpStatus: res.status
+          finishReason: round.finishReason ?? null,
+          httpStatus: round.httpStatus ?? null,
+          provider: round.provider
         }
       });
       return { reply };
     }
 
-    const parts = candidate.content.parts;
-    const functionCallPart = parts.find(
-      (p): p is { functionCall: { name: string; args: Record<string, unknown> } } => "functionCall" in p
-    );
-
-    if (!functionCallPart) {
-      const textPart = parts.find((p): p is { text: string } => "text" in p);
-      const raw = textPart?.text?.trim() ?? "";
+    if (!round.functionCall) {
+      const raw = round.text?.trim() ?? "";
       const trimmed = !raw
         ? geminiModelDoesNotKnowReply(language)
         : raw.length > 8000
@@ -822,7 +773,7 @@ export async function handleResidentPortalAiChat(
       return { reply: trimmed };
     }
 
-    const { name, args } = functionCallPart.functionCall;
+    const { name, args } = round.functionCall;
     const toolResponse = await executeResidentTool(name, args ?? {}, normalizedEmail);
 
     void appendAiToolInvocation({

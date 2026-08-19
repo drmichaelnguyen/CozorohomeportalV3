@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.9.12] - 2026-08-19
+
+- **9router LLM**: Cozoro Bee, manager AI, support assistant, and the Facebook/website bot prefer 9router (`gpt-5` via `NINE_ROUTER_API_KEY`) using the same host as luckynekoAI / MCCQE. Gemini 2.5 Flash remains the fallback when 9router is unset or fails.
+- **Cooker policy notice**: Residents see a first-open reminder to reserve and photo-check the shared cooker in the app.
+- **Cooker IFTTT example names** now match live D7 events (`cooker1_on` / `cooker1_off` / `cooker2_on` / `cooker2_off`).
+
 ## [3.9.11] - 2026-08-18
 
 - **Cooker check-in report**: Next to Turn On, residents can open the existing maintenance Report form with Kitchen location and that cooker already filled in.

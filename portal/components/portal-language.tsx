@@ -1682,6 +1682,32 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "Two shared kitchen cookers. Take one live photo that shows both the cooker and the kitchen before turning on. Each session is 30 minutes. You can reserve a slot up to 3 days ahead (max 1 hour / 2 sessions per day). After you turn off, others can use it.",
     vi: "Hai bếp dùng chung. Chụp một ảnh live thấy cả bếp nấu và nhà bếp trước khi bật. Mỗi lượt 30 phút. Có thể đặt chỗ trước tối đa 3 ngày (tối đa 1 giờ / 2 lượt mỗi ngày). Sau khi tắt, người khác có thể dùng."
   },
+  cookerPolicyNoticeKicker: { en: "Notice for all residents", vi: "Thông báo tới tất cả cư dân" },
+  cookerPolicyNoticeTitle: {
+    en: "New kitchen cooker rules",
+    vi: "Quy định mới khi dùng bếp"
+  },
+  cookerPolicyNoticeIntro: {
+    en: "We are implementing a new way to use the shared cooker so the kitchen stays safe and hygienic.",
+    vi: "Chúng tôi đang áp dụng cách dùng bếp chung mới để đảm bảo an toàn và vệ sinh nhà bếp."
+  },
+  cookerPolicyRule1: {
+    en: "Reserve the cooker and turn it on/off only in the CozoroHome app (Controller → Cooker).",
+    vi: "Chỉ đặt chỗ và bật/tắt bếp trong ứng dụng CozoroHome (Điều khiển → Bếp)."
+  },
+  cookerPolicyRule2: {
+    en: "Take photos of the cooker and kitchen before you turn the cooker on.",
+    vi: "Chụp ảnh bếp và nhà bếp trước khi bật bếp."
+  },
+  cookerPolicyRule3: {
+    en: "After cooking, clean the kitchen, take an after-use photo, and turn the cooker off in the app.",
+    vi: "Sau khi nấu, dọn nhà bếp, chụp ảnh sau khi dùng, rồi tắt bếp trên ứng dụng."
+  },
+  cookerPolicyNoticeFine: {
+    en: "Failure to turn off the cooker or to clean the kitchen after use may lead to a fine for a cleaning and safety violation.",
+    vi: "Không tắt bếp hoặc không dọn nhà bếp sau khi dùng có thể bị phạt vì vi phạm vệ sinh và an toàn."
+  },
+  cookerPolicyOpenCooker: { en: "Open cooker", vi: "Mở điều khiển bếp" },
   cookerFineWarning: {
     en: "If you leave it on past {minutes} minutes, the first 2 times are a safety reminder with no fine. After that a {amount} VND ticket can be issued.",
     vi: "Nếu quên tắt quá {minutes} phút, 2 lần đầu chỉ nhắc nhở an toàn (không phạt). Từ lần sau có thể bị lập phiếu phạt {amount} VND."

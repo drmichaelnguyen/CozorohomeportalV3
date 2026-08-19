@@ -12,12 +12,15 @@ const envSchema = z.object({
   FACEBOOK_PAGE_ACCESS_TOKEN: z.string().optional(),
   FACEBOOK_APP_SECRET: z.string().optional(),
   FACEBOOK_GRAPH_API_BASE_URL: z.string().url().optional(),
-  BOT_LLM_PROVIDER: z.enum(["none", "gemini", "openai"]).optional(),
+  BOT_LLM_PROVIDER: z.enum(["none", "nine_router", "gemini", "openai"]).optional(),
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_API_BASE_URL: z.string().url().optional(),
   BOT_ROUTER_MODEL: z.string().optional(),
   BOT_ANSWER_MODEL: z.string().optional(),
   BOT_ROUTER_TRAINING_FILE: z.string().optional(),
+  NINE_ROUTER_API_KEY: z.string().optional(),
+  NINE_ROUTER_URL: z.string().optional(),
+  NINE_ROUTER_MODEL: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().optional(),
   BOT_TOP_K: z.string().optional(),
@@ -57,7 +60,13 @@ function resolveLocalPath(entry: string) {
 const env = envSchema.parse(process.env);
 const inferredProvider =
   env.BOT_LLM_PROVIDER ??
-  (env.GEMINI_API_KEY?.trim() ? "gemini" : env.OPENAI_API_KEY?.trim() ? "openai" : "none");
+  (env.NINE_ROUTER_API_KEY?.trim()
+    ? "nine_router"
+    : env.GEMINI_API_KEY?.trim()
+      ? "gemini"
+      : env.OPENAI_API_KEY?.trim()
+        ? "openai"
+        : "none");
 
 export const config = {
   port: Number(env.PORT ?? 4010),
@@ -75,8 +84,16 @@ export const config = {
   geminiApiKey: env.GEMINI_API_KEY?.trim() ?? "",
   geminiApiBaseUrl:
     env.GEMINI_API_BASE_URL?.replace(/\/+$/, "") ?? "https://generativelanguage.googleapis.com/v1beta",
-  routerModel: env.BOT_ROUTER_MODEL?.trim() ?? "gemini-2.5-flash-lite",
-  answerModel: env.BOT_ANSWER_MODEL?.trim() ?? "gemini-2.5-flash",
+  nineRouterApiKey: env.NINE_ROUTER_API_KEY?.trim() ?? "",
+  nineRouterUrl:
+    env.NINE_ROUTER_URL?.trim() || "https://9router.k-aithelittlelion.com/v1/chat/completions",
+  nineRouterModel: env.NINE_ROUTER_MODEL?.trim() || "gpt-5",
+  routerModel:
+    env.BOT_ROUTER_MODEL?.trim() ??
+    (inferredProvider === "nine_router" ? "gpt-5" : "gemini-2.5-flash-lite"),
+  answerModel:
+    env.BOT_ANSWER_MODEL?.trim() ??
+    (inferredProvider === "nine_router" ? "gpt-5" : "gemini-2.5-flash"),
   routerTrainingFile: resolveLocalPath(env.BOT_ROUTER_TRAINING_FILE ?? "./data/router-training.json"),
   openAiApiKey: env.OPENAI_API_KEY?.trim() ?? "",
   openAiModel: env.OPENAI_MODEL?.trim() ?? "gpt-4.1-mini",

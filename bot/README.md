@@ -107,13 +107,13 @@ Use the Windows helper scripts in this repo when you need `chatbot.cozorohome.co
 
 This mode runs the bot on port `4111`, which matches the chatbot Cloudflare Tunnel config.
 
-Recommended hosted free-tier setup:
+Recommended hosted setup (same 9router as luckynekoAI):
 
-- create a free Gemini API key in Google AI Studio: [ai.google.dev](https://ai.google.dev/)
-- set `BOT_LLM_PROVIDER=gemini`
-- set `GEMINI_API_KEY=...`
-- keep `BOT_ROUTER_MODEL=gemini-2.5-flash-lite`
-- keep `BOT_ANSWER_MODEL=gemini-2.5-flash`
+- set `BOT_LLM_PROVIDER=nine_router`
+- set `NINE_ROUTER_API_KEY=...`
+- keep `NINE_ROUTER_URL=https://9router.k-aithelittlelion.com/v1/chat/completions`
+- keep `BOT_ROUTER_MODEL=gpt-5` and `BOT_ANSWER_MODEL=gpt-5`
+- Gemini remains an optional fallback if 9router is unset (`BOT_LLM_PROVIDER=gemini`)
 
 Notes:
 

@@ -1144,6 +1144,12 @@ export function ControllerClient({
                 </span>
               </h2>
               <p className="mt-2 text-sm text-slate-700">{t("cookerIntro")}</p>
+              <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
+                <li>{t("cookerPolicyRule1")}</li>
+                <li>{t("cookerPolicyRule2")}</li>
+                <li>{t("cookerPolicyRule3")}</li>
+              </ol>
+              <p className="mt-2 text-xs font-medium text-rose-800">{t("cookerPolicyNoticeFine")}</p>
               <p className="mt-2 text-xs font-medium text-rose-800">
                 {t("cookerFineWarning", undefined, {
                   minutes: cookerContext.sessionMinutes || cookerContext.maxOnMinutes,

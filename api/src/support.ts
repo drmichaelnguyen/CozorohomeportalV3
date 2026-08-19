@@ -24,6 +24,7 @@ import {
 import { loadOpenAcComfortAlertsForStaff } from "./ac-comfort-votes.js";
 import { loadOpenHostelBookingAlertsForStaff } from "./hostel-booking-notifications.js";
 import { buildFridgeDrainReminderNotifications } from "./fridge-drain-schedule.js";
+import { listCleaningHeroAwardsForEmail } from "./cleaning-hero-awards.js";
 import { listCookerLeftoverNoticesForEmail } from "./cooker-controller.js";
 import { isBranchAutomationDisabled, isCleaningTaskAutomationDisabled } from "./branch-closure.js";
 import { prisma } from "./prisma.js";

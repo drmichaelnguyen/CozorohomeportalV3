@@ -840,15 +840,19 @@ export async function answerCustomerQuestion(
   const searchTopic = inferSearchTopic(normalizedQuestion, conversationContext);
   const results = knowledgeService.search(normalizedQuestion, { topic: searchTopic });
 
+  const canRouteWithLlm =
+    (config.llmProvider === "nine_router" && config.nineRouterApiKey) ||
+    (config.llmProvider === "gemini" && config.geminiApiKey);
+
   if (!hasStrongDormSignal) {
-    if (config.llmProvider === "gemini" && config.geminiApiKey) {
+    if (canRouteWithLlm) {
       try {
         const route = await routeDormQuestion(normalizedQuestion, conversationContext);
         if (route.decision === "deny" || route.route === "off_topic") {
           return buildOffTopicAnswer(preferredLanguage);
         }
       } catch (error) {
-        console.warn("[bot] Falling back after Gemini route error", error);
+        console.warn("[bot] Falling back after LLM route error", error);
         return buildOffTopicAnswer(preferredLanguage);
       }
     } else {
@@ -856,7 +860,7 @@ export async function answerCustomerQuestion(
     }
   }
 
-  if (config.llmProvider === "gemini" && config.geminiApiKey && (results.length || liveContext.trim())) {
+  if (canRouteWithLlm && (results.length || liveContext.trim())) {
     try {
       const route = await routeDormQuestion(normalizedQuestion, conversationContext);
       if ((route.decision === "deny" || route.route === "off_topic") && !hasStrongDormSignal) {
@@ -871,7 +875,7 @@ export async function answerCustomerQuestion(
         preferredLanguage
       });
     } catch (error) {
-      console.warn("[bot] Falling back after Gemini route error", error);
+      console.warn("[bot] Falling back after LLM route error", error);
     }
   }
 

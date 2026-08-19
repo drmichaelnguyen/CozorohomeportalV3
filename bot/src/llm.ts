@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { config } from "./config.js";
+import { call9RouterChatCompletion, has9RouterConfig } from "./nine-router.js";
 import { SearchResult } from "./knowledge/service.js";
 import { normalizeVietnameseChatText, PreferredLanguage } from "./language.js";
 import {
@@ -172,24 +173,39 @@ export async function routeDormQuestion(question: string, conversationContext?: 
     `Normalized customer question: ${sanitizedQuestion}`
   ].join("\n");
 
-  const payload = await callGemini({
-    model: config.routerModel,
-    prompt,
-    maxOutputTokens: 120,
-    mimeType: "application/json",
-    jsonSchema: {
-      type: "object",
-      properties: {
-        decision: { type: "string", enum: ["allow", "deny"] },
-        route: { type: "string", enum: ["simple_policy", "deep_policy", "off_topic"] },
-        reason: { type: "string" }
-      },
-      required: ["decision", "route", "reason"]
-    }
-  });
+  const text =
+    config.llmProvider === "nine_router" && has9RouterConfig()
+      ? await call9RouterChatCompletion({
+          systemInstruction:
+            "You are a strict JSON classifier. Return only valid JSON matching the schema.",
+          userPrompt: [
+            prompt,
+            "",
+            'Return JSON only with keys: decision ("allow"|"deny"), route ("simple_policy"|"deep_policy"|"off_topic"), reason (string).'
+          ].join("\n"),
+          model: config.routerModel,
+          temperature: 0.1
+        })
+      : extractGeminiText(
+          await callGemini({
+            model: config.routerModel,
+            prompt,
+            maxOutputTokens: 120,
+            mimeType: "application/json",
+            jsonSchema: {
+              type: "object",
+              properties: {
+                decision: { type: "string", enum: ["allow", "deny"] },
+                route: { type: "string", enum: ["simple_policy", "deep_policy", "off_topic"] },
+                reason: { type: "string" }
+              },
+              required: ["decision", "route", "reason"]
+            }
+          })
+        );
 
-  const text = extractGeminiText(payload);
-  return topicDecisionSchema.parse(JSON.parse(text));
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  return topicDecisionSchema.parse(JSON.parse(jsonMatch?.[0] ?? text));
 }
 
 function buildSourceList(results: SearchResult[]) {
@@ -211,7 +227,7 @@ function buildKnowledgeContext(results: SearchResult[], liveContext?: string) {
   return [liveContext?.trim(), ...sections].filter(Boolean).join("\n\n");
 }
 
-export async function answerWithGemini(params: {
+export async function answerWithLlm(params: {
   question: string;
   results: SearchResult[];
   liveContext?: string;
@@ -261,6 +277,15 @@ export async function answerWithGemini(params: {
     buildSourceList(params.results)
   ].join("\n");
 
+  if (config.llmProvider === "nine_router" && has9RouterConfig()) {
+    return call9RouterChatCompletion({
+      systemInstruction: "You are Cozoro, the Cozorohome dorm assistant. Follow the user prompt strictly.",
+      userPrompt: prompt,
+      model: config.answerModel,
+      temperature: 0.1
+    });
+  }
+
   const payload = await callGemini({
     model: config.answerModel,
     prompt,
@@ -275,3 +300,6 @@ export async function answerWithGemini(params: {
 
   return text;
 }
+
+/** @deprecated Use answerWithLlm — kept for call-site compatibility. */
+export const answerWithGemini = answerWithLlm;

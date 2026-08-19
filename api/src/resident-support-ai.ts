@@ -1,12 +1,13 @@
 /**
- * Resident support thread — Gemini replies stored as SupportMessage (ASSISTANT)
+ * Resident support thread — LLM replies stored as SupportMessage (ASSISTANT)
  * so managers see the same conversation and can follow up in the shared inbox.
+ * Prefers 9router when NINE_ROUTER_API_KEY is set; otherwise Gemini.
  */
 
 import { SupportMessageSenderRole } from "@prisma/client";
 
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
-import { recordGeminiUsage, type GeminiUsageMetadata } from "./ai-usage.js";
+import { recordGeminiUsage } from "./ai-usage.js";
 import {
   stripSupportAssistantMetaSuffix,
   type SupportAssistantStoredMeta
@@ -25,37 +26,11 @@ import {
   getLaundryBookingContextForEmail,
   getPaymentsForEmail
 } from "./google-sheets.js";
-import { geminiCapacityReply, isGeminiCapacityOrRateLimit } from "./gemini-capacity-reply.js";
+import { geminiCapacityReply } from "./gemini-capacity-reply.js";
+import { completeToolChatRound, hasPortalLlmConfig, type LlmChatContent, type LlmChatTool } from "./llm-tool-chat.js";
 import { prisma } from "./prisma.js";
 
 const ASSISTANT_SENDER_EMAIL = "cozoro-assistant@system";
-
-const GEMINI_ENDPOINT = () => {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) throw new Error("GEMINI_API_KEY is not configured");
-  return `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
-};
-
-type GeminiPart =
-  | { text: string }
-  | { functionCall: { name: string; args: Record<string, unknown> } }
-  | { functionResponse: { name: string; response: Record<string, unknown> } };
-
-type GeminiContent = {
-  role: "user" | "model";
-  parts: GeminiPart[];
-};
-
-type GeminiResponse = {
-  candidates?: Array<{
-    content: {
-      role: string;
-      parts: GeminiPart[];
-    };
-  }>;
-  error?: { message: string; code?: number; status?: string };
-  usageMetadata?: GeminiUsageMetadata;
-};
 
 function looksVietnamese(text: string) {
   return /[\u00C0-\u1EF9]/.test(text);
@@ -85,7 +60,7 @@ function sanitizeOther(raw: unknown) {
 
 function compressThreadForGemini(
   rows: Array<{ senderRole: SupportMessageSenderRole; senderName: string | null; body: string }>
-): GeminiContent[] {
+): LlmChatContent[] {
   const recent = rows.slice(-AI_CHAT_CONTEXT_MESSAGE_LIMIT);
   const chunks: { role: "user" | "model"; text: string }[] = [];
   for (const m of recent) {
@@ -107,7 +82,7 @@ function compressThreadForGemini(
       chunks.push({ role, text });
     }
   }
-  return chunks.map((c) => ({ role: c.role, parts: [{ text: c.text }] })) as GeminiContent[];
+  return chunks.map((c) => ({ role: c.role, parts: [{ text: c.text }] }));
 }
 
 function buildResidentContextBlock(email: string, client: Record<string, string> | null) {
@@ -300,7 +275,7 @@ export async function runResidentSupportAssistantTurn(input: {
     return { replyText: null };
   }
 
-  if (!process.env.GEMINI_API_KEY) {
+  if (!hasPortalLlmConfig("shared")) {
     return { replyText: null };
   }
 
@@ -403,7 +378,7 @@ export async function runResidentSupportAssistantTurn(input: {
     }))
   );
 
-  const tools = [
+  const tools: LlmChatTool[] = [
     {
       functionDeclarations: [
         {
@@ -434,48 +409,38 @@ export async function runResidentSupportAssistantTurn(input: {
 
   let maxRounds = 4;
   while (maxRounds-- > 0) {
-    const body = {
-      system_instruction: { parts: [{ text: systemPrompt }] },
+    const requestStartedAt = Date.now();
+    const round = await completeToolChatRound({
+      systemPrompt,
       contents,
       tools,
-      tool_config: { function_calling_config: { mode: "AUTO" } },
-      generation_config: {
-        temperature: 0.35,
-        max_output_tokens: 768
-      }
-    };
-
-    const requestStartedAt = Date.now();
-    const res = await fetch(GEMINI_ENDPOINT(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
+      temperature: 0.35,
+      maxOutputTokens: 768,
+      geminiKind: "shared"
     });
-
-    const raw = await res.text();
-    let data: GeminiResponse;
-    try {
-      data = JSON.parse(raw) as GeminiResponse;
-    } catch {
-      void recordGeminiUsage({
-        feature: "resident_support_thread",
-        actorEmail: input.residentEmail,
-        status: "INVALID_RESPONSE",
-        latencyMs: Date.now() - requestStartedAt
-      });
-      console.warn("[resident-support-ai] Gemini non-JSON response");
-      return { replyText: null };
-    }
 
     void recordGeminiUsage({
       feature: "resident_support_thread",
       actorEmail: input.residentEmail,
-      usage: data.usageMetadata,
-      status: isGeminiCapacityOrRateLimit(res, data) ? "RATE_LIMITED" : data.error || !res.ok ? "ERROR" : "SUCCESS",
+      usage: round.usage,
+      provider: round.provider,
+      model: round.model,
+      status: round.rateLimited
+        ? "RATE_LIMITED"
+        : round.invalidJson
+          ? "INVALID_RESPONSE"
+          : round.errorMessage
+            ? "ERROR"
+            : "SUCCESS",
       latencyMs: Date.now() - requestStartedAt
     });
 
-    if (isGeminiCapacityOrRateLimit(res, data)) {
+    if (round.invalidJson) {
+      console.warn("[resident-support-ai] non-JSON response");
+      return { replyText: null };
+    }
+
+    if (round.rateLimited) {
       const quotaReply = geminiCapacityReply(preferVietnamese ? "vi" : "en");
       void appendAiTrainingExchange({
         channel: "resident_support_thread",
@@ -483,29 +448,22 @@ export async function runResidentSupportAssistantTurn(input: {
         userText: last.body,
         modelText: quotaReply,
         conversationId: input.conversationId,
-        meta: { geminiQuotaExceeded: true, preferVietnamese }
+        meta: { geminiQuotaExceeded: true, preferVietnamese, provider: round.provider }
       });
       return { replyText: quotaReply };
     }
 
-    if (data.error) {
-      console.warn("[resident-support-ai] Gemini error", data.error.message);
+    if (round.errorMessage) {
+      console.warn("[resident-support-ai] LLM error", round.errorMessage);
       return { replyText: null };
     }
 
-    const candidate = data.candidates?.[0];
-    if (!candidate?.content?.parts?.length) {
+    if (round.emptyCandidate || (!round.functionCall && !round.text)) {
       return { replyText: null };
     }
 
-    const parts = candidate.content.parts;
-    const functionCallPart = parts.find(
-      (p): p is { functionCall: { name: string; args: Record<string, unknown> } } => "functionCall" in p
-    );
-
-    if (!functionCallPart) {
-      const textPart = parts.find((p): p is { text: string } => "text" in p);
-      const replyText = textPart?.text?.trim() || null;
+    if (!round.functionCall) {
+      const replyText = round.text?.trim() || null;
       const trimmed = replyText && replyText.length > 6000 ? replyText.slice(0, 6000) : replyText;
       if (trimmed) {
         void appendAiTrainingExchange({
@@ -520,7 +478,7 @@ export async function runResidentSupportAssistantTurn(input: {
       return { replyText: trimmed };
     }
 
-    const { name, args } = functionCallPart.functionCall;
+    const { name, args } = round.functionCall;
     let toolResponse: Record<string, unknown>;
     if (name === "save_resident_contact") {
       toolResponse = await executeSaveResidentContact(input.conversationId, args);

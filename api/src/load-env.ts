@@ -17,12 +17,14 @@ if (fs.existsSync(apiDotEnv)) {
 }
 dotenv.config();
 
-const hasAnyGemini = Boolean(
-  process.env.GEMINI_API_KEY?.trim() || process.env.GEMINI_RESIDENT_PORTAL_AI_API_KEY?.trim()
+const hasAnyLlm = Boolean(
+  process.env.NINE_ROUTER_API_KEY?.trim() ||
+    process.env.GEMINI_API_KEY?.trim() ||
+    process.env.GEMINI_RESIDENT_PORTAL_AI_API_KEY?.trim()
 );
-if (!hasAnyGemini) {
+if (!hasAnyLlm) {
   console.warn(
-    "[cozorohome-api] No GEMINI_API_KEY or GEMINI_RESIDENT_PORTAL_AI_API_KEY in process.env — " +
+    "[cozorohome-api] No NINE_ROUTER_API_KEY, GEMINI_API_KEY, or GEMINI_RESIDENT_PORTAL_AI_API_KEY in process.env — " +
       "Cozoro Bee / manager AI need one of these (loaded api/.env from " +
       (fs.existsSync(apiDotEnv) ? apiDotEnv : "missing; fell back to cwd .env only") +
       ")."

@@ -1,5 +1,5 @@
 /**
- * Manager AI Chat — Gemini Flash 2.5 via REST API
+ * Manager AI Chat — 9router (gpt-5) when NINE_ROUTER_API_KEY is set, else Gemini 2.5 Flash.
  *
  * Supported actions (executed server-side after model confirms intent):
  *   add_coins      — POST /manager/coins/adjust
@@ -11,31 +11,17 @@
  */
 
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
-import { recordGeminiUsage, type GeminiUsageMetadata } from "./ai-usage.js";
+import { recordGeminiUsage } from "./ai-usage.js";
+import { completeToolChatRound, type LlmChatContent } from "./llm-tool-chat.js";
 import { appendAiToolInvocation, appendAiTrainingExchange } from "./ai-training-log.js";
 import { geminiModelDoesNotKnowReply } from "./gemini-capacity-reply.js";
 import { tryFounderEasterEggReply } from "./cozoro-founder-easter-egg.js";
 import { getManagerClients, getManagerInactiveClients } from "./google-sheets.js";
 import { requirePortalRole } from "./staff-access.js";
 
-const GEMINI_ENDPOINT = () => {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) throw new Error("GEMINI_API_KEY is not configured");
-  return `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
-};
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 export type AiChatMessage = {
   role: "user" | "model";
   text: string;
-};
-
-type GeminiPart = { text: string } | { functionCall: { name: string; args: Record<string, unknown> } } | { functionResponse: { name: string; response: Record<string, unknown> } };
-
-type GeminiContent = {
-  role: "user" | "model";
-  parts: GeminiPart[];
 };
 
 type GeminiTool = {
@@ -48,18 +34,6 @@ type GeminiTool = {
       required?: string[];
     };
   }>;
-};
-
-type GeminiResponse = {
-  candidates?: Array<{
-    content: {
-      role: string;
-      parts: GeminiPart[];
-    };
-    finishReason?: string;
-  }>;
-  error?: { message: string };
-  usageMetadata?: GeminiUsageMetadata;
 };
 
 const SAFETY_ONE_DELETE_PER_MESSAGE =
@@ -599,7 +573,7 @@ export async function handleManagerAiChat(
   const systemPrompt = buildSystemPrompt(clients, language);
 
   const limitedHistory = history.slice(-AI_CHAT_CONTEXT_MESSAGE_LIMIT);
-  const contents: GeminiContent[] = limitedHistory.map((msg) => ({
+  const contents: LlmChatContent[] = limitedHistory.map((msg) => ({
     role: msg.role,
     parts: [{ text: msg.text }]
   }));
@@ -609,86 +583,69 @@ export async function handleManagerAiChat(
   let maxRounds = 5; // prevent infinite tool loops
 
   while (maxRounds-- > 0) {
-    const body = {
-      system_instruction: { parts: [{ text: systemPrompt }] },
+    const requestStartedAt = Date.now();
+    const round = await completeToolChatRound({
+      systemPrompt,
       contents,
       tools: TOOLS,
-      tool_config: { function_calling_config: { mode: "AUTO" } },
-      generation_config: {
-        temperature: 0.3,
-        max_output_tokens: 1024
-      }
-    };
-
-    const requestStartedAt = Date.now();
-    const res = await fetch(GEMINI_ENDPOINT(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
+      temperature: 0.3,
+      maxOutputTokens: 1024,
+      geminiKind: "shared"
     });
-
-    const data = (await res.json()) as GeminiResponse;
 
     void recordGeminiUsage({
       feature: "manager_ai_chat",
       actorEmail: operatorEmail,
-      usage: data.usageMetadata,
-      status: data.error || !res.ok ? "ERROR" : "SUCCESS",
+      usage: round.usage,
+      provider: round.provider,
+      model: round.model,
+      status: round.rateLimited
+        ? "RATE_LIMITED"
+        : round.errorMessage || round.invalidJson
+          ? "ERROR"
+          : "SUCCESS",
       latencyMs: Date.now() - requestStartedAt
     });
 
-    if (data.error) {
-      throw new Error(data.error.message);
+    if (round.errorMessage) {
+      throw new Error(round.errorMessage);
     }
 
-    const candidate = data.candidates?.[0];
-    if (!candidate) throw new Error("No response from AI");
+    if (round.functionCall) {
+      const { name, args } = round.functionCall;
+      const toolResult = await executeTool(name, args, operatorEmail, deleteBudget);
+      if (toolResult.navigateTo) navigateTo = toolResult.navigateTo;
 
-    const parts = candidate.content.parts;
-
-    // Check if the model wants to call a function
-    const functionCallPart = parts.find((p): p is { functionCall: { name: string; args: Record<string, unknown> } } =>
-      "functionCall" in p
-    );
-
-    if (!functionCallPart) {
-      // Model produced a text response — done
-      const textPart = parts.find((p): p is { text: string } => "text" in p);
-      const raw = textPart?.text?.trim() ?? "";
-      const reply = raw || geminiModelDoesNotKnowReply(language);
-      const lastUser = [...history].reverse().find((m) => m.role === "user");
-      void appendAiTrainingExchange({
+      void appendAiToolInvocation({
         channel: "manager",
         identifier: operatorEmail,
+        toolName: name,
+        args: (args ?? {}) as Record<string, unknown>,
+        result: toolResult.result,
         language,
-        userText: lastUser?.text ?? "",
-        modelText: reply,
-        meta: navigateTo ? { navigateTo } : undefined
+        meta: toolResult.navigateTo ? { navigateTo: toolResult.navigateTo } : undefined
       });
-      return { reply, navigateTo };
+
+      contents.push({ role: "model", parts: [{ functionCall: { name, args } }] });
+      contents.push({
+        role: "user",
+        parts: [{ functionResponse: { name, response: toolResult.result } }]
+      });
+      continue;
     }
 
-    // Execute the tool
-    const { name, args } = functionCallPart.functionCall;
-    const toolResult = await executeTool(name, args, operatorEmail, deleteBudget);
-    if (toolResult.navigateTo) navigateTo = toolResult.navigateTo;
-
-    void appendAiToolInvocation({
+    const raw = round.text?.trim() ?? "";
+    const reply = raw || geminiModelDoesNotKnowReply(language);
+    const lastUser = [...history].reverse().find((m) => m.role === "user");
+    void appendAiTrainingExchange({
       channel: "manager",
       identifier: operatorEmail,
-      toolName: name,
-      args: (args ?? {}) as Record<string, unknown>,
-      result: toolResult.result,
       language,
-      meta: toolResult.navigateTo ? { navigateTo: toolResult.navigateTo } : undefined
+      userText: lastUser?.text ?? "",
+      modelText: reply,
+      meta: navigateTo ? { navigateTo } : undefined
     });
-
-    // Append model turn (function call) and tool result to contents
-    contents.push({ role: "model", parts: [{ functionCall: { name, args } }] });
-    contents.push({
-      role: "user",
-      parts: [{ functionResponse: { name, response: toolResult.result } }]
-    });
+    return { reply, navigateTo };
   }
 
   const fallback = geminiModelDoesNotKnowReply(language);

@@ -19,6 +19,7 @@ import { CleaningReminderPopup } from "./cleaning-reminder-popup";
 import { RentDueBlockingOverlay } from "./rent-due-blocking-overlay";
 import { AddToHomeScreenPrompt } from "./add-to-home-screen-prompt";
 import { BranchBroadcastPrompt } from "./branch-broadcast-prompt";
+import { CookerPolicyPrompt } from "./cooker-policy-prompt";
 import { PaymentRequirementPrompt } from "./payment-requirement-prompt";
 import { SelfAssignPromoPopup } from "./self-assign-promo-popup";
 
@@ -300,6 +301,7 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
       {isLoggedIn && sessionEmail ? (
         <PaymentRequirementPrompt email={sessionEmail} enabled={!isStaffSession} />
       ) : null}
+      <CookerPolicyPrompt />
       <CleaningReminderPopup />
       <SelfAssignPromoPopup />
       <RentDueBlockingOverlay />
