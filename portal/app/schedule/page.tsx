@@ -13,9 +13,9 @@ export default function SchedulePage() {
         </p>
       </section>
 
+      <RewardedCleaningClient />
       <NextPaymentPreviewClient />
       <NextLaundryPreviewClient />
-      <RewardedCleaningClient />
       <CleaningScheduleClient />
     </div>
   );

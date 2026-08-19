@@ -687,6 +687,35 @@ export function HomeDashboardClient() {
             </div>
           </section>
 
+          {!isExpired && (
+            <section className="rounded-3xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm sm:p-6">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-lg font-semibold text-slate-900">
+                      {t("rewardedCleaningTitle", "Rewarded cleaning")}
+                    </h2>
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-amber-800">
+                      Beta
+                    </span>
+                  </div>
+                  <p className="mt-2 max-w-2xl text-sm text-slate-700">
+                    {t(
+                      "rewardedCleaningHomeTeaser",
+                      "Clean or organize a shared area on your own — upload before/after photos and staff can approve coin rewards (from 5,000 coins)."
+                    )}
+                  </p>
+                </div>
+                <Link
+                  href="/cleaning-schedule#rewarded-cleaning"
+                  className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
+                >
+                  {t("rewardedCleaningHomeCta", "Start rewarded cleaning")}
+                </Link>
+              </div>
+            </section>
+          )}
+
           <details className="group rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:p-6">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-4">
               <div>

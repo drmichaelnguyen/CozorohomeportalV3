@@ -999,6 +999,11 @@ const translations: Record<string, { en: string; vi: string }> = {
     vi: "Khách hostel không được phân công lịch vệ sinh."
   },
   rewardedCleaningTitle: { en: "Rewarded cleaning", vi: "Vệ sinh có thưởng coin" },
+  rewardedCleaningHomeTeaser: {
+    en: "Clean or organize a shared area on your own — upload before/after photos and staff can approve coin rewards (from 5,000 coins).",
+    vi: "Tự dọn hoặc sắp xếp khu vực chung — tải ảnh trước/sau và quản lý có thể duyệt thưởng coin (từ 5.000 coin)."
+  },
+  rewardedCleaningHomeCta: { en: "Start rewarded cleaning", vi: "Bắt đầu vệ sinh có thưởng" },
   rewardedCleaningDesc: {
     en: "Take before photos, clean or organize a shared site, then upload after photos. AI compares the improvement and staff approve coin rewards (minimum {min} coins). One site per day.",
     vi: "Chụp ảnh trước, dọn/vệ sinh khu vực chung, rồi tải ảnh sau. AI so sánh mức cải thiện và quản lý duyệt thưởng coin (tối thiểu {min} coin). Mỗi khu vực tối đa 1 lần/ngày."
