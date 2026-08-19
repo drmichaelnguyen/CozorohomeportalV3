@@ -305,6 +305,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.21 | Hide cleaning **AI vs human benchmark** panel from Admin Cleaning UI (data still recorded in DB/`CleaningAiBenchmark` for internal review later; auto-skip toggle not exposed). |
 | 3.9.20 | Agent guide updated: rewarded cleaning beta, Cozoro Hero all-client broadcasts, coin analytics receiver column, runtime data paths. |
 | 3.9.19 | Cozoro Hero **month/quarter** auto-awards now **broadcast to all active clients** (push, branch popup with Open schedule, Notification Center `CLEANING_HERO_ANNOUNCEMENT`) with winner name, bonus coins, and self-assign promo; shared `branch-broadcasts.ts` module. |
 | 3.9.18 | Owner **Analytics → Coins** table and grouping add **Receiver** column (resident name + email from COZORO COINS sheet). |
