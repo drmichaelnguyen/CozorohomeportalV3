@@ -6,10 +6,13 @@ import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 import { CozoroStarfieldBurst } from "./cozoro-starfield-burst";
 import { VentHammerGameModal } from "./vent-hammer-game-modal";
+import { AiSuggestedActionCard, type AiSuggestedAction } from "./ai-suggested-action-card";
 
 type Message = {
   role: "user" | "model";
   text: string;
+  pendingAction?: AiSuggestedAction;
+  actionResolved?: boolean;
 };
 
 const MAX_STORED_MESSAGES = 10;
@@ -189,6 +192,7 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
         error?: string;
         showStarfieldEffect?: true;
         startVentHammerGame?: true;
+        pendingAction?: AiSuggestedAction;
       };
       if (!res.ok || data.error) {
         setErrorBanner(data.error ?? t("errorSomethingWrong"));
@@ -196,7 +200,7 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
         return;
       }
       const reply = (data.reply ?? "").trim() || "…";
-      updateMessages([...base, { role: "model", text: reply }]);
+      updateMessages([...base, { role: "model", text: reply, pendingAction: data.pendingAction }]);
       if (data.showStarfieldEffect) {
         setStarfieldBurstKey((k) => k + 1);
       }
@@ -276,6 +280,29 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
                       }`}
                     >
                       <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
+                      {m.pendingAction && !m.actionResolved ? (
+                        <AiSuggestedActionCard
+                          action={m.pendingAction}
+                          actorEmail={normalized}
+                          channel="resident"
+                          onConfirmed={() => {
+                            setMessages((prev) => {
+                              const next = [...prev];
+                              if (next[i]) next[i] = { ...next[i]!, actionResolved: true };
+                              if (normalized) saveStored(normalized, language, next);
+                              return next;
+                            });
+                          }}
+                          onDismiss={() => {
+                            setMessages((prev) => {
+                              const next = [...prev];
+                              if (next[i]) next[i] = { ...next[i]!, actionResolved: true };
+                              if (normalized) saveStored(normalized, language, next);
+                              return next;
+                            });
+                          }}
+                        />
+                      ) : null}
                     </div>
                   </div>
                 ))}

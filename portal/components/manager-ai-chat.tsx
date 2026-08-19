@@ -4,11 +4,14 @@ import { useEffect, useMemo, useRef, useState, type TouchEvent } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 import { CozoroStarfieldBurst } from "./cozoro-starfield-burst";
+import { AiSuggestedActionCard, type AiSuggestedAction } from "./ai-suggested-action-card";
 
 type Message = {
   role: "user" | "model";
   text: string;
   navigateTo?: string;
+  pendingAction?: AiSuggestedAction;
+  actionResolved?: boolean;
 };
 
 /** Turns kept in localStorage per manager (for later AI training export / review). */
@@ -49,6 +52,19 @@ function parseStoredMessages(raw: string): Message[] {
       if (typeof m.text !== "string") continue;
       const msg: Message = { role: m.role, text: m.text };
       if (typeof m.navigateTo === "string" && m.navigateTo.trim()) msg.navigateTo = m.navigateTo.trim();
+      if (m.pendingAction && typeof m.pendingAction === "object") {
+        const pa = m.pendingAction as Record<string, unknown>;
+        if (typeof pa.token === "string" && typeof pa.summary === "string" && typeof pa.toolName === "string") {
+          msg.pendingAction = {
+            token: pa.token,
+            summary: pa.summary,
+            toolName: pa.toolName,
+            risk:
+              pa.risk === "high" || pa.risk === "medium" || pa.risk === "low" ? pa.risk : "low"
+          };
+        }
+      }
+      if (m.actionResolved === true) msg.actionResolved = true;
       out.push(msg);
     }
     return out;
@@ -184,6 +200,7 @@ function ChatBody({
         navigateTo?: string;
         error?: string;
         showStarfieldEffect?: true;
+        pendingAction?: AiSuggestedAction;
       };
 
       if (!res.ok || data.error) {
@@ -195,7 +212,8 @@ function ChatBody({
       const modelMsg: Message = {
         role: "model",
         text: data.reply ?? "(no response)",
-        navigateTo: data.navigateTo
+        navigateTo: data.navigateTo,
+        pendingAction: data.pendingAction
       };
       const withReply = [...nextMessages, modelMsg];
       updateMessages(withReply);
@@ -204,7 +222,7 @@ function ChatBody({
         setStarfieldBurstKey((k) => k + 1);
       }
 
-      if (data.navigateTo && onNavigate) {
+      if (data.navigateTo && onNavigate && !data.pendingAction) {
         onNavigate(data.navigateTo);
       }
     } catch {
@@ -337,7 +355,32 @@ function ChatBody({
                 }`}
               >
                 <p className="whitespace-pre-wrap">{msg.text}</p>
-                {msg.navigateTo && onNavigate && (
+                {msg.pendingAction && !msg.actionResolved ? (
+                  <AiSuggestedActionCard
+                    action={msg.pendingAction}
+                    actorEmail={operatorEmail}
+                    channel="manager"
+                    navigateTo={msg.navigateTo}
+                    onNavigate={onNavigate}
+                    onConfirmed={() => {
+                      setMessages((prev) => {
+                        const next = [...prev];
+                        if (next[i]) next[i] = { ...next[i]!, actionResolved: true };
+                        saveMessages(operatorEmail, language, next);
+                        return next;
+                      });
+                    }}
+                    onDismiss={() => {
+                      setMessages((prev) => {
+                        const next = [...prev];
+                        if (next[i]) next[i] = { ...next[i]!, actionResolved: true };
+                        saveMessages(operatorEmail, language, next);
+                        return next;
+                      });
+                    }}
+                  />
+                ) : null}
+                {msg.navigateTo && onNavigate && !msg.pendingAction ? (
                   <button
                     type="button"
                     onClick={() => onNavigate(msg.navigateTo!)}
@@ -348,7 +391,7 @@ function ChatBody({
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                     </svg>
                   </button>
-                )}
+                ) : null}
               </div>
             </div>
           ))

@@ -1867,6 +1867,11 @@ const translations: Record<string, { en: string; vi: string }> = {
   managerAiViewAdminCleaning: { en: "Cleaning", vi: "Vệ sinh" },
   managerAiViewSettings: { en: "Settings", vi: "Cài đặt" },
   managerAiViewController: { en: "Device Controller", vi: "Điều khiển thiết bị" },
+  aiActionSuggested: { en: "Suggested action", vi: "Thao tác đề xuất" },
+  aiActionConfirm: { en: "Confirm", vi: "Xác nhận" },
+  aiActionCancel: { en: "Cancel", vi: "Hủy" },
+  aiActionConfirmed: { en: "Action completed.", vi: "Đã thực hiện xong." },
+  aiActionDismissed: { en: "Action dismissed.", vi: "Đã bỏ thao tác." },
   accountNoonBeeFabTitle: {
     en: "Noon surprise — tap for a tiny bee flight",
     vi: "Bất ngờ buổi trưa — bấm để ong bay thử"
