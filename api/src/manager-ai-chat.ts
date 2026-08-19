@@ -10,14 +10,24 @@
  *   delete_*       — POST /staff/{entity}/delete (one sheet row per call; max one successful delete per chat turn)
  */
 
+import { CleaningTaskType } from "@prisma/client";
+
+import {
+  createPendingSuggestedAction,
+  pendingConfirmationToolResponse,
+  requiresAiActionConfirmation,
+  verifyPendingSuggestedAction,
+  type PendingSuggestedAction
+} from "./ai-suggested-actions.js";
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
 import { recordGeminiUsage } from "./ai-usage.js";
+import { adminAssignCleaningTask, adminRemoveCleaningTask } from "./cleaning.js";
 import { completeToolChatRound, type LlmChatContent } from "./llm-tool-chat.js";
 import { appendAiToolInvocation, appendAiTrainingExchange } from "./ai-training-log.js";
 import { geminiModelDoesNotKnowReply } from "./gemini-capacity-reply.js";
 import { tryFounderEasterEggReply } from "./cozoro-founder-easter-egg.js";
-import { getManagerClients, getManagerInactiveClients } from "./google-sheets.js";
-import { requirePortalRole } from "./staff-access.js";
+import { getManagerClients } from "./google-sheets.js";
+import { getStaffName, requirePortalRole } from "./staff-access.js";
 
 export type AiChatMessage = {
   role: "user" | "model";
@@ -197,10 +207,52 @@ const TOOLS: GeminiTool[] = [
           },
           required: ["calendarId", "eventId", "reason"]
         }
+      },
+      {
+        name: "assign_cleaning_task",
+        description:
+          "Assign a cleaning task to a resident on a future date. Use when a manager wants to place or change who is on kitchen/trash duty for a specific day.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            email: { type: "STRING", description: "Resident email to assign" },
+            date: { type: "STRING", description: "Scheduled date YYYY-MM-DD (future date only)" },
+            type: {
+              type: "STRING",
+              description: "Task type",
+              enum: ["KITCHEN_D2", "KITCHEN_D7", "TRASH_D7"]
+            },
+            floor: { type: "NUMBER", description: "Required floor number for TRASH_D7 only" },
+            reason: { type: "STRING", description: "Why this assignment is needed" }
+          },
+          required: ["email", "date", "type", "reason"]
+        }
+      },
+      {
+        name: "remove_cleaning_task",
+        description:
+          "Remove a future cleaning task by task id from the admin cleaning schedule. Destructive — use when a manager wants to clear a slot.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            taskId: { type: "STRING", description: "Cleaning task id from the schedule" },
+            reason: { type: "STRING", description: "Why this task should be removed" }
+          },
+          required: ["taskId", "reason"]
+        }
       }
     ]
   }
 ];
+
+function parseAiCalendarDate(value: unknown): Date {
+  const s = String(value ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    throw new Error("date must be YYYY-MM-DD");
+  }
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d!));
+}
 
 // ─── Client context builder ────────────────────────────────────────────────────
 
@@ -468,6 +520,49 @@ async function executeTool(
     };
   }
 
+  if (toolName === "assign_cleaning_task") {
+    try {
+      const actorName = await getStaffName(operatorEmail);
+      const task = await adminAssignCleaningTask({
+        email: String(args.email ?? "").trim().toLowerCase(),
+        date: parseAiCalendarDate(args.date),
+        type: String(args.type ?? "") as CleaningTaskType,
+        floor: typeof args.floor === "number" ? args.floor : undefined,
+        actorEmail: operatorEmail,
+        actorName
+      });
+      return {
+        result: {
+          success: true,
+          message: `Assigned ${String(args.type)} on ${String(args.date)} to ${String(args.email)}`,
+          taskId: task.id
+        }
+      };
+    } catch (error) {
+      return { result: { error: error instanceof Error ? error.message : "Failed to assign cleaning task" } };
+    }
+  }
+
+  if (toolName === "remove_cleaning_task") {
+    try {
+      const actorName = await getStaffName(operatorEmail);
+      const result = await adminRemoveCleaningTask(
+        String(args.taskId ?? "").trim(),
+        operatorEmail,
+        actorName
+      );
+      return {
+        result: {
+          success: true,
+          message: `Removed cleaning task ${String(args.taskId ?? "")}`,
+          removed: result
+        }
+      };
+    } catch (error) {
+      return { result: { error: error instanceof Error ? error.message : "Failed to remove cleaning task" } };
+    }
+  }
+
   if (toolName === "navigate") {
     return {
       result: { navigating: true, view: args.view, reason: args.reason },
@@ -500,6 +595,11 @@ ${clientList || "  (chưa tải được danh sách)"}
 - Kiểm tra giường trống hoặc đang có người (query_beds — luôn gọi công cụ này khi hỏi số giường trống/đang ở; đừng đoán từ danh sách cư dân)
 - Chuyển quản lý sang màn hình phù hợp khi việc phức tạp hơn khả năng tự động (navigate)
 - Xóa **một dòng** trong sheet (coin / thanh toán / phạt) hoặc **một** lịch giặt — chỉ khi quản lý yêu cầu rõ ràng và cung cấp đúng khóa dòng (delete_coin_sheet_row, delete_payment_sheet_row, delete_fine_sheet_row, delete_laundry_booking)
+- Gán hoặc xóa ca vệ sinh cho cư dân (assign_cleaning_task, remove_cleaning_task)
+
+## Xác nhận thao tác (quan trọng)
+- Mọi thao tác thay đổi dữ liệu (coin, phạt, thanh toán, xóa dòng, lịch giặt, vệ sinh, chuyển màn hình) **chưa chạy ngay** — portal hiện nút **Xác nhận** cho quản lý bấm.
+- Sau khi gọi công cụ, giải thích ngắn gọn và nhắc quản lý bấm Xác nhận bên dưới. Đừng nói đã hoàn tất trước khi họ xác nhận.
 
 ## Quy tắc
 - **An toàn xóa:** Mỗi tin nhắn của quản lý chỉ được phép xóa thành công **tối đa một dòng** (một lần xóa). Nếu cần xóa nhiều dòng, hãy xóa một dòng rồi bảo quản lý gửi tin nhắn mới cho dòng tiếp theo. Không gọi nhiều công cụ xóa thành công trong cùng một lượt.
@@ -529,6 +629,11 @@ ${clientList || "  (no active residents loaded)"}
 - Check which beds are available or occupied (use the query_beds tool — always call it for counts or lists of empty beds; do not infer availability only from the resident list)
 - Navigate to a specific manager view for complex actions (use the navigate tool)
 - Delete **one** sheet row (coins / payments / fines) or **one** laundry booking when the manager explicitly requests it and provides exact row keys (delete_coin_sheet_row, delete_payment_sheet_row, delete_fine_sheet_row, delete_laundry_booking)
+- Assign or remove cleaning schedule tasks for a resident (assign_cleaning_task, remove_cleaning_task)
+
+## Action confirmation (important)
+- Every data-changing action (coins, fines, payments, deletes, laundry, cleaning, navigation) is **not executed immediately** — the portal shows a **Confirm** button for the manager to approve.
+- After calling a tool, explain briefly and remind the manager to tap Confirm below. Do not claim the action is done before they confirm.
 
 ## Rules
 - **Delete safety:** At most **one successful row deletion per manager message.** Each delete tool removes exactly one row. If multiple rows must be removed, delete one and tell the manager to send another message for the next row. Do not complete more than one successful delete in the same turn.
@@ -551,7 +656,7 @@ export async function handleManagerAiChat(
   operatorEmail: string,
   history: AiChatMessage[],
   options?: { language?: UiLanguage }
-): Promise<{ reply: string; navigateTo?: string; showStarfieldEffect?: true }> {
+): Promise<{ reply: string; navigateTo?: string; showStarfieldEffect?: true; pendingAction?: PendingSuggestedAction }> {
   await requirePortalRole(operatorEmail, ["manager", "owner", "app_admin"], "Only managers can use the AI assistant.");
 
   const language: UiLanguage = options?.language === "vi" ? "vi" : "en";
@@ -580,6 +685,7 @@ export async function handleManagerAiChat(
 
   let navigateTo: string | undefined;
   const deleteBudget = { remaining: 1 };
+  let pendingAction: PendingSuggestedAction | undefined;
   let maxRounds = 5; // prevent infinite tool loops
 
   while (maxRounds-- > 0) {
@@ -613,20 +719,48 @@ export async function handleManagerAiChat(
 
     if (round.functionCall) {
       const { name, args } = round.functionCall;
-      const toolResult = await executeTool(name, args, operatorEmail, deleteBudget);
+      const toolArgs = (args ?? {}) as Record<string, unknown>;
+
+      if (requiresAiActionConfirmation("manager", name) && !pendingAction) {
+        pendingAction = createPendingSuggestedAction({
+          channel: "manager",
+          toolName: name,
+          args: toolArgs,
+          actorEmail: operatorEmail,
+          language
+        });
+        const pendingResponse = pendingConfirmationToolResponse(pendingAction.summary, language);
+        void appendAiToolInvocation({
+          channel: "manager",
+          identifier: operatorEmail,
+          toolName: name,
+          args: toolArgs,
+          result: pendingResponse,
+          language,
+          meta: { pendingConfirmation: true }
+        });
+        contents.push({ role: "model", parts: [{ functionCall: { name, args: toolArgs } }] });
+        contents.push({
+          role: "user",
+          parts: [{ functionResponse: { name, response: pendingResponse } }]
+        });
+        continue;
+      }
+
+      const toolResult = await executeTool(name, toolArgs, operatorEmail, deleteBudget);
       if (toolResult.navigateTo) navigateTo = toolResult.navigateTo;
 
       void appendAiToolInvocation({
         channel: "manager",
         identifier: operatorEmail,
         toolName: name,
-        args: (args ?? {}) as Record<string, unknown>,
+        args: toolArgs,
         result: toolResult.result,
         language,
         meta: toolResult.navigateTo ? { navigateTo: toolResult.navigateTo } : undefined
       });
 
-      contents.push({ role: "model", parts: [{ functionCall: { name, args } }] });
+      contents.push({ role: "model", parts: [{ functionCall: { name, args: toolArgs } }] });
       contents.push({
         role: "user",
         parts: [{ functionResponse: { name, response: toolResult.result } }]
@@ -643,9 +777,18 @@ export async function handleManagerAiChat(
       language,
       userText: lastUser?.text ?? "",
       modelText: reply,
-      meta: navigateTo ? { navigateTo } : undefined
+      meta: {
+        ...(navigateTo ? { navigateTo } : {}),
+        ...(pendingAction ? { pendingActionTool: pendingAction.toolName } : {})
+      }
     });
-    return { reply, navigateTo };
+    const pendingNavigateTo =
+      pendingAction?.toolName === "navigate" ? String(pendingAction.args.view ?? "").trim() || undefined : undefined;
+    return {
+      reply,
+      navigateTo: pendingNavigateTo ?? navigateTo,
+      pendingAction
+    };
   }
 
   const fallback = geminiModelDoesNotKnowReply(language);
@@ -656,7 +799,51 @@ export async function handleManagerAiChat(
     language,
     userText: lastUser?.text ?? "",
     modelText: fallback,
-    meta: { maxToolRoundsExhausted: true, ...(navigateTo ? { navigateTo } : {}) }
+    meta: { maxToolRoundsExhausted: true, ...(navigateTo ? { navigateTo } : {}), ...(pendingAction ? { pendingActionTool: pendingAction.toolName } : {}) }
   });
-  return { reply: fallback, navigateTo };
+  return { reply: fallback, navigateTo, pendingAction };
+}
+
+export async function confirmManagerAiAction(
+  operatorEmail: string,
+  actionToken: string
+): Promise<{ success: boolean; message: string; navigateTo?: string; result?: Record<string, unknown> }> {
+  await requirePortalRole(operatorEmail, ["manager", "owner", "app_admin"], "Only managers can confirm AI actions.");
+  const payload = verifyPendingSuggestedAction(actionToken, "manager", operatorEmail);
+  if (!payload) {
+    throw new Error("This suggested action expired or is invalid. Ask the assistant again.");
+  }
+
+  const deleteBudget = { remaining: 1 };
+  const toolResult = await executeTool(payload.toolName, payload.args, operatorEmail, deleteBudget);
+
+  void appendAiToolInvocation({
+    channel: "manager",
+    identifier: operatorEmail,
+    toolName: payload.toolName,
+    args: payload.args,
+    result: toolResult.result,
+    language: payload.language,
+    meta: { confirmedByUser: true, ...(toolResult.navigateTo ? { navigateTo: toolResult.navigateTo } : {}) }
+  });
+
+  if ("error" in toolResult.result && toolResult.result.error) {
+    return {
+      success: false,
+      message: String(toolResult.result.error),
+      result: toolResult.result
+    };
+  }
+
+  const message =
+    typeof toolResult.result.message === "string"
+      ? toolResult.result.message
+      : payload.summary;
+
+  return {
+    success: true,
+    message,
+    navigateTo: toolResult.navigateTo,
+    result: toolResult.result
+  };
 }

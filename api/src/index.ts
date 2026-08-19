@@ -309,8 +309,12 @@ import {
   listStripeHostelPayments,
   refundStripeHostelPayment
 } from "./stripe-hostel-payments.js";
-import { handleManagerAiChat, type AiChatMessage } from "./manager-ai-chat.js";
-import { handleResidentPortalAiChat, type ResidentPortalAiMessage } from "./resident-portal-ai-chat.js";
+import { handleManagerAiChat, confirmManagerAiAction, type AiChatMessage } from "./manager-ai-chat.js";
+import {
+  handleResidentPortalAiChat,
+  confirmResidentAiAction,
+  type ResidentPortalAiMessage
+} from "./resident-portal-ai-chat.js";
 import { getVentHammerRedeemToday, markVentHammerRedeemedToday } from "./vent-hammer-redeem-guard.js";
 import {
   managerGetDepositRefundPreview,
@@ -5297,6 +5301,28 @@ app.post("/manager/ai-chat", async (request, response) => {
   }
 });
 
+app.post("/manager/ai-chat/confirm-action", async (request, response) => {
+  const parsed = z
+    .object({
+      operatorEmail: z.string().email(),
+      actionToken: z.string().min(10)
+    })
+    .safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid confirm-action payload" });
+  }
+
+  try {
+    const result = await confirmManagerAiAction(parsed.data.operatorEmail, parsed.data.actionToken);
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to confirm action"
+    });
+  }
+});
+
 app.post("/resident/portal-ai-chat", async (request, response) => {
   const parsed = z
     .object({
@@ -5329,6 +5355,30 @@ app.post("/resident/portal-ai-chat", async (request, response) => {
         : lower.includes("not configured") || lower.includes("disabled")
           ? 503
           : 400;
+    return response.status(status).json({ error: msg });
+  }
+});
+
+app.post("/resident/portal-ai-chat/confirm-action", async (request, response) => {
+  const parsed = z
+    .object({
+      email: z.string().email(),
+      actionToken: z.string().min(10)
+    })
+    .safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid confirm-action payload" });
+  }
+
+  try {
+    const result = await confirmResidentAiAction(parsed.data.email, parsed.data.actionToken);
+    return response.json(result);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unable to confirm action";
+    const lower = msg.toLowerCase();
+    const status =
+      lower.includes("not allowed") || lower.includes("cozoro bee:") ? 403 : 400;
     return response.status(status).json({ error: msg });
   }
 });

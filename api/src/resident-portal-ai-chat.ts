@@ -6,8 +6,15 @@
  * Tools only return data scoped to the authenticated resident email (server-enforced).
  */
 
-import { CleaningAvailabilityType } from "@prisma/client";
+import { CleaningAvailabilityType, CleaningTaskType } from "@prisma/client";
 
+import {
+  createPendingSuggestedAction,
+  pendingConfirmationToolResponse,
+  requiresAiActionConfirmation,
+  verifyPendingSuggestedAction,
+  type PendingSuggestedAction
+} from "./ai-suggested-actions.js";
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
 import { recordGeminiUsage } from "./ai-usage.js";
 import { completeToolChatRound, type LlmChatContent } from "./llm-tool-chat.js";
@@ -20,9 +27,15 @@ import {
 } from "./cozoro-vent-hammer-easter-egg.js";
 
 import { computePrepaidNextPaymentEstimate } from "./calculation-engine.js";
+import {
+  completeCleaningTask,
+  releaseCleaningTask,
+  selfAssignCleaningTask
+} from "./cleaning.js";
 import { calculateRentBreakdownForBillingMonth } from "./monthly-rent-breakdown.js";
 import { getCleaningOverviewForUser } from "./cleaning.js";
 import {
+  cancelLaundryBooking,
   createLaundryBooking,
   getActiveClientByEmail,
   getCoinsForEmail,
@@ -182,6 +195,15 @@ async function buildRentSnapshot(email: string): Promise<Record<string, unknown>
     onPrepaidPlan: false,
     blockingRentDuePopupEnabled: portalUx.blockingRentDuePopupEnabled
   };
+}
+
+function parseAiCalendarDate(value: unknown): Date {
+  const s = String(value ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    throw new Error("date must be YYYY-MM-DD");
+  }
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d!));
 }
 
 async function executeResidentTool(
@@ -455,6 +477,55 @@ async function executeResidentTool(
       const snap = await buildRentSnapshot(residentEmail.trim().toLowerCase());
       return { ok: true, rentJson: clipJson(snap, 14000) };
     }
+    case "self_assign_cleaning": {
+      try {
+        const task = await selfAssignCleaningTask({
+          email: residentEmail,
+          date: parseAiCalendarDate(args.date),
+          type: String(args.type ?? "") as CleaningTaskType
+        });
+        return {
+          ok: true,
+          message: `Self-assigned ${String(args.type)} on ${String(args.date)}`,
+          taskId: task.id
+        };
+      } catch (e) {
+        return { ok: false, message: e instanceof Error ? e.message : "Self-assign failed." };
+      }
+    }
+    case "release_my_cleaning_task": {
+      try {
+        const taskId = String(args.taskId ?? "").trim();
+        if (!taskId) return { ok: false, message: "taskId is required." };
+        const result = await releaseCleaningTask(taskId, residentEmail);
+        return { ok: true, message: `Released cleaning task ${taskId}`, taskId: result.task.id };
+      } catch (e) {
+        return { ok: false, message: e instanceof Error ? e.message : "Release failed." };
+      }
+    }
+    case "complete_my_cleaning_task": {
+      try {
+        const taskId = String(args.taskId ?? "").trim();
+        if (!taskId) return { ok: false, message: "taskId is required." };
+        const task = await completeCleaningTask(taskId, residentEmail, String(args.note ?? "").trim() || undefined);
+        return { ok: true, message: `Completed cleaning task ${taskId}`, taskId: task.id };
+      } catch (e) {
+        return { ok: false, message: e instanceof Error ? e.message : "Complete failed." };
+      }
+    }
+    case "cancel_my_laundry_booking": {
+      try {
+        const eventId = String(args.eventId ?? "").trim();
+        const calendarId = String(args.calendarId ?? "").trim();
+        if (!eventId || !calendarId) {
+          return { ok: false, message: "eventId and calendarId are required." };
+        }
+        const result = await cancelLaundryBooking({ email: residentEmail, calendarId, eventId });
+        return { ok: true, message: "Laundry booking cancelled.", result };
+      } catch (e) {
+        return { ok: false, message: e instanceof Error ? e.message : "Cancel failed." };
+      }
+    }
     default:
       return { ok: false, message: `Unknown tool: ${name}` };
   }
@@ -552,6 +623,59 @@ const TOOLS: GeminiTool[] = [
         description:
           "Current month rent status, breakdown or prepaid next-payment estimate — only for this resident.",
         parameters: { type: "OBJECT", properties: {} }
+      },
+      {
+        name: "self_assign_cleaning",
+        description:
+          "Self-assign an open cleaning slot for this resident on a future date. Use get_my_cleaning first to see open dates and task types allowed for their branch.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            date: { type: "STRING", description: "Date YYYY-MM-DD (future, within 30 days)" },
+            type: {
+              type: "STRING",
+              description: "KITCHEN_D2, KITCHEN_D7, or TRASH_D7 (must match branch rules)",
+              enum: ["KITCHEN_D2", "KITCHEN_D7", "TRASH_D7"]
+            }
+          },
+          required: ["date", "type"]
+        }
+      },
+      {
+        name: "release_my_cleaning_task",
+        description: "Release (cancel) one of this resident's future assigned cleaning tasks by task id from get_my_cleaning.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            taskId: { type: "STRING", description: "Cleaning task id" }
+          },
+          required: ["taskId"]
+        }
+      },
+      {
+        name: "complete_my_cleaning_task",
+        description: "Mark one of this resident's assigned cleaning tasks as complete (same as Schedule page).",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            taskId: { type: "STRING", description: "Cleaning task id" },
+            note: { type: "STRING", description: "Optional completion note" }
+          },
+          required: ["taskId"]
+        }
+      },
+      {
+        name: "cancel_my_laundry_booking",
+        description:
+          "Cancel one of this resident's upcoming laundry bookings. Requires eventId and calendarId from get_my_laundry_status. Only allowed at least 1 hour before start.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            eventId: { type: "STRING", description: "Booking event id" },
+            calendarId: { type: "STRING", description: "Calendar id for the booking" }
+          },
+          required: ["eventId", "calendarId"]
+        }
       }
     ]
   }
@@ -570,7 +694,8 @@ function buildSystemPrompt(language: UiLanguage, residentEmail: string) {
 
 ## Hard rules
 - You must **never** reveal or infer other residents' names, emails, rooms, fines, or schedules.
-- **You cannot delete or alter official records** (Google Sheet roster rows, contracts, fines, payments, coins ledger, other residents' bookings, or chat history). Your tools are read-only except **book_my_laundry**, which only creates a booking for this email. If someone asks to delete data, say clearly that only staff can do that through the office — do not imply you deleted anything or that they succeeded without staff.
+- **You cannot delete or alter official records** (Google Sheet roster rows, contracts, fines, payments, coins ledger, other residents' bookings, or chat history). Mutating tools (**book_my_laundry**, **self_assign_cleaning**, **release_my_cleaning_task**, **complete_my_cleaning_task**, **cancel_my_laundry_booking**) only affect this email's portal data and require the resident to tap **Confirm** in the app before anything runs.
+- If someone asks to delete data you cannot touch (fines, contracts, etc.), say clearly that only staff can do that through the office.
 - Only use facts returned by your tools (each tool is server-scoped to this email's sheet rows and portal data).
 - If tools return nothing or an error, say so honestly; do not invent numbers.
 - Prefer **concise** answers. Offer step-by-step only when booking laundry or interpreting a schedule.
@@ -580,6 +705,8 @@ function buildSystemPrompt(language: UiLanguage, residentEmail: string) {
   3. Ask for a **date and time**, OR if they want the **soonest** slot — then call **suggest_closest_laundry_slot** (omit preferredStartIso) or pass their requested time as **preferredStartIso** to find the nearest open slot on an eligible machine of that type.
   4. If their exact time is not open, call **get_laundry_open_slots** for the chosen machineId and/or **suggest_closest_laundry_slot** and **propose the closest available** start time in plain language (local timezone context: Vietnam).
   5. Only then call **book_my_laundry** with a start ISO that is still open for that machineId (re-check slots if needed).
+- **Cleaning actions:** use **get_my_cleaning** first. To claim an open slot call **self_assign_cleaning**; to release or complete an assigned task use **release_my_cleaning_task** or **complete_my_cleaning_task** with the task id from the overview.
+- **Action confirmation (mandatory):** after calling any mutating tool, explain what will happen and tell the resident to tap **Confirm** below. Do not say the booking or schedule change is done until they confirm.
 - For **coins / rent / fines**: call **get_my_financial_overview** when they ask about balance, payments, or penalties together; otherwise **get_my_coins** or **get_my_rent_status** as appropriate.
 - Payments/rent: summarize amounts and due status clearly; mention if figures are estimates from the roster.
 - This Bee chat is **not** the same as the human **Messages / Support** thread — still be professional; for disputes or sensitive issues, suggest that thread.
@@ -612,6 +739,7 @@ export async function handleResidentPortalAiChat(
   showStarfieldEffect?: true;
   ventGameOfferPending?: true;
   startVentHammerGame?: true;
+  pendingAction?: PendingSuggestedAction;
 }> {
   if (process.env.RESIDENT_PORTAL_AI_DISABLED === "1") {
     throw new Error("Cozoro Bee is temporarily disabled.");
@@ -686,6 +814,7 @@ export async function handleResidentPortalAiChat(
 
   const normalizedEmail = residentEmail.trim().toLowerCase();
   let maxRounds = 8;
+  let pendingAction: PendingSuggestedAction | undefined;
 
   while (maxRounds-- > 0) {
     const requestStartedAt = Date.now();
@@ -768,24 +897,53 @@ export async function handleResidentPortalAiChat(
         identifier: normalizedEmail,
         language,
         userText: lastUser?.text ?? "",
-        modelText: trimmed
+        modelText: trimmed,
+        meta: pendingAction ? { pendingActionTool: pendingAction.toolName } : undefined
       });
-      return { reply: trimmed };
+      return { reply: trimmed, pendingAction };
     }
 
     const { name, args } = round.functionCall;
-    const toolResponse = await executeResidentTool(name, args ?? {}, normalizedEmail);
+    const toolArgs = (args ?? {}) as Record<string, unknown>;
+
+    if (requiresAiActionConfirmation("resident", name) && !pendingAction) {
+      pendingAction = createPendingSuggestedAction({
+        channel: "resident",
+        toolName: name,
+        args: toolArgs,
+        actorEmail: normalizedEmail,
+        language
+      });
+      const pendingResponse = pendingConfirmationToolResponse(pendingAction.summary, language);
+      void appendAiToolInvocation({
+        channel: "resident_portal",
+        identifier: normalizedEmail,
+        toolName: name,
+        args: toolArgs,
+        result: pendingResponse,
+        language,
+        meta: { pendingConfirmation: true }
+      });
+      contents.push({ role: "model", parts: [{ functionCall: { name, args: toolArgs } }] });
+      contents.push({
+        role: "user",
+        parts: [{ functionResponse: { name, response: pendingResponse } }]
+      });
+      continue;
+    }
+
+    const toolResponse = await executeResidentTool(name, toolArgs, normalizedEmail);
 
     void appendAiToolInvocation({
       channel: "resident_portal",
       identifier: normalizedEmail,
       toolName: name,
-      args: (args ?? {}) as Record<string, unknown>,
+      args: toolArgs,
       result: toolResponse,
       language
     });
 
-    contents.push({ role: "model", parts: [{ functionCall: { name, args: args ?? {} } }] });
+    contents.push({ role: "model", parts: [{ functionCall: { name, args: toolArgs } }] });
     contents.push({
       role: "user",
       parts: [{ functionResponse: { name, response: toolResponse } }]
@@ -800,7 +958,45 @@ export async function handleResidentPortalAiChat(
     language,
     userText: lastUser?.text ?? "",
     modelText: fallback,
-    meta: { maxToolRoundsExhausted: true }
+    meta: { maxToolRoundsExhausted: true, ...(pendingAction ? { pendingActionTool: pendingAction.toolName } : {}) }
   });
-  return { reply: fallback };
+  return { reply: fallback, pendingAction };
+}
+
+export async function confirmResidentAiAction(
+  residentEmail: string,
+  actionToken: string
+): Promise<{ success: boolean; message: string; result?: Record<string, unknown> }> {
+  await assertEligibleForResidentPortalAi(residentEmail);
+  const payload = verifyPendingSuggestedAction(actionToken, "resident", residentEmail);
+  if (!payload) {
+    throw new Error("This suggested action expired or is invalid. Ask Cozoro Bee again.");
+  }
+
+  const toolResponse = await executeResidentTool(payload.toolName, payload.args, residentEmail.trim().toLowerCase());
+
+  void appendAiToolInvocation({
+    channel: "resident_portal",
+    identifier: residentEmail.trim().toLowerCase(),
+    toolName: payload.toolName,
+    args: payload.args,
+    result: toolResponse,
+    language: payload.language,
+    meta: { confirmedByUser: true }
+  });
+
+  if (!toolResponse.ok) {
+    return {
+      success: false,
+      message: typeof toolResponse.message === "string" ? toolResponse.message : "Action failed.",
+      result: toolResponse
+    };
+  }
+
+  const message =
+    typeof toolResponse.message === "string"
+      ? toolResponse.message
+      : payload.summary;
+
+  return { success: true, message, result: toolResponse };
 }
