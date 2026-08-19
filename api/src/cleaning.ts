@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   CleaningAssignmentSource,
   CleaningAuditDecision,
+  CleaningAiVerdict,
   CleaningAvailabilityType,
   CleaningScheduleCorrectionAction,
   CleaningSwapRequestStatus,
@@ -46,6 +47,12 @@ import {
 import { hasCompletedCheckout, listCheckedOutEmails } from "./checkout.js";
 import { listVietnamHolidays } from "./vietnam-holidays.js";
 import { prisma } from "./prisma.js";
+import {
+  listCleaningReferencePhotos,
+  saveCleaningCompletionPhotos,
+  type CleaningPhotoInput
+} from "./cleaning-photos.js";
+import { runCleaningTaskPhotoVerification } from "./cleaning-photo-verification.js";
 
 type ActiveCleaningUser = {
   email: string;
@@ -2422,6 +2429,20 @@ async function buildCleaningOverviewForUser(email: string) {
   const holidayYear = today.getUTCFullYear();
   const holidays = listVietnamHolidays(holidayYear - 1, holidayYear + 1);
 
+  const photoRequiredTaskTypes: CleaningTaskType[] = [];
+  if (user) {
+    for (const type of getAllowedTaskTypesForUser(user)) {
+      const referencePhotos = await listCleaningReferencePhotos({
+        taskType: type,
+        branchId: user.branchId,
+        floor: user.floor
+      });
+      if (referencePhotos.length > 0) {
+        photoRequiredTaskTypes.push(type);
+      }
+    }
+  }
+
   return {
     user,
     tasks,
@@ -2437,7 +2458,8 @@ async function buildCleaningOverviewForUser(email: string) {
       weekend: rewardSettings.selfAssignWeekendMultiplier,
       holiday: rewardSettings.selfAssignHolidayMultiplier
     },
-    holidays
+    holidays,
+    photoRequiredTaskTypes
   };
 }
 
@@ -2546,6 +2568,9 @@ export async function getAdminCleaningTasks(from?: Date, to?: Date) {
         orderBy: {
           createdAt: "asc"
         }
+      },
+      completionPhotos: {
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
       }
     },
     orderBy: [{ scheduledDate: "asc" }, { branchId: "asc" }]
@@ -3124,7 +3149,13 @@ export async function sweepLeftResidentCleaningSchedules(now = new Date()) {
   };
 }
 
-export async function completeCleaningTask(taskId: string, email: string, note?: string, photo?: string) {
+export async function completeCleaningTask(
+  taskId: string,
+  email: string,
+  note?: string,
+  photo?: string,
+  photos?: CleaningPhotoInput[]
+) {
   const task = await findUniqueCleaningTask({
     where: { id: taskId }
   });
@@ -3135,6 +3166,19 @@ export async function completeCleaningTask(taskId: string, email: string, note?:
 
   if (task.userEmail.toLowerCase() !== email.trim().toLowerCase()) {
     throw new Error("You can only complete your own cleaning task");
+  }
+
+  const referencePhotos = await listCleaningReferencePhotos({
+    taskType: task.type,
+    branchId: task.branchId,
+    floor: task.floor
+  });
+  const requiresPhotos = referencePhotos.length > 0;
+
+  if (requiresPhotos && (!photos || photos.length === 0)) {
+    throw new Error(
+      "Completion photos are required for this cleaning area. Take a few pictures of the finished work before submitting."
+    );
   }
 
   const isLate = !canCompleteTaskNow(task) && canCompleteTaskLate(task);
@@ -3157,46 +3201,61 @@ export async function completeCleaningTask(taskId: string, email: string, note?:
       status: CleaningTaskStatus.DONE_PENDING_AUDIT,
       completedAt: new Date(),
       completionNote: lateNote,
-      completionPhoto: photo,
+      completionPhoto: photo ?? null,
+      aiVerdict: requiresPhotos ? CleaningAiVerdict.PENDING : CleaningAiVerdict.SKIPPED,
+      aiScore: null,
+      aiNote: requiresPhotos ? "AI verification pending." : "No reference photos configured for this area.",
+      aiVerifiedAt: null,
       rewardCoins: lateRewardCoins
     }
   });
+
+  if (photos && photos.length > 0) {
+    await saveCleaningCompletionPhotos(taskId, photos);
+    if (referencePhotos.length > 0) {
+      await runCleaningTaskPhotoVerification(taskId, email.trim().toLowerCase());
+    }
+  }
+
+  const finalTask =
+    (await findUniqueCleaningTask({ where: { id: taskId } })) ?? updated;
+
   await logAction({
     actorEmail: email.trim().toLowerCase(),
     actorName: task.userName ?? task.userEmail,
     actorRole: "resident",
     action: "cleaning.task.complete",
     entityType: "CleaningTask",
-    entityId: updated.id,
-    entityLabel: `${updated.type}|${updated.scheduledDate.toISOString().slice(0, 10)}`,
+    entityId: finalTask.id,
+    entityLabel: `${finalTask.type}|${finalTask.scheduledDate.toISOString().slice(0, 10)}`,
     details: isLate ? "late=true" : "late=false"
   });
 
-  if (updated.calendarId && updated.calendarEventId) {
-    const target = getCleaningCalendarTarget(updated.type, { floor: updated.floor });
+  if (finalTask.calendarId && finalTask.calendarEventId) {
+    const target = getCleaningCalendarTarget(finalTask.type, { floor: finalTask.floor });
     if (target) {
       await updateCleaningCalendarEvent({
-        calendarId: updated.calendarId,
-        eventId: updated.calendarEventId,
+        calendarId: finalTask.calendarId,
+        eventId: finalTask.calendarEventId,
         title: target.title,
-        scheduledDate: updated.scheduledDate,
-        userEmail: updated.userEmail,
-        userName: updated.userName,
-        branchId: updated.branchId,
-        floor: updated.floor,
-        rewardCoins: updated.rewardCoins,
-        type: updated.type,
+        scheduledDate: finalTask.scheduledDate,
+        userEmail: finalTask.userEmail,
+        userName: finalTask.userName,
+        branchId: finalTask.branchId,
+        floor: finalTask.floor,
+        rewardCoins: finalTask.rewardCoins,
+        type: finalTask.type,
         status: CleaningTaskStatus.DONE_PENDING_AUDIT,
-        completedAt: updated.completedAt,
-        completionNote: updated.completionNote,
-        completionPhoto: updated.completionPhoto,
-        auditorNote: updated.auditorNote
+        completedAt: finalTask.completedAt,
+        completionNote: finalTask.completionNote,
+        completionPhoto: finalTask.completionPhoto,
+        auditorNote: finalTask.auditorNote
       });
     }
   }
 
-  await invalidateCleaningOverviewCache(updated.userEmail);
-  return updated;
+  await invalidateCleaningOverviewCache(finalTask.userEmail);
+  return finalTask;
 }
 
 export async function auditCleaningTask(input: {
@@ -3517,21 +3576,36 @@ export async function getCleaningManagerReviewQueue(now = new Date()) {
     })
   ]);
 
-  const pendingAudit = pendingAuditTasks.map((task) => ({
-    id: task.id,
-    userEmail: task.userEmail,
-    userName: task.userName,
-    bedDisplay: bedLineByEmail.get(task.userEmail.trim().toLowerCase()) ?? null,
-    branchId: task.branchId,
-    floor: task.floor,
-    type: task.type,
-    scheduledDate: task.scheduledDate,
-    status: task.status,
-    rewardCoins: task.rewardCoins,
-    completedAt: task.completedAt,
-    completionNote: task.completionNote,
-    completionPhoto: task.completionPhoto
-  }));
+  const pendingAudit = await Promise.all(
+    pendingAuditTasks.map(async (task) => {
+      const completionPhotos = await prisma.cleaningCompletionPhoto.findMany({
+        where: { taskId: task.id },
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+        select: { id: true, storageName: true, fileName: true, sortOrder: true }
+      });
+
+      return {
+        id: task.id,
+        userEmail: task.userEmail,
+        userName: task.userName,
+        bedDisplay: bedLineByEmail.get(task.userEmail.trim().toLowerCase()) ?? null,
+        branchId: task.branchId,
+        floor: task.floor,
+        type: task.type,
+        scheduledDate: task.scheduledDate,
+        status: task.status,
+        rewardCoins: task.rewardCoins,
+        completedAt: task.completedAt,
+        completionNote: task.completionNote,
+        completionPhoto: task.completionPhoto,
+        completionPhotos,
+        aiVerdict: task.aiVerdict,
+        aiScore: task.aiScore,
+        aiNote: task.aiNote,
+        aiVerifiedAt: task.aiVerifiedAt
+      };
+    })
+  );
 
   const overdueAssigned: Array<{
     id: string;

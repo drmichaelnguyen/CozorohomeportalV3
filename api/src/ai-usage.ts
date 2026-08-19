@@ -13,7 +13,8 @@ export type AiModality = "text" | "vision";
 export const AI_FEATURE_LABELS: Record<string, string> = {
   manager_ai_chat: "Manager AI chat",
   resident_portal: "Resident assistant",
-  resident_support_thread: "Support assistant"
+  resident_support_thread: "Support assistant",
+  cleaning_photo_verification: "Cleaning photo verification"
 };
 
 export const AI_MODALITY_LABELS: Record<AiModality, string> = {

@@ -29,6 +29,15 @@ type AdminTask = {
   completedAt?: string | null;
   completionNote?: string | null;
   completionPhoto?: string | null;
+  completionPhotos?: Array<{
+    id: string;
+    storageName: string;
+    fileName: string;
+    sortOrder: number;
+  }>;
+  aiVerdict?: "PENDING" | "ELIGIBLE" | "NOT_ELIGIBLE" | "SKIPPED" | null;
+  aiScore?: number | null;
+  aiNote?: string | null;
   auditorNote?: string | null;
 };
 
@@ -112,6 +121,16 @@ type CleaningReviewQueuePayload = {
     completedAt: string | null;
     completionNote: string | null;
     completionPhoto: string | null;
+    completionPhotos?: Array<{
+      id: string;
+      storageName: string;
+      fileName: string;
+      sortOrder: number;
+    }>;
+    aiVerdict?: AdminTask["aiVerdict"];
+    aiScore?: number | null;
+    aiNote?: string | null;
+    aiVerifiedAt?: string | null;
   }>;
   overdueAssigned: Array<{
     id: string;
@@ -153,6 +172,62 @@ function prettyTaskType(type: AdminTask["type"], t: (key: any, ...args: any[]) =
   if (type === "KITCHEN_D2") return t("kitchenD2");
   if (type === "KITCHEN_D7") return t("kitchenD7");
   return t("trashD7");
+}
+
+type CleaningReferencePhoto = {
+  id: string;
+  taskType: AdminTask["type"];
+  branchId: string;
+  floor: number | null;
+  storageName: string;
+  fileName: string;
+  caption: string | null;
+  url: string;
+};
+
+function cleaningPhotoUrl(storageName: string, email: string, kind: "reference" | "completion") {
+  return `${API_BASE_URL}/cleaning/photos/${encodeURIComponent(storageName)}?email=${encodeURIComponent(email)}&kind=${kind}`;
+}
+
+function aiVerdictLabel(
+  verdict: AdminTask["aiVerdict"],
+  language: "en" | "vi"
+) {
+  if (verdict === "ELIGIBLE") {
+    return language === "vi" ? "AI: đủ điều kiện coin" : "AI: eligible for coins";
+  }
+  if (verdict === "NOT_ELIGIBLE") {
+    return language === "vi" ? "AI: chưa đủ điều kiện" : "AI: not eligible";
+  }
+  if (verdict === "PENDING") {
+    return language === "vi" ? "AI: đang kiểm tra" : "AI: pending";
+  }
+  return language === "vi" ? "AI: bỏ qua / chưa có mẫu" : "AI: skipped / no reference";
+}
+
+function aiVerdictClassName(verdict: AdminTask["aiVerdict"]) {
+  if (verdict === "ELIGIBLE") return "bg-emerald-100 text-emerald-800 ring-emerald-200";
+  if (verdict === "NOT_ELIGIBLE") return "bg-rose-100 text-rose-800 ring-rose-200";
+  if (verdict === "PENDING") return "bg-amber-100 text-amber-800 ring-amber-200";
+  return "bg-slate-100 text-slate-700 ring-slate-200";
+}
+
+async function fileToReferencePhoto(file: File) {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Unable to read photo"));
+    reader.readAsDataURL(file);
+  });
+  const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
+  if (!match) {
+    throw new Error("Invalid photo");
+  }
+  return {
+    fileName: file.name || "photo.jpg",
+    mimeType: match[1] || file.type || "image/jpeg",
+    dataBase64: match[2]!
+  };
 }
 
 function isDismissedOverdueTask(note?: string | null) {
@@ -320,6 +395,12 @@ export function AdminCleaningClient() {
   const [showDateRange, setShowDateRange] = useState(false);
   const [reviewQueue, setReviewQueue] = useState<CleaningReviewQueuePayload | null>(null);
   const [reviewQueueLoading, setReviewQueueLoading] = useState(false);
+  const [referenceTaskType, setReferenceTaskType] = useState<AdminTask["type"]>("KITCHEN_D7");
+  const [referenceBranchId, setReferenceBranchId] = useState<"D2" | "D7">("D7");
+  const [referenceFloor, setReferenceFloor] = useState("1");
+  const [referencePhotos, setReferencePhotos] = useState<CleaningReferencePhoto[]>([]);
+  const [referencePhotosLoading, setReferencePhotosLoading] = useState(false);
+  const [referenceUploadLoading, setReferenceUploadLoading] = useState(false);
   const [overdueAssignedVisibleCount, setOverdueAssignedVisibleCount] = useState(OVERDUE_ASSIGNED_PAGE_SIZE);
   const [editingFineTaskId, setEditingFineTaskId] = useState<string | null>(null);
   const [editingFineAmount, setEditingFineAmount] = useState<string>("");
@@ -356,6 +437,10 @@ export function AdminCleaningClient() {
   useEffect(() => {
     setOverdueAssignedVisibleCount(OVERDUE_ASSIGNED_PAGE_SIZE);
   }, [reviewQueue]);
+
+  useEffect(() => {
+    void loadReferencePhotos();
+  }, [activeEmail, referenceTaskType, referenceBranchId, referenceFloor]);
 
   async function readJsonSafely<T>(response: Response) {
     const bodyText = await response.text();
@@ -407,6 +492,85 @@ export function AdminCleaningClient() {
       setMessage(t("adminCleaningErrReviewQueue"));
     } finally {
       setReviewQueueLoading(false);
+    }
+  }
+
+  async function loadReferencePhotos() {
+    setReferencePhotosLoading(true);
+    try {
+      const params = new URLSearchParams({
+        actorEmail: activeEmail,
+        taskType: referenceTaskType,
+        branchId: referenceBranchId
+      });
+      if (referenceTaskType === "TRASH_D7") {
+        params.set("floor", referenceFloor);
+      }
+      const response = await fetch(`${API_BASE_URL}/manager/cleaning/reference-photos?${params.toString()}`);
+      const data = await readJsonSafely<{ photos?: CleaningReferencePhoto[]; error?: string }>(response);
+      if (!response.ok) {
+        setMessage(data.error ?? "Unable to load reference photos.");
+        return;
+      }
+      setReferencePhotos(data.photos ?? []);
+    } catch {
+      setMessage("Unable to load reference photos.");
+    } finally {
+      setReferencePhotosLoading(false);
+    }
+  }
+
+  async function uploadReferencePhotos(files: FileList | null) {
+    if (!files || files.length === 0) {
+      return;
+    }
+
+    setReferenceUploadLoading(true);
+    setMessage("");
+    try {
+      const photos = await Promise.all(Array.from(files).slice(0, 5).map((file) => fileToReferencePhoto(file)));
+      const response = await fetch(`${API_BASE_URL}/manager/cleaning/reference-photos`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actorEmail: activeEmail,
+          taskType: referenceTaskType,
+          branchId: referenceBranchId,
+          floor: referenceTaskType === "TRASH_D7" ? Number.parseInt(referenceFloor, 10) : undefined,
+          photos
+        })
+      });
+      const data = await readJsonSafely<{ error?: string }>(response);
+      if (!response.ok) {
+        setMessage(data.error ?? "Unable to upload reference photos.");
+        return;
+      }
+      await loadReferencePhotos();
+      setMessage("Reference photos saved.");
+    } catch {
+      setMessage("Unable to upload reference photos.");
+    } finally {
+      setReferenceUploadLoading(false);
+    }
+  }
+
+  async function removeReferencePhoto(id: string) {
+    setReferenceUploadLoading(true);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/manager/cleaning/reference-photos/${encodeURIComponent(id)}?actorEmail=${encodeURIComponent(activeEmail)}`,
+        { method: "DELETE" }
+      );
+      const data = await readJsonSafely<{ error?: string }>(response);
+      if (!response.ok) {
+        setMessage(data.error ?? "Unable to remove reference photo.");
+        return;
+      }
+      await loadReferencePhotos();
+    } catch {
+      setMessage("Unable to remove reference photo.");
+    } finally {
+      setReferenceUploadLoading(false);
     }
   }
 
@@ -1205,6 +1369,117 @@ export function AdminCleaningClient() {
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
+            <h2 className="text-lg font-semibold text-slate-900">
+              {language === "vi" ? "Ảnh mẫu vệ sinh" : "Cleaning reference photos"}
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">
+              {language === "vi"
+                ? "Chụp vài ảnh khu vực đã làm tốt. AI sẽ so sánh ảnh cư dân nộp với mẫu này trước khi xét coin."
+                : "Save a few photos of well-done work per area. AI compares resident submissions to these references before coin verification."}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void loadReferencePhotos()}
+            disabled={referencePhotosLoading || referenceUploadLoading}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 disabled:opacity-60"
+          >
+            {referencePhotosLoading ? t("refreshing") : t("refreshLabel", "Refresh")}
+          </button>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-4">
+          <label className="block text-sm font-medium text-slate-700">
+            {language === "vi" ? "Loại việc" : "Task type"}
+            <select
+              value={referenceTaskType}
+              onChange={(event) => setReferenceTaskType(event.target.value as AdminTask["type"])}
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+            >
+              <option value="KITCHEN_D2">{prettyTaskType("KITCHEN_D2", t)}</option>
+              <option value="KITCHEN_D7">{prettyTaskType("KITCHEN_D7", t)}</option>
+              <option value="TRASH_D7">{prettyTaskType("TRASH_D7", t)}</option>
+            </select>
+          </label>
+          <label className="block text-sm font-medium text-slate-700">
+            {language === "vi" ? "Chi nhánh" : "Branch"}
+            <select
+              value={referenceBranchId}
+              onChange={(event) => setReferenceBranchId(event.target.value as "D2" | "D7")}
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+            >
+              <option value="D2">D2</option>
+              <option value="D7">D7</option>
+            </select>
+          </label>
+          {referenceTaskType === "TRASH_D7" ? (
+            <label className="block text-sm font-medium text-slate-700">
+              {language === "vi" ? "Tầng" : "Floor"}
+              <select
+                value={referenceFloor}
+                onChange={(event) => setReferenceFloor(event.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+              >
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+              </select>
+            </label>
+          ) : null}
+          <label className="flex items-end">
+            <span className="inline-flex w-full cursor-pointer items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">
+              {referenceUploadLoading
+                ? language === "vi"
+                  ? "Đang tải..."
+                  : "Uploading..."
+                : language === "vi"
+                  ? "Thêm ảnh mẫu"
+                  : "Add reference photos"}
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                multiple
+                className="hidden"
+                disabled={referenceUploadLoading}
+                onChange={(event) => {
+                  void uploadReferencePhotos(event.target.files);
+                  event.currentTarget.value = "";
+                }}
+              />
+            </span>
+          </label>
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-3">
+          {referencePhotos.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              {language === "vi" ? "Chưa có ảnh mẫu cho khu vực này." : "No reference photos for this area yet."}
+            </p>
+          ) : (
+            referencePhotos.map((photo) => (
+              <div key={photo.id} className="w-36">
+                <a href={photo.url} target="_blank" rel="noopener noreferrer" className="block overflow-hidden rounded-xl ring-1 ring-slate-200">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={photo.url} alt={photo.fileName} className="h-28 w-full object-cover" />
+                </a>
+                <button
+                  type="button"
+                  onClick={() => void removeReferencePhoto(photo.id)}
+                  disabled={referenceUploadLoading}
+                  className="mt-2 w-full rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700 disabled:opacity-50"
+                >
+                  {t("removeLabel")}
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
             <h2 className="text-lg font-semibold text-slate-900">{t("adminCleaningReviewQueueTitle")}</h2>
             <p className="mt-1 text-sm text-slate-600">{t("adminCleaningReviewQueueBlurb")}</p>
           </div>
@@ -1266,6 +1541,37 @@ export function AdminCleaningClient() {
                             {new Date(task.scheduledDate).toLocaleDateString(dateLocale)}
                           </div>
                           <div className="mt-1 text-xs text-slate-600">{task.userEmail}</div>
+                          {task.aiVerdict ? (
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase ring-1 ${aiVerdictClassName(task.aiVerdict)}`}>
+                                {aiVerdictLabel(task.aiVerdict, language)}
+                                {task.aiScore != null ? ` · ${task.aiScore}/100` : ""}
+                              </span>
+                            </div>
+                          ) : null}
+                          {task.aiNote ? (
+                            <p className="mt-1 text-xs text-slate-600">{task.aiNote}</p>
+                          ) : null}
+                          {task.completionPhotos && task.completionPhotos.length > 0 ? (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {task.completionPhotos.map((photo) => (
+                                <a
+                                  key={photo.id}
+                                  href={cleaningPhotoUrl(photo.storageName, activeEmail, "completion")}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="block h-14 w-14 overflow-hidden rounded-lg ring-1 ring-slate-200"
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={cleaningPhotoUrl(photo.storageName, activeEmail, "completion")}
+                                    alt={photo.fileName}
+                                    className="h-full w-full object-cover"
+                                  />
+                                </a>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
                         <div className="flex shrink-0 flex-wrap gap-1.5">
                           <button
@@ -1825,7 +2131,16 @@ export function AdminCleaningClient() {
                               {task.completionNote && (
                                 <p className="mt-1 text-xs text-slate-600 italic">"{task.completionNote}"</p>
                               )}
-                              {task.completionPhoto && (
+                              {task.aiVerdict ? (
+                                <div className="mt-2">
+                                  <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase ring-1 ${aiVerdictClassName(task.aiVerdict)}`}>
+                                    {aiVerdictLabel(task.aiVerdict, language)}
+                                    {task.aiScore != null ? ` · ${task.aiScore}/100` : ""}
+                                  </span>
+                                  {task.aiNote ? <p className="mt-1 text-xs text-slate-600">{task.aiNote}</p> : null}
+                                </div>
+                              ) : null}
+                              {task.completionPhoto && !task.completionPhotos?.length ? (
                                 <a
                                   href={task.completionPhoto}
                                   target="_blank"
@@ -1834,7 +2149,27 @@ export function AdminCleaningClient() {
                                 >
                                   {t("viewCompletionPhoto")}
                                 </a>
-                              )}
+                              ) : null}
+                              {task.completionPhotos && task.completionPhotos.length > 0 ? (
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {task.completionPhotos.map((photo) => (
+                                    <a
+                                      key={photo.id}
+                                      href={cleaningPhotoUrl(photo.storageName, activeEmail, "completion")}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="block h-16 w-16 overflow-hidden rounded-lg ring-1 ring-slate-200"
+                                    >
+                                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                                      <img
+                                        src={cleaningPhotoUrl(photo.storageName, activeEmail, "completion")}
+                                        alt={photo.fileName}
+                                        className="h-full w-full object-cover"
+                                      />
+                                    </a>
+                                  ))}
+                                </div>
+                              ) : null}
                               <p className="mt-1 text-xs text-slate-500">{t("assignerLabel")}: {getAssignerLabel(task, t)}</p>
                               {auditorNote && (
                                 <p className={`mt-1 text-xs font-medium ${isDismissed ? "text-slate-600" : "text-rose-700"}`}>

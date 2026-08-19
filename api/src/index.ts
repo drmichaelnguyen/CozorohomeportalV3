@@ -283,6 +283,15 @@ import {
   getCleaningAutoSchedulerConfig,
   updateCleaningAutoSchedulerConfig
 } from "./cleaning-scheduler-config.js";
+import {
+  buildCleaningPhotoUrl,
+  canViewCleaningCompletionPhoto,
+  canViewCleaningReferencePhoto,
+  deactivateCleaningReferencePhoto,
+  listCleaningReferencePhotos,
+  readCleaningPhotoBytes,
+  uploadCleaningReferencePhotos
+} from "./cleaning-photos.js";
 import { logAction } from "./action-log.js";
 import { prisma } from "./prisma.js";
 import { billingPeriodMonthForGateSession, markGateParkingTicketsPaidForBilling } from "./gate-parking-tickets.js";
@@ -1797,7 +1806,34 @@ const generateCleaningSchema = z.object({
 const completeCleaningSchema = z.object({
   email: z.string().email(),
   note: z.string().optional(),
-  photo: z.string().optional()
+  photo: z.string().optional(),
+  photos: z
+    .array(
+      z.object({
+        fileName: z.string().min(1),
+        mimeType: z.string().min(1),
+        dataBase64: z.string().min(1)
+      })
+    )
+    .max(5)
+    .optional()
+});
+const cleaningPhotoUploadSchema = z.object({
+  actorEmail: z.string().email(),
+  taskType: z.enum(["KITCHEN_D2", "KITCHEN_D7", "TRASH_D7"]),
+  branchId: z.enum(["D2", "D7"]),
+  floor: z.coerce.number().int().positive().optional(),
+  caption: z.string().optional(),
+  photos: z
+    .array(
+      z.object({
+        fileName: z.string().min(1),
+        mimeType: z.string().min(1),
+        dataBase64: z.string().min(1)
+      })
+    )
+    .min(1)
+    .max(5)
 });
 const releaseCleaningSchema = z.object({
   email: z.string().email()
@@ -5901,7 +5937,8 @@ app.post("/cleaning/tasks/:id/complete", async (request, response) => {
       request.params.id,
       parsed.data.email,
       parsed.data.note,
-      parsed.data.photo
+      parsed.data.photo,
+      parsed.data.photos
     );
     return response.json(task);
   } catch (error) {
@@ -8026,6 +8063,123 @@ app.put("/manager/cleaning-reward-settings", async (req, res) => {
     return res.json(settings);
   } catch (error) {
     return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+app.get("/manager/cleaning/reference-photos", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim();
+  const taskType = String(req.query.taskType ?? "").trim();
+  const branchId = String(req.query.branchId ?? "").trim();
+  const floorRaw = req.query.floor;
+
+  if (!actorEmail || !taskType || !branchId) {
+    return res.status(400).json({ error: "actorEmail, taskType, and branchId are required" });
+  }
+  if (!["KITCHEN_D2", "KITCHEN_D7", "TRASH_D7"].includes(taskType) || !["D2", "D7"].includes(branchId)) {
+    return res.status(400).json({ error: "Invalid taskType or branchId" });
+  }
+
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const floor =
+      floorRaw == null || floorRaw === ""
+        ? undefined
+        : Number.parseInt(String(floorRaw), 10);
+    if (floorRaw != null && floorRaw !== "" && (floor == null || !Number.isFinite(floor) || floor <= 0)) {
+      return res.status(400).json({ error: "Invalid floor" });
+    }
+
+    const photos = await listCleaningReferencePhotos({
+      taskType: taskType as "KITCHEN_D2" | "KITCHEN_D7" | "TRASH_D7",
+      branchId,
+      floor
+    });
+    return res.json({
+      photos: photos.map((photo) => ({
+        ...photo,
+        url: buildCleaningPhotoUrl(photo.storageName, actorEmail)
+      }))
+    });
+  } catch (error) {
+    return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+app.post("/manager/cleaning/reference-photos", async (req, res) => {
+  const parsed = cleaningPhotoUploadSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid reference photo payload" });
+  }
+
+  try {
+    await requirePortalRole(parsed.data.actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const photos = await uploadCleaningReferencePhotos({
+      taskType: parsed.data.taskType,
+      branchId: parsed.data.branchId,
+      floor: parsed.data.floor,
+      uploadedBy: parsed.data.actorEmail,
+      photos: parsed.data.photos,
+      caption: parsed.data.caption
+    });
+    return res.json({
+      photos: photos.map((photo) => ({
+        ...photo,
+        url: buildCleaningPhotoUrl(photo.storageName, parsed.data.actorEmail)
+      }))
+    });
+  } catch (error) {
+    return res.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to upload reference photos"
+    });
+  }
+});
+
+app.delete("/manager/cleaning/reference-photos/:id", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim();
+  if (!actorEmail) {
+    return res.status(400).json({ error: "actorEmail is required" });
+  }
+
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const photo = await deactivateCleaningReferencePhoto(req.params.id, actorEmail);
+    return res.json({ photo });
+  } catch (error) {
+    return res.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to remove reference photo"
+    });
+  }
+});
+
+app.get("/cleaning/photos/:storageName", async (request, response) => {
+  const email = String(request.query.email ?? "").trim().toLowerCase();
+  const storageName = String(request.params.storageName ?? "");
+  const kind = String(request.query.kind ?? "completion").trim();
+
+  if (!email) {
+    return response.status(400).json({ error: "email query parameter is required" });
+  }
+  if (kind !== "reference" && kind !== "completion") {
+    return response.status(400).json({ error: "kind must be reference or completion" });
+  }
+
+  try {
+    const allowed =
+      kind === "reference"
+        ? await canViewCleaningReferencePhoto(email)
+        : await canViewCleaningCompletionPhoto(storageName, email);
+    if (!allowed) {
+      return response.status(403).json({ error: "You do not have access to this cleaning photo." });
+    }
+
+    const bytes = await readCleaningPhotoBytes(storageName, kind);
+    response.setHeader("Content-Type", "image/jpeg");
+    response.setHeader("Cache-Control", "private, max-age=3600");
+    return response.send(bytes);
+  } catch (error) {
+    return response.status(404).json({
+      error: error instanceof Error ? error.message : "Cleaning photo not found"
+    });
   }
 });
 

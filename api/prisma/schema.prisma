@@ -69,6 +69,13 @@ enum CleaningAuditDecision {
   REJECT
 }
 
+enum CleaningAiVerdict {
+  PENDING
+  ELIGIBLE
+  NOT_ELIGIBLE
+  SKIPPED
+}
+
 enum CleaningScheduleCorrectionAction {
   REASSIGN
   ASSIGN_OVERRIDE
@@ -238,9 +245,14 @@ model CleaningTask {
   completionNote   String?
   completionPhoto  String?
   auditorNote      String?
+  aiVerdict        CleaningAiVerdict?
+  aiScore          Int?
+  aiNote           String?            @db.Text
+  aiVerifiedAt     DateTime?
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
   audits           CleaningAudit[]
+  completionPhotos CleaningCompletionPhoto[]
 
   @@unique([slotKey], map: "CleaningTask_slotKey_key")
   @@index([userEmail, scheduledDate])
@@ -258,6 +270,37 @@ model CleaningAudit {
   createdAt   DateTime            @default(now())
 
   @@index([taskId, createdAt])
+}
+
+/// Staff-uploaded reference photos showing a well-done cleaning for a task area.
+model CleaningReferencePhoto {
+  id          String           @id @default(cuid())
+  taskType    CleaningTaskType
+  branchId    String
+  floor       Int?
+  storageName String           @unique
+  fileName    String
+  caption     String?
+  uploadedBy  String
+  sortOrder   Int              @default(0)
+  isActive    Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([taskType, branchId, floor, isActive])
+}
+
+/// Resident completion photos submitted when marking a cleaning task done.
+model CleaningCompletionPhoto {
+  id          String       @id @default(cuid())
+  taskId      String
+  task        CleaningTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  storageName String       @unique
+  fileName    String
+  sortOrder   Int          @default(0)
+  createdAt   DateTime     @default(now())
+
+  @@index([taskId, sortOrder])
 }
 
 /// Reusable checkbox options for why staff corrected auto-schedule (seeded + staff-added).

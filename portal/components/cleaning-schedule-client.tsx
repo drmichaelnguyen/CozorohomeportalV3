@@ -65,6 +65,7 @@ type CleaningOverview = {
     holiday: number;
   };
   holidays?: Array<{ date: string; nameEn: string; nameVi: string }>;
+  photoRequiredTaskTypes?: CleaningTask["type"][];
   cleaningExcluded?: boolean;
   cleaningExcludedReason?: string;
 };
@@ -112,6 +113,38 @@ function prettyTaskType(type: CleaningTask["type"]) {
   if (type === "KITCHEN_D2") return "Kitchen D2";
   if (type === "KITCHEN_D7") return "Kitchen D7";
   return "Trash D7";
+}
+
+type CleaningCompletionPhotoPayload = {
+  fileName: string;
+  mimeType: string;
+  dataBase64: string;
+};
+
+type CleaningCompletionPhotoDraft = CleaningCompletionPhotoPayload & {
+  previewUrl: string;
+};
+
+async function fileToCleaningPhoto(file: File): Promise<CleaningCompletionPhotoPayload> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Unable to read photo"));
+    reader.readAsDataURL(file);
+  });
+  const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
+  if (!match) {
+    throw new Error("Invalid photo");
+  }
+  return {
+    fileName: file.name || "photo.jpg",
+    mimeType: match[1] || file.type || "image/jpeg",
+    dataBase64: match[2]!
+  };
+}
+
+function taskRequiresCompletionPhotos(task: CleaningTask, overview: CleaningOverview | null) {
+  return Boolean(overview?.photoRequiredTaskTypes?.includes(task.type));
 }
 
 const DISMISSED_OVERDUE_TASK_NOTE_PREFIX = "[Dismissed overdue task]";
@@ -442,6 +475,7 @@ export function CleaningScheduleClient({
   const [loading, setLoading] = useState(false);
   const [overview, setOverview] = useState<CleaningOverview | null>(null);
   const [completionNotes, setCompletionNotes] = useState<Record<string, string>>({});
+  const [completionPhotos, setCompletionPhotos] = useState<Record<string, CleaningCompletionPhotoDraft[]>>({});
   const [refreshing, setRefreshing] = useState(false);
   const [calendarFocusDate, setCalendarFocusDate] = useState(() => startOfDay(new Date()));
   const [selectedDate, setSelectedDate] = useState(() => startOfDay(new Date()));
@@ -878,6 +912,16 @@ export function CleaningScheduleClient({
     setLoading(true);
     setMessage("");
 
+    const task = overview?.tasks.find((entry) => entry.id === taskId);
+    const photos = completionPhotos[taskId] ?? [];
+    const photosRequired = task ? taskRequiresCompletionPhotos(task, overview) : false;
+
+    if (photosRequired && photos.length === 0) {
+      setMessage("Take at least one photo of the finished area before submitting.");
+      setLoading(false);
+      return;
+    }
+
     try {
       const response = await fetch(`${API_BASE_URL}/cleaning/tasks/${taskId}/complete`, {
         method: "POST",
@@ -886,23 +930,140 @@ export function CleaningScheduleClient({
         },
         body: JSON.stringify({
           email: activeEmail,
-          note: completionNotes[taskId] || undefined
+          note: completionNotes[taskId] || undefined,
+          photos: photos.length
+            ? photos.map(({ fileName, mimeType, dataBase64 }) => ({ fileName, mimeType, dataBase64 }))
+            : undefined
         })
       });
-      const data = await readJsonSafely<{ error?: string }>(response);
+      const data = await readJsonSafely<{ error?: string; aiVerdict?: string; aiNote?: string }>(response);
 
       if (!response.ok) {
         setMessage(data.error ?? "Unable to mark task done.");
         return;
       }
 
+      setCompletionPhotos((current) => {
+        const next = { ...current };
+        for (const draft of next[taskId] ?? []) {
+          URL.revokeObjectURL(draft.previewUrl);
+        }
+        delete next[taskId];
+        return next;
+      });
       await loadOverview(activeEmail, { refresh: true });
-      setMessage("Task marked done and sent for audit.");
+      if (data.aiVerdict === "ELIGIBLE") {
+        setMessage("Task submitted. AI verified your photos — staff will confirm coins shortly.");
+      } else if (data.aiVerdict === "NOT_ELIGIBLE") {
+        setMessage(
+          data.aiNote
+            ? `Task submitted for staff review. AI note: ${data.aiNote}`
+            : "Task submitted for staff review. AI could not verify the photos yet."
+        );
+      } else {
+        setMessage("Task marked done and sent for audit.");
+      }
     } catch {
       setMessage("Unable to mark task done.");
     } finally {
       setLoading(false);
     }
+  }
+
+  async function addCompletionPhoto(taskId: string, file: File | null) {
+    if (!file) {
+      return;
+    }
+
+    const current = completionPhotos[taskId] ?? [];
+    if (current.length >= 5) {
+      setMessage("You can attach up to 5 photos per completion.");
+      return;
+    }
+
+    try {
+      const payload = await fileToCleaningPhoto(file);
+      const previewUrl = URL.createObjectURL(file);
+      setCompletionPhotos((state) => ({
+        ...state,
+        [taskId]: [...(state[taskId] ?? []), { ...payload, previewUrl }]
+      }));
+    } catch {
+      setMessage("Unable to read the selected photo.");
+    }
+  }
+
+  function removeCompletionPhoto(taskId: string, index: number) {
+    setCompletionPhotos((state) => {
+      const current = state[taskId] ?? [];
+      const target = current[index];
+      if (target) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      const nextPhotos = current.filter((_, photoIndex) => photoIndex !== index);
+      const next = { ...state };
+      if (nextPhotos.length === 0) {
+        delete next[taskId];
+      } else {
+        next[taskId] = nextPhotos;
+      }
+      return next;
+    });
+  }
+
+  function renderCompletionPhotoPicker(task: CleaningTask) {
+    const photos = completionPhotos[task.id] ?? [];
+    const photosRequired = taskRequiresCompletionPhotos(task, overview);
+
+    return (
+      <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+        <div className="text-sm font-medium text-slate-800">
+          {t("cleaningCompletionPhotosTitle", "Completion photos")}
+          {photosRequired ? " *" : ""}
+        </div>
+        <p className="mt-1 text-xs text-slate-500">
+          {photosRequired
+            ? t(
+                "cleaningCompletionPhotosRequired",
+                "Take a few live photos of the finished area. AI compares them with staff reference photos before coin verification."
+              )
+            : t(
+                "cleaningCompletionPhotosOptional",
+                "Optional: add photos of the finished work (up to 5)."
+              )}
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {photos.map((photo, index) => (
+            <div key={`${task.id}-${index}`} className="relative h-20 w-20 overflow-hidden rounded-lg ring-1 ring-slate-200">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={photo.previewUrl} alt="" className="h-full w-full object-cover" />
+              <button
+                type="button"
+                onClick={() => removeCompletionPhoto(task.id, index)}
+                className="absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-white"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          {photos.length < 5 ? (
+            <label className="flex h-20 w-20 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-white text-[10px] font-medium text-slate-600">
+              <span>{t("cleaningAddPhoto", "Add photo")}</span>
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(event) => {
+                  void addCompletionPhoto(task.id, event.target.files?.[0] ?? null);
+                  event.currentTarget.value = "";
+                }}
+              />
+            </label>
+          ) : null}
+        </div>
+      </div>
+    );
   }
 
   async function releaseTask(taskId: string) {
@@ -1289,6 +1450,7 @@ export function CleaningScheduleClient({
               </div>
             </div>
             <div className="md:min-w-[220px]">
+              {renderCompletionPhotoPicker(nextCleaningCardTask)}
               <button
                 type="button"
                 onClick={() => void markDone(nextCleaningCardTask.id)}
@@ -2484,6 +2646,7 @@ export function CleaningScheduleClient({
                           placeholder="Optional completion note"
                           className="mt-3 min-h-24 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                         />
+                        {renderCompletionPhotoPicker(task)}
                         <button
                           type="button"
                           onClick={() => void markDone(task.id)}
