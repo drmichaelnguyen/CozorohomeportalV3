@@ -1704,8 +1704,16 @@ const translations: Record<string, { en: string; vi: string }> = {
     vi: "Sau khi nấu, dọn nhà bếp, chụp ảnh sau khi dùng, rồi tắt bếp trên ứng dụng."
   },
   cookerPolicyNoticeFine: {
-    en: "Failure to turn off the cooker or to clean the kitchen after use may lead to a fine for a cleaning and safety violation.",
-    vi: "Không tắt bếp hoặc không dọn nhà bếp sau khi dùng có thể bị phạt vì vi phạm vệ sinh và an toàn."
+    en: "Please turn the cooker off in the app when you finish if nobody else is using it. Leftover-on fine tickets are currently on hold.",
+    vi: "Hãy tắt bếp trên ứng dụng khi dùng xong nếu không còn ai đang dùng. Hiện chưa lập phiếu phạt quên tắt."
+  },
+  cookerFineHoldNotice: {
+    en: "If your session is still on after {minutes} minutes and nobody else is using that cooker, we will remind you to turn it off. Fine tickets are on hold.",
+    vi: "Nếu lượt của bạn vẫn bật sau {minutes} phút và không có ai khác đang dùng, chúng tôi sẽ nhắc bạn tắt bếp. Hiện chưa lập phiếu phạt."
+  },
+  cookerTurnOffNowReminder: {
+    en: "Your cooker session is still on and nobody else is using it. Please clean up and turn it off now.",
+    vi: "Lượt bếp của bạn vẫn đang bật và chưa có ai khác đang dùng. Hãy dọn sạch và tắt bếp ngay."
   },
   cookerPolicyOpenCooker: { en: "Open cooker", vi: "Mở điều khiển bếp" },
   cookerFineWarning: {
@@ -1720,8 +1728,8 @@ const translations: Record<string, { en: string; vi: string }> = {
   cookerInUseBy: { en: "{name} currently has the cooker on.", vi: "{name} đang bật bếp." },
   cookerSafetyTakeover: { en: "Safety takeover", vi: "Tiếp nhận vì an toàn" },
   cookerTakeoverConfirm: {
-    en: "I confirm nobody is using this cooker. The previous user who did not turn it off will get an automatic safety reminder (first 2 times) or a fine after that.",
-    vi: "Tôi xác nhận không có ai đang dùng bếp này. Người trước quên tắt sẽ bị nhắc tự động (2 lần đầu) hoặc phạt từ lần sau."
+    en: "I confirm nobody is using this cooker. The previous user who did not turn it off will get a reminder to turn it off. Fine tickets are currently on hold.",
+    vi: "Tôi xác nhận không có ai đang dùng bếp này. Người trước quên tắt sẽ được nhắc tắt bếp. Hiện chưa lập phiếu phạt."
   },
   cookerReservedBy: { en: "Reserved now by {name}.", vi: "{name} đang giữ chỗ bếp này." },
   cookerYourSlot: { en: "This is your reserved slot. You can turn it on now.", vi: "Đây là lượt bạn đã đặt. Bạn có thể bật bếp." },
@@ -1765,8 +1773,8 @@ const translations: Record<string, { en: string; vi: string }> = {
   cookerInspectPhotos: { en: "Inspect photos", vi: "Xem ảnh kiểm tra" },
   cookerInspectionTitle: { en: "Kitchen cooker photo inspection", vi: "Kiểm tra ảnh bếp" },
   cookerInspectionDesc: {
-    en: "Review cooker and kitchen photos, then send a safety reminder (no fine) or create a leftover-on fine ticket. Photos can be attached to the fine.",
-    vi: "Xem ảnh bếp và nhà bếp, rồi gửi nhắc nhở an toàn (không phạt) hoặc lập phiếu phạt quên tắt. Ảnh có thể đính kèm phiếu phạt."
+    en: "Review cooker and kitchen photos, then send a turn-off reminder. Leftover-on fine tickets are currently on hold.",
+    vi: "Xem ảnh bếp và nhà bếp, rồi gửi nhắc tắt bếp. Hiện chưa lập phiếu phạt quên tắt."
   },
   cookerInspectionEmpty: { en: "No cooker sessions found for this cooker yet.", vi: "Chưa có lượt dùng bếp này." },
   cookerInspectionLoadFailed: { en: "Unable to load cooker inspection photos.", vi: "Không tải được ảnh kiểm tra bếp." },
@@ -1781,6 +1789,10 @@ const translations: Record<string, { en: string; vi: string }> = {
   cookerPhotoKindCleaned: { en: "Cleaned after use", vi: "Đã dọn" },
   cookerSendReminder: { en: "Send reminder", vi: "Gửi nhắc nhở" },
   cookerCreateFine: { en: "Create fine ticket", vi: "Lập phiếu phạt" },
+  cookerFinesOnHoldNote: {
+    en: "Leftover-on fine tickets are on hold. Send a reminder to turn the cooker off instead.",
+    vi: "Hiện chưa lập phiếu phạt quên tắt. Hãy gửi nhắc tắt bếp."
+  },
   cookerSendingTicket: { en: "Sending...", vi: "Đang gửi..." },
   cookerConfirmReminder: {
     en: "Send a safety leftover-on reminder to {name}? No fine will be created.",

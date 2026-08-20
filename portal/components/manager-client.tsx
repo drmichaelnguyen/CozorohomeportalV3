@@ -3426,7 +3426,11 @@ export function ManagerClient({
   const [cookers, setCookers] = useState<SmartDevice[]>([]);
   const [cookerInspectionOpen, setCookerInspectionOpen] = useState<string | null>(null);
   const [cookerInspections, setCookerInspections] = useState<CookerInspectionSession[]>([]);
-  const [cookerInspectionMeta, setCookerInspectionMeta] = useState({ leftoverFineVnd: 50000, leftoverReminderLimit: 2 });
+  const [cookerInspectionMeta, setCookerInspectionMeta] = useState({
+    leftoverFineVnd: 50000,
+    leftoverReminderLimit: 2,
+    leftoverFinesOnHold: true
+  });
   const [cookerInspectionLoading, setCookerInspectionLoading] = useState(false);
   const [cookerInspectionTicketPending, setCookerInspectionTicketPending] = useState<string | null>(null);
   const [cookerInspectionLightbox, setCookerInspectionLightbox] = useState<string | null>(null);
@@ -5933,7 +5937,8 @@ export function ManagerClient({
       setCookerInspections(deviceId && deviceId !== "all" ? inspections.filter((item) => item.deviceId === deviceId) : inspections);
       setCookerInspectionMeta({
         leftoverFineVnd: Number(data.leftoverFineVnd) || 50000,
-        leftoverReminderLimit: Number(data.leftoverReminderLimit) || 2
+        leftoverReminderLimit: Number(data.leftoverReminderLimit) || 2,
+        leftoverFinesOnHold: data.leftoverFinesOnHold !== false
       });
     } catch (error) {
       setControllerFeedback("cooker-inspect", {
@@ -5951,6 +5956,10 @@ export function ManagerClient({
   };
 
   const ticketCookerInspection = async (session: CookerInspectionSession, action: "reminder" | "fine") => {
+    if (action === "fine" && cookerInspectionMeta.leftoverFinesOnHold) {
+      setControllerFeedback("cooker-inspect", { tone: "error", message: t("cookerFinesOnHoldNote") });
+      return;
+    }
     const confirmText =
       action === "fine"
         ? t("cookerConfirmFine", undefined, {
@@ -14052,14 +14061,18 @@ export function ManagerClient({
                           >
                             {reminderPending ? t("cookerSendingTicket") : t("cookerSendReminder")}
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => void ticketCookerInspection(session, "fine")}
-                            disabled={Boolean(cookerInspectionTicketPending) || session.leftoverFineIssued}
-                            className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
-                          >
-                            {finePending ? t("cookerSendingTicket") : t("cookerCreateFine")}
-                          </button>
+                          {cookerInspectionMeta.leftoverFinesOnHold ? (
+                            <p className="w-full text-[11px] font-medium text-amber-800">{t("cookerFinesOnHoldNote")}</p>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => void ticketCookerInspection(session, "fine")}
+                              disabled={Boolean(cookerInspectionTicketPending) || session.leftoverFineIssued}
+                              className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+                            >
+                              {finePending ? t("cookerSendingTicket") : t("cookerCreateFine")}
+                            </button>
+                          )}
                         </div>
                       </div>
                     );

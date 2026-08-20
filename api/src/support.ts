@@ -1024,10 +1024,12 @@ export async function listResidentSupportNotifications(email: string) {
       notifications.push({
         id: `cooker-left-on-${notice.id}`,
         type: "COOKER_LEFT_ON",
-        title: notice.fined ? "Cooker left-on fine" : "Cooker left-on reminder",
+        title: notice.fined ? "Cooker left-on fine" : "Please turn the cooker off",
         body: notice.fined
           ? `${notice.cookerLabel} was left on. A fine ticket was created for safety (incident ${notice.strike}).`
-          : `${notice.cookerLabel} was left on. Safety reminder ${notice.strike} of 2 — the next time may be a fine.`,
+          : notice.reason === "active_session"
+            ? `${notice.cookerLabel} is still on and nobody else is using it. Please turn it off in Controller.`
+            : `${notice.cookerLabel} was left on. Please turn it off in Controller if nobody else is using it. Fine tickets are on hold.`,
         createdAt: notice.createdAt,
         unreadCount: 1,
         href: "/controller"
