@@ -167,7 +167,7 @@ const nextConfig: NextConfig = {
 | `src/index.ts` | Express app entry, all route registrations |
 | `src/cleaning.ts` | Cleaning schedule logic (self-assign, availability, tasks) |
 | `src/google-sheets.ts` | Google Sheets integration |
-| `src/cooker-controller.ts` | Kitchen cooker on/off, photo inspection, 60-day JPG storage, leftover-on fine |
+| `src/cooker-controller.ts` | Kitchen cooker on/off, pre-use inspection, 1-hour auto-off, usage history |
 | `prisma/schema.prisma` | Database schema |
 
 **Key API endpoints:**
@@ -187,14 +187,11 @@ const nextConfig: NextConfig = {
 | `POST /manager/support/messages` | Send reply as manager |
 | `POST /manager/support/conversations/:id/read` | Mark conversation read |
 | `GET /clients/laundry-bookings?email=` | Resident laundry bookings |
-| `GET /controller/cooker?email=` | Resident kitchen cooker status (on/off, reservations, photos required to toggle) |
-| `POST /controller/cooker/on` | Turn cooker on with one compressed live photo of the cooker and kitchen (`confirmUnused` for leftover-on takeover) |
-| `POST /controller/cooker/off` | Turn cooker off with a cleaned-after-use photo (checks out a reservation) |
-| `POST /controller/cooker/reserve` | Reserve a 30-minute cooker slot (max 3 days ahead, 2 sessions/day) |
-| `POST /controller/cooker/reservations/cancel` | Cancel own unused cooker reservation |
+| `GET /controller/cooker?email=` | Resident kitchen cooker status (on/off, last use, 1-hour auto-off) |
+| `POST /controller/cooker/on` | Turn cooker on after a pre-use inspection (Clean/Dirty/Damage) |
+| `POST /controller/cooker/off` | Optional early turn-off by the resident who turned it on |
 | `POST /manager/controller/cooker/command` | Staff ON/OFF override (IFTTT events optional until configured) |
-| `GET /manager/controller/cooker/inspections?actorEmail=` | Staff kitchen photo inspection list (manager, owner, app_admin) |
-| `POST /manager/controller/cooker/inspections/ticket` | Staff leftover-on reminder or fine from inspection photos |
+| `GET /manager/controller/cooker/usage?actorEmail=` | Staff cooker usage history with inspection notes (manager, owner, app_admin) |
 | `GET /staff/clients/duplicates?actorEmail=` | List clients with multiple active rows in the sheet |
 | `POST /staff/clients/set-inactive` | Set a specific contract row (by maHd) to Hiá»‡n cÃ²n á»Ÿ = âˆ’1 |
 | `POST /clients/contracts/extend` | Resident contract extension: body includes `email` and `newContractEndDate` (`dd/mm/yyyy`) or legacy `extensionMonths`; writes a **pending** entry to contract-approvals JSON (duplicate guard for pending extension per email). |
@@ -284,6 +281,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.16 | Cooker: pre-use inspection only (no photos/booking/leftover fines); 1-hour auto-off; usage history saved. |
 | 3.9.12 | Portal and bot AI prefer 9router (`gpt-5`); resident cooker policy notice; D7 cooker IFTTT event names. |
 | 3.9.11 | Cooker check-in Report button; owners can view AI usage; analytics splits text chat vs computer vision tokens/cost. |
 | 3.9.10 | Cooker inspection is one live camera photo of cooker + kitchen (gallery uploads blocked); cooker controller shows a Beta badge. |

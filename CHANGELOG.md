@@ -1,5 +1,9 @@
 # Changelog
 
+## [3.9.16] - 2026-08-21
+
+- **Cooker inspect-and-use**: Residents inspect the cooker (clean / dirty / damage) before turning it on. Photos, leftover-on reminders/fines, and cooker booking are removed. Usage is saved in history. The cooker turns off automatically after 1 hour; turn it on again to use another hour.
+
 ## [3.9.12] - 2026-08-19
 
 - **9router LLM**: Cozoro Bee, manager AI, support assistant, and the Facebook/website bot prefer 9router (`gpt-5` via `NINE_ROUTER_API_KEY`) using the same host as luckynekoAI / MCCQE. Gemini 2.5 Flash remains the fallback when 9router is unset or fails.
