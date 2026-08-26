@@ -35,18 +35,13 @@ import { appendControllerHistoryEntry, listControllerHistory } from "./controlle
 import { getUserAirFryerContext, startAirFryerUse } from "./airfryer-controller.js";
 import { getUserMicrowaveContext, startMicrowaveUse } from "./microwave-controller.js";
 import {
-  canViewCookerPhoto,
-  getCookerPhotoAbsolutePath,
   getUserCookerContext,
   listCookerDevices,
   sendManagerCookerCommand,
   startCookerUse,
   stopCookerUse,
-  sweepForgottenCookerSessions,
-  createCookerReservation,
-  cancelCookerReservation,
-  listCookerInspectionsForStaff,
-  issueStaffCookerInspectionTicket
+  sweepExpiredCookerSessions,
+  listCookerUsageForStaff
 } from "./cooker-controller.js";
 import {
   getGooglePortalClientConfig,
@@ -1373,43 +1368,19 @@ const airFryerStartSchema = z.object({
   email: z.string().email(),
   inspection: z.string().min(1)
 });
-const cookerPhotoSchema = z.object({
-  fileName: z.string().trim().min(1).max(200),
-  mimeType: z.string().trim().min(1),
-  dataBase64: z.string().trim().min(1)
-});
 const cookerOnSchema = z.object({
   email: z.string().email(),
   machineId: z.string().trim().min(1),
-  cookerPhoto: cookerPhotoSchema,
-  kitchenPhoto: cookerPhotoSchema.optional(),
-  confirmUnused: z.boolean().optional()
+  inspection: z.string().trim().min(1)
 });
 const cookerOffSchema = z.object({
   email: z.string().email(),
-  machineId: z.string().trim().min(1),
-  cleanedPhoto: cookerPhotoSchema
-});
-const cookerReserveSchema = z.object({
-  email: z.string().email(),
-  machineId: z.string().trim().min(1),
-  startAt: z.string().trim().min(1)
-});
-const cookerReservationCancelSchema = z.object({
-  email: z.string().email(),
-  reservationId: z.string().trim().min(1)
+  machineId: z.string().trim().min(1)
 });
 const managerCookerCommandSchema = z.object({
   actorEmail: z.string().email().optional(),
   machineId: z.string().trim().min(1),
   action: z.enum(["ON", "OFF"])
-});
-const cookerStaffInspectionTicketSchema = z.object({
-  actorEmail: z.string().email(),
-  sessionId: z.string().trim().min(1),
-  action: z.enum(["reminder", "fine"]),
-  amount: z.coerce.number().int().positive().optional(),
-  note: z.string().trim().max(500).optional()
 });
 const laundryTriggerSchema = z.object({
   email: z.string().email().optional(),
@@ -4014,7 +3985,7 @@ app.get("/controller/cooker", async (request, response) => {
 app.post("/controller/cooker/on", async (request, response) => {
   const parsed = cookerOnSchema.safeParse(request.body);
   if (!parsed.success) {
-    return response.status(400).json({ error: "Email, cooker id, and a live inspection photo are required" });
+    return response.status(400).json({ error: "Email, cooker id, and a pre-use inspection are required" });
   }
   try {
     const result = await startCookerUse(parsed.data);
@@ -4028,7 +3999,7 @@ app.post("/controller/cooker/on", async (request, response) => {
       deviceLabel: result.cooker.label,
       branchId: result.session.branchId,
       action: "ON",
-      details: parsed.data.confirmUnused ? "safety takeover + pre-use photo" : "pre-use cooker and kitchen photo",
+      details: `inspection: ${parsed.data.inspection}`,
       timestamp: result.session.startedAt
     });
     return response.json(result);
@@ -4042,7 +4013,7 @@ app.post("/controller/cooker/on", async (request, response) => {
 app.post("/controller/cooker/off", async (request, response) => {
   const parsed = cookerOffSchema.safeParse(request.body);
   if (!parsed.success) {
-    return response.status(400).json({ error: "Email, cooker id, and a cleaned photo are required" });
+    return response.status(400).json({ error: "Email and cooker id are required" });
   }
   try {
     const result = await stopCookerUse(parsed.data);
@@ -4056,62 +4027,13 @@ app.post("/controller/cooker/off", async (request, response) => {
       deviceLabel: result.cooker.label,
       branchId: result.session.branchId,
       action: "OFF",
-      details: "post-use cleaned photo",
+      details: "manual off",
       timestamp: result.session.endedAt ?? result.session.lastRequestedAt
     });
     return response.json(result);
   } catch (error) {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to turn cooker off"
-    });
-  }
-});
-
-app.post("/controller/cooker/reserve", async (request, response) => {
-  const parsed = cookerReserveSchema.safeParse(request.body);
-  if (!parsed.success) {
-    return response.status(400).json({ error: "Email, cooker id, and start time are required" });
-  }
-  try {
-    return response.status(201).json(await createCookerReservation(parsed.data));
-  } catch (error) {
-    return response.status(400).json({
-      error: error instanceof Error ? error.message : "Unable to reserve cooker"
-    });
-  }
-});
-
-app.post("/controller/cooker/reservations/cancel", async (request, response) => {
-  const parsed = cookerReservationCancelSchema.safeParse(request.body);
-  if (!parsed.success) {
-    return response.status(400).json({ error: "Email and reservation id are required" });
-  }
-  try {
-    return response.json(await cancelCookerReservation(parsed.data));
-  } catch (error) {
-    return response.status(400).json({
-      error: error instanceof Error ? error.message : "Unable to cancel cooker reservation"
-    });
-  }
-});
-
-app.get("/controller/cooker/photo/:fileName", async (request, response) => {
-  const email = String(request.query.email ?? "").trim().toLowerCase();
-  const fileName = String(request.params.fileName ?? "");
-  if (!email) {
-    return response.status(400).json({ error: "email query parameter is required" });
-  }
-  try {
-    const viewer = await resolvePortalLogin(email);
-    const isStaff = Boolean(viewer.allowed && viewer.role && viewer.role !== "user");
-    if (!isStaff && !(await canViewCookerPhoto(fileName, email))) {
-      return response.status(403).json({ error: "You do not have access to this cooker photo." });
-    }
-    const photo = await getCookerPhotoAbsolutePath(fileName);
-    return response.sendFile(photo.absolutePath);
-  } catch (error) {
-    return response.status(404).json({
-      error: error instanceof Error ? error.message : "Cooker photo not found"
     });
   }
 });
@@ -4149,7 +4071,7 @@ app.post("/manager/controller/cooker/command", async (request, response) => {
   }
 });
 
-app.get("/manager/controller/cooker/inspections", async (request, response) => {
+app.get("/manager/controller/cooker/usage", async (request, response) => {
   const actorEmail = String(request.query.actorEmail ?? "").trim().toLowerCase();
   if (!actorEmail) {
     return response.status(400).json({ error: "actorEmail query parameter is required" });
@@ -4158,32 +4080,13 @@ app.get("/manager/controller/cooker/inspections", async (request, response) => {
     await requirePortalRole(
       actorEmail,
       ["manager", "owner", "app_admin"],
-      "Only managers, owners, or the app admin can inspect cooker photos."
+      "Only managers, owners, or the app admin can view cooker usage history."
     );
     const limit = Number.parseInt(String(request.query.limit ?? "40"), 10);
-    return response.json(await listCookerInspectionsForStaff(Number.isFinite(limit) ? limit : 40));
+    return response.json(await listCookerUsageForStaff(Number.isFinite(limit) ? limit : 40));
   } catch (error) {
     return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
-      error: error instanceof Error ? error.message : "Unable to load cooker inspections"
-    });
-  }
-});
-
-app.post("/manager/controller/cooker/inspections/ticket", async (request, response) => {
-  const parsed = cookerStaffInspectionTicketSchema.safeParse(request.body);
-  if (!parsed.success) {
-    return response.status(400).json({ error: "actorEmail, sessionId, and action (reminder or fine) are required" });
-  }
-  try {
-    await requirePortalRole(
-      parsed.data.actorEmail,
-      ["manager", "owner", "app_admin"],
-      "Only managers, owners, or the app admin can ticket cooker inspections."
-    );
-    return response.status(201).json(await issueStaffCookerInspectionTicket(parsed.data));
-  } catch (error) {
-    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400).json({
-      error: error instanceof Error ? error.message : "Unable to ticket cooker inspection"
+      error: error instanceof Error ? error.message : "Unable to load cooker usage history"
     });
   }
 });
@@ -10942,13 +10845,13 @@ app.listen(port, "127.0.0.1", () => {
 
   scheduleTimer.unref();
 
-  void sweepForgottenCookerSessions().catch((error) => {
-    console.error("[cooker-leftover-sweep] startup failed", error);
+  void sweepExpiredCookerSessions().catch((error) => {
+    console.error("[cooker-auto-off] startup failed", error);
   });
-  const cookerLeftoverTimer = setInterval(() => {
-    void sweepForgottenCookerSessions().catch((error) => {
-      console.error("[cooker-leftover-sweep] interval failed", error);
+  const cookerAutoOffTimer = setInterval(() => {
+    void sweepExpiredCookerSessions().catch((error) => {
+      console.error("[cooker-auto-off] interval failed", error);
     });
   }, 2 * 60 * 1000);
-  cookerLeftoverTimer.unref();
+  cookerAutoOffTimer.unref();
 });

@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 
-const NOTICE_VERSION = "v1";
+const NOTICE_VERSION = "v2";
 
 function storageKey(email: string) {
   return `cozorohome-cooker-policy-${NOTICE_VERSION}:${email.trim().toLowerCase()}`;

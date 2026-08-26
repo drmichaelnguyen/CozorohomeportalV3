@@ -1708,120 +1708,65 @@ const translations: Record<string, { en: string; vi: string }> = {
   cookerBetaBadge: { en: "Beta", vi: "Thử nghiệm" },
   cookerUnitLabel: { en: "Cooker {n}", vi: "Bếp {n}" },
   cookerIntro: {
-    en: "Two shared kitchen cookers. Take one live photo that shows both the cooker and the kitchen before turning on. Each session is 30 minutes. You can reserve a slot up to 3 days ahead (max 1 hour / 2 sessions per day). After you turn off, others can use it.",
-    vi: "Hai bếp dùng chung. Chụp một ảnh live thấy cả bếp nấu và nhà bếp trước khi bật. Mỗi lượt 30 phút. Có thể đặt chỗ trước tối đa 3 ngày (tối đa 1 giờ / 2 lượt mỗi ngày). Sau khi tắt, người khác có thể dùng."
+    en: "Two shared kitchen cookers. Inspect the cooker before turning it on. It turns off automatically after 1 hour. To use it again, inspect and turn it on again.",
+    vi: "Hai bếp dùng chung. Kiểm tra bếp trước khi bật. Bếp tự tắt sau 1 giờ. Muốn dùng tiếp, hãy kiểm tra và bật lại."
   },
   cookerPolicyNoticeKicker: { en: "Notice for all residents", vi: "Thông báo tới tất cả cư dân" },
   cookerPolicyNoticeTitle: {
-    en: "New kitchen cooker rules",
-    vi: "Quy định mới khi dùng bếp"
+    en: "Kitchen cooker rules",
+    vi: "Quy định khi dùng bếp"
   },
   cookerPolicyNoticeIntro: {
-    en: "We are implementing a new way to use the shared cooker so the kitchen stays safe and hygienic.",
-    vi: "Chúng tôi đang áp dụng cách dùng bếp chung mới để đảm bảo an toàn và vệ sinh nhà bếp."
+    en: "Use the shared cooker from the CozoroHome app so we can keep a usage history and keep the kitchen safe.",
+    vi: "Hãy dùng bếp chung từ ứng dụng CozoroHome để lưu lịch sử sử dụng và giữ nhà bếp an toàn."
   },
   cookerPolicyRule1: {
-    en: "Reserve the cooker and turn it on/off only in the CozoroHome app (Controller → Cooker).",
-    vi: "Chỉ đặt chỗ và bật/tắt bếp trong ứng dụng CozoroHome (Điều khiển → Bếp)."
+    en: "Turn the cooker on only in the CozoroHome app (Controller → Cooker) after a pre-use inspection.",
+    vi: "Chỉ bật bếp trong ứng dụng CozoroHome (Điều khiển → Bếp) sau khi kiểm tra trước khi dùng."
   },
   cookerPolicyRule2: {
-    en: "Take photos of the cooker and kitchen before you turn the cooker on.",
-    vi: "Chụp ảnh bếp và nhà bếp trước khi bật bếp."
+    en: "The cooker turns off automatically after 1 hour. Inspect and turn it on again if you still need it.",
+    vi: "Bếp tự tắt sau 1 giờ. Nếu còn cần dùng, hãy kiểm tra và bật lại."
   },
   cookerPolicyRule3: {
-    en: "After cooking, clean the kitchen, take an after-use photo, and turn the cooker off in the app.",
-    vi: "Sau khi nấu, dọn nhà bếp, chụp ảnh sau khi dùng, rồi tắt bếp trên ứng dụng."
+    en: "If you find the cooker dirty or damaged, report it before using.",
+    vi: "Nếu thấy bếp bẩn hoặc hư hỏng, hãy báo ngay trước khi dùng."
   },
   cookerPolicyNoticeFine: {
-    en: "Failure to turn off the cooker or to clean the kitchen after use may lead to a fine for a cleaning and safety violation.",
-    vi: "Không tắt bếp hoặc không dọn nhà bếp sau khi dùng có thể bị phạt vì vi phạm vệ sinh và an toàn."
+    en: "Please clean the kitchen after cooking and leave the cooker ready for the next resident.",
+    vi: "Hãy dọn nhà bếp sau khi nấu và để bếp sẵn sàng cho người dùng tiếp theo."
   },
   cookerPolicyOpenCooker: { en: "Open cooker", vi: "Mở điều khiển bếp" },
-  cookerFineWarning: {
-    en: "If you leave it on past {minutes} minutes, the first 2 times are a safety reminder with no fine. After that a {amount} VND ticket can be issued.",
-    vi: "Nếu quên tắt quá {minutes} phút, 2 lần đầu chỉ nhắc nhở an toàn (không phạt). Từ lần sau có thể bị lập phiếu phạt {amount} VND."
-  },
-  cookerStrikeStatus: { en: "Leftover-on incidents on your account: {count}", vi: "Số lần quên tắt trên tài khoản: {count}" },
   cookerLastUse: { en: "Last use", vi: "Lượt gần nhất" },
   cookerLastUser: { en: "Last user", vi: "Người dùng gần nhất" },
-  cookerTurnOffBy: { en: "Turn off by", vi: "Phải tắt trước" },
-  cookerYouAreUsing: { en: "You have the cooker on. Clean up and turn it off when finished.", vi: "Bạn đang bật bếp. Hãy dọn sạch và tắt khi dùng xong." },
+  cookerLastInspection: { en: "Inspection", vi: "Kiểm tra" },
+  cookerAutoOffAt: { en: "Auto off at", vi: "Tự tắt lúc" },
+  cookerYouAreUsing: { en: "You have the cooker on. It will turn off automatically after 1 hour.", vi: "Bạn đang bật bếp. Bếp sẽ tự tắt sau 1 giờ." },
   cookerInUseBy: { en: "{name} currently has the cooker on.", vi: "{name} đang bật bếp." },
-  cookerSafetyTakeover: { en: "Safety takeover", vi: "Tiếp nhận vì an toàn" },
-  cookerTakeoverConfirm: {
-    en: "I confirm nobody is using this cooker. The previous user who did not turn it off will get an automatic safety reminder (first 2 times) or a fine after that.",
-    vi: "Tôi xác nhận không có ai đang dùng bếp này. Người trước quên tắt sẽ bị nhắc tự động (2 lần đầu) hoặc phạt từ lần sau."
+  cookerPreUseInspection: { en: "Pre-use inspection *", vi: "Kiểm tra trước khi dùng *" },
+  cookerInspectionHint: {
+    en: "Please mark the cooker condition before you turn it on. Report dirt or damage immediately.",
+    vi: "Hãy ghi nhận tình trạng bếp trước khi bật. Nếu bẩn hoặc hư hỏng, báo ngay cho Cozoro."
   },
-  cookerReservedBy: { en: "Reserved now by {name}.", vi: "{name} đang giữ chỗ bếp này." },
-  cookerYourSlot: { en: "This is your reserved slot. You can turn it on now.", vi: "Đây là lượt bạn đã đặt. Bạn có thể bật bếp." },
-  cookerWalkUpBlocked: { en: "This cooker is reserved. Wait for the slot to end, or book your own 30-minute session.", vi: "Bếp này đã được đặt. Đợi hết giờ hoặc đặt lượt 30 phút của bạn." },
-  cookerReserveTitle: { en: "Reserve a 30-minute session", vi: "Đặt lượt 30 phút" },
-  cookerReserveHint: {
-    en: "Book up to {days} days ahead. Max {sessions} sessions ({minutes} minutes each, 1 hour/day). Others cannot turn it on during your slot. Checking out (turn off) frees it immediately.",
-    vi: "Đặt trước tối đa {days} ngày. Tối đa {sessions} lượt ({minutes} phút mỗi lượt, 1 giờ/ngày). Người khác không bật được trong giờ của bạn. Tắt bếp là trả chỗ ngay."
-  },
-  cookerReserveStart: { en: "Start time", vi: "Giờ bắt đầu" },
-  cookerReserveButton: { en: "RESERVE COOKER", vi: "ĐẶT BẾP" },
-  cookerReserving: { en: "Reserving...", vi: "Đang đặt..." },
-  cookerReserved: { en: "Cooker reserved. Only you can turn it on during that time.", vi: "Đã đặt bếp. Chỉ bạn được bật trong khung giờ đó." },
-  cookerReserveFailed: { en: "Unable to reserve the cooker.", vi: "Không đặt được bếp." },
-  cookerMyReservations: { en: "Your cooker reservations", vi: "Lượt bếp bạn đã đặt" },
-  cookerCancelReservation: { en: "Cancel", vi: "Hủy" },
-  cookerReservationCancelled: { en: "Reservation cancelled.", vi: "Đã hủy lượt đặt bếp." },
-  cookerCancelFailed: { en: "Unable to cancel that reservation.", vi: "Không hủy được lượt đặt." },
-  cookerCheckoutHint: { en: "Turn off with a cleaned photo to check out so others can use it.", vi: "Tắt kèm ảnh đã dọn để trả chỗ, người khác mới dùng được." },
-  cookerPreUsePhotos: { en: "Pre-use inspection photo *", vi: "Ảnh kiểm tra trước khi dùng *" },
-  cookerPostUsePhoto: { en: "Cleaned after use *", vi: "Ảnh đã dọn sau khi dùng *" },
-  cookerPhotoCooker: { en: "Photo of the cooker and kitchen", vi: "Ảnh bếp nấu và nhà bếp" },
-  cookerPhotoKitchen: { en: "Photo of the kitchen", vi: "Ảnh nhà bếp" },
-  cookerPhotoCleaned: { en: "Photo showing the cooker and kitchen cleaned", vi: "Ảnh bếp nấu và nhà bếp đã dọn sạch" },
-  cookerCameraOnlyHint: { en: "Use the live camera now. One photo must show both the cooker and the kitchen. Saved gallery photos cannot be uploaded.", vi: "Phải chụp bằng camera lúc này. Một ảnh phải thấy cả bếp nấu và nhà bếp. Không được tải ảnh có sẵn." },
-  cookerTakePhoto: { en: "OPEN CAMERA", vi: "MỞ CAMERA" },
-  cookerRetakePhoto: { en: "RETAKE PHOTO", vi: "CHỤP LẠI" },
-  cookerCapturePhoto: { en: "TAKE PHOTO", vi: "CHỤP ẢNH" },
-  cookerCameraClose: { en: "Cancel", vi: "Hủy" },
-  cookerCameraRequired: { en: "This device has no camera API. Use a phone browser to take a live photo.", vi: "Thiết bị này không có camera. Hãy dùng trình duyệt điện thoại để chụp ảnh." },
-  cookerCameraDenied: { en: "Camera access is required. Allow the camera, then take a live photo of the cooker/kitchen.", vi: "Cần quyền camera. Hãy cho phép camera rồi chụp ảnh bếp/nhà bếp." },
   cookerTurnOn: { en: "TURN COOKER ON", vi: "BẬT BẾP" },
   cookerReportIssue: { en: "REPORT", vi: "BÁO CÁO" },
   cookerTurnOff: { en: "TURN COOKER OFF", vi: "TẮT BẾP" },
   cookerTurningOn: { en: "Turning on...", vi: "Đang bật..." },
   cookerTurningOff: { en: "Turning off...", vi: "Đang tắt..." },
-  cookerTurnedOn: { en: "Cooker turned on. Remember to clean and turn it off after use.", vi: "Đã bật bếp. Nhớ dọn sạch và tắt sau khi dùng." },
-  cookerTurnedOff: { en: "Cooker turned off. Thank you for cleaning up.", vi: "Đã tắt bếp. Cảm ơn bạn đã dọn sạch." },
+  cookerTurnedOn: { en: "Cooker turned on. It will turn off automatically after 1 hour.", vi: "Đã bật bếp. Bếp sẽ tự tắt sau 1 giờ." },
+  cookerTurnedOff: { en: "Cooker turned off.", vi: "Đã tắt bếp." },
   cookerTurnOnFailed: { en: "Unable to turn the cooker on.", vi: "Không bật được bếp." },
   cookerTurnOffFailed: { en: "Unable to turn the cooker off.", vi: "Không tắt được bếp." },
-  cookerInspectPhotos: { en: "Inspect photos", vi: "Xem ảnh kiểm tra" },
-  cookerInspectionTitle: { en: "Kitchen cooker photo inspection", vi: "Kiểm tra ảnh bếp" },
+  cookerUsageHistory: { en: "Usage history", vi: "Lịch sử sử dụng" },
+  cookerInspectionTitle: { en: "Kitchen cooker usage history", vi: "Lịch sử sử dụng bếp" },
   cookerInspectionDesc: {
-    en: "Review cooker and kitchen photos, then send a safety reminder (no fine) or create a leftover-on fine ticket. Photos can be attached to the fine.",
-    vi: "Xem ảnh bếp và nhà bếp, rồi gửi nhắc nhở an toàn (không phạt) hoặc lập phiếu phạt quên tắt. Ảnh có thể đính kèm phiếu phạt."
+    en: "Each turn-on is saved with the resident’s pre-use inspection. The cooker turns off automatically after 1 hour.",
+    vi: "Mỗi lần bật được lưu kèm kiểm tra trước khi dùng. Bếp tự tắt sau 1 giờ."
   },
   cookerInspectionEmpty: { en: "No cooker sessions found for this cooker yet.", vi: "Chưa có lượt dùng bếp này." },
-  cookerInspectionLoadFailed: { en: "Unable to load cooker inspection photos.", vi: "Không tải được ảnh kiểm tra bếp." },
+  cookerInspectionLoadFailed: { en: "Unable to load cooker usage history.", vi: "Không tải được lịch sử sử dụng bếp." },
   cookerInspectionInUse: { en: "Currently on", vi: "Đang bật" },
   cookerInspectionEnded: { en: "Turned off", vi: "Đã tắt" },
-  cookerInspectionOverdue: { en: "Overdue", vi: "Quá hạn" },
-  cookerAlreadyFined: { en: "Fine already issued", vi: "Đã phạt" },
-  cookerAlreadyReminded: { en: "Already reminded", vi: "Đã nhắc" },
-  cookerNoPhotosYet: { en: "No inspection photos on this session.", vi: "Lượt này chưa có ảnh kiểm tra." },
-  cookerPhotoKindCooker: { en: "Cooker and kitchen", vi: "Bếp và nhà bếp" },
-  cookerPhotoKindKitchen: { en: "Kitchen", vi: "Nhà bếp" },
-  cookerPhotoKindCleaned: { en: "Cleaned after use", vi: "Đã dọn" },
-  cookerSendReminder: { en: "Send reminder", vi: "Gửi nhắc nhở" },
-  cookerCreateFine: { en: "Create fine ticket", vi: "Lập phiếu phạt" },
-  cookerSendingTicket: { en: "Sending...", vi: "Đang gửi..." },
-  cookerConfirmReminder: {
-    en: "Send a safety leftover-on reminder to {name}? No fine will be created.",
-    vi: "Gửi nhắc nhở an toàn quên tắt bếp cho {name}? Sẽ không lập phiếu phạt."
-  },
-  cookerConfirmFine: {
-    en: "Create a {amount} VND leftover-on fine for {name} from these kitchen photos?",
-    vi: "Lập phiếu phạt {amount} VND vì quên tắt bếp cho {name} từ các ảnh này?"
-  },
-  cookerReminderSent: { en: "Safety reminder sent.", vi: "Đã gửi nhắc nhở an toàn." },
-  cookerFineCreated: { en: "Fine ticket created from the inspection photos.", vi: "Đã lập phiếu phạt từ ảnh kiểm tra." },
-  cookerTicketFailed: { en: "Unable to send that cooker ticket.", vi: "Không gửi được phiếu bếp." },
   refreshHistory: { en: "Refresh History", vi: "Cập nhật lịch sử" },
   noControllerHistory: { en: "No controller actions have been logged yet.", vi: "Chưa có nhật ký điều khiển nào được ghi lại." },
   confirmImportBooking: { en: "Confirm & Import Booking", vi: "Xác nhận & Nhập lượt đặt" },

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { getAccountStatus, type AccountLockOverride } from "../lib/account-lock-status";
 import { InlineHelp } from "./inline-help";
@@ -76,12 +76,6 @@ type AirFryerContext = {
 
 type MicrowaveContext = AirFryerContext;
 
-type CookerPhotoRecord = {
-  fileName: string;
-  kind: "cooker" | "kitchen" | "cleaned";
-  uploadedAt: string;
-};
-
 type CookerSession = {
   id: string;
   deviceId: string;
@@ -93,21 +87,7 @@ type CookerSession = {
   lastRequestedAction: "ON" | "OFF";
   lastRequestedAt: string;
   endedAt: string | null;
-  leftoverFineIssuedAt: string | null;
-  leftoverFineAmount: number | null;
-  onPhotos?: CookerPhotoRecord[];
-  offPhotos?: CookerPhotoRecord[];
-};
-
-type CookerReservation = {
-  id: string;
-  deviceId: string;
-  cookerNumber: 1 | 2;
-  startAt: string;
-  endAt: string;
-  status: "booked" | "checked_in" | "checked_out" | "expired" | "cancelled";
-  name: string;
-  email: string;
+  inspection?: string;
 };
 
 type CookerUnitStatus = {
@@ -120,15 +100,9 @@ type CookerUnitStatus = {
   inUse: boolean;
   availableNow: boolean;
   isMine: boolean;
-  overdue: boolean;
-  turnOffDeadlineAt: string | null;
+  autoOffAt: string | null;
   currentUse: CookerSession | null;
   lastUse: CookerSession | null;
-  activeReservation: CookerReservation | null;
-  reservedByMe: boolean;
-  reservedByOther: boolean;
-  canWalkUp: boolean;
-  canTakeOver: boolean;
 };
 
 type CookerContext = {
@@ -137,19 +111,7 @@ type CookerContext = {
   branchId: "D2" | "D7";
   eligible: boolean;
   maxOnMinutes: number;
-  leftoverFineVnd: number;
-  leftoverStrikes: number;
-  sessionMinutes: number;
-  reserveMaxAdvanceDays: number;
-  reserveMaxSessionsPerDay: number;
-  myReservations: CookerReservation[];
   cookers: CookerUnitStatus[];
-};
-
-type CookerPhotoPayload = {
-  fileName: string;
-  mimeType: string;
-  dataBase64: string;
 };
 
 type LaundryBooking = {
@@ -192,48 +154,6 @@ async function fetchJson<T>(url: string, init?: RequestInit) {
   }
 }
 
-async function fetchJsonLong<T>(url: string, init?: RequestInit, timeoutMs = 45000) {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, { ...init, signal: controller.signal });
-    const data = (await response.json()) as T;
-    if (!response.ok) {
-      const errorMessage =
-        typeof data === "object" && data !== null && "error" in data && typeof data.error === "string"
-          ? data.error
-          : "Request failed";
-      throw new Error(errorMessage);
-    }
-    return data;
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("API request timed out. Check that the API is running.");
-    }
-    throw error;
-  } finally {
-    window.clearTimeout(timeout);
-  }
-}
-
-async function fileToCookerPhoto(file: File): Promise<CookerPhotoPayload> {
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(new Error("Unable to read photo"));
-    reader.readAsDataURL(file);
-  });
-  const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
-  if (!match) {
-    throw new Error("Invalid photo");
-  }
-  return {
-    fileName: file.name || "photo.jpg",
-    mimeType: match[1] || file.type || "image/jpeg",
-    dataBase64: match[2]!
-  };
-}
-
 function formatTimestamp(value: string | null, language: "en" | "vi") {
   if (!value) {
     return language === "vi" ? "Chưa có" : "Not yet";
@@ -246,24 +166,6 @@ function formatTimestamp(value: string | null, language: "en" | "vi") {
     hour: "numeric",
     minute: "2-digit"
   }).format(new Date(value));
-}
-
-function pad2(value: number) {
-  return String(value).padStart(2, "0");
-}
-
-function toDatetimeLocalValue(date: Date) {
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
-}
-
-function roundUpToNextFiveMinutes(date: Date) {
-  const next = new Date(date);
-  next.setSeconds(0, 0);
-  const remainder = next.getMinutes() % 5;
-  if (remainder !== 0) {
-    next.setMinutes(next.getMinutes() + (5 - remainder));
-  }
-  return next;
 }
 
 export function ControllerClient({
@@ -289,12 +191,8 @@ export function ControllerClient({
   const [loading, setLoading] = useState(false);
   const [submittingAction, setSubmittingAction] = useState<"ON" | "OFF" | null>(null);
   const [startingAirFryer, setStartingAirFryer] = useState(false);
-  const [cookerSubmitting, setCookerSubmitting] = useState<{ id: string; action: "ON" | "OFF" | "RESERVE" | "CANCEL" } | null>(null);
-  const [cookerPhotos, setCookerPhotos] = useState<
-    Record<string, { on: File | null; cleaned: File | null }>
-  >({});
-  const [cookerTakeoverConfirm, setCookerTakeoverConfirm] = useState<Record<string, boolean>>({});
-  const [cookerReserveAt, setCookerReserveAt] = useState<Record<string, string>>({});
+  const [cookerSubmitting, setCookerSubmitting] = useState<{ id: string; action: "ON" | "OFF" } | null>(null);
+  const [cookerInspections, setCookerInspections] = useState<Record<string, string>>({});
   const [cookerReportFor, setCookerReportFor] = useState<{ location: string; device: string } | null>(null);
   const [activeLaundryBooking, setActiveLaundryBooking] = useState<LaundryBooking | null>(null);
   const [nextLaundryBooking, setNextLaundryBooking] = useState<LaundryBooking | null>(null);
@@ -569,49 +467,28 @@ export function ControllerClient({
     }
   }
 
-  function cookerPhotoState(machineId: string) {
-    return cookerPhotos[machineId] ?? { on: null, cleaned: null };
-  }
-
-  function setCookerPhoto(machineId: string, key: "on" | "cleaned", file: File | null) {
-    setCookerPhotos((current) => ({
-      ...current,
-      [machineId]: {
-        on: current[machineId]?.on ?? null,
-        cleaned: current[machineId]?.cleaned ?? null,
-        [key]: file
-      }
-    }));
-  }
-
   async function turnCookerOn(machineId: string) {
-    const photos = cookerPhotoState(machineId);
-    if (!activeEmail || !photos.on) {
+    const inspection = cookerInspections[machineId];
+    if (!activeEmail || !inspection) {
       return;
     }
     setCookerSubmitting({ id: machineId, action: "ON" });
     setMessage("");
     try {
-      const cookerPhoto = await fileToCookerPhoto(photos.on);
-      await fetchJsonLong<{ ok: true }>(`${API_BASE_URL}/controller/cooker/on`, {
+      await fetchJson<{ ok: true }>(`${API_BASE_URL}/controller/cooker/on`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: activeEmail,
           machineId,
-          cookerPhoto,
-          confirmUnused: Boolean(cookerTakeoverConfirm[machineId])
+          inspection
         })
       });
       const updated = await fetchJson<CookerContext>(
         `${API_BASE_URL}/controller/cooker?email=${encodeURIComponent(activeEmail)}`
       );
       setCookerContext(updated);
-      setCookerPhotos((current) => ({
-        ...current,
-        [machineId]: { on: null, cleaned: current[machineId]?.cleaned ?? null }
-      }));
-      setCookerTakeoverConfirm((current) => ({ ...current, [machineId]: false }));
+      setCookerInspections((current) => ({ ...current, [machineId]: "" }));
       setMessage(t("cookerTurnedOn"));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : t("cookerTurnOnFailed"));
@@ -621,76 +498,24 @@ export function ControllerClient({
   }
 
   async function turnCookerOff(machineId: string) {
-    const photos = cookerPhotoState(machineId);
-    if (!activeEmail || !photos.cleaned) {
+    if (!activeEmail) {
       return;
     }
     setCookerSubmitting({ id: machineId, action: "OFF" });
     setMessage("");
     try {
-      const cleanedPhoto = await fileToCookerPhoto(photos.cleaned);
-      await fetchJsonLong<{ ok: true }>(`${API_BASE_URL}/controller/cooker/off`, {
+      await fetchJson<{ ok: true }>(`${API_BASE_URL}/controller/cooker/off`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: activeEmail, machineId, cleanedPhoto })
+        body: JSON.stringify({ email: activeEmail, machineId })
       });
       const updated = await fetchJson<CookerContext>(
         `${API_BASE_URL}/controller/cooker?email=${encodeURIComponent(activeEmail)}`
       );
       setCookerContext(updated);
-      setCookerPhoto(machineId, "cleaned", null);
       setMessage(t("cookerTurnedOff"));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : t("cookerTurnOffFailed"));
-    } finally {
-      setCookerSubmitting(null);
-    }
-  }
-
-  async function reserveCooker(machineId: string) {
-    const startAt = cookerReserveAt[machineId];
-    if (!activeEmail || !startAt) {
-      return;
-    }
-    setCookerSubmitting({ id: machineId, action: "RESERVE" });
-    setMessage("");
-    try {
-      await fetchJson<{ ok: true }>(`${API_BASE_URL}/controller/cooker/reserve`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: activeEmail, machineId, startAt: new Date(startAt).toISOString() })
-      });
-      const updated = await fetchJson<CookerContext>(
-        `${API_BASE_URL}/controller/cooker?email=${encodeURIComponent(activeEmail)}`
-      );
-      setCookerContext(updated);
-      setMessage(t("cookerReserved"));
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : t("cookerReserveFailed"));
-    } finally {
-      setCookerSubmitting(null);
-    }
-  }
-
-  async function cancelCookerReservation(reservationId: string) {
-    if (!activeEmail) {
-      return;
-    }
-    setCookerSubmitting({ id: reservationId, action: "CANCEL" });
-    setMessage("");
-    try {
-      await fetchJson<{ ok: true }>(`${API_BASE_URL}/controller/cooker/reservations/cancel`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: activeEmail, reservationId })
-      });
-      const updated = await fetchJson<CookerContext>(
-        `${API_BASE_URL}/controller/cooker?email=${encodeURIComponent(activeEmail)}`
-      );
-      setCookerContext(updated);
-      setMessage(t("cookerReservationCancelled"));
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : t("cookerCancelFailed"));
     } finally {
       setCookerSubmitting(null);
     }
@@ -1149,67 +974,13 @@ export function ControllerClient({
                 <li>{t("cookerPolicyRule2")}</li>
                 <li>{t("cookerPolicyRule3")}</li>
               </ol>
-              <p className="mt-2 text-xs font-medium text-rose-800">{t("cookerPolicyNoticeFine")}</p>
-              <p className="mt-2 text-xs font-medium text-rose-800">
-                {t("cookerFineWarning", undefined, {
-                  minutes: cookerContext.sessionMinutes || cookerContext.maxOnMinutes,
-                  amount: cookerContext.leftoverFineVnd.toLocaleString(language === "vi" ? "vi-VN" : "en-US")
-                })}
-              </p>
-              <p className="mt-1 text-xs text-slate-600">
-                {t("cookerStrikeStatus", undefined, { count: cookerContext.leftoverStrikes ?? 0 })}
-              </p>
-
-              { (cookerContext.myReservations ?? []).length > 0 ? (
-                <div className="mt-4 rounded-xl border border-rose-100 bg-rose-50/50 p-3">
-                  <p className="text-xs font-bold uppercase tracking-tight text-rose-900">{t("cookerMyReservations")}</p>
-                  <div className="mt-2 space-y-2">
-                    {(cookerContext.myReservations ?? []).map((reservation) => {
-                      const cancelling = cookerSubmitting?.id === reservation.id && cookerSubmitting.action === "CANCEL";
-                      return (
-                        <div key={reservation.id} className="flex items-start justify-between gap-2 rounded-lg bg-white px-3 py-2 text-sm">
-                          <div>
-                            <p className="font-semibold text-slate-900">
-                              {t("cookerUnitLabel", undefined, { n: reservation.cookerNumber })}
-                            </p>
-                            <p className="text-xs text-slate-600">
-                              {formatTimestamp(reservation.startAt, language)} – {formatTimestamp(reservation.endAt, language)}
-                            </p>
-                          </div>
-                          {reservation.status === "booked" ? (
-                            <button
-                              type="button"
-                              onClick={() => void cancelCookerReservation(reservation.id)}
-                              disabled={isBlocked || cancelling}
-                              className="rounded-lg border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-50"
-                            >
-                              {cancelling ? "..." : t("cookerCancelReservation")}
-                            </button>
-                          ) : (
-                            <span className="text-[11px] font-medium text-rose-800">{reservation.status}</span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
 
               <div className="mt-5 grid gap-4 lg:grid-cols-2">
                 {cookerContext.cookers.map((unit) => {
-                  const photos = cookerPhotoState(unit.cooker.id);
                   const submittingOn = cookerSubmitting?.id === unit.cooker.id && cookerSubmitting.action === "ON";
                   const submittingOff = cookerSubmitting?.id === unit.cooker.id && cookerSubmitting.action === "OFF";
-                  const submittingReserve = cookerSubmitting?.id === unit.cooker.id && cookerSubmitting.action === "RESERVE";
                   const busy = cookerSubmitting?.id === unit.cooker.id;
-                  const canStart =
-                    (!unit.inUse && (unit.canWalkUp || unit.reservedByMe)) ||
-                    (unit.canTakeOver && (!unit.reservedByOther || unit.reservedByMe));
-                  const takeoverReady = !unit.canTakeOver || Boolean(cookerTakeoverConfirm[unit.cooker.id]);
-                  const reserveMin = toDatetimeLocalValue(roundUpToNextFiveMinutes(new Date()));
-                  const reserveMax = toDatetimeLocalValue(
-                    new Date(Date.now() + (cookerContext.reserveMaxAdvanceDays || 3) * 24 * 60 * 60 * 1000)
-                  );
+                  const selectedInspection = cookerInspections[unit.cooker.id] ?? "";
                   return (
                     <div key={unit.cooker.id} className="rounded-xl border border-rose-100 bg-rose-50/30 p-4">
                       <div className="flex items-start justify-between gap-2">
@@ -1237,31 +1008,22 @@ export function ControllerClient({
                           <span className="font-medium">{t("cookerLastUser")}:</span>{" "}
                           {unit.lastUse?.startedByName || unit.lastUse?.startedByEmail || "—"}
                         </div>
-                        {unit.turnOffDeadlineAt ? (
+                        {unit.lastUse?.inspection ? (
                           <div>
-                            <span className="font-medium">{t("cookerTurnOffBy")}:</span>{" "}
-                            {formatTimestamp(unit.turnOffDeadlineAt, language)}
+                            <span className="font-medium">{t("cookerLastInspection")}:</span>{" "}
+                            {unit.lastUse.inspection}
+                          </div>
+                        ) : null}
+                        {unit.autoOffAt ? (
+                          <div>
+                            <span className="font-medium">{t("cookerAutoOffAt")}:</span>{" "}
+                            {formatTimestamp(unit.autoOffAt, language)}
                           </div>
                         ) : null}
                       </div>
 
-                      {unit.activeReservation ? (
-                        <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-950">
-                          <p className="font-semibold">
-                            {unit.reservedByMe
-                              ? t("cookerYourSlot")
-                              : t("cookerReservedBy", undefined, {
-                                  name: unit.activeReservation.name || unit.activeReservation.email
-                                })}
-                          </p>
-                          <p className="mt-1 text-xs">
-                            {formatTimestamp(unit.activeReservation.startAt, language)} – {formatTimestamp(unit.activeReservation.endAt, language)}
-                          </p>
-                        </div>
-                      ) : null}
-
                       {unit.currentUse ? (
-                        <div className={`mt-4 rounded-xl border p-3 text-sm ${unit.overdue ? "border-rose-300 bg-rose-50 text-rose-900" : "border-amber-200 bg-amber-50 text-slate-900"}`}>
+                        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-slate-900">
                           <p className="font-semibold">
                             {unit.isMine
                               ? t("cookerYouAreUsing")
@@ -1272,48 +1034,47 @@ export function ControllerClient({
                           <p className="mt-1">
                             {language === "vi" ? "Bắt đầu" : "Started"}: {formatTimestamp(unit.currentUse.startedAt, language)}
                           </p>
-                          {unit.isMine ? <p className="mt-1 text-xs">{t("cookerCheckoutHint")}</p> : null}
+                          {unit.currentUse.inspection ? (
+                            <p className="mt-1 text-xs">
+                              {t("cookerLastInspection")}: {unit.currentUse.inspection}
+                            </p>
+                          ) : null}
                         </div>
                       ) : null}
 
-                      {unit.canTakeOver && (!unit.reservedByOther || unit.reservedByMe) ? (
-                        <label className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-                          <input
-                            type="checkbox"
-                            className="mt-1"
-                            checked={Boolean(cookerTakeoverConfirm[unit.cooker.id])}
-                            onChange={(event) =>
-                              setCookerTakeoverConfirm((current) => ({
-                                ...current,
-                                [unit.cooker.id]: event.target.checked
-                              }))
-                            }
-                          />
-                          <span>
-                            <span className="font-semibold">{t("cookerSafetyTakeover")}</span>
-                            <span className="mt-1 block text-xs">{t("cookerTakeoverConfirm")}</span>
-                          </span>
-                        </label>
-                      ) : null}
-
-                      {unit.reservedByOther && !unit.reservedByMe && !unit.canTakeOver ? (
-                        <p className="mt-3 text-xs text-slate-600">{t("cookerWalkUpBlocked")}</p>
-                      ) : null}
-
-                      {canStart ? (
+                      {!unit.inUse ? (
                         <div className="mt-4 space-y-3">
-                          <p className="text-xs font-bold uppercase tracking-tight text-rose-900">{t("cookerPreUsePhotos")}</p>
-                          <CookerPhotoPicker
-                            label={t("cookerPhotoCooker")}
-                            file={photos.on}
-                            onChange={(file) => setCookerPhoto(unit.cooker.id, "on", file)}
-                            language={language}
-                          />
+                          <p className="text-xs font-bold uppercase tracking-tight text-rose-900">{t("cookerPreUseInspection")}</p>
+                          <div className="grid grid-cols-1 gap-2 text-sm">
+                            {[
+                              { vi: "Sạch / Clean", value: "Clean" },
+                              { vi: "Dơ / Dirty", value: "Dirty" },
+                              { vi: "Hư hỏng / Damage", value: "Damage" }
+                            ].map((opt) => (
+                              <button
+                                key={opt.value}
+                                type="button"
+                                onClick={() =>
+                                  setCookerInspections((current) => ({ ...current, [unit.cooker.id]: opt.vi }))
+                                }
+                                className={`flex items-center justify-between rounded-lg border p-3 text-left transition-all ${
+                                  selectedInspection === opt.vi
+                                    ? "border-rose-500 bg-white ring-2 ring-rose-200"
+                                    : "border-rose-100 bg-white/50 hover:bg-white"
+                                }`}
+                              >
+                                <span className={selectedInspection === opt.vi ? "font-bold text-rose-900" : "text-slate-600"}>
+                                  {opt.vi}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                          <p className="text-[11px] leading-relaxed text-rose-800 font-medium">{t("cookerInspectionHint")}</p>
                           <div className="flex gap-2">
                             <button
                               type="button"
                               onClick={() => void turnCookerOn(unit.cooker.id)}
-                              disabled={isBlocked || busy || !photos.on || !takeoverReady}
+                              disabled={isBlocked || busy || !selectedInspection}
                               className="min-w-0 flex-1 rounded-xl bg-rose-600 py-3 text-sm font-bold text-white shadow-lg shadow-rose-100 hover:bg-rose-700 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               {submittingOn ? t("cookerTurningOn") : t("cookerTurnOn")}
@@ -1334,57 +1095,14 @@ export function ControllerClient({
                           </div>
                         </div>
                       ) : unit.isMine ? (
-                        <div className="mt-4 space-y-3">
-                          <p className="text-xs font-bold uppercase tracking-tight text-slate-900">{t("cookerPostUsePhoto")}</p>
-                          <CookerPhotoPicker
-                            label={t("cookerPhotoCleaned")}
-                            file={photos.cleaned}
-                            onChange={(file) => setCookerPhoto(unit.cooker.id, "cleaned", file)}
-                            language={language}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => void turnCookerOff(unit.cooker.id)}
-                            disabled={isBlocked || busy || !photos.cleaned}
-                            className="w-full rounded-xl bg-slate-900 py-3 text-sm font-bold text-white hover:bg-slate-800 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            {submittingOff ? t("cookerTurningOff") : t("cookerTurnOff")}
-                          </button>
-                        </div>
-                      ) : null}
-
-                      {!unit.isMine ? (
-                        <div className="mt-4 space-y-2 rounded-xl border border-slate-200 bg-white p-3">
-                          <p className="text-xs font-bold uppercase tracking-tight text-slate-800">{t("cookerReserveTitle")}</p>
-                          <p className="text-xs text-slate-600">
-                            {t("cookerReserveHint", undefined, {
-                              minutes: cookerContext.sessionMinutes || 30,
-                              days: cookerContext.reserveMaxAdvanceDays || 3,
-                              sessions: cookerContext.reserveMaxSessionsPerDay || 2
-                            })}
-                          </p>
-                          <label className="block text-xs font-medium text-slate-700">
-                            {t("cookerReserveStart")}
-                            <input
-                              type="datetime-local"
-                              min={reserveMin}
-                              max={reserveMax}
-                              value={cookerReserveAt[unit.cooker.id] ?? reserveMin}
-                              onChange={(event) =>
-                                setCookerReserveAt((current) => ({ ...current, [unit.cooker.id]: event.target.value }))
-                              }
-                              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                            />
-                          </label>
-                          <button
-                            type="button"
-                            onClick={() => void reserveCooker(unit.cooker.id)}
-                            disabled={isBlocked || busy || !cookerReserveAt[unit.cooker.id]}
-                            className="w-full rounded-lg border border-rose-300 bg-rose-50 py-2 text-xs font-bold text-rose-900 disabled:opacity-50"
-                          >
-                            {submittingReserve ? t("cookerReserving") : t("cookerReserveButton")}
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void turnCookerOff(unit.cooker.id)}
+                          disabled={isBlocked || busy}
+                          className="mt-4 w-full rounded-xl bg-slate-900 py-3 text-sm font-bold text-white hover:bg-slate-800 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {submittingOff ? t("cookerTurningOff") : t("cookerTurnOff")}
+                        </button>
                       ) : null}
                     </div>
                   );
@@ -1483,161 +1201,6 @@ export function ControllerClient({
           onClose={() => setCookerReportFor(null)}
           onSuccess={() => setMessage(t("reportSuccess"))}
         />
-      ) : null}
-    </div>
-  );
-}
-
-function stopMediaStream(stream: MediaStream | null) {
-  stream?.getTracks().forEach((track) => track.stop());
-}
-
-function CookerPhotoPicker({
-  label,
-  file,
-  onChange
-}: {
-  label: string;
-  file: File | null;
-  onChange: (file: File | null) => void;
-  language: "en" | "vi";
-}) {
-  const { t } = usePortalLanguage();
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const [cameraOpen, setCameraOpen] = useState(false);
-  const [cameraError, setCameraError] = useState("");
-  const preview = file ? URL.createObjectURL(file) : null;
-
-  useEffect(() => {
-    if (!preview) {
-      return;
-    }
-    return () => URL.revokeObjectURL(preview);
-  }, [preview]);
-
-  useEffect(() => {
-    if (!cameraOpen) {
-      return;
-    }
-    const video = videoRef.current;
-    if (video && streamRef.current) {
-      video.srcObject = streamRef.current;
-      void video.play().catch(() => {
-        setCameraError(t("cookerCameraDenied"));
-      });
-    }
-    return () => {
-      stopMediaStream(streamRef.current);
-      streamRef.current = null;
-      if (video) {
-        video.srcObject = null;
-      }
-    };
-  }, [cameraOpen, t]);
-
-  async function openCamera() {
-    setCameraError("");
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setCameraError(t("cookerCameraRequired"));
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1280 },
-          height: { ideal: 960 }
-        }
-      });
-      streamRef.current = stream;
-      setCameraOpen(true);
-    } catch {
-      setCameraError(t("cookerCameraDenied"));
-    }
-  }
-
-  function closeCamera() {
-    setCameraOpen(false);
-  }
-
-  function capturePhoto() {
-    const video = videoRef.current;
-    if (!video || video.videoWidth < 8 || video.videoHeight < 8) {
-      setCameraError(t("cookerCameraDenied"));
-      return;
-    }
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const context = canvas.getContext("2d");
-    if (!context) {
-      setCameraError(t("cookerCameraDenied"));
-      return;
-    }
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) {
-          setCameraError(t("cookerCameraDenied"));
-          return;
-        }
-        onChange(new File([blob], `cooker-live-${Date.now()}.jpg`, { type: "image/jpeg" }));
-        setCameraOpen(false);
-      },
-      "image/jpeg",
-      0.85
-    );
-  }
-
-  return (
-    <div className="rounded-xl border border-dashed border-rose-300 bg-white p-3">
-      <span className="text-sm font-semibold text-slate-900">{label}</span>
-      <p className="mt-1 text-xs text-slate-500">{t("cookerCameraOnlyHint")}</p>
-      {preview ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={preview} alt="" className="mt-3 h-28 w-full rounded-lg object-cover" />
-      ) : null}
-      {cameraError ? <p className="mt-2 text-xs font-medium text-rose-700">{cameraError}</p> : null}
-      <button
-        type="button"
-        onClick={() => void openCamera()}
-        className="mt-3 w-full rounded-lg bg-rose-600 py-2 text-xs font-bold text-white hover:bg-rose-700"
-      >
-        {file ? t("cookerRetakePhoto") : t("cookerTakePhoto")}
-      </button>
-
-      {cameraOpen ? (
-        <div className="fixed inset-0 z-[220] flex items-end justify-center bg-black/70 p-0 sm:items-center sm:p-4">
-          <div className="flex w-full max-w-md flex-col rounded-t-3xl bg-slate-950 p-4 text-white sm:rounded-3xl">
-            <p className="text-sm font-semibold">{label}</p>
-            <p className="mt-1 text-xs text-slate-300">{t("cookerCameraOnlyHint")}</p>
-            <video
-              ref={videoRef}
-              autoPlay
-              muted
-              playsInline
-              className="mt-3 h-72 w-full rounded-2xl bg-black object-cover"
-            />
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={closeCamera}
-                className="rounded-xl border border-slate-500 py-3 text-sm font-semibold text-slate-100"
-              >
-                {t("cookerCameraClose")}
-              </button>
-              <button
-                type="button"
-                onClick={capturePhoto}
-                className="rounded-xl bg-rose-600 py-3 text-sm font-bold text-white"
-              >
-                {t("cookerCapturePhoto")}
-              </button>
-            </div>
-          </div>
-        </div>
       ) : null}
     </div>
   );
