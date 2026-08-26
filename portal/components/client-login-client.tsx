@@ -277,6 +277,12 @@ export function ClientLoginClient() {
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [passwordChangeRequired, setPasswordChangeRequired] = useState(false);
+  const [forgotPasswordMode, setForgotPasswordMode] = useState(false);
+  const [resetCodeSent, setResetCodeSent] = useState(false);
+  const [resetCode, setResetCode] = useState("");
+  const [resetNewPassword, setResetNewPassword] = useState("");
+  const [resetConfirmPassword, setResetConfirmPassword] = useState("");
+  const [showResetPassword, setShowResetPassword] = useState(false);
 
   const normalizedEmail = email.trim().toLowerCase();
   const isAdminSession = isLoggedIn && !!sessionRole && sessionRole !== "user";
@@ -621,6 +627,97 @@ export function ClientLoginClient() {
           ? error.message
           : t("apiRequestFailed", "API request failed. Make sure the API is running and Google Sheets has been connected.")
       );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function closeForgotPassword() {
+    setForgotPasswordMode(false);
+    setResetCodeSent(false);
+    setResetCode("");
+    setResetNewPassword("");
+    setResetConfirmPassword("");
+    setShowResetPassword(false);
+    setMessage("");
+  }
+
+  async function handleRequestPasswordReset(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!normalizedEmail) {
+      setMessage(t("resetEmailRequired", "Enter the email address for your portal account."));
+      return;
+    }
+
+    setLoading(true);
+    setMessage("");
+    try {
+      const response = await fetchWithTimeout(`${API_BASE_URL}/auth/password-reset/request-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: normalizedEmail })
+      });
+      const data = (await response.json()) as { ok?: boolean; error?: string };
+      if (!response.ok) {
+        setMessage(data.error ?? t("unableToSendResetCode", "Unable to send a reset code."));
+        return;
+      }
+
+      setResetCodeSent(true);
+      setMessage(t("resetCodeSentGeneric", "If this email has portal access, a 6-digit reset code has been sent."));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : t("unableToSendResetCode", "Unable to send a reset code."));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleConfirmPasswordReset(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!/^\d{6}$/.test(resetCode.trim())) {
+      setMessage(t("enterSixDigitResetCode", "Enter the 6-digit code from your email."));
+      return;
+    }
+    if (resetNewPassword.trim().length < 8) {
+      setMessage(t("resetPasswordTooShort", "New password must be at least 8 characters."));
+      return;
+    }
+    if (resetNewPassword !== resetConfirmPassword) {
+      setMessage(t("passwordsDoNotMatch", "Passwords do not match."));
+      return;
+    }
+
+    setLoading(true);
+    setMessage("");
+    try {
+      const response = await fetchWithTimeout(`${API_BASE_URL}/auth/password-reset/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: normalizedEmail,
+          code: resetCode.trim(),
+          newPassword: resetNewPassword
+        })
+      });
+      const data = (await response.json()) as { ok?: boolean; error?: string };
+      if (!response.ok) {
+        setMessage(data.error ?? t("unableToResetPassword", "Unable to reset the password."));
+        return;
+      }
+
+      setPassword(resetNewPassword);
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem(REMEMBERED_LOGIN_PASSWORD_KEY);
+      }
+      setForgotPasswordMode(false);
+      setResetCodeSent(false);
+      setResetCode("");
+      setResetNewPassword("");
+      setResetConfirmPassword("");
+      setShowResetPassword(false);
+      setMessage(t("passwordResetSuccess", "Password reset successfully. You can now log in with your new password."));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : t("unableToResetPassword", "Unable to reset the password."));
     } finally {
       setLoading(false);
     }
@@ -989,6 +1086,7 @@ export function ClientLoginClient() {
               )}
             </div>
 
+            {!forgotPasswordMode ? (
             <form onSubmit={handleSubmit} className="mt-4 rounded-2xl border border-slate-200 bg-white p-4" suppressHydrationWarning>
               <div className="text-sm font-medium text-slate-900">{t("signInWithEmail", "Sign in with email")}</div>
               <p className="mt-1 text-sm text-slate-600">
@@ -1056,7 +1154,137 @@ export function ClientLoginClient() {
               >
                 {loading ? t("signingIn", "Signing in...") : t("logInWithEmailBtn", "Log in with email")}
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setForgotPasswordMode(true);
+                  setMessage("");
+                }}
+                className="mt-4 block text-sm font-medium text-slate-700 underline underline-offset-2"
+              >
+                {t("forgotPassword", "Forgot password?")}
+              </button>
             </form>
+            ) : (
+              <form
+                onSubmit={resetCodeSent ? handleConfirmPasswordReset : handleRequestPasswordReset}
+                className="mt-4 rounded-2xl border border-slate-200 bg-white p-4"
+                suppressHydrationWarning
+              >
+                <div className="text-sm font-medium text-slate-900">{t("resetPassword", "Reset password")}</div>
+                <p className="mt-1 text-sm text-slate-600">
+                  {resetCodeSent
+                    ? t("enterResetCodeAndPassword", "Enter the 6-digit code from your email and choose a new password.")
+                    : t("resetPasswordInstructions", "Enter your portal email and we’ll send a 6-digit reset code if the account is eligible.")}
+                </p>
+
+                <label className="mt-4 block text-sm font-medium text-slate-700">
+                  {t("emailLabel", "Email")}
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(event) => {
+                      setEmail(event.target.value);
+                      setResetCodeSent(false);
+                      setResetCode("");
+                    }}
+                    autoComplete="email"
+                    disabled={resetCodeSent}
+                    required
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200 disabled:bg-slate-100"
+                    placeholder="name[at]example.com"
+                  />
+                </label>
+
+                {resetCodeSent ? (
+                  <>
+                    <label className="mt-4 block text-sm font-medium text-slate-700">
+                      {t("resetCode", "Reset code")}
+                      <input
+                        type="text"
+                        value={resetCode}
+                        onChange={(event) => setResetCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        maxLength={6}
+                        required
+                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm tracking-[0.3em] text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                        placeholder="000000"
+                      />
+                    </label>
+
+                    <label className="mt-4 block text-sm font-medium text-slate-700">
+                      {t("newPassword", "New password")}
+                      <div className="mt-1 flex overflow-hidden rounded-lg border border-slate-300 bg-white">
+                        <input
+                          type={showResetPassword ? "text" : "password"}
+                          value={resetNewPassword}
+                          onChange={(event) => setResetNewPassword(event.target.value)}
+                          autoComplete="new-password"
+                          minLength={8}
+                          required
+                          className="w-full px-3 py-2 outline-none"
+                          placeholder={t("resetPasswordPlaceholder", "At least 8 characters")}
+                        />
+                        <PasswordVisibilityButton
+                          visible={showResetPassword}
+                          onToggle={() => setShowResetPassword((current) => !current)}
+                          label={showResetPassword ? t("hidePassword", "Hide password") : t("showPassword", "Show password")}
+                        />
+                      </div>
+                    </label>
+
+                    <label className="mt-4 block text-sm font-medium text-slate-700">
+                      {t("confirmPassword", "Confirm new password")}
+                      <input
+                        type={showResetPassword ? "text" : "password"}
+                        value={resetConfirmPassword}
+                        onChange={(event) => setResetConfirmPassword(event.target.value)}
+                        autoComplete="new-password"
+                        minLength={8}
+                        required
+                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                      />
+                    </label>
+                  </>
+                ) : null}
+
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                  >
+                    {loading
+                      ? t("working", "Working...")
+                      : resetCodeSent
+                        ? t("resetPassword", "Reset password")
+                        : t("sendResetCode", "Send reset code")}
+                  </button>
+                  {resetCodeSent ? (
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={() => {
+                        setResetCodeSent(false);
+                        setResetCode("");
+                        setMessage("");
+                      }}
+                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-60"
+                    >
+                      {t("requestAnotherCode", "Request another code")}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={closeForgotPassword}
+                    className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
+                  >
+                    {t("backToSignIn", "Back to sign in")}
+                  </button>
+                </div>
+              </form>
+            )}
           </>
         ) : null}
 

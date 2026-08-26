@@ -62,6 +62,7 @@ import {
   upsertStaffAccess
 } from "./staff-access.js";
 import { adminSetPortalPassword, changePortalPassword, loginWithPortalPassword, setPortalPassword, upsertStoredPassword } from "./portal-auth.js";
+import { confirmPortalPasswordReset, requestPortalPasswordReset } from "./portal-password-reset.js";
 import { getAccountLockOverride, setAccountLockOverride } from "./account-lock-overrides.js";
 import { getClientGroupContext, getGroupMessages, markGroupRead, postGroupMessage } from "./group-support.js";
 import { VAPID_PUBLIC_KEY, savePushSubscription, deletePushSubscription, sendPushToEmail } from "./push.js";
@@ -1313,6 +1314,14 @@ const portalPasswordAdminSetSchema = z.object({
   actorEmail: z.string().email(),
   targetEmail: z.string().email(),
   newPassword: z.string().trim().min(4)
+});
+const portalPasswordResetRequestSchema = z.object({
+  email: z.string().email()
+});
+const portalPasswordResetConfirmSchema = z.object({
+  email: z.string().email(),
+  code: z.string().trim().regex(/^\d{6}$/),
+  newPassword: z.string().trim().min(8)
 });
 const accountLockOverrideSchema = z.object({
   actorEmail: z.string().email(),
@@ -2825,6 +2834,46 @@ app.post("/auth/login", async (request, response) => {
           : 400;
 
     return response.status(statusCode).json({ error: message });
+  }
+});
+
+app.post("/auth/password-reset/request-code", async (request, response) => {
+  const parsed = portalPasswordResetRequestSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "A valid email is required." });
+  }
+
+  try {
+    await requestPortalPasswordReset({
+      email: parsed.data.email,
+      ip: request.get("x-forwarded-for") || request.ip || request.socket.remoteAddress || "unknown"
+    });
+    return response.json({
+      ok: true,
+      message: "If this email has portal access, a reset code has been sent."
+    });
+  } catch (error) {
+    const statusCode = (error as Error & { statusCode?: number }).statusCode ?? 500;
+    return response.status(statusCode).json({
+      error: error instanceof Error ? error.message : "Unable to request a password reset code."
+    });
+  }
+});
+
+app.post("/auth/password-reset/confirm", async (request, response) => {
+  const parsed = portalPasswordResetConfirmSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "A valid email, 6-digit code, and new password are required." });
+  }
+
+  try {
+    const result = await confirmPortalPasswordReset(parsed.data);
+    return response.json(result);
+  } catch (error) {
+    const statusCode = (error as Error & { statusCode?: number }).statusCode ?? 500;
+    return response.status(statusCode).json({
+      error: error instanceof Error ? error.message : "Unable to reset the password."
+    });
   }
 });
 

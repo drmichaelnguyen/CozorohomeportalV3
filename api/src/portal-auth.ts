@@ -201,19 +201,6 @@ export async function loginWithPortalPassword(input: { email: string; password: 
   const matches =
     incomingHash.length === storedHash.length && timingSafeEqual(incomingHash, storedHash);
 
-  if (!matches && resolution.source === "client") {
-    const defaultPassword = await getClientDefaultPassword(email);
-    if (password === defaultPassword) {
-      await upsertStoredPassword(email, defaultPassword);
-
-      return {
-        ...resolution,
-        createdPassword: false,
-        mustChangePassword: existingRecord.mustChangePassword
-      };
-    }
-  }
-
   if (!matches) {
     throw new Error("Incorrect password for this email.");
   }

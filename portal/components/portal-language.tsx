@@ -485,6 +485,35 @@ const translations: Record<string, { en: string; vi: string }> = {
   rememberLogin: { en: "Remember this login on this computer", vi: "Ghi nhớ đăng nhập trên máy tính này" },
   signingIn: { en: "Signing in...", vi: "Đang đăng nhập..." },
   logInWithEmailBtn: { en: "Log in with email", vi: "Đăng nhập bằng email" },
+  forgotPassword: { en: "Forgot password?", vi: "Quên mật khẩu?" },
+  resetPassword: { en: "Reset password", vi: "Đặt lại mật khẩu" },
+  resetPasswordInstructions: {
+    en: "Enter your portal email and we’ll send a 6-digit reset code if the account is eligible.",
+    vi: "Nhập email cổng thông tin; nếu tài khoản hợp lệ, chúng tôi sẽ gửi mã đặt lại gồm 6 chữ số."
+  },
+  enterResetCodeAndPassword: {
+    en: "Enter the 6-digit code from your email and choose a new password.",
+    vi: "Nhập mã 6 chữ số trong email và chọn mật khẩu mới."
+  },
+  resetEmailRequired: { en: "Enter the email address for your portal account.", vi: "Nhập địa chỉ email của tài khoản cổng thông tin." },
+  sendResetCode: { en: "Send reset code", vi: "Gửi mã đặt lại" },
+  resetCode: { en: "Reset code", vi: "Mã đặt lại" },
+  resetCodeSentGeneric: {
+    en: "If this email has portal access, a 6-digit reset code has been sent.",
+    vi: "Nếu email này có quyền truy cập cổng thông tin, mã đặt lại gồm 6 chữ số đã được gửi."
+  },
+  enterSixDigitResetCode: { en: "Enter the 6-digit code from your email.", vi: "Nhập mã 6 chữ số trong email." },
+  resetPasswordPlaceholder: { en: "At least 8 characters", vi: "Ít nhất 8 ký tự" },
+  resetPasswordTooShort: { en: "New password must be at least 8 characters.", vi: "Mật khẩu mới phải có ít nhất 8 ký tự." },
+  unableToSendResetCode: { en: "Unable to send a reset code.", vi: "Không thể gửi mã đặt lại." },
+  unableToResetPassword: { en: "Unable to reset the password.", vi: "Không thể đặt lại mật khẩu." },
+  passwordResetSuccess: {
+    en: "Password reset successfully. You can now log in with your new password.",
+    vi: "Đã đặt lại mật khẩu. Bạn có thể đăng nhập bằng mật khẩu mới."
+  },
+  requestAnotherCode: { en: "Request another code", vi: "Yêu cầu mã khác" },
+  backToSignIn: { en: "Back to sign in", vi: "Quay lại đăng nhập" },
+  working: { en: "Working...", vi: "Đang xử lý..." },
   accountSecurity: { en: "Account Security", vi: "Bảo mật Tài khoản" },
   firstLoginDetected: { en: "First login detected. Please change your password before continuing to use the portal.", vi: "Phát hiện lần đăng nhập đầu. Vui lòng đổi mật khẩu trước khi tiếp tục." },
   changePasswordAnytime: { en: "You can change your password here at any time.", vi: "Bạn có thể đổi mật khẩu ở đây bất kỳ lúc nào." },
