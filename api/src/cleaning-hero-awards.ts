@@ -4,6 +4,7 @@ import path from "node:path";
 import { CleaningTaskStatus, CoinReason } from "@prisma/client";
 
 import { CONTRACT_CODE_COLUMN, getActiveClientByEmail, managerAdjustCoins } from "./google-sheets.js";
+import { announceCleaningHeroAward } from "./cleaning-hero-announcements.js";
 import { prisma } from "./prisma.js";
 
 const ledgerFilePath = path.join(process.cwd(), "data", "cleaning-hero-awards.json");
@@ -238,6 +239,16 @@ async function awardHeroForPeriod(
   console.log(
     `[cleaning-hero] Awarded ${coinsAwarded} coins to ${winner.userEmail} for ${awardId} (${winner.completedCount} completions)`
   );
+
+  try {
+    await announceCleaningHeroAward(award);
+  } catch (error) {
+    console.error(
+      `[cleaning-hero] Failed to announce ${awardId} to all clients:`,
+      error instanceof Error ? error.message : error
+    );
+  }
+
   return award;
 }
 

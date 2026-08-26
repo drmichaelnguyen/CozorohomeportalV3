@@ -71,6 +71,9 @@ Important release safety rules:
  - `api/.google-oauth.json`
  - important `api/data/*` files such as caches, staff access, and other operational state
  - `api/data/chat-attachments/` — binary files for support/group chat images (DB rows only store metadata; missing files make past attachments 404)
+ - `api/data/rewarded-cleaning-photos/` — before/after JPGs for voluntary rewarded cleaning beta (DB rows only store metadata)
+ - `api/data/cleaning-hero-announcements.json` — broadcast ledger for month/quarter Cozoro Hero notices to all clients
+ - `api/data/cleaning-hero-awards.json` — Cozoro Hero winner ledger (coin grants per closed period)
 - if `api/.google-oauth.json` is missing in production, Google Sheets / Gmail / Calendar startup calls can fail with `Google OAuth tokens are missing`
 
 Production sync rule:
@@ -138,6 +141,10 @@ const nextConfig: NextConfig = {
 | `portal-session.tsx` | Session context (`sessionEmail`, `sessionRole`, `isLoggedIn`) |
 | `portal-language.tsx` | i18n context with `t()` helper (Vietnamese/English) |
 | `cleaning-schedule-client.tsx` | Full cleaning calendar with self-assign, availability, task management; staff can embed via `viewEmail` to open a selected resident’s schedule from manager Tools |
+| `rewarded-cleaning-client.tsx` | **Beta** voluntary site cleaning on `/schedule`: before/after photos (max 3 each), site dropdown + custom sites, AI comparison, staff coin approval (min 5,000); one site per resident per day |
+| `rewarded-cleaning-review-client.tsx` | Staff review queue for rewarded cleaning (Admin Cleaning, top of page): side-by-side photos, AI suggestion, approve/reject with editable coin amount |
+| `self-assign-promo-popup.tsx` | Occasional resident popup (~every 4 days) advertising self-assign coin multipliers; links to Schedule |
+| `branch-broadcast-prompt.tsx` | First-open branch notice popup; hero announcements include **Open schedule** CTA |
 | `manager-support-inbox.tsx` | iMessage-style support chat for managers (up to 3 compressed image attachments per message) |
 | `manager-web-lead-inbox.tsx` | Manager **Web AI chat** inbox for www.cozorohome.com guest bot threads; mobile master–detail with back-to-inbox |
 | `support-client.tsx` | Resident support chat (tabs: personal, room, floor, branch; image attachments) |
@@ -166,6 +173,11 @@ const nextConfig: NextConfig = {
 |------|---------|
 | `src/index.ts` | Express app entry, all route registrations |
 | `src/cleaning.ts` | Cleaning schedule logic (self-assign, availability, tasks) |
+| `src/cleaning-hero-awards.ts` | Cozoro Hero month/quarter/year auto coin grants from self-assign completion counts |
+| `src/cleaning-hero-announcements.ts` | Broadcast month/quarter hero winners to all active clients (push, branch popup, Notification Center) with self-assign promo |
+| `src/rewarded-cleaning.ts` | Voluntary rewarded cleaning beta (sites, submissions, staff audit, coin grant) |
+| `src/rewarded-cleaning-verification.ts` | AI before/after photo comparison for rewarded cleaning |
+| `src/branch-broadcasts.ts` | Shared branch notice queue (`data/branch-broadcasts.json`) for manager broadcasts and system hero announcements |
 | `src/google-sheets.ts` | Google Sheets integration |
 | `src/cooker-controller.ts` | Kitchen cooker on/off, photo inspection, 60-day JPG storage, leftover-on fine |
 | `prisma/schema.prisma` | Database schema |
@@ -179,7 +191,7 @@ const nextConfig: NextConfig = {
 | `POST /cleaning/self-assign` | Submit self-assignment |
 | `POST /cleaning/tasks/:id/complete` | Mark task done |
 | `POST /cleaning/tasks/:id/release` | Release task (with penalty calculation) |
-| `GET /support/notifications?email=` | Resident notifications by type (SUPPORT_REPLY, PAYMENT_DUE, NEW_FINE, LAUNDRY_REMINDER, CLEANING_REMINDER) |
+| `GET /support/notifications?email=` | Resident notifications by type (SUPPORT_REPLY, PAYMENT_DUE, NEW_FINE, LAUNDRY_REMINDER, CLEANING_REMINDER, CLEANING_HERO_AWARD, CLEANING_HERO_ANNOUNCEMENT, …) |
 | `GET /support/attachments/:id` | Stream a chat image for an authorized viewer (`email` query); files under `api/data/chat-attachments/` |
 | Support / group message POSTs | Optional `attachments[]` (`dataUrl`, `fileName`, `width`, `height`) — max 3 images, JPEG/PNG/WebP, ~2 MB each after client compress |
 | `GET /manager/support/conversations?operatorEmail=` | Manager inbox list |
@@ -207,6 +219,14 @@ const nextConfig: NextConfig = {
 | `POST /manager/branch-broadcast` | **Manager, owner, app_admin** â€” push a branch-wide message to all active clients in D2/D7 and queue first-open prompt notices. |
 | `GET /clients/branch-broadcasts/pending?email=` | Resident fetches unread branch prompts queued after branch broadcasts. |
 | `POST /clients/branch-broadcasts/:id/read` | Resident acknowledges a branch prompt so it no longer appears on next app open. |
+| `GET /rewarded-cleaning/me?email=` | **Resident** — rewarded cleaning overview (sites, today's submissions, history) |
+| `POST /rewarded-cleaning/sites` | **Resident** — add a custom cleaning site to the dropdown |
+| `POST /rewarded-cleaning/submissions/before` | **Resident** — start submission with up to 3 before photos (one site per day) |
+| `POST /rewarded-cleaning/submissions/:id/after` | **Resident** — submit up to 3 after photos; triggers AI before/after comparison |
+| `GET /rewarded-cleaning/photos/:storageName?email=` | Stream rewarded cleaning photo (`api/data/rewarded-cleaning-photos/`) |
+| `GET /manager/rewarded-cleaning/review-queue?actorEmail=` | **Manager+** — pending rewarded cleaning submissions |
+| `POST /manager/rewarded-cleaning/submissions/:id/audit` | **Manager+** — approve (min 5,000 coins) or reject |
+| `POST /clients/cleaning-hero-announcements/:id/read` | Mark a Cozoro Hero broadcast notice read in Notification Center |
 | `GET /manager/stripe/payments?actorEmail=` | **Manager, owner, app_admin** — list hostel guest Stripe payments (amount, refund status, receipt status). |
 | `GET /manager/stripe/payments/:bookingId?actorEmail=` | **Manager, owner, app_admin** — payment detail with Stripe charge/refund enrichment when `STRIPE_SECRET_KEY` is set. |
 | `POST /manager/stripe/payments/:bookingId/create-receipt` | **Manager, owner, app_admin** — backfill a missing VND payment receipt for a paid Stripe booking. |
@@ -268,7 +288,8 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 - **Self-assign**: residents can claim open slots for future dates only, **max 30 days ahead**
 - **Self-assign coin multipliers** (vs manager/system base reward): weekday **x2**, weekend **x2.5**, Vietnam national holiday **x3** (holiday calendar on cleaning UI; holiday wins over weekend)
-- **Cozoro Hero awards** (highest completed self-assign count in the period, excluding rejected): month **+30,000**, quarter **+50,000**, year **+100,000** ("Cozoro Hero of the Year"); coins + Notification Center notice; awards closed periods once
+- **Cozoro Hero awards** (highest completed self-assign count in the period, excluding rejected): month **+30,000**, quarter **+50,000**, year **+100,000** ("Cozoro Hero of the Year"); coins + Notification Center notice for the winner; **month/quarter** winners also trigger a **broadcast to all active clients** (push, branch first-open popup with Open schedule CTA, and `CLEANING_HERO_ANNOUNCEMENT` in Notification Center) including self-assign multiplier promo; ledger `data/cleaning-hero-awards.json`; announcements `data/cleaning-hero-announcements.json`
+- **Rewarded cleaning beta** (voluntary, separate from scheduled tasks): resident picks a site (dropdown or custom), uploads up to **3 before** and **3 after** photos; AI compares improvement; staff approves coin reward (**minimum 5,000**); **one site per resident per day**; photos under `api/data/rewarded-cleaning-photos/`; Prisma `RewardedCleaningSite`, `RewardedCleaningSubmission`, `RewardedCleaningPhoto`; UI on `/schedule` and staff review at top of Admin Cleaning
 - **Contract end cleanup**: cleaning schedule is removed only after the resident **confirms they left** (checkout form), or when staff mark them inactive (−1 with no remaining active row). An expired contract end date alone does **not** remove tasks while the account stays active. Hostel short-term guests (`SHORTTERM-*`) are never on the cleaning schedule.
 - **Take Over**: if today is after 20:00 and an assigned resident hasn't completed the task, others can take over
 - **Task types**: `KITCHEN_D2`, `KITCHEN_D7`, `TRASH_D7`
@@ -284,6 +305,11 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.21 | Hide cleaning **AI vs human benchmark** panel from Admin Cleaning UI (data still recorded in DB/`CleaningAiBenchmark` for internal review later; auto-skip toggle not exposed). |
+| 3.9.20 | Agent guide updated: rewarded cleaning beta, Cozoro Hero all-client broadcasts, coin analytics receiver column, runtime data paths. |
+| 3.9.19 | Cozoro Hero **month/quarter** auto-awards now **broadcast to all active clients** (push, branch popup with Open schedule, Notification Center `CLEANING_HERO_ANNOUNCEMENT`) with winner name, bonus coins, and self-assign promo; shared `branch-broadcasts.ts` module. |
+| 3.9.18 | Owner **Analytics → Coins** table and grouping add **Receiver** column (resident name + email from COZORO COINS sheet). |
+| 3.9.16 | **Rewarded cleaning beta**: voluntary before/after photos (max 3 each), site dropdown + custom sites, AI comparison, staff review (min 5,000 coins), one site per resident per day; Prisma models + `api/data/rewarded-cleaning-photos/`. |
 | 3.9.12 | Portal and bot AI prefer 9router (`gpt-5`); resident cooker policy notice; D7 cooker IFTTT event names. |
 | 3.9.11 | Cooker check-in Report button; owners can view AI usage; analytics splits text chat vs computer vision tokens/cost. |
 | 3.9.10 | Cooker inspection is one live camera photo of cooker + kitchen (gallery uploads blocked); cooker controller shows a Beta badge. |

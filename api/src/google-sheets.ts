@@ -5079,6 +5079,57 @@ export async function awardCleaningCoinsToSheet(input: {
   }
 }
 
+export async function awardRewardedCleaningCoinsToSheet(input: {
+  userEmail: string;
+  userName: string | null;
+  branchId: string;
+  rewardCoins: number;
+  submissionId: string;
+  siteName: string;
+  reviewedBy: string;
+}) {
+  const normalizedEmail = input.userEmail.trim().toLowerCase();
+  const transactionCode = `RewardedCleaning${input.submissionId}`;
+  const existingEntries = await getCoinsForEmail(normalizedEmail);
+  const alreadyAwarded = existingEntries.some(
+    (entry) => (entry.row[COINS_TRANSACTION_CODE_COLUMN] ?? "").trim() === transactionCode
+  );
+  if (alreadyAwarded) {
+    console.warn(
+      `[RewardedCleaningCoins] Skipping duplicate award for ${normalizedEmail} transaction ${transactionCode}`
+    );
+    return;
+  }
+
+  const client = await getActiveClientByEmail(normalizedEmail);
+  const currentCoins = client
+    ? Number.parseInt(String(client[CLIENT_CURRENT_COINS_COLUMN] ?? "0").replace(/[^0-9-]/g, ""), 10) || 0
+    : 0;
+  const nextCoins = currentCoins + input.rewardCoins;
+  const recordedMember = client ? (client[COINS_MEMBER_COLUMN] ?? "") : "";
+
+  await appendCoinsSheetRow({
+    [COINS_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(new Date()),
+    [CONTRACT_CODE_COLUMN]: client ? (client[CONTRACT_CODE_COLUMN] ?? "") : "",
+    ["Chi nhánh Cozoro dorm"]: input.branchId.replace("D", ""),
+    [EMAIL_COLUMN]: normalizedEmail,
+    [CLIENT_NAME_COLUMN]: input.userName ?? (client ? (client[CLIENT_NAME_COLUMN] ?? "") : ""),
+    [CLIENT_BED_COLUMN]: client ? (client[CLIENT_BED_COLUMN] ?? "") : "",
+    [COINS_BALANCE_COLUMN]: String(input.rewardCoins),
+    [COINS_EVENT_COLUMN]: `Vệ sinh tự nguyện (beta): ${input.siteName.slice(0, 80)}`,
+    [COINS_OPERATOR_COLUMN]: "",
+    [COINS_MEMBER_COLUMN]: recordedMember,
+    [COINS_CURRENT_BALANCE_COLUMN]: String(nextCoins),
+    [COINS_TRANSACTION_CODE_COLUMN]: transactionCode
+  });
+
+  if (client && client[CONTRACT_CODE_COLUMN]) {
+    await updateClientColumns(client[CONTRACT_CODE_COLUMN], {
+      [CLIENT_CURRENT_COINS_COLUMN]: String(nextCoins)
+    });
+  }
+}
+
 /**
  * Transfers coins from the swap requester to the swap target when a cleaning
  * swap request is accepted. Writes two rows to the coins sheet (debit + credit)

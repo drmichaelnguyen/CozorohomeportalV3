@@ -68,6 +68,12 @@ import { getClientGroupContext, getGroupMessages, markGroupRead, postGroupMessag
 import { VAPID_PUBLIC_KEY, savePushSubscription, deletePushSubscription, sendPushToEmail } from "./push.js";
 import { getCleaningRewardSettings, updateCleaningRewardSettings } from "./cleaning-reward-settings.js";
 import { runCleaningHeroAwards } from "./cleaning-hero-awards.js";
+import {
+  listPendingBranchBroadcasts,
+  markBranchBroadcastRead,
+  queueBranchBroadcast
+} from "./branch-broadcasts.js";
+import { markCleaningHeroAnnouncementRead } from "./cleaning-hero-announcements.js";
 import { getManagerFridgeDrainSchedule, upsertFridgeDrainCleaningDate } from "./fridge-drain-schedule.js";
 import {
   exportDatabaseToGoogleSheet,
@@ -298,6 +304,19 @@ import {
   getCleaningAiBenchmarkSettings,
   updateCleaningAiBenchmarkSettings
 } from "./cleaning-ai-benchmark.js";
+import {
+  addRewardedCleaningSite,
+  auditRewardedCleaningSubmission,
+  getRewardedCleaningOverview,
+  listRewardedCleaningReviewQueue,
+  listRewardedCleaningSites,
+  submitRewardedCleaningAfter,
+  submitRewardedCleaningBefore
+} from "./rewarded-cleaning.js";
+import {
+  canViewRewardedCleaningPhoto,
+  readRewardedCleaningPhotoBytes
+} from "./rewarded-cleaning-photos.js";
 import { logAction } from "./action-log.js";
 import { prisma } from "./prisma.js";
 import { billingPeriodMonthForGateSession, markGateParkingTicketsPaidForBilling } from "./gate-parking-tickets.js";
@@ -383,7 +402,6 @@ const app = express();
 const port = Number(process.env.PORT) || 4000; // AntiGravity: Use env PORT if available, default to 4000
 const GUEST_AUTH_RATE_PATH = path.join(process.cwd(), "data", "guest-auth-rate.json");
 const CONTRACT_APPROVALS_PATH = path.join(process.cwd(), "data", "contract-approvals.json");
-const BRANCH_BROADCASTS_PATH = path.join(process.cwd(), "data", "branch-broadcasts.json");
 const PAYMENT_REQUIREMENT_NOTICES_PATH = path.join(process.cwd(), "data", "payment-requirement-notices.json");
 const GUEST_AUTH_MIN_INTERVAL_MS = 60 * 1000;
 const GUEST_AUTH_MAX_PER_EMAIL_PER_HOUR = 3;
@@ -447,17 +465,6 @@ type PendingContractApproval = {
   };
 };
 type ContractApprovalsFile = { approvals: PendingContractApproval[] };
-type BranchBroadcastNotice = {
-  id: string;
-  branch: "D2" | "D7";
-  title: string;
-  body: string;
-  sentAt: string;
-  sentBy: string;
-  recipientEmails: string[];
-  readBy: string[];
-};
-type BranchBroadcastsFile = { notices: BranchBroadcastNotice[] };
 type PaymentRequirementNotice = {
   id: string;
   title: string;
@@ -482,21 +489,6 @@ async function readContractApprovals(): Promise<ContractApprovalsFile> {
 async function writeContractApprovals(file: ContractApprovalsFile): Promise<void> {
   await mkdir(path.dirname(CONTRACT_APPROVALS_PATH), { recursive: true });
   await writeFile(CONTRACT_APPROVALS_PATH, JSON.stringify(file, null, 2), "utf8");
-}
-
-async function readBranchBroadcasts(): Promise<BranchBroadcastsFile> {
-  try {
-    const raw = await readFile(BRANCH_BROADCASTS_PATH, "utf8");
-    const parsed = JSON.parse(raw) as BranchBroadcastsFile;
-    return { notices: Array.isArray(parsed.notices) ? parsed.notices : [] };
-  } catch {
-    return { notices: [] };
-  }
-}
-
-async function writeBranchBroadcasts(file: BranchBroadcastsFile): Promise<void> {
-  await mkdir(path.dirname(BRANCH_BROADCASTS_PATH), { recursive: true });
-  await writeFile(BRANCH_BROADCASTS_PATH, JSON.stringify(file, null, 2), "utf8");
 }
 
 async function readPaymentRequirementNotices(): Promise<PaymentRequirementNoticesFile> {
@@ -1855,6 +1847,33 @@ const cleaningAiBenchmarkSettingsPutSchema = z.object({
   accuracyThresholdPercent: z.coerce.number().int().min(50).max(100).optional(),
   minSampleSize: z.coerce.number().int().min(10).max(10_000).optional(),
   autoSkipManualAuditEnabled: z.boolean().optional()
+});
+const rewardedCleaningPhotoSchema = z.object({
+  fileName: z.string().min(1),
+  mimeType: z.string().min(1),
+  dataBase64: z.string().min(1)
+});
+const rewardedCleaningBeforeSchema = z.object({
+  email: z.string().email(),
+  siteId: z.string().min(1),
+  note: z.string().optional(),
+  photos: z.array(rewardedCleaningPhotoSchema).min(1).max(3)
+});
+const rewardedCleaningAfterSchema = z.object({
+  email: z.string().email(),
+  note: z.string().optional(),
+  photos: z.array(rewardedCleaningPhotoSchema).min(1).max(3)
+});
+const rewardedCleaningAddSiteSchema = z.object({
+  email: z.string().email(),
+  name: z.string().min(2).max(191),
+  branchId: z.enum(["D2", "D7"]).optional()
+});
+const rewardedCleaningAuditSchema = z.object({
+  actorEmail: z.string().email(),
+  approve: z.boolean(),
+  rewardCoins: z.coerce.number().int().min(5000).optional(),
+  note: z.string().optional()
 });
 const releaseCleaningSchema = z.object({
   email: z.string().email()
@@ -8302,6 +8321,146 @@ app.put("/manager/cleaning/ai-benchmark-settings", async (req, res) => {
   }
 });
 
+app.get("/rewarded-cleaning/me", async (request, response) => {
+  const email = String(request.query.email ?? "").trim().toLowerCase();
+  if (!email) {
+    return response.status(400).json({ error: "email query parameter is required" });
+  }
+  try {
+    const overview = await getRewardedCleaningOverview(email);
+    return response.json(overview);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to load rewarded cleaning overview"
+    });
+  }
+});
+
+app.get("/rewarded-cleaning/sites", async (request, response) => {
+  const email = String(request.query.email ?? "").trim().toLowerCase();
+  const branchId = String(request.query.branchId ?? "").trim();
+  if (!email) {
+    return response.status(400).json({ error: "email query parameter is required" });
+  }
+  try {
+    const sites = await listRewardedCleaningSites({
+      email,
+      branchId: branchId || undefined
+    });
+    return response.json({ sites });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to list cleaning sites"
+    });
+  }
+});
+
+app.post("/rewarded-cleaning/sites", async (request, response) => {
+  const parsed = rewardedCleaningAddSiteSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid site payload" });
+  }
+  try {
+    const site = await addRewardedCleaningSite(parsed.data);
+    return response.json({ site });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to add cleaning site"
+    });
+  }
+});
+
+app.post("/rewarded-cleaning/submissions/before", async (request, response) => {
+  const parsed = rewardedCleaningBeforeSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid before submission payload" });
+  }
+  try {
+    const submission = await submitRewardedCleaningBefore(parsed.data);
+    return response.json({ submission });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to submit before photos"
+    });
+  }
+});
+
+app.post("/rewarded-cleaning/submissions/:id/after", async (request, response) => {
+  const parsed = rewardedCleaningAfterSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid after submission payload" });
+  }
+  try {
+    const submission = await submitRewardedCleaningAfter({
+      ...parsed.data,
+      submissionId: String(request.params.id ?? "")
+    });
+    return response.json({ submission });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to submit after photos"
+    });
+  }
+});
+
+app.get("/rewarded-cleaning/photos/:storageName", async (request, response) => {
+  const email = String(request.query.email ?? "").trim().toLowerCase();
+  const storageName = String(request.params.storageName ?? "");
+  if (!email) {
+    return response.status(400).json({ error: "email query parameter is required" });
+  }
+  try {
+    const allowed = await canViewRewardedCleaningPhoto(storageName, email);
+    if (!allowed) {
+      return response.status(403).json({ error: "You do not have access to this photo." });
+    }
+    const bytes = await readRewardedCleaningPhotoBytes(storageName);
+    response.setHeader("Content-Type", "image/jpeg");
+    response.setHeader("Cache-Control", "private, max-age=3600");
+    return response.send(bytes);
+  } catch (error) {
+    return response.status(404).json({
+      error: error instanceof Error ? error.message : "Photo not found"
+    });
+  }
+});
+
+app.get("/manager/rewarded-cleaning/review-queue", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "").trim();
+  if (!actorEmail) {
+    return response.status(400).json({ error: "actorEmail is required" });
+  }
+  try {
+    const queue = await listRewardedCleaningReviewQueue(actorEmail);
+    return response.json({ queue, count: queue.length });
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Forbidden"
+    });
+  }
+});
+
+app.post("/manager/rewarded-cleaning/submissions/:id/audit", async (request, response) => {
+  const parsed = rewardedCleaningAuditSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid audit payload" });
+  }
+  try {
+    const submission = await auditRewardedCleaningSubmission({
+      submissionId: String(request.params.id ?? ""),
+      reviewerEmail: parsed.data.actorEmail,
+      approve: parsed.data.approve,
+      rewardCoins: parsed.data.rewardCoins,
+      note: parsed.data.note
+    });
+    return response.json({ submission });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to audit submission";
+    const status = message.includes("Staff only") || message.includes("Forbidden") ? 403 : 400;
+    return response.status(status).json({ error: message });
+  }
+});
+
 // GET /manager/db-backup/status — owner reads DB backup sheet metadata
 app.get("/manager/db-backup/status", async (req, res) => {
   const actorEmail = String(req.query.actorEmail ?? "").trim();
@@ -8635,21 +8794,13 @@ app.post("/manager/branch-broadcast", async (request, response) => {
       await sendPushToEmail(email, parsed.data.title.trim(), parsed.data.body.trim(), "/");
     }
 
-    const file = await readBranchBroadcasts();
-    file.notices.unshift({
-      id: randomUUID(),
+    await queueBranchBroadcast({
       branch: parsed.data.branch,
       title: parsed.data.title.trim(),
       body: parsed.data.body.trim(),
-      sentAt: new Date().toISOString(),
       sentBy: parsed.data.actorEmail.trim().toLowerCase(),
-      recipientEmails,
-      readBy: []
+      recipientEmails
     });
-    if (file.notices.length > 200) {
-      file.notices = file.notices.slice(0, 200);
-    }
-    await writeBranchBroadcasts(file);
 
     return response.json({ ok: true, attempted: recipientEmails.length });
   } catch (error) {
@@ -8670,17 +8821,7 @@ app.get("/clients/branch-broadcasts/pending", async (request, response) => {
       return response.json({ notices: [] });
     }
     const branch = normalizeClientBranch(String(matched[CLIENT_BRANCH_COLUMN] ?? ""));
-    const file = await readBranchBroadcasts();
-    const notices = file.notices
-      .filter((n) => n.branch === branch && n.recipientEmails.includes(email) && !n.readBy.includes(email))
-      .slice(0, 3)
-      .map((n) => ({
-        id: n.id,
-        title: n.title,
-        body: n.body,
-        sentAt: n.sentAt,
-        branch: n.branch
-      }));
+    const notices = await listPendingBranchBroadcasts(email, branch);
     return response.json({ notices });
   } catch (error) {
     return response.status(500).json({ error: error instanceof Error ? error.message : "Unable to load notices" });
@@ -8694,21 +8835,32 @@ app.post("/clients/branch-broadcasts/:id/read", async (request, response) => {
   }
   try {
     const email = parsed.data.email.trim().toLowerCase();
-    const file = await readBranchBroadcasts();
-    const notice = file.notices.find((n) => n.id === request.params.id);
-    if (!notice) {
+    const ok = await markBranchBroadcastRead(String(request.params.id), email);
+    if (!ok) {
       return response.status(404).json({ error: "Notice not found" });
-    }
-    if (!notice.recipientEmails.includes(email)) {
-      return response.status(403).json({ error: "This notice is not available for this account." });
-    }
-    if (!notice.readBy.includes(email)) {
-      notice.readBy.push(email);
-      await writeBranchBroadcasts(file);
     }
     return response.json({ ok: true });
   } catch (error) {
     return response.status(500).json({ error: error instanceof Error ? error.message : "Unable to mark notice as read" });
+  }
+});
+
+app.post("/clients/cleaning-hero-announcements/:id/read", async (request, response) => {
+  const parsed = residentBroadcastReadSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid read payload" });
+  }
+  try {
+    const email = parsed.data.email.trim().toLowerCase();
+    const ok = await markCleaningHeroAnnouncementRead(String(request.params.id), email);
+    if (!ok) {
+      return response.status(404).json({ error: "Announcement not found" });
+    }
+    return response.json({ ok: true });
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to mark announcement as read"
+    });
   }
 });
 

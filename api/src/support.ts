@@ -25,6 +25,7 @@ import { loadOpenAcComfortAlertsForStaff } from "./ac-comfort-votes.js";
 import { loadOpenHostelBookingAlertsForStaff } from "./hostel-booking-notifications.js";
 import { buildFridgeDrainReminderNotifications } from "./fridge-drain-schedule.js";
 import { listCleaningHeroAwardsForEmail } from "./cleaning-hero-awards.js";
+import { listCleaningHeroAnnouncementsForEmail } from "./cleaning-hero-announcements.js";
 import { listCookerLeftoverNoticesForEmail } from "./cooker-controller.js";
 import { isBranchAutomationDisabled, isCleaningTaskAutomationDisabled } from "./branch-closure.js";
 import { prisma } from "./prisma.js";
@@ -550,6 +551,7 @@ type ResidentNotificationItem = {
     | "PREPAID_PACKAGE"
     | "FRIDGE_DRAIN_REMINDER"
     | "CLEANING_HERO_AWARD"
+    | "CLEANING_HERO_ANNOUNCEMENT"
     | "COOKER_LEFT_ON";
   title: string;
   body: string;
@@ -906,7 +908,25 @@ async function buildResidentReminderNotifications(email: string) {
       body: `Congrats! You completed the most self-assigned cleaning tasks in ${award.periodKey} (${award.completedCount}). +${award.coinsAwarded.toLocaleString()} coins have been added to your account.`,
       createdAt: award.awardedAt,
       unreadCount: 1,
-      href: "/cleaning-schedule"
+      href: "/schedule"
+    });
+  }
+
+  const heroAnnouncements = await listCleaningHeroAnnouncementsForEmail(normalizedEmail, { withinDays: 45 });
+  for (const announcement of heroAnnouncements) {
+    const isWinner = announcement.winnerEmail === normalizedEmail;
+    if (isWinner) {
+      continue;
+    }
+    const alreadyRead = announcement.readBy.includes(normalizedEmail);
+    notifications.push({
+      id: `cleaning-hero-announcement-${announcement.id}`,
+      type: "CLEANING_HERO_ANNOUNCEMENT",
+      title: announcement.title,
+      body: announcement.body,
+      createdAt: announcement.announcedAt,
+      unreadCount: alreadyRead ? 0 : 1,
+      href: "/schedule"
     });
   }
 

@@ -29,6 +29,8 @@ enum CoinReason {
   CLEANING_REVERSAL
   CLEANING_SWAP_DEBIT
   CLEANING_SWAP_CREDIT
+  REWARDED_CLEANING_REWARD
+  REWARDED_CLEANING_REVERSAL
 }
 
 enum CleaningSwapRequestStatus {
@@ -798,6 +800,79 @@ model WebLeadConversation {
 
   @@index([status, lastMessageAt])
   @@index([phone])
+}
+
+enum RewardedCleaningStatus {
+  AWAITING_AFTER
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum RewardedCleaningPhotoPhase {
+  BEFORE
+  AFTER
+}
+
+/// Voluntary site cleaning/organizing areas (system defaults + resident-added).
+model RewardedCleaningSite {
+  id          String   @id @default(cuid())
+  name        String
+  branchId    String?
+  createdBy   String?
+  isSystem    Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  submissions RewardedCleaningSubmission[]
+
+  @@unique([name, branchId])
+  @@index([branchId, isActive])
+}
+
+/// Resident before/after cleaning submission for optional coin rewards (beta).
+model RewardedCleaningSubmission {
+  id               String                 @id @default(cuid())
+  userEmail        String
+  userName         String?
+  branchId         String
+  siteId           String
+  site             RewardedCleaningSite   @relation(fields: [siteId], references: [id])
+  workDate         DateTime               @db.Date
+  status           RewardedCleaningStatus @default(AWAITING_AFTER)
+  beforeNote       String?                @db.VarChar(500)
+  afterNote        String?                @db.VarChar(500)
+  aiVerdict        CleaningAiVerdict?
+  aiScore          Int?
+  aiNote           String?                @db.Text
+  aiSuggestedCoins Int?
+  aiVerifiedAt     DateTime?
+  rewardCoins      Int?
+  reviewerEmail    String?
+  reviewerNote     String?                @db.VarChar(500)
+  reviewedAt       DateTime?
+  afterSubmittedAt DateTime?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  photos           RewardedCleaningPhoto[]
+
+  @@unique([userEmail, siteId, workDate])
+  @@index([status, createdAt])
+  @@index([userEmail, workDate])
+  @@index([branchId, workDate])
+}
+
+model RewardedCleaningPhoto {
+  id           String                     @id @default(cuid())
+  submissionId String
+  submission   RewardedCleaningSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  phase        RewardedCleaningPhotoPhase
+  storageName  String                     @unique
+  fileName     String
+  sortOrder    Int                        @default(0)
+  createdAt    DateTime                   @default(now())
+
+  @@index([submissionId, phase, sortOrder])
 }
 
 model WebLeadMessage {

@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
+import { usePortalLanguage } from "./portal-language";
 
 type BranchPromptNotice = {
   id: string;
@@ -18,8 +20,11 @@ export function BranchBroadcastPrompt({
   email: string;
   enabled: boolean;
 }) {
+  const { t } = usePortalLanguage();
   const [queue, setQueue] = useState<BranchPromptNotice[]>([]);
   const active = queue[0] ?? null;
+  const isHeroNotice =
+    Boolean(active?.title?.includes("Cozoro Hero")) || Boolean(active?.title?.includes("Anh hùng Cozoro"));
 
   useEffect(() => {
     if (!enabled || !email) return;
@@ -69,13 +74,28 @@ export function BranchBroadcastPrompt({
         <p className="mt-3 text-xs text-slate-500">
           Sent: {new Date(active.sentAt).toLocaleString()}
         </p>
-        <button
-          type="button"
-          onClick={() => void dismissCurrent()}
-          className="mt-4 w-full rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-700"
-        >
-          Got it
-        </button>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {isHeroNotice ? (
+            <Link
+              href="/schedule"
+              onClick={() => void dismissCurrent()}
+              className="inline-flex flex-1 items-center justify-center rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700"
+            >
+              {t("selfAssignPromoCta", "Open schedule")}
+            </Link>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void dismissCurrent()}
+            className={`inline-flex rounded-xl px-4 py-2.5 text-sm font-semibold ${
+              isHeroNotice
+                ? "border border-slate-300 text-slate-700 hover:bg-slate-50"
+                : "w-full bg-amber-600 text-white hover:bg-amber-700"
+            }`}
+          >
+            {t("notificationAcComfortDismiss", "Got it")}
+          </button>
+        </div>
       </div>
     </div>
   );

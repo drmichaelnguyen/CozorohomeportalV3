@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
+import { RewardedCleaningReviewClient } from "./rewarded-cleaning-review-client";
 const PRIVILEGED_EMAILS = new Set(["cozorohome@gmail.com", "dr.trongto@gmail.com"]);
 const DEFAULT_PRIVILEGED_EMAIL = "cozorohome@gmail.com";
 const OVERDUE_ASSIGNED_PAGE_SIZE = 5;
@@ -185,53 +186,6 @@ type CleaningReferencePhoto = {
   url: string;
 };
 
-type CleaningAiBenchmarkReport = {
-  settings: {
-    evaluationWindowDays: number;
-    accuracyThresholdPercent: number;
-    minSampleSize: number;
-    autoSkipManualAuditEnabled: boolean;
-  };
-  evaluationWindow: {
-    windowDays: number;
-    sampleSize: number;
-    matches: number;
-    mismatches: number;
-    accuracyPercent: number | null;
-    eligibleHumanApprove: number;
-    eligibleHumanReject: number;
-    notEligibleHumanApprove: number;
-    notEligibleHumanReject: number;
-  };
-  last30Days: { sampleSize: number; accuracyPercent: number | null };
-  autoSkipReady: boolean;
-  autoSkipActive: boolean;
-  progressToAutoSkip: {
-    sampleSize: number;
-    sampleSizeRequired: number;
-    accuracyPercent: number | null;
-    accuracyRequired: number;
-  };
-  byTaskType: Array<{
-    taskType: AdminTask["type"];
-    sampleSize: number;
-    matches: number;
-    accuracyPercent: number | null;
-  }>;
-  recentMismatches: Array<{
-    id: string;
-    taskId: string;
-    taskType: AdminTask["type"];
-    branchId: string;
-    floor: number | null;
-    aiVerdict: string;
-    aiScore: number | null;
-    humanDecision: string;
-    reviewer: string;
-    createdAt: string;
-  }>;
-};
-
 function cleaningPhotoUrl(storageName: string, email: string, kind: "reference" | "completion") {
   return `${API_BASE_URL}/cleaning/photos/${encodeURIComponent(storageName)}?email=${encodeURIComponent(email)}&kind=${kind}`;
 }
@@ -402,9 +356,8 @@ function getSchedulerJobLabel(
 export function AdminCleaningClient() {
   const { t, language } = usePortalLanguage();
   const dateLocale = language === "vi" ? "vi-VN" : "en-US";
-  const { sessionEmail, sessionRole } = usePortalSession();
+  const { sessionEmail } = usePortalSession();
   const activeEmail = sessionEmail || DEFAULT_PRIVILEGED_EMAIL;
-  const canManageAiBenchmark = sessionRole === "owner" || sessionRole === "app_admin";
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [calendars, setCalendars] = useState<AdminCalendar[]>([]);
@@ -449,9 +402,6 @@ export function AdminCleaningClient() {
   const [referencePhotos, setReferencePhotos] = useState<CleaningReferencePhoto[]>([]);
   const [referencePhotosLoading, setReferencePhotosLoading] = useState(false);
   const [referenceUploadLoading, setReferenceUploadLoading] = useState(false);
-  const [aiBenchmark, setAiBenchmark] = useState<CleaningAiBenchmarkReport | null>(null);
-  const [aiBenchmarkLoading, setAiBenchmarkLoading] = useState(false);
-  const [aiBenchmarkSaving, setAiBenchmarkSaving] = useState(false);
   const [overdueAssignedVisibleCount, setOverdueAssignedVisibleCount] = useState(OVERDUE_ASSIGNED_PAGE_SIZE);
   const [editingFineTaskId, setEditingFineTaskId] = useState<string | null>(null);
   const [editingFineAmount, setEditingFineAmount] = useState<string>("");
@@ -492,66 +442,6 @@ export function AdminCleaningClient() {
   useEffect(() => {
     void loadReferencePhotos();
   }, [activeEmail, referenceTaskType, referenceBranchId, referenceFloor]);
-
-  useEffect(() => {
-    void loadAiBenchmark();
-  }, [activeEmail]);
-
-  async function loadAiBenchmark() {
-    setAiBenchmarkLoading(true);
-    try {
-      const response = await fetch(
-        `${API_BASE_URL}/manager/cleaning/ai-benchmark?actorEmail=${encodeURIComponent(activeEmail)}`
-      );
-      const data = await readJsonSafely<CleaningAiBenchmarkReport & { error?: string }>(response);
-      if (!response.ok) {
-        setMessage(data.error ?? "Unable to load AI benchmark.");
-        return;
-      }
-      setAiBenchmark(data);
-    } catch {
-      setMessage("Unable to load AI benchmark.");
-    } finally {
-      setAiBenchmarkLoading(false);
-    }
-  }
-
-  async function saveAutoSkipSetting(enabled: boolean) {
-    if (!canManageAiBenchmark) {
-      setMessage("Only owners can change auto-skip settings.");
-      return;
-    }
-    setAiBenchmarkSaving(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/manager/cleaning/ai-benchmark-settings`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          actorEmail: activeEmail,
-          autoSkipManualAuditEnabled: enabled
-        })
-      });
-      const data = await readJsonSafely<{ error?: string }>(response);
-      if (!response.ok) {
-        setMessage(data.error ?? "Unable to update auto-skip setting.");
-        return;
-      }
-      await loadAiBenchmark();
-      setMessage(
-        enabled
-          ? language === "vi"
-            ? "Đã bật tự duyệt AI (chỉ khi đạt ngưỡng độ chính xác)."
-            : "Auto-skip enabled (only when accuracy threshold is met)."
-          : language === "vi"
-            ? "Đã tắt tự duyệt AI — cần duyệt thủ công."
-            : "Auto-skip disabled — manual audit required."
-      );
-    } catch {
-      setMessage("Unable to update auto-skip setting.");
-    } finally {
-      setAiBenchmarkSaving(false);
-    }
-  }
 
   async function readJsonSafely<T>(response: Response) {
     const bodyText = await response.text();
@@ -1308,7 +1198,6 @@ export function AdminCleaningClient() {
       if (reviewQueue) {
         await loadReviewQueue();
       }
-      await loadAiBenchmark();
       if (decision === "APPROVE") {
         setMessage(t("adminCleaningTaskApprovedCoins"));
       } else {
@@ -1382,6 +1271,7 @@ export function AdminCleaningClient() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
+      <RewardedCleaningReviewClient />
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
         <div className="flex items-center gap-2">
           <h1 className="text-2xl font-semibold text-slate-900">{t("adminCleaningHeader")}</h1>
@@ -1587,172 +1477,6 @@ export function AdminCleaningClient() {
             ))
           )}
         </div>
-      </section>
-
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-violet-200">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">
-              {language === "vi" ? "Benchmark AI vs duyệt thủ công" : "AI vs human audit benchmark"}
-            </h2>
-            <p className="mt-1 text-sm text-slate-600">
-              {language === "vi"
-                ? "Theo dõi độ chính xác AI so với quyết định của staff. Khi đạt ≥90% trên đủ mẫu, có thể bật tự duyệt coin cho task AI ELIGIBLE."
-                : "Track how often AI agrees with staff approve/reject. At ≥90% accuracy with enough samples, you can enable auto-approval for AI-eligible tasks."}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => void loadAiBenchmark()}
-            disabled={aiBenchmarkLoading}
-            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 disabled:opacity-60"
-          >
-            {aiBenchmarkLoading ? t("refreshing") : t("refreshLabel", "Refresh")}
-          </button>
-        </div>
-
-        {aiBenchmark ? (
-          <div className="mt-5 space-y-5">
-            <div className="grid gap-4 md:grid-cols-3">
-              <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-violet-700">
-                  {language === "vi" ? "Độ chính xác" : "Accuracy"} ({aiBenchmark.evaluationWindow.windowDays}d)
-                </div>
-                <div className="mt-2 text-3xl font-black text-slate-900">
-                  {aiBenchmark.evaluationWindow.accuracyPercent != null
-                    ? `${aiBenchmark.evaluationWindow.accuracyPercent}%`
-                    : "—"}
-                </div>
-                <div className="mt-1 text-xs text-slate-600">
-                  {aiBenchmark.evaluationWindow.matches}/{aiBenchmark.evaluationWindow.sampleSize}{" "}
-                  {language === "vi" ? "khớp" : "matches"}
-                </div>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {language === "vi" ? "Mẫu cần" : "Samples required"}
-                </div>
-                <div className="mt-2 text-3xl font-black text-slate-900">
-                  {aiBenchmark.progressToAutoSkip.sampleSize}/{aiBenchmark.progressToAutoSkip.sampleSizeRequired}
-                </div>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
-                  <div
-                    className="h-full rounded-full bg-violet-600"
-                    style={{
-                      width: `${Math.min(
-                        100,
-                        (aiBenchmark.progressToAutoSkip.sampleSize /
-                          Math.max(1, aiBenchmark.progressToAutoSkip.sampleSizeRequired)) *
-                          100
-                      )}%`
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {language === "vi" ? "Ngưỡng" : "Threshold"}
-                </div>
-                <div className="mt-2 text-3xl font-black text-slate-900">
-                  {aiBenchmark.progressToAutoSkip.accuracyRequired}%
-                </div>
-                <div className="mt-1 text-xs text-slate-600">
-                  {aiBenchmark.autoSkipReady
-                    ? language === "vi"
-                      ? "Đủ điều kiện bật auto-skip"
-                      : "Ready for auto-skip"
-                    : language === "vi"
-                      ? "Chưa đủ điều kiện"
-                      : "Not ready yet"}
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-slate-200 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold text-slate-900">
-                    {language === "vi" ? "Tự duyệt coin (AI ELIGIBLE)" : "Auto-approve coins (AI ELIGIBLE)"}
-                  </div>
-                  <p className="mt-1 text-xs text-slate-600">
-                    {aiBenchmark.autoSkipActive
-                      ? language === "vi"
-                        ? "Đang bật — task ELIGIBLE được duyệt coin tự động."
-                        : "Active — ELIGIBLE tasks skip manual audit."
-                      : language === "vi"
-                        ? "Tắt mặc định. Chỉ bật sau khi benchmark đạt ngưỡng."
-                        : "Off by default. Enable only after benchmark meets threshold."}
-                  </p>
-                </div>
-                {canManageAiBenchmark ? (
-                  <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={aiBenchmark.settings.autoSkipManualAuditEnabled}
-                      disabled={aiBenchmarkSaving || !aiBenchmark.autoSkipReady}
-                      onChange={(event) => void saveAutoSkipSetting(event.target.checked)}
-                      className="h-4 w-4 rounded border-slate-300 text-violet-600"
-                    />
-                    {language === "vi" ? "Bật auto-skip" : "Enable auto-skip"}
-                  </label>
-                ) : (
-                  <span className="text-xs text-slate-500">{language === "vi" ? "Chỉ owner" : "Owners only"}</span>
-                )}
-              </div>
-              {!aiBenchmark.autoSkipReady ? (
-                <p className="mt-2 text-xs text-amber-700">
-                  {language === "vi"
-                    ? `Cần ≥${aiBenchmark.progressToAutoSkip.accuracyRequired}% độ chính xác và ≥${aiBenchmark.progressToAutoSkip.sampleSizeRequired} mẫu human review.`
-                    : `Requires ≥${aiBenchmark.progressToAutoSkip.accuracyRequired}% accuracy and ≥${aiBenchmark.progressToAutoSkip.sampleSizeRequired} human-reviewed comparisons.`}
-                </p>
-              ) : null}
-            </div>
-
-            {aiBenchmark.byTaskType.length > 0 ? (
-              <div>
-                <h3 className="text-sm font-semibold text-slate-900">
-                  {language === "vi" ? "Theo loại việc" : "By task type"}
-                </h3>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {aiBenchmark.byTaskType.map((row) => (
-                    <div key={row.taskType} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
-                      <div className="font-semibold text-slate-800">{prettyTaskType(row.taskType, t)}</div>
-                      <div className="text-slate-600">
-                        {row.accuracyPercent != null ? `${row.accuracyPercent}%` : "—"} · n={row.sampleSize}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {aiBenchmark.recentMismatches.length > 0 ? (
-              <div>
-                <h3 className="text-sm font-semibold text-rose-900">
-                  {language === "vi" ? "Lệch gần đây (AI ≠ staff)" : "Recent mismatches (AI ≠ staff)"}
-                </h3>
-                <ul className="mt-2 space-y-2">
-                  {aiBenchmark.recentMismatches.slice(0, 8).map((row) => (
-                    <li key={row.id} className="rounded-lg border border-rose-100 bg-rose-50/40 px-3 py-2 text-xs text-slate-700">
-                      {prettyTaskType(row.taskType, t)} · {row.branchId}
-                      {row.floor != null ? ` F${row.floor}` : ""} · AI {row.aiVerdict}
-                      {row.aiScore != null ? ` ${row.aiScore}/100` : ""} · staff {row.humanDecision} ·{" "}
-                      {new Date(row.createdAt).toLocaleString(dateLocale)}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </div>
-        ) : aiBenchmarkLoading ? (
-          <p className="mt-4 text-sm text-slate-500">{t("refreshing")}</p>
-        ) : (
-          <p className="mt-4 text-sm text-slate-500">
-            {language === "vi"
-              ? "Chưa có dữ liệu benchmark. Dữ liệu được ghi khi staff duyệt task có AI ELIGIBLE/NOT_ELIGIBLE."
-              : "No benchmark data yet. Records are created when staff audit tasks with AI ELIGIBLE/NOT_ELIGIBLE verdicts."}
-          </p>
-        )}
       </section>
 
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
