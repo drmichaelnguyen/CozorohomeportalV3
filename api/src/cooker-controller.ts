@@ -27,6 +27,9 @@ export const COOKER_SESSION_MINUTES = 30;
 export const COOKER_RESERVE_MAX_ADVANCE_DAYS = 3;
 export const COOKER_RESERVE_MAX_SESSIONS_PER_DAY = 2;
 const LEFTOVER_REMINDER_LIMIT = 2;
+/** Leftover-on fine tickets are paused; overdue sessions get turn-off reminders only. */
+const LEFTOVER_FINES_ON_HOLD = true;
+const ACTIVE_SESSION_REMINDER_INTERVAL_MS = 30 * 60 * 1000;
 
 export type CookerBranchId = "D2" | "D7";
 export type CookerNumber = 1 | 2;
@@ -64,6 +67,7 @@ export type CookerSession = {
   leftoverFineIssuedAt: string | null;
   leftoverFineAmount: number | null;
   leftoverWarningOnly?: boolean;
+  lastTurnOffReminderAt?: string | null;
   reservationId?: string | null;
   closedReason?: "checkout" | "takeover" | "timeout" | null;
 };
@@ -89,7 +93,7 @@ export type CookerLeftoverNotice = {
   strike: number;
   fined: boolean;
   amount: number | null;
-  reason: "takeover" | "timeout" | "manual";
+  reason: "takeover" | "timeout" | "manual" | "active_session";
 };
 
 type CookerStateFile = {
@@ -135,6 +139,7 @@ export type UserCookerContext = {
   eligible: boolean;
   maxOnMinutes: number;
   leftoverFineVnd: number;
+  leftoverFinesOnHold: boolean;
   leftoverStrikes: number;
   sessionMinutes: number;
   reserveMaxAdvanceDays: number;
@@ -594,6 +599,7 @@ export async function getUserCookerContext(email: string): Promise<UserCookerCon
     eligible,
     maxOnMinutes: getCookerMaxOnMinutes(),
     leftoverFineVnd: getCookerLeftOnFineVnd(),
+    leftoverFinesOnHold: LEFTOVER_FINES_ON_HOLD,
     leftoverStrikes: state.leftoverStrikesByEmail[normalizedEmail] ?? 0,
     sessionMinutes: COOKER_SESSION_MINUTES,
     reserveMaxAdvanceDays: COOKER_RESERVE_MAX_ADVANCE_DAYS,
@@ -879,7 +885,7 @@ async function applyLeftoverConsequence(
   const email = normalizeEmail(session.startedByEmail);
   const nextStrike = (state.leftoverStrikesByEmail[email] ?? 0) + 1;
   state.leftoverStrikesByEmail[email] = nextStrike;
-  const warningOnly = nextStrike <= LEFTOVER_REMINDER_LIMIT;
+  const warningOnly = LEFTOVER_FINES_ON_HOLD || nextStrike <= LEFTOVER_REMINDER_LIMIT;
   const recordedAt = new Date().toISOString();
   let amount: number | null = null;
   let fined = false;
@@ -901,11 +907,15 @@ async function applyLeftoverConsequence(
           `Dear ${session.startedByName || email},`,
           "",
           `For safety, ${device.label} was recorded as left on (${reason}).`,
-          `This is reminder ${nextStrike} of ${LEFTOVER_REMINDER_LIMIT}. The next time this happens, a fine ticket may be issued.`,
+          LEFTOVER_FINES_ON_HOLD
+            ? "Please turn the cooker off in the CozoroHome app if nobody else is using it. Fine tickets are currently on hold."
+            : `This is reminder ${nextStrike} of ${LEFTOVER_REMINDER_LIMIT}. The next time this happens, a fine ticket may be issued.`,
           "",
           `Quý khách thân mến,`,
           `Vì an toàn, ${device.label} được ghi nhận là quên tắt (${reason}).`,
-          `Đây là nhắc nhở ${nextStrike}/${LEFTOVER_REMINDER_LIMIT}. Lần sau có thể bị lập phiếu phạt.`
+          LEFTOVER_FINES_ON_HOLD
+            ? "Nếu không còn ai đang dùng, hãy tắt bếp trong ứng dụng CozoroHome. Hiện chưa lập phiếu phạt."
+            : `Đây là nhắc nhở ${nextStrike}/${LEFTOVER_REMINDER_LIMIT}. Lần sau có thể bị lập phiếu phạt.`
         ].join("\n")
       });
     } catch (error) {
@@ -926,6 +936,56 @@ async function applyLeftoverConsequence(
   state.leftoverNotices = state.leftoverNotices.slice(0, 200);
 
   return { recordedAt, warningOnly, amount, fined, strike: nextStrike };
+}
+
+async function remindActiveCookerSession(state: CookerStateFile, session: CookerSession, device: CookerDevice, now: number) {
+  const lastReminderMs = session.lastTurnOffReminderAt ? new Date(session.lastTurnOffReminderAt).getTime() : 0;
+  if (Number.isFinite(lastReminderMs) && lastReminderMs > 0 && now - lastReminderMs < ACTIVE_SESSION_REMINDER_INTERVAL_MS) {
+    return { sent: false as const };
+  }
+
+  const email = normalizeEmail(session.startedByEmail);
+  const recordedAt = new Date(now).toISOString();
+  const strike = state.leftoverStrikesByEmail[email] ?? 0;
+  const firstReminderForSession = !session.lastTurnOffReminderAt;
+
+  try {
+    await sendGmailReceipt({
+      to: email,
+      subject: `[Cozoro Home] Please turn off ${device.label} / Nhắc tắt bếp`,
+      body: [
+        `Dear ${session.startedByName || email},`,
+        "",
+        `Your ${device.label} session is still active and nobody else is using that cooker.`,
+        "Please open Controller → Cooker, clean up, and turn it off in the app.",
+        "Fine tickets for leftover-on are currently on hold — this is a reminder only.",
+        "",
+        `Quý khách thân mến,`,
+        `Lượt ${device.label} của bạn vẫn đang bật và chưa có ai khác đang dùng bếp này.`,
+        "Hãy mở Điều khiển → Bếp, dọn sạch, rồi tắt bếp trên ứng dụng.",
+        "Hiện chưa lập phiếu phạt quên tắt — đây chỉ là nhắc nhở."
+      ].join("\n")
+    });
+  } catch (error) {
+    console.error("[cooker] active-session turn-off reminder email failed", error);
+  }
+
+  if (firstReminderForSession) {
+    state.leftoverNotices.unshift({
+      id: randomUUID(),
+      email,
+      cookerLabel: device.label,
+      createdAt: recordedAt,
+      strike,
+      fined: false,
+      amount: null,
+      reason: "active_session"
+    });
+    state.leftoverNotices = state.leftoverNotices.slice(0, 200);
+  }
+
+  patchSessionInState(state, session.id, { lastTurnOffReminderAt: recordedAt, leftoverWarningOnly: true });
+  return { sent: true as const };
 }
 
 async function issueLeftoverFine(session: CookerSession, cookerLabel: string) {
@@ -1020,6 +1080,7 @@ export async function listCookerInspectionsForStaff(limit = 40) {
   return {
     leftoverFineVnd: getCookerLeftOnFineVnd(),
     leftoverReminderLimit: LEFTOVER_REMINDER_LIMIT,
+    leftoverFinesOnHold: LEFTOVER_FINES_ON_HOLD,
     inspections
   };
 }
@@ -1068,8 +1129,13 @@ export async function issueStaffCookerInspectionTicket(input: {
   }
   const email = normalizeEmail(session.startedByEmail);
   const alreadyTicketed = Boolean(session.leftoverFineIssuedAt);
-  if (input.action === "fine" && session.leftoverFineAmount) {
-    throw new Error("This cooker session already has a leftover-on fine.");
+  if (input.action === "fine") {
+    if (LEFTOVER_FINES_ON_HOLD) {
+      throw new Error("Leftover-on fine tickets are on hold. Send a turn-off reminder instead.");
+    }
+    if (session.leftoverFineAmount) {
+      throw new Error("This cooker session already has a leftover-on fine.");
+    }
   }
   if (input.action === "reminder" && alreadyTicketed) {
     throw new Error("This cooker session already has a leftover-on reminder or fine.");
@@ -1092,14 +1158,18 @@ export async function issueStaffCookerInspectionTicket(input: {
           `Dear ${session.startedByName || email},`,
           "",
           `Staff inspected kitchen photos for ${cookerLabel}.`,
-          "For safety, this is a reminder to turn the cooker off and leave the kitchen clean.",
-          `This is reminder ${strike} of ${LEFTOVER_REMINDER_LIMIT}. A later leftover-on incident can become a fine.`,
+          "Please turn the cooker off in the CozoroHome app if nobody else is using it.",
+          LEFTOVER_FINES_ON_HOLD
+            ? "Fine tickets for leftover-on are currently on hold — this is a reminder only."
+            : `This is reminder ${strike} of ${LEFTOVER_REMINDER_LIMIT}. A later leftover-on incident can become a fine.`,
           staffNote ? `Staff note: ${staffNote}` : "",
           "",
           `Quý khách thân mến,`,
           `Nhân viên đã kiểm tra ảnh nhà bếp cho ${cookerLabel}.`,
-          "Vì an toàn, đây là nhắc nhở tắt bếp và dọn sạch.",
-          `Đây là nhắc nhở ${strike}/${LEFTOVER_REMINDER_LIMIT}. Lần sau có thể bị lập phiếu phạt.`,
+          "Vì an toàn, hãy tắt bếp trên ứng dụng nếu không còn ai đang dùng, và dọn sạch nhà bếp.",
+          LEFTOVER_FINES_ON_HOLD
+            ? "Hiện chưa lập phiếu phạt quên tắt — đây chỉ là nhắc nhở."
+            : `Đây là nhắc nhở ${strike}/${LEFTOVER_REMINDER_LIMIT}. Lần sau có thể bị lập phiếu phạt.`,
           staffNote ? `Ghi chú: ${staffNote}` : ""
         ]
           .filter((line) => line !== "")
@@ -1279,7 +1349,7 @@ export async function sweepForgottenCookerSessions() {
   const state = await readStateFile();
   const now = Date.now();
   expireStaleReservations(state, now);
-  const results: Array<{ sessionId: string; deviceId: string; fined: boolean }> = [];
+  const results: Array<{ sessionId: string; deviceId: string; reminded: boolean }> = [];
 
   for (const device of COOKER_DEVICES) {
     if (isBranchAutomationDisabled(device.branchId)) {
@@ -1293,49 +1363,10 @@ export async function sweepForgottenCookerSessions() {
       continue;
     }
 
-    try {
-      await triggerCookerIfttt(device, "OFF", current.startedByEmail);
-    } catch (error) {
-      console.error(`[cooker] leftover OFF webhook failed for ${device.id}`, error);
-    }
-
-    const leftover = current.leftoverFineIssuedAt
-      ? {
-          recordedAt: current.leftoverFineIssuedAt,
-          warningOnly: Boolean(current.leftoverWarningOnly),
-          amount: current.leftoverFineAmount,
-          fined: Boolean(current.leftoverFineAmount)
-        }
-      : await applyLeftoverConsequence(state, current, device, "timeout");
-    const endedAt = new Date().toISOString();
-    if (current.reservationId) {
-      const reservation = state.reservations.find((entry) => entry.id === current.reservationId);
-      if (reservation && isOpenReservation(reservation)) {
-        reservation.status = "expired";
-      }
-    }
-    const closed: CookerSession = {
-      ...current,
-      lastRequestedAction: "OFF",
-      lastRequestedAt: endedAt,
-      endedAt,
-      endedByEmail: "system",
-      endedByName: "Cooker controller",
-      leftoverFineIssuedAt: leftover.recordedAt,
-      leftoverFineAmount: leftover.amount,
-      leftoverWarningOnly: leftover.warningOnly,
-      closedReason: "timeout"
-    };
-    state.currentByDeviceId[device.id] = null;
-    rememberSession(state, closed);
-    results.push({ sessionId: current.id, deviceId: device.id, fined: leftover.fined });
+    const reminded = await remindActiveCookerSession(state, current, device, now);
+    results.push({ sessionId: current.id, deviceId: device.id, reminded: reminded.sent });
   }
 
-  if (results.length > 0) {
-    await writeStateFile(state);
-  } else {
-    await writeStateFile(state);
-  }
-
-  return { checked: COOKER_DEVICES.length, closed: results.length, results };
+  await writeStateFile(state);
+  return { checked: COOKER_DEVICES.length, reminded: results.filter((row) => row.reminded).length, results };
 }

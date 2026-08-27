@@ -138,6 +138,7 @@ type CookerContext = {
   eligible: boolean;
   maxOnMinutes: number;
   leftoverFineVnd: number;
+  leftoverFinesOnHold?: boolean;
   leftoverStrikes: number;
   sessionMinutes: number;
   reserveMaxAdvanceDays: number;
@@ -1150,12 +1151,20 @@ export function ControllerClient({
                 <li>{t("cookerPolicyRule3")}</li>
               </ol>
               <p className="mt-2 text-xs font-medium text-rose-800">{t("cookerPolicyNoticeFine")}</p>
-              <p className="mt-2 text-xs font-medium text-rose-800">
-                {t("cookerFineWarning", undefined, {
-                  minutes: cookerContext.sessionMinutes || cookerContext.maxOnMinutes,
-                  amount: cookerContext.leftoverFineVnd.toLocaleString(language === "vi" ? "vi-VN" : "en-US")
-                })}
-              </p>
+              {cookerContext.leftoverFinesOnHold ? (
+                <p className="mt-2 text-xs font-medium text-amber-800">
+                  {t("cookerFineHoldNotice", undefined, {
+                    minutes: cookerContext.sessionMinutes || cookerContext.maxOnMinutes
+                  })}
+                </p>
+              ) : (
+                <p className="mt-2 text-xs font-medium text-rose-800">
+                  {t("cookerFineWarning", undefined, {
+                    minutes: cookerContext.sessionMinutes || cookerContext.maxOnMinutes,
+                    amount: cookerContext.leftoverFineVnd.toLocaleString(language === "vi" ? "vi-VN" : "en-US")
+                  })}
+                </p>
+              )}
               <p className="mt-1 text-xs text-slate-600">
                 {t("cookerStrikeStatus", undefined, { count: cookerContext.leftoverStrikes ?? 0 })}
               </p>
@@ -1264,7 +1273,9 @@ export function ControllerClient({
                         <div className={`mt-4 rounded-xl border p-3 text-sm ${unit.overdue ? "border-rose-300 bg-rose-50 text-rose-900" : "border-amber-200 bg-amber-50 text-slate-900"}`}>
                           <p className="font-semibold">
                             {unit.isMine
-                              ? t("cookerYouAreUsing")
+                              ? unit.overdue
+                                ? t("cookerTurnOffNowReminder")
+                                : t("cookerYouAreUsing")
                               : t("cookerInUseBy", undefined, {
                                   name: unit.currentUse.startedByName || unit.currentUse.startedByEmail
                                 })}
