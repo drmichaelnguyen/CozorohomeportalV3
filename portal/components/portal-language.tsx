@@ -986,6 +986,35 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "You already have a cleaning task on: {dates}. Marking unavailable will NOT remove it. Use Release or Swap if you cannot do the task. Continue?",
     vi: "Bạn đã có lịch trực vào: {dates}. Đánh dấu không rảnh sẽ KHÔNG xóa lịch trực đó. Hãy dùng Hủy lịch hoặc Đổi lịch nếu bạn không thể thực hiện. Tiếp tục?"
   },
+  assignedTaskAwayDecision: {
+    en: "You already have an assigned cleaning task on: {dates}.\n\nChoose OK to mark the date(s) unavailable and review removing the assigned task(s). Late cancellations may charge coins.\n\nChoose Cancel to mark the date(s) unavailable but KEEP the assigned task(s).",
+    vi: "Bạn đã có lịch trực được phân công vào: {dates}.\n\nChọn OK để đánh dấu ngày không rảnh và xem xét hủy các lịch trực đã được giao. Hủy sát ngày có thể bị trừ Coin.\n\nChọn Hủy để chỉ đánh dấu ngày không rảnh nhưng VẪN GIỮ các lịch trực đã được giao."
+  },
+  lateCancelConfirm: {
+    en: "Late cancellation warning\n\nTask: {task}\nDate: {date}\nFine: {amount} VND\nCoins charged immediately: {coins}\nCurrent balance: {balance} coins\nBalance after payment: {remaining} coins\n\nChoose OK to confirm the cancellation and coin payment. Choose Cancel to keep the assigned task.",
+    vi: "Cảnh báo hủy lịch sát ngày\n\nLịch trực: {task}\nNgày: {date}\nMức phạt: {amount}đ\nCoin bị trừ ngay: {coins}\nSố dư hiện tại: {balance} Coin\nSố dư sau thanh toán: {remaining} Coin\n\nChọn OK để xác nhận hủy lịch và thanh toán bằng Coin. Chọn Hủy để giữ lịch trực đã được giao."
+  },
+  lateCancelInsufficientCoins: {
+    en: "This late cancellation requires {required} coins, but your current balance is {available}. The assigned task was kept. Please request a swap or contact Cozoro.",
+    vi: "Hủy lịch sát ngày cần {required} Coin nhưng số dư hiện tại của bạn là {available} Coin. Lịch trực vẫn được giữ. Vui lòng yêu cầu đổi lịch hoặc liên hệ Cozoro."
+  },
+  lateCancelKept: { en: "The assigned task was kept.", vi: "Lịch trực đã được giữ lại." },
+  taskRemovedCoinsPaid: {
+    en: "You were removed and the task was reassigned. {coins} coins were deducted immediately to settle the late-cancellation fine.",
+    vi: "Bạn đã được hủy lịch và hệ thống đã phân công người thay thế. {coins} Coin đã được trừ ngay để thanh toán phí hủy sát ngày."
+  },
+  taskRemoved: {
+    en: "You were removed from this task and the system reassigned it.",
+    vi: "Bạn đã được hủy khỏi lịch trực và hệ thống đã phân công người thay thế."
+  },
+  unableToReleaseTask: { en: "Unable to release this task.", vi: "Không thể hủy lịch trực này." },
+  dateMarkedUnavailable: { en: "Date marked unavailable.", vi: "Đã đánh dấu ngày không rảnh." },
+  datePreferenceSaved: { en: "Date preference saved.", vi: "Đã lưu lựa chọn cho ngày này." },
+  awayDatesSaved: { en: "{count} date(s) marked as away.", vi: "Đã đánh dấu vắng {count} ngày." },
+  awayAssignedTasksRemoved: {
+    en: "{count} assigned task(s) removed.",
+    vi: "Đã hủy {count} lịch trực được phân công."
+  },
   pastUnavailableError: { en: "Past dates cannot be marked unavailable.", vi: "Không thể đánh dấu không rảnh cho ngày đã qua." },
   optOutHelp: { en: "Opt Out pays a one-time fee (100,000 VND or 150,000 coins) to skip ALL cleaning assignments for this month entirely.", vi: "Opt Out trả một lần (100.000 VND hoặc 150.000 coin) để bỏ qua toàn bộ lịch trực vệ sinh trong tháng này." },
   cleaningCalendarTitle: { en: "Cleaning Calendar", vi: "Lịch vệ sinh" },
@@ -1137,8 +1166,8 @@ const translations: Record<string, { en: string; vi: string }> = {
   // Release/removal help (EN + VI — updated to mention swap)
   removalHelpTitle: { en: "Removal and reassignment rules", vi: "Quy tắc hủy và phân công lại" },
   removalHelp: {
-    en: "When you remove yourself from a task, the system immediately finds a replacement using the same fairness ranking as auto-schedule, then may place you on a later open slot of the same type within 15 days — only if you are the most underdue eligible resident for that later slot (so release does not dump you onto the next empty day unfairly).\n\nFine tiers (full fine = 10,000 VND):\n• 5+ days ahead → No fine\n• 1–4 days ahead → 50% fine (5,000 VND)\n• Same day → 75% fine (7,500 VND)\n• Past date → Cannot release\n\nMonthly limit: max 3 removals per calendar month.\nException: self-assigned + released 5+ days ahead → no fine and does not count against the monthly limit.\n\nTip: Use \"Find swap partner\" instead of removing directly. You can offer coins to incentivise another resident to take your slot — no auto-fine, no monthly limit used.",
-    vi: "Khi bạn hủy đăng ký, hệ thống ngay lập tức tìm người thay thế theo cùng thứ tự công bằng với lịch tự động, rồi có thể xếp bạn vào lịch trống cùng loại trong vòng 15 ngày — chỉ khi bạn là cư dân \"nợ nhiều nhất\" đủ điều kiện cho lịch đó (tránh bị đẩy vào ngày trống kế tiếp một cách không công bằng).\n\nMức phạt (phạt đầy đủ = 10.000 VND):\n• Trước 5+ ngày → Không phạt\n• Trước 1–4 ngày → Phạt 50% (5.000 VND)\n• Cùng ngày → Phạt 75% (7.500 VND)\n• Ngày đã qua → Không thể hủy\n\nGiới hạn tháng: tối đa 3 lần hủy mỗi tháng.\nNgoại lệ: tự đăng ký + hủy trước 5+ ngày → không phạt và không tính vào giới hạn tháng.\n\nGợi ý: Dùng \"Tìm người đổi lịch\" thay vì hủy trực tiếp. Bạn có thể đề nghị coin để khuyến khích cư dân khác nhận lịch của bạn — không bị phạt tự động, không dùng giới hạn tháng."
+    en: "When you remove yourself from a task, the system immediately finds a replacement using the same fairness ranking as auto-schedule, then may place you on a later open slot of the same type within 15 days — only if you are the most underdue eligible resident for that later slot (so release does not dump you onto the next empty day unfairly).\n\nFine tiers (full fine = 10,000 VND):\n• 5+ days ahead → No fine\n• 1–4 days ahead → 50% fine (5,000 VND)\n• Same day → 75% fine (7,500 VND)\n• Past date → Cannot release\n\nFor a late cancellation, the confirmation shows the exact coin cost and balance. The coins are deducted immediately when you confirm, and the fine is recorded as paid.\n\nMonthly limit: max 3 removals per calendar month.\nException: self-assigned + released 5+ days ahead → no fine and does not count against the monthly limit.\n\nTip: Use \"Find swap partner\" instead of removing directly. You can offer coins to incentivise another resident to take your slot — no auto-fine, no monthly limit used.",
+    vi: "Khi bạn hủy đăng ký, hệ thống ngay lập tức tìm người thay thế theo cùng thứ tự công bằng với lịch tự động, rồi có thể xếp bạn vào lịch trống cùng loại trong vòng 15 ngày — chỉ khi bạn là cư dân \"nợ nhiều nhất\" đủ điều kiện cho lịch đó (tránh bị đẩy vào ngày trống kế tiếp một cách không công bằng).\n\nMức phạt (phạt đầy đủ = 10.000 VND):\n• Trước 5+ ngày → Không phạt\n• Trước 1–4 ngày → Phạt 50% (5.000 VND)\n• Cùng ngày → Phạt 75% (7.500 VND)\n• Ngày đã qua → Không thể hủy\n\nKhi hủy sát ngày, màn hình xác nhận sẽ hiển thị chính xác số Coin cần trả và số dư. Coin được trừ ngay khi bạn xác nhận, và phiếu phạt được ghi nhận là đã thanh toán.\n\nGiới hạn tháng: tối đa 3 lần hủy mỗi tháng.\nNgoại lệ: tự đăng ký + hủy trước 5+ ngày → không phạt và không tính vào giới hạn tháng.\n\nGợi ý: Dùng \"Tìm người đổi lịch\" thay vì hủy trực tiếp. Bạn có thể đề nghị coin để khuyến khích cư dân khác nhận lịch của bạn — không bị phạt tự động, không dùng giới hạn tháng."
   },
   pastTasksTitle: { en: "Past Tasks", vi: "Lịch trực đã qua" },
   pastTasksShow: { en: "Show past tasks", vi: "Hiện lịch đã qua" },
@@ -1297,6 +1326,52 @@ const translations: Record<string, { en: string; vi: string }> = {
   toolsDbBackupConfirmLabel: { en: "Type RESTORE to confirm", vi: "Nhập RESTORE để xác nhận" },
   toolsDbBackupNoSheet: { en: "No backup sheet yet — run Export first.", vi: "Chưa có sheet sao lưu — hãy Xuất trước." },
   toolsDbBackupTableCounts: { en: "Row counts (last export)", vi: "Số dòng (lần xuất cuối)" },
+  toolsMetaAiKnowledgeTitle: { en: "Meta AI fanpage knowledge", vi: "Tri thức Fanpage Meta AI" },
+  toolsMetaAiKnowledgeDesc: {
+    en: "Sync approved fanpage Q&A, pricing, and live D7 bed availability to the Google Doc linked to Meta AI on your Facebook Page. Auto-sync runs every 3 days while the API is running.",
+    vi: "Đồng bộ tri thức Fanpage (giá, chính sách, giường trống D7) lên Google Doc gắn với Meta AI trên Fanpage. Tự động đồng bộ mỗi 3 ngày khi API đang chạy."
+  },
+  toolsMetaAiKnowledgeHelp: {
+    en: "Only the designated Meta AI admin can see and run this. Edit base text in bot/knowledge/meta-ai-fanpage-knowledge.md in git; live bed counts are appended on each sync. Enable Google Docs API in Cloud Console and reconnect Google here if sync fails.",
+    vi: "Chỉ admin Meta AI được chỉ định mới thấy và chạy mục này. Sửa nội dung gốc trong bot/knowledge/meta-ai-fanpage-knowledge.md; giường trống được cập nhật mỗi lần đồng bộ. Bật Google Docs API trên Cloud Console và kết nối lại Google nếu đồng bộ lỗi."
+  },
+  toolsMetaAiKnowledgeOpenDoc: { en: "Open Google Doc", vi: "Mở Google Doc" },
+  toolsMetaAiKnowledgeLastSync: { en: "Last sync", vi: "Lần đồng bộ cuối" },
+  toolsMetaAiKnowledgeNeverSynced: { en: "Not synced yet — run Sync now.", vi: "Chưa đồng bộ — bấm Đồng bộ ngay." },
+  toolsMetaAiKnowledgeAutoSync: {
+    en: "Automatic sync every {days} days (API scheduler).",
+    vi: "Tự động đồng bộ mỗi {days} ngày (khi API chạy)."
+  },
+  toolsMetaAiKnowledgeOAuthMissing: {
+    en: "Google Sheets is not connected yet. Use Reconnect Google to authorize Docs access.",
+    vi: "Chưa kết nối Google. Bấm Kết nối lại Google để cấp quyền Docs."
+  },
+  toolsMetaAiKnowledgeDocsScopeMissing: {
+    en: "Google Docs permission is missing. Click Reconnect Google and approve the new scope.",
+    vi: "Thiếu quyền Google Docs. Bấm Kết nối lại Google và chấp nhận quyền mới."
+  },
+  toolsMetaAiKnowledgeSyncNow: { en: "Sync now", vi: "Đồng bộ ngay" },
+  toolsMetaAiKnowledgeForceSync: { en: "Force sync", vi: "Đồng bộ cưỡng bức" },
+  toolsMetaAiKnowledgeSyncing: { en: "Syncing…", vi: "Đang đồng bộ…" },
+  toolsMetaAiKnowledgeSynced: { en: "Google Doc updated.", vi: "Đã cập nhật Google Doc." },
+  toolsMetaAiKnowledgeSkipped: { en: "Sync skipped (recent sync). Use Force sync to override.", vi: "Bỏ qua (vừa đồng bộ gần đây). Dùng Đồng bộ cưỡng bức nếu cần." },
+  toolsMetaAiKnowledgeReconnectGoogle: { en: "Reconnect Google", vi: "Kết nối lại Google" },
+  toolsMetaAiKnowledgeOAuthHostNote: {
+    en: "Complete Google login in a browser on this Mac — the callback uses localhost:4000 on the host machine.",
+    vi: "Hoàn tất đăng nhập Google trên trình duyệt của Mac host — callback dùng localhost:4000 trên máy chủ."
+  },
+  toolsMetaAiKnowledgeCustomInstructionsTitle: {
+    en: "Meta AI custom instructions (copy to Meta)",
+    vi: "Custom instructions Meta AI (dán lên Meta)"
+  },
+  toolsMetaAiKnowledgeCustomInstructionsDesc: {
+    en: "Paste this into Meta Business Suite → AI replies → Custom instructions. The Google Doc knowledge file is synced separately.",
+    vi: "Dán vào Meta Business Suite → Trả lời AI → Custom instructions. Tài liệu Knowledge trên Google Doc được đồng bộ riêng."
+  },
+  toolsMetaAiKnowledgeCopyInstructions: { en: "Copy instructions", vi: "Sao chép" },
+  toolsMetaAiKnowledgeCopied: { en: "Copied to clipboard.", vi: "Đã sao chép." },
+  toolsMetaAiKnowledgeCopyFailed: { en: "Could not copy — select the text manually.", vi: "Không sao chép được — hãy chọn text thủ công." },
+  toolsMetaAiKnowledgeNoInstructions: { en: "Instructions not loaded yet.", vi: "Chưa tải được nội dung." },
   toolsLoadFailed: { en: "Could not load settings.", vi: "Không tải được cấu hình." },
   toolsSelectResidentsFirst: { en: "Select at least one resident.", vi: "Chọn ít nhất một cư dân." },
   toolsEnterNonZeroDelta: { en: "Enter a non-zero coin change.", vi: "Nhập mức thay đổi coin khác 0." },
@@ -2189,7 +2264,58 @@ const translations: Record<string, { en: string; vi: string }> = {
   airfryerAnalyticsTitle: { en: "Airfryer analytics", vi: "Phân tích Nồi chiên" },
   airfryerAnalyticsDesc: { en: "Airfryer usage grouped by branch, actor, and time.", vi: "Sử dụng nồi chiên không dầu nhóm theo chi nhánh, người thực hiện và thời gian." },
   cleaningAnalyticsTitle: { en: "Cleaning analytics", vi: "Phân tích Vệ sinh" },
-  cleaningAnalyticsDesc: { en: "Cleaning review and overdue queues grouped by status, branch, task, and date.", vi: "Hàng đợi kiểm tra và quá hạn vệ sinh nhóm theo trạng thái, chi nhánh, công việc và ngày." },
+  cleaningAnalyticsDesc: {
+    en: "Assignment source breakdown, monthly self-assign trends, and cleaning tasks grouped by source, status, branch, task, and date.",
+    vi: "Phân tích nguồn phân công, xu hướng tự đăng ký theo tháng và công việc vệ sinh nhóm theo nguồn, trạng thái, chi nhánh, công việc và ngày."
+  },
+  cleaningAssignmentSummaryTitle: { en: "Assignment sources", vi: "Nguồn phân công" },
+  cleaningAssignmentSummaryDesc: {
+    en: "Share of scheduled cleaning tasks by how they were assigned. Excludes missed slots.",
+    vi: "Tỷ lệ công việc vệ sinh theo cách phân công. Không tính các lịch bị bỏ lỡ."
+  },
+  cleaningSourceSelf: { en: "Self-assign", vi: "Tự đăng ký" },
+  cleaningSourceSystem: { en: "Auto (system)", vi: "Tự động (hệ thống)" },
+  cleaningSourceManager: { en: "Manager", vi: "Quản lý" },
+  cleaningSourceLegacy: { en: "Legacy / unknown", vi: "Cũ / không rõ" },
+  cleaningSelfAssignShare: { en: "Self-assign share", vi: "Tỷ lệ tự đăng ký" },
+  cleaningSelfAssignCount: { en: "Self-assign tasks", vi: "Lịch tự đăng ký" },
+  cleaningAutoAssignCount: { en: "Auto-assigned", vi: "Tự động phân công" },
+  cleaningManagerAssignCount: { en: "Manager-assigned", vi: "Quản lý phân công" },
+  cleaningAssignmentLast30Days: { en: "Last 30 days", vi: "30 ngày gần đây" },
+  cleaningAssignmentPrior30Days: { en: "Prior 30 days", vi: "30 ngày trước đó" },
+  cleaningAssignmentMonthlyTrend: { en: "Monthly trend (by scheduled date)", vi: "Xu hướng theo tháng (theo ngày lịch)" },
+  cleaningAssignmentTrendUp: { en: "Up {points} pts vs prior 30 days", vi: "Tăng {points} điểm so với 30 ngày trước" },
+  cleaningAssignmentTrendDown: { en: "Down {points} pts vs prior 30 days", vi: "Giảm {points} điểm so với 30 ngày trước" },
+  cleaningAssignmentTrendFlat: { en: "Flat vs prior 30 days", vi: "Không đổi so với 30 ngày trước" },
+  cleaningUniqueSelfAssigners: { en: "Unique self-assigners (30d)", vi: "Cư dân tự đăng ký (30 ngày)" },
+  bedOccupancyTab: { en: "Bed occupancy", vi: "Lấp giường" },
+  bedOccupancyTitle: { en: "Bed occupancy through time", vi: "Tỷ lệ lấp giường theo thời gian" },
+  bedOccupancyDesc: {
+    en: "Monthly snapshots recorded on or after the 15th. Inventory: D2 = 21 beds, D7 = 63 beds.",
+    vi: "Ảnh chụp hàng tháng được ghi vào hoặc sau ngày 15. Tồn kho: D2 = 21 giường, D7 = 63 giường."
+  },
+  bedOccupancyLatest: { en: "Latest", vi: "Mới nhất" },
+  bedOccupancyLatestDetail: {
+    en: "{occupied} occupied · {total} total · {month}",
+    vi: "{occupied} đã lấp · {total} tổng · {month}"
+  },
+  bedOccupancyNoSnapshot: { en: "No snapshot yet", vi: "Chưa có ảnh chụp" },
+  bedOccupancyTrendTitle: { en: "Occupancy trend", vi: "Xu hướng lấp giường" },
+  bedOccupancyTrendDesc: {
+    en: "Occupancy rate by branch across monthly snapshots.",
+    vi: "Tỷ lệ lấp giường theo chi nhánh qua các ảnh chụp hàng tháng."
+  },
+  bedOccupancyNoData: {
+    en: "No occupancy snapshots yet. The first monthly snapshot is captured on or after the 15th.",
+    vi: "Chưa có ảnh chụp lấp giường. Ảnh chụp hàng tháng đầu tiên được ghi vào hoặc sau ngày 15."
+  },
+  bedOccupancyHoverHint: {
+    en: "Hover a month on the chart to see branch details.",
+    vi: "Di chuột lên tháng trên biểu đồ để xem chi tiết theo chi nhánh."
+  },
+  bedOccupancyLoadError: { en: "Unable to load occupancy history.", vi: "Không thể tải lịch sử lấp giường." },
+  systemLabel: { en: "System", vi: "Hệ thống" },
+  unknownLabel: { en: "Unknown", vi: "Không rõ" },
   analyticsMetricInView: { en: "{label} in view", vi: "{label} đang xem" },
   analyticsEntries: { en: "Entries", vi: "Số mục" },
   analyticsCurrentGroup: { en: "Current group", vi: "Nhóm hiện tại" },
@@ -2229,6 +2355,7 @@ const translations: Record<string, { en: string; vi: string }> = {
   dimContent: { en: "Content", vi: "Nội dung" },
   dimMachine: { en: "Machine", vi: "Máy" },
   dimTask: { en: "Task", vi: "Công việc" },
+  dimSource: { en: "Assignment source", vi: "Nguồn phân công" },
   // Payment Analytics
   paymentAnalyticsTitle: { en: "Payment Analytics", vi: "Phân tích Thanh toán" },
   paymentAnalyticsDesc: { en: "Owner-only revenue overview from payment receipts. Click a bar or donut slice to drill into the next group.", vi: "Tổng quan doanh thu chỉ dành cho chủ sở hữu từ biên lai thanh toán. Nhấn vào cột hoặc lát bánh để xem chi tiết nhóm tiếp theo." },

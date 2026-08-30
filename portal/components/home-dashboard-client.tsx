@@ -204,7 +204,7 @@ function getNextCleaningTask(tasks: CleaningTask[]) {
 
 export function HomeDashboardClient() {
   const { sessionEmail } = usePortalSession();
-  const { t } = usePortalLanguage();
+  const { t, language } = usePortalLanguage();
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [client, setClient] = useState<ClientRecord | null>(null);
@@ -221,8 +221,9 @@ export function HomeDashboardClient() {
   const [terminationRecord, setTerminationRecord] = useState<{ maHd: string; terminatedAt: string; depositNote: string; checkOut: { submittedAt: string } | null } | null>(null);
   const [checkoutFlow, setCheckoutFlow] = useState<{
     eligible: boolean;
-    kind?: "termination" | "contract_due";
+    kind?: "termination" | "contract_due" | "resident";
     completed?: boolean;
+    deactivateAt?: string;
   } | null>(null);
   const activeEmail = sessionEmail.trim().toLowerCase();
   const { override: accountLockOverride } = useAccountLockOverride(activeEmail || null);
@@ -289,7 +290,12 @@ export function HomeDashboardClient() {
       const rentStatusData = rentStatusResponse.ok ? (await rentStatusResponse.json()) as RentPaidStatusPayload : null;
       const terminationData = terminationResponse.ok ? (await terminationResponse.json()) as { record?: { maHd: string; terminatedAt: string; depositNote: string; checkOut: { submittedAt: string } | null } | null } : null;
       const checkoutCtxData = checkoutCtxResponse.ok
-        ? ((await checkoutCtxResponse.json()) as { eligible: boolean; kind?: "termination" | "contract_due"; completed?: boolean })
+        ? ((await checkoutCtxResponse.json()) as {
+            eligible: boolean;
+            kind?: "termination" | "contract_due" | "resident";
+            completed?: boolean;
+            deactivateAt?: string;
+          })
         : null;
 
       if (!clientResponse.ok) {
@@ -540,14 +546,13 @@ export function HomeDashboardClient() {
         </section>
       )}
 
-      {!terminationRecord && checkoutFlow?.eligible && !checkoutFlow.completed && checkoutFlow.kind === "contract_due" && !isRemoved && (
+      {!terminationRecord && checkoutFlow?.eligible && !checkoutFlow.completed && !isRemoved && (
         <section className="rounded-3xl border border-amber-300 bg-amber-50 p-5 shadow-sm sm:p-6">
           <p className="text-sm font-bold text-amber-900">{t("checkoutDueTitle", "Check-out")}</p>
           <p className="mt-1 text-xs text-amber-800">
-            {t(
-              "checkoutDueSub",
-              "Your contract end date is within 7 days. Complete the step-by-step check-out on the Check-out page (photos are saved on our server; summary is sent to Google Sheet)."
-            )}
+            {language === "vi"
+              ? "Bạn có thể bắt đầu check-out bất cứ lúc nào. Sau khi hoàn tất, bạn không thể đặt thêm dịch vụ và tài khoản sẽ tự động ngừng hoạt động sau 10 ngày."
+              : "You can start check-out at any time. Once completed, service booking stops immediately and your account is automatically deactivated after 10 days."}
           </p>
           <Link
             href="/check-out"
@@ -555,6 +560,19 @@ export function HomeDashboardClient() {
           >
             {t("openCheckOut", "Open check-out →")}
           </Link>
+        </section>
+      )}
+
+      {checkoutFlow?.completed && !isRemoved && (
+        <section className="rounded-3xl border border-rose-300 bg-rose-50 p-5 shadow-sm sm:p-6">
+          <p className="text-sm font-bold text-rose-900">
+            {language === "vi" ? "Check-out đã hoàn tất" : "Check-out completed"}
+          </p>
+          <p className="mt-1 text-xs text-rose-800">
+            {language === "vi"
+              ? `Bạn không thể đặt thêm dịch vụ. Tài khoản sẽ tự động ngừng hoạt động${checkoutFlow.deactivateAt ? ` vào ${formatCozoroDate(checkoutFlow.deactivateAt)}` : " sau 10 ngày"}.`
+              : `You can no longer book services. Your account will be automatically deactivated${checkoutFlow.deactivateAt ? ` on ${formatCozoroDate(checkoutFlow.deactivateAt)}` : " after 10 days"}.`}
+          </p>
         </section>
       )}
 

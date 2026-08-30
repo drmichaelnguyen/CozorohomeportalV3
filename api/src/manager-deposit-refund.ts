@@ -1,5 +1,7 @@
 import {
   ACTIVE_STAYING_COLUMN,
+  CLIENT_BED_COLUMN,
+  CLIENT_BRANCH_COLUMN,
   CLIENT_CONTRACT_END_COLUMN,
   CLIENT_NAME_COLUMN,
   CONTRACT_CODE_COLUMN,
@@ -14,7 +16,8 @@ import {
 import {
   CONTRACT_DUE_CHECKOUT_WINDOW_DAYS,
   daysUntilContractEnd,
-  getTerminationByMaHd
+  getTerminationByMaHd,
+  hasCompletedCheckoutForContract
 } from "./checkout.js";
 import { listUnpaidGateParkingTicketsForEmail } from "./gate-parking-tickets.js";
 import { requirePortalRole } from "./staff-access.js";
@@ -71,6 +74,7 @@ export type DepositRefundBreakdown = {
   refundAmountVnd: number;
   unpaidFineLines: DepositRefundDeductionLine[];
   unpaidGateLines: DepositRefundDeductionLine[];
+  otherDeductionNote?: string;
 };
 
 async function getClientRowByMaHd(maHd: string): Promise<ClientRow | null> {
@@ -115,7 +119,8 @@ async function getClientRowByMaHd(maHd: string): Promise<ClientRow | null> {
 
 export async function buildDepositRefundBreakdown(
   row: ClientRow,
-  refundAmountVnd: number
+  refundAmountVnd: number,
+  otherDeductionNote?: string
 ): Promise<DepositRefundBreakdown> {
   const email = normalizeEmail(String(row["Địa chỉ email"] ?? row.EMAIL ?? ""));
   const depositVnd = parseMoneyVnd(row["Số tiền cọc"]);
@@ -156,11 +161,12 @@ export async function buildDepositRefundBreakdown(
     otherDeductionsVnd,
     refundAmountVnd: refund,
     unpaidFineLines,
-    unpaidGateLines
+    unpaidGateLines,
+    otherDeductionNote: otherDeductionNote?.trim() || undefined
   };
 }
 
-export type DepositRefundEligibilityReason = "inactive" | "terminated" | "contract_due";
+export type DepositRefundEligibilityReason = "inactive" | "terminated" | "contract_due" | "checked_out";
 
 export async function resolveDepositRefundEligibilityAsync(client: ClientRow): Promise<{
   eligible: boolean;
@@ -176,6 +182,10 @@ export async function resolveDepositRefundEligibilityAsync(client: ClientRow): P
     if (term) {
       return { eligible: true, reason: "terminated" };
     }
+  }
+  const email = normalizeEmail(String(client["Địa chỉ email"] ?? client.EMAIL ?? ""));
+  if (email && maHd && await hasCompletedCheckoutForContract(email, maHd)) {
+    return { eligible: true, reason: "checked_out" };
   }
   const days = daysUntilContractEnd(String(client[CLIENT_CONTRACT_END_COLUMN] ?? ""));
   if (days !== null && days <= CONTRACT_DUE_CHECKOUT_WINDOW_DAYS) {
@@ -208,10 +218,14 @@ export async function managerGetDepositRefundPreview(input: { actorEmail: string
     eligibilityReason: elig.reason,
     clientEmail: email,
     clientName: name,
+    clientBranch: String(row[CLIENT_BRANCH_COLUMN] ?? "").trim(),
+    clientBed: String(row[CLIENT_BED_COLUMN] ?? "").trim(),
     maHd: input.maHd.trim(),
     depositVnd: breakdown.depositVnd,
     unpaidFinesVnd: breakdown.unpaidFinesVnd,
     unpaidGateVnd: breakdown.unpaidGateVnd,
+    unpaidFineLines: breakdown.unpaidFineLines,
+    unpaidGateLines: breakdown.unpaidGateLines,
     suggestedRefundVnd
   };
 }
@@ -266,10 +280,11 @@ function buildDepositRefundBreakdownLines(
   }
 
   if (breakdown.otherDeductionsVnd > 0) {
+    const note = breakdown.otherDeductionNote?.slice(0, 500);
     lines.push(
       isVi
-        ? `  - Khấu trừ khác: ${formatDeduction(breakdown.otherDeductionsVnd)}`
-        : `  - Other deductions: ${formatDeduction(breakdown.otherDeductionsVnd)}`
+        ? `  - Khấu trừ khác${note ? ` (${note})` : ""}: ${formatDeduction(breakdown.otherDeductionsVnd)}`
+        : `  - Other deductions${note ? ` (${note})` : ""}: ${formatDeduction(breakdown.otherDeductionsVnd)}`
     );
   }
 
@@ -333,6 +348,7 @@ export async function managerSendDepositRefundEmail(input: {
   actorEmail: string;
   maHd: string;
   refundAmountVnd: number;
+  otherDeductionNote?: string;
 }) {
   await requirePortalRole(normalizeEmail(input.actorEmail), ["manager", "owner", "app_admin"], "Staff only.");
   const refund = Math.round(Number(input.refundAmountVnd));
@@ -356,7 +372,7 @@ export async function managerSendDepositRefundEmail(input: {
     return { error: "Client email is missing." };
   }
   const name = String(row[CLIENT_NAME_COLUMN] ?? "").trim() || email;
-  const breakdown = await buildDepositRefundBreakdown(row, refund);
+  const breakdown = await buildDepositRefundBreakdown(row, refund, input.otherDeductionNote);
   const { subject, body } = buildDepositRefundEmailBodies({ clientName: name, breakdown });
   await sendGmailReceipt({ to: email, subject, body });
   return { ok: true, sentTo: email };

@@ -57,6 +57,7 @@ import { ManagerSettingsTools } from "./manager-settings-tools";
 import { ManagerResidentGuidesEditor } from "./manager-resident-guides-editor";
 import { AdminAiUsageAnalytics } from "./admin-ai-usage-analytics";
 import { BedOccupancyAnalytics } from "./bed-occupancy-analytics";
+import { CheckoutReviewClient } from "./checkout-review-client";
 
 
 type StaffRole = "manager" | "owner" | "app_admin" | "mechanic";
@@ -275,7 +276,7 @@ type PricingSettingsSectionKey =
 
 type ManagerSettingsMainSection = "pricing" | "resident_guides" | "tools" | "ai_usage";
 type PricingSettingsSubTab = "long_term" | "short_term" | "referral" | "staff";
-type ClientSubTab = "list" | "details" | "analytics";
+type ClientSubTab = "list" | "details" | "checkout" | "analytics";
 type OwnerAnalyticsTab = "payments" | "coins" | "laundry" | "fines" | "cleaning" | "airfryer" | "occupancy";
 type PaymentAnalyticsChartView = "bar" | "donut";
 type PaymentAnalyticsDimension = "receiver" | "branch" | "category" | "bed" | "year" | "month";
@@ -786,7 +787,260 @@ function translateAnalyticsValue(value: string, t: (key: string) => string) {
   if (value === "Unknown") return t("unknownLabel");
   if (value === "System") return t("systemLabel");
   if (value === "Uncategorized") return t("uncategorizedLabel");
+  if (value === "SELF") return t("cleaningSourceSelf");
+  if (value === "SYSTEM") return t("cleaningSourceSystem");
+  if (value === "MANAGER") return t("cleaningSourceManager");
+  if (value === "LEGACY") return t("cleaningSourceLegacy");
   return value;
+}
+
+type CleaningAssignmentSourceKey = "SELF" | "SYSTEM" | "MANAGER" | "LEGACY";
+
+const CLEANING_ASSIGNMENT_SOURCE_COLORS: Record<CleaningAssignmentSourceKey, string> = {
+  SELF: "#10b981",
+  SYSTEM: "#0ea5e9",
+  MANAGER: "#f59e0b",
+  LEGACY: "#94a3b8"
+};
+
+function resolveCleaningAssignmentSource(
+  assignmentSource?: string | null,
+  isSelfAssigned?: string | boolean | null
+): CleaningAssignmentSourceKey {
+  if (assignmentSource === "SELF" || isSelfAssigned === true || isSelfAssigned === "true") {
+    return "SELF";
+  }
+  if (assignmentSource === "SYSTEM") {
+    return "SYSTEM";
+  }
+  if (assignmentSource === "MANAGER") {
+    return "MANAGER";
+  }
+  return "LEGACY";
+}
+
+function getCleaningSourceLabel(source: CleaningAssignmentSourceKey, t: (key: string) => string) {
+  if (source === "SELF") return t("cleaningSourceSelf");
+  if (source === "SYSTEM") return t("cleaningSourceSystem");
+  if (source === "MANAGER") return t("cleaningSourceManager");
+  return t("cleaningSourceLegacy");
+}
+
+function getCleaningAssignmentTimestamp(row: Record<string, string>) {
+  return row.__createdAt || row.__timestamp || "";
+}
+
+function isCleaningRowMissed(row: Record<string, string>) {
+  return String(row.__status ?? "").toUpperCase() === "MISSED";
+}
+
+function buildCleaningAssignmentMonthlyTrend(rows: Record<string, string>[], monthCount = 6) {
+  const now = new Date();
+  const monthKeys: string[] = [];
+  for (let offset = monthCount - 1; offset >= 0; offset -= 1) {
+    const date = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+    monthKeys.push(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`);
+  }
+
+  const buckets = new Map(
+    monthKeys.map((monthKey) => [
+      monthKey,
+      { monthKey, SELF: 0, SYSTEM: 0, MANAGER: 0, LEGACY: 0, total: 0 }
+    ])
+  );
+
+  rows.forEach((row) => {
+    if (isCleaningRowMissed(row)) {
+      return;
+    }
+    const scheduled = new Date(row.__timestamp);
+    if (Number.isNaN(scheduled.getTime())) {
+      return;
+    }
+    const monthKey = `${scheduled.getFullYear()}-${String(scheduled.getMonth() + 1).padStart(2, "0")}`;
+    const bucket = buckets.get(monthKey);
+    if (!bucket) {
+      return;
+    }
+    const source = resolveCleaningAssignmentSource(row.__assignmentSource, row.__isSelfAssigned);
+    bucket[source] += 1;
+    bucket.total += 1;
+  });
+
+  return monthKeys.map((monthKey) => buckets.get(monthKey)!);
+}
+
+function summarizeCleaningAssignmentWindow(
+  rows: Record<string, string>[],
+  from: Date,
+  to: Date
+) {
+  const counts: Record<CleaningAssignmentSourceKey, number> = {
+    SELF: 0,
+    SYSTEM: 0,
+    MANAGER: 0,
+    LEGACY: 0
+  };
+  let total = 0;
+  const selfAssigners = new Set<string>();
+
+  rows.forEach((row) => {
+    if (isCleaningRowMissed(row)) {
+      return;
+    }
+    const assignedAt = new Date(getCleaningAssignmentTimestamp(row) || row.__timestamp);
+    if (Number.isNaN(assignedAt.getTime()) || assignedAt < from || assignedAt > to) {
+      return;
+    }
+    const source = resolveCleaningAssignmentSource(row.__assignmentSource, row.__isSelfAssigned);
+    counts[source] += 1;
+    total += 1;
+    if (source === "SELF" && row.__residentEmail) {
+      selfAssigners.add(row.__residentEmail.trim().toLowerCase());
+    }
+  });
+
+  return { counts, total, uniqueSelfAssigners: selfAssigners.size };
+}
+
+function CleaningAssignmentSourceSummary({
+  rows,
+  t
+}: {
+  rows: Record<string, string>[];
+  t: (key: string, params?: Record<string, string | number>) => string;
+}) {
+  const { overall, last30, prior30, monthlyTrend } = useMemo(() => {
+    const now = new Date();
+    const last30Start = new Date(now);
+    last30Start.setDate(last30Start.getDate() - 30);
+    const prior30Start = new Date(now);
+    prior30Start.setDate(prior30Start.getDate() - 60);
+    const prior30End = new Date(last30Start);
+    prior30End.setMilliseconds(prior30End.getMilliseconds() - 1);
+
+    return {
+      overall: summarizeCleaningAssignmentWindow(rows, new Date(0), now),
+      last30: summarizeCleaningAssignmentWindow(rows, last30Start, now),
+      prior30: summarizeCleaningAssignmentWindow(rows, prior30Start, prior30End),
+      monthlyTrend: buildCleaningAssignmentMonthlyTrend(rows)
+    };
+  }, [rows]);
+
+  const selfShare = overall.total ? (overall.counts.SELF / overall.total) * 100 : 0;
+  const last30Share = last30.total ? (last30.counts.SELF / last30.total) * 100 : 0;
+  const prior30Share = prior30.total ? (prior30.counts.SELF / prior30.total) * 100 : 0;
+  const trendDelta = Math.round((last30Share - prior30Share) * 10) / 10;
+  const trendLabel =
+    trendDelta > 0
+      ? t("cleaningAssignmentTrendUp", { points: trendDelta })
+      : trendDelta < 0
+        ? t("cleaningAssignmentTrendDown", { points: Math.abs(trendDelta) })
+        : t("cleaningAssignmentTrendFlat");
+
+  const sourceCards: Array<{ key: CleaningAssignmentSourceKey; labelKey: string; count: number }> = [
+    { key: "SELF", labelKey: "cleaningSelfAssignCount", count: overall.counts.SELF },
+    { key: "SYSTEM", labelKey: "cleaningAutoAssignCount", count: overall.counts.SYSTEM },
+    { key: "MANAGER", labelKey: "cleaningManagerAssignCount", count: overall.counts.MANAGER }
+  ];
+
+  return (
+    <section className="space-y-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <div>
+        <h3 className="text-base font-semibold text-slate-900">{t("cleaningAssignmentSummaryTitle")}</h3>
+        <p className="mt-1 text-sm text-slate-600">{t("cleaningAssignmentSummaryDesc")}</p>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">{t("cleaningSelfAssignShare")}</div>
+          <div className="mt-2 text-2xl font-semibold text-emerald-800">{selfShare.toFixed(1)}%</div>
+          <div className="mt-1 text-xs text-emerald-700">
+            {formatNumber(overall.counts.SELF)} / {formatNumber(overall.total)}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("cleaningAssignmentLast30Days")}</div>
+          <div className="mt-2 text-2xl font-semibold text-slate-900">{last30Share.toFixed(1)}%</div>
+          <div className="mt-1 text-xs text-slate-600">
+            {formatNumber(last30.counts.SELF)} / {formatNumber(last30.total)}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("cleaningAssignmentPrior30Days")}</div>
+          <div className="mt-2 text-2xl font-semibold text-slate-900">{prior30Share.toFixed(1)}%</div>
+          <div className="mt-1 text-xs text-slate-600">
+            {formatNumber(prior30.counts.SELF)} / {formatNumber(prior30.total)}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("cleaningUniqueSelfAssigners")}</div>
+          <div className="mt-2 text-2xl font-semibold text-slate-900">{formatNumber(last30.uniqueSelfAssigners)}</div>
+          <div className={`mt-1 text-xs ${trendDelta > 0 ? "text-emerald-700" : trendDelta < 0 ? "text-amber-700" : "text-slate-600"}`}>
+            {trendLabel}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        {sourceCards.map((card) => {
+          const share = overall.total ? (card.count / overall.total) * 100 : 0;
+          return (
+            <div key={card.key} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <span className="h-3 w-3 rounded-full" style={{ backgroundColor: CLEANING_ASSIGNMENT_SOURCE_COLORS[card.key] }} />
+                {t(card.labelKey)}
+              </div>
+              <div className="mt-2 text-xl font-semibold text-slate-900">{formatNumber(card.count)}</div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
+                <div
+                  className="h-full rounded-full"
+                  style={{ width: `${Math.max(share > 0 ? 4 : 0, share)}%`, backgroundColor: CLEANING_ASSIGNMENT_SOURCE_COLORS[card.key] }}
+                />
+              </div>
+              <div className="mt-1 text-xs text-slate-500">{share.toFixed(1)}%</div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <div className="text-sm font-semibold text-slate-900">{t("cleaningAssignmentMonthlyTrend")}</div>
+        <div className="space-y-3">
+          {monthlyTrend.map((month) => {
+            const maxTotal = Math.max(1, ...monthlyTrend.map((item) => item.total));
+            const selfPct = month.total ? (month.SELF / month.total) * 100 : 0;
+            return (
+              <div key={month.monthKey} className="grid gap-2 md:grid-cols-[5.5rem_1fr_4rem] md:items-center">
+                <div className="text-sm font-medium text-slate-700">{month.monthKey}</div>
+                <div className="flex h-7 overflow-hidden rounded-lg bg-slate-200">
+                  {(["SELF", "SYSTEM", "MANAGER", "LEGACY"] as CleaningAssignmentSourceKey[]).map((source) => {
+                    if (!month[source]) {
+                      return null;
+                    }
+                    return (
+                      <div
+                        key={source}
+                        className="h-full"
+                        style={{
+                          width: `${(month[source] / maxTotal) * 100}%`,
+                          backgroundColor: CLEANING_ASSIGNMENT_SOURCE_COLORS[source]
+                        }}
+                        title={`${getCleaningSourceLabel(source, t)}: ${month[source]}`}
+                      />
+                    );
+                  })}
+                </div>
+                <div className="text-right text-xs text-slate-600">
+                  {formatNumber(month.total)} · {selfPct.toFixed(0)}% {t("cleaningSourceSelf")}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function translateCoinEvent(event: string, t: (key: string) => string) {
@@ -2005,7 +2259,7 @@ function OwnerAnalyticsDashboard({
     { key: "fines", label: t("analyticsFineTab") },
     { key: "cleaning", label: t("analyticsCleaningTab") },
     { key: "airfryer", label: t("analyticsAirfryerTab") },
-    { key: "occupancy", label: "Bed occupancy" }
+    { key: "occupancy", label: t("bedOccupancyTab") }
   ];
 
   const activeTabLabel = tabItems.find((item) => item.key === activeTab)?.label ?? t("analyticsTab", "Analytics");
@@ -2123,10 +2377,14 @@ function OwnerAnalyticsDashboard({
       }
       const tasks = (data.tasks ?? []).map((task) => ({
         __timestamp: String(task.scheduledDate ?? ""),
+        __createdAt: String((task as { createdAt?: string }).createdAt ?? ""),
+        __assignmentSource: String((task as { assignmentSource?: string | null }).assignmentSource ?? ""),
+        __isSelfAssigned: (task as { isSelfAssigned?: boolean }).isSelfAssigned ? "true" : "false",
         __branch: normalizeBranchLabel(task.branchId),
         __status: String(task.status ?? ""),
         __task: String(task.type ?? ""),
         __resident: String(task.userName ?? task.userEmail ?? ""),
+        __residentEmail: String(task.userEmail ?? ""),
         __detail:
           String(task.completionNote ?? task.auditorNote ?? task.completionPhoto ?? "").trim() ||
           `${String(task.rewardCoins ?? 0)} coins`,
@@ -2251,13 +2509,19 @@ function OwnerAnalyticsDashboard({
     [controllerAnalyticsRows]
   );
 
-  const cleaningAnalyticsRows = useMemo(
-    () =>
-      [...cleaningTasks].sort(
+  const cleaningAnalyticsRows = useMemo((): Record<string, string>[] => {
+      const sorted = [...cleaningTasks].sort(
         (left, right) => new Date(right.__timestamp).getTime() - new Date(left.__timestamp).getTime()
-      ),
-    [cleaningTasks]
-  );
+      );
+      return sorted.map((row) => {
+        const sourceKey = resolveCleaningAssignmentSource(row.__assignmentSource, row.__isSelfAssigned);
+        return {
+          ...row,
+          __sourceKey: sourceKey,
+          __source: getCleaningSourceLabel(sourceKey, t)
+        };
+      });
+    }, [cleaningTasks, t]);
 
   return (
     <section className="space-y-5 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
@@ -2484,7 +2748,9 @@ function OwnerAnalyticsDashboard({
           t={t}
         />
       ) : (
-        <GroupedAnalyticsDashboard
+        <div className="space-y-5">
+          <CleaningAssignmentSourceSummary rows={cleaningAnalyticsRows} t={t} />
+          <GroupedAnalyticsDashboard
           title={t("cleaningAnalyticsTitle")}
           description={t("cleaningAnalyticsDesc")}
           rows={cleaningAnalyticsRows}
@@ -2493,18 +2759,20 @@ function OwnerAnalyticsDashboard({
           metricLabel={t("analyticsCleaningTab")}
           metricMode="count"
           dimensions={[
+            { key: "source", label: t("dimSource") },
             { key: "status", label: t("dimStatus") },
             { key: "branch", label: t("dimBranch") },
             { key: "task", label: t("dimTask") },
             { key: "year", label: t("dimYear") },
             { key: "month", label: t("dimMonth") }
           ]}
-          defaultOrder={["status", "branch", "task", "year", "month"]}
+          defaultOrder={["source", "status", "branch", "task", "year", "month"]}
           allLabel={t("analyticsAllCleaningItems")}
           emptyMessage={cleaningError || t("analyticsEmptyCleaning")}
           tableTitle={t("analyticsAllCleaningItems")}
           tableColumns={[
             { key: "when", label: t("colWhen"), getValue: (row) => formatDateTime(row.__timestamp) },
+            { key: "source", label: t("dimSource"), getValue: (row) => row.__source || "-" },
             { key: "status", label: t("colStatus"), getValue: (row) => row.__status || "-" },
             { key: "task", label: t("colTask"), getValue: (row) => row.__task || "-" },
             { key: "resident", label: t("colResident"), getValue: (row) => row.__resident || "-" },
@@ -2512,6 +2780,7 @@ function OwnerAnalyticsDashboard({
             { key: "detail", label: t("colDetail"), getValue: (row) => row.__detail || "-" }
           ]}
           getField={(row, dimension) => {
+            if (dimension === "source") return row.__source || t("unknownLabel");
             if (dimension === "status") return row.__status || t("unknownLabel");
             if (dimension === "branch") return row.__branch || t("unknownLabel");
             if (dimension === "task") return row.__task || t("unknownLabel");
@@ -2527,6 +2796,7 @@ function OwnerAnalyticsDashboard({
           formatMetricValue={(value) => formatNumber(value)}
           t={t}
         />
+        </div>
       )}
     </section>
   );
@@ -2858,6 +3128,7 @@ export function ManagerClient({
     sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin";
   const canEditRentCoinUsage = isOwnerSession || isAppAdminSession;
   const canViewAiUsage = isOwnerSession || isAppAdminSession;
+  const [canManageMetaAiKnowledge, setCanManageMetaAiKnowledge] = useState(false);
   const canSendDepositRefundEmail =
     sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin";
 
@@ -5704,11 +5975,21 @@ export function ManagerClient({
     }
     if (activeManagerView === "settings") {
       void loadPricingConfig();
+      if (normalizedEmail) {
+        void fetch(
+          `${API_BASE_URL}/manager/meta-ai-knowledge/access?actorEmail=${encodeURIComponent(normalizedEmail)}`
+        )
+          .then((response) => response.json())
+          .then((data: { allowed?: boolean }) => setCanManageMetaAiKnowledge(Boolean(data.allowed)))
+          .catch(() => setCanManageMetaAiKnowledge(false));
+      } else {
+        setCanManageMetaAiKnowledge(false);
+      }
     }
     if (activeManagerView === "support_chat") {
       void loadMaintenanceTickets({ silent: true });
     }
-  }, [activeManagerView, loadMaintenanceTickets]);
+  }, [activeManagerView, loadMaintenanceTickets, normalizedEmail]);
 
   useEffect(() => {
     setActiveManagerView(initialView);
@@ -6414,6 +6695,17 @@ export function ManagerClient({
                 {t("clientDetailsTab")}
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => setClientSubTab("checkout")}
+              className={`whitespace-nowrap px-6 py-3 text-sm font-bold uppercase tracking-wider transition-all border-b-2 ${
+                clientSubTab === "checkout"
+                  ? "border-sky-500 text-sky-600"
+                  : "border-transparent text-slate-400 hover:text-slate-600"
+              }`}
+            >
+              {language === "vi" ? "Duyệt check-out" : "Check-out review"}
+            </button>
             {isOwnerSession || isAppAdminSession ? (
               <button
                 type="button"
@@ -7780,6 +8072,11 @@ export function ManagerClient({
             );
           })()}
           </div>
+        ) : clientSubTab === "checkout" ? (
+          <CheckoutReviewClient
+            actorEmail={normalizedEmail}
+            canApprove={isOwnerSession || isAppAdminSession}
+          />
         ) : clientSubTab === "analytics" && (isOwnerSession || isAppAdminSession) ? (
            <OwnerAnalyticsDashboard
             paymentRows={paymentPurposeRows}
@@ -12715,6 +13012,7 @@ export function ManagerClient({
               normalizedEmail={normalizedEmail}
               clients={clients}
               canManageDbBackup={isOwnerSession || isAppAdminSession}
+              canManageMetaAiKnowledge={canManageMetaAiKnowledge}
               t={t}
               onRefreshClients={async () => {
                 await loadClients(true);

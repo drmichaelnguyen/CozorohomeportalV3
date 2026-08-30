@@ -31,9 +31,10 @@ type ClientRecord = Record<string, string>;
 
 type CheckoutBannerContext = {
   eligible: boolean;
-  kind?: "termination" | "contract_due";
+  kind?: "termination" | "contract_due" | "resident";
   completed?: boolean;
   depositNote?: string;
+  deactivateAt?: string;
 };
 
 type LaundryBooking = {
@@ -950,6 +951,31 @@ export function AccountOverviewClient() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       {isLoggedIn && !hideResidentGuides ? <ResidentInstructionsPanel audience={guideAudience} /> : null}
+      {checkoutBanner?.eligible && !checkoutBanner.completed ? (
+        <section className="rounded-2xl border border-amber-300 bg-amber-50 p-5 shadow-sm">
+          <p className="text-sm font-bold text-amber-900">Check-out</p>
+          <p className="mt-1 text-xs leading-relaxed text-amber-800">
+            {language === "vi"
+              ? "Mọi cư dân đều có thể thực hiện check-out. Sau khi hoàn tất, bạn không thể đặt thêm dịch vụ và tài khoản sẽ tự động ngừng hoạt động sau 10 ngày."
+              : "Every resident can complete check-out. Once submitted, you cannot book more services and your account will automatically be deactivated after 10 days."}
+          </p>
+          <Link href="/check-out" className="mt-3 inline-block rounded-xl bg-amber-800 px-4 py-2 text-sm font-semibold text-white">
+            {language === "vi" ? "Bắt đầu check-out →" : "Start check-out →"}
+          </Link>
+        </section>
+      ) : null}
+      {checkoutBanner?.completed ? (
+        <section className="rounded-2xl border border-rose-300 bg-rose-50 p-5 shadow-sm">
+          <p className="text-sm font-bold text-rose-900">
+            {language === "vi" ? "Check-out đã hoàn tất" : "Check-out completed"}
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-rose-800">
+            {language === "vi"
+              ? `Bạn không thể đặt thêm dịch vụ. Tài khoản sẽ tự động ngừng hoạt động${checkoutBanner.deactivateAt ? ` vào ${formatCozoroDate(checkoutBanner.deactivateAt)}` : " sau 10 ngày"}.`
+              : `You can no longer book services. Your account will automatically be deactivated${checkoutBanner.deactivateAt ? ` on ${formatCozoroDate(checkoutBanner.deactivateAt)}` : " after 10 days"}.`}
+          </p>
+        </section>
+      ) : null}
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
         <div className="flex items-start justify-between gap-4">
           <h1 className="text-2xl font-semibold text-slate-900">{t("accountOverviewTitle")}</h1>

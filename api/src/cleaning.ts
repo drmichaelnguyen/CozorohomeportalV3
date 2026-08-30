@@ -20,7 +20,9 @@ import {
   CleaningCalendarEvent,
   awardCleaningCoinsToSheet,
   createAutomaticFineForEmail,
+  createAutomaticFineForEmailPaidByCoins,
   deleteCleaningCalendarEvent,
+  getFineCoinPaymentQuoteForEmail,
   getConfiguredCleaningCalendars,
   createCleaningCalendarEvent,
   getCleaningCalendarTarget,
@@ -137,6 +139,27 @@ class CleaningSelfAssignConflictError extends Error {
     super("This task is already assigned on that date");
     this.name = "CleaningSelfAssignConflictError";
     this.suggestions = suggestions;
+  }
+}
+
+export type CleaningLateCancellationPenalty = {
+  fineRate: number;
+  fineAmount: number;
+  message: string;
+  coinCost: number;
+  currentCoins: number;
+  remainingCoins: number;
+  recordedMember: string;
+  multiplier: number;
+};
+
+export class CleaningLateCancellationConfirmationRequiredError extends Error {
+  penalty: CleaningLateCancellationPenalty;
+
+  constructor(penalty: CleaningLateCancellationPenalty) {
+    super("Confirm the late-cancellation fine and immediate coin payment before removing this task.");
+    this.name = "CleaningLateCancellationConfirmationRequiredError";
+    this.penalty = penalty;
   }
 }
 
@@ -2201,7 +2224,11 @@ async function countReleasesThisMonth(email: string): Promise<number> {
   });
 }
 
-export async function releaseCleaningTask(taskId: string, email: string) {
+export async function releaseCleaningTask(
+  taskId: string,
+  email: string,
+  options?: { confirmLatePenalty?: boolean }
+) {
   const normalizedEmail = email.trim().toLowerCase();
   const task = await findUniqueCleaningTask({
     where: { id: taskId }
@@ -2255,6 +2282,24 @@ export async function releaseCleaningTask(taskId: string, email: string) {
   }
 
   const newFloor = task.type === CleaningTaskType.TRASH_D7 ? replacementUser.floor : task.floor;
+  const coinQuote = releasePenalty.fineAmount > 0
+    ? await getFineCoinPaymentQuoteForEmail(normalizedEmail, releasePenalty.fineAmount)
+    : null;
+
+  if (coinQuote && !options?.confirmLatePenalty) {
+    throw new CleaningLateCancellationConfirmationRequiredError({
+      fineRate: releasePenalty.fineRate,
+      fineAmount: releasePenalty.fineAmount,
+      message: releasePenalty.message,
+      ...coinQuote
+    });
+  }
+
+  if (coinQuote && !coinQuote.canPay) {
+    throw new Error(
+      `Not enough coins to pay this late-cancellation fine. Required: ${coinQuote.coinCost}; available: ${coinQuote.currentCoins}.`
+    );
+  }
 
   // Attempt to update Google Calendar. If this fails, log and continue — the DB is
   // authoritative for released tasks, and the sync will respect the UNAVAILABLE record
@@ -2338,14 +2383,27 @@ export async function releaseCleaningTask(taskId: string, email: string) {
     details: `replacement=${replacement.email}; penalty=${releasePenalty.fineAmount}`
   });
 
-  if (releasePenalty.fineAmount > 0) {
-    await createAutomaticFineForEmail({
+  const paidFine = releasePenalty.fineAmount > 0
+    ? await createAutomaticFineForEmailPaidByCoins({
       email: normalizedEmail,
       amount: releasePenalty.fineAmount,
       content: "Late cleaning cancellation",
       description: `Late release for ${formatTaskTypeForFine(task.type)} scheduled on ${formatTaskDateForFine(task.scheduledDate)}. ${releasePenalty.message}`,
       location: task.branchId,
       operator: "Cleaning schedule system"
+    })
+    : null;
+
+  if (paidFine) {
+    await logAction({
+      actorEmail: normalizedEmail,
+      actorName: task.userName ?? normalizedEmail,
+      actorRole: "resident",
+      action: "cleaning.task.release_fine_paid",
+      entityType: "CleaningTask",
+      entityId: reassignedTask.id,
+      entityLabel: `${reassignedTask.type}|${reassignedTask.scheduledDate.toISOString().slice(0, 10)}`,
+      details: `fineAmount=${releasePenalty.fineAmount}; coinCost=${paidFine.coinPayment.coinCost}; remainingCoins=${paidFine.coinPayment.currentCoins}`
     });
   }
 
@@ -2367,7 +2425,10 @@ export async function releaseCleaningTask(taskId: string, email: string) {
     penalty: {
       fineRate: releasePenalty.fineRate,
       fineAmount: releasePenalty.fineAmount,
-      message: releasePenalty.message
+      message: releasePenalty.message,
+      coinCost: paidFine?.coinPayment.coinCost ?? 0,
+      currentCoins: paidFine?.coinPayment.currentCoins ?? coinQuote?.currentCoins ?? null,
+      paidWithCoins: Boolean(paidFine)
     }
   };
 }

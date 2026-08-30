@@ -366,6 +366,15 @@ export type FineEntry = {
   };
 };
 
+export type FineCoinPaymentQuote = {
+  coinCost: number;
+  currentCoins: number;
+  remainingCoins: number;
+  canPay: boolean;
+  recordedMember: string;
+  multiplier: number;
+};
+
 /** Cash/VND amount from the fines sheet (same column the portal uses for unpaid fine totals). */
 export function getFineAmountVndFromEntry(entry: FineEntry): number {
   return parseLooseInteger(String(entry.row[FINE_AMOUNT_COLUMN] ?? ""));
@@ -1279,20 +1288,50 @@ export function createAuthUrl() {
   return oauthClient.generateAuthUrl({
     access_type: "offline",
     prompt: "consent",
+    include_granted_scopes: true,
     scope: [
       "https://www.googleapis.com/auth/spreadsheets",
       "https://www.googleapis.com/auth/calendar",
       "https://www.googleapis.com/auth/drive.file",
+      "https://www.googleapis.com/auth/documents",
       "https://www.googleapis.com/auth/gmail.send"
     ]
   });
 }
 
-export async function exchangeCodeForTokens(code: string) {
+function mergeOAuthScopeStrings(...scopeStrings: Array<string | undefined>) {
+  const scopes = new Set<string>();
+  for (const value of scopeStrings) {
+    for (const scope of String(value ?? "").split(/\s+/).filter(Boolean)) {
+      scopes.add(scope);
+    }
+  }
+  return [...scopes].join(" ");
+}
+
+export async function exchangeCodeForTokens(code: string, grantedScopeFromCallback?: string) {
   const oauthClient = getOAuthClient();
+  const existing = await readSavedTokens();
   const { tokens } = await oauthClient.getToken(code);
-  await saveTokens(tokens as Record<string, unknown>);
-  return tokens;
+
+  const merged: Record<string, unknown> = {
+    ...(existing ?? {}),
+    ...tokens
+  };
+
+  merged.scope = mergeOAuthScopeStrings(
+    typeof existing?.scope === "string" ? existing.scope : undefined,
+    typeof tokens.scope === "string" ? tokens.scope : undefined,
+    grantedScopeFromCallback
+  );
+
+  if (!merged.refresh_token && existing?.refresh_token) {
+    merged.refresh_token = existing.refresh_token;
+  }
+
+  await saveTokens(merged);
+  oauthClient.setCredentials(merged);
+  return merged;
 }
 
 async function getAuthorizedOAuthClient() {
@@ -4021,6 +4060,35 @@ export async function getFinesForEmail(email: string) {
     });
 }
 
+export async function getFineCoinPaymentQuoteForEmail(
+  email: string,
+  amountVnd: number
+): Promise<FineCoinPaymentQuote> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const client = await getActiveClientByEmail(normalizedEmail);
+  if (!client) {
+    throw new Error("No active client found for that email");
+  }
+
+  const currentCoins =
+    Number.parseInt(
+      String(client[CLIENT_CURRENT_COINS_COLUMN] ?? client["Cozoro coins hiện có"] ?? "0").replace(/[^0-9-]/g, ""),
+      10
+    ) || 0;
+  const recordedMember = (client[COINS_MEMBER_COLUMN] ?? "").trim() || "Silver";
+  const multiplier = getFineCoinMultiplier(recordedMember);
+  const coinCost = Math.ceil(Math.max(0, Math.trunc(amountVnd)) * multiplier);
+
+  return {
+    coinCost,
+    currentCoins,
+    remainingCoins: Math.max(0, currentCoins - coinCost),
+    canPay: currentCoins >= coinCost,
+    recordedMember,
+    multiplier
+  };
+}
+
 export async function getManagerFines() {
   const cache = (await readCachedFines()) ?? (await syncFinesFromSheet());
   const clientCache = (await readCachedClients()) ?? (await syncClientsFromSheet());
@@ -4094,25 +4162,32 @@ export async function payFineByCoins(input: {
 
   const nextCoinsBalance = Math.max(0, fineEntry.coinPayment.currentCoins - fineEntry.coinPayment.coinCost);
 
-  await appendCoinsSheetRow({
-    [COINS_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(new Date()),
-    [CONTRACT_CODE_COLUMN]: client[CONTRACT_CODE_COLUMN] ?? "",
-    ["Chi nhánh Cozoro dorm"]: normalizeClientBranch(client["Chi nhánh Cozoro dorm"] ?? "").replace("D", ""),
-    [EMAIL_COLUMN]: normalizedEmail,
-    [CLIENT_NAME_COLUMN]: client[CLIENT_NAME_COLUMN] ?? "",
-    [CLIENT_BED_COLUMN]: client[CLIENT_BED_COLUMN] ?? "",
-    [COINS_BALANCE_COLUMN]: String(-fineEntry.coinPayment.coinCost),
-    [COINS_EVENT_COLUMN]: fineEntry.row[FINE_CONTENT_COLUMN] || "Hóa đơn nội quy",
-    [COINS_OPERATOR_COLUMN]: "",
-    [COINS_MEMBER_COLUMN]: fineEntry.coinPayment.recordedMember,
-    [COINS_CURRENT_BALANCE_COLUMN]: String(nextCoinsBalance),
-    [COINS_TRANSACTION_CODE_COLUMN]: `FineCoins${Date.now()}${normalizedEmail}`
-  });
+  await appendCoinsSheetRow(
+    {
+      [COINS_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(new Date()),
+      [CONTRACT_CODE_COLUMN]: client[CONTRACT_CODE_COLUMN] ?? "",
+      ["Chi nhánh Cozoro dorm"]: normalizeClientBranch(client["Chi nhánh Cozoro dorm"] ?? "").replace("D", ""),
+      [EMAIL_COLUMN]: normalizedEmail,
+      [CLIENT_NAME_COLUMN]: client[CLIENT_NAME_COLUMN] ?? "",
+      [CLIENT_BED_COLUMN]: client[CLIENT_BED_COLUMN] ?? "",
+      [COINS_BALANCE_COLUMN]: String(-fineEntry.coinPayment.coinCost),
+      [COINS_EVENT_COLUMN]: fineEntry.row[FINE_CONTENT_COLUMN] || "Hóa đơn nội quy",
+      [COINS_OPERATOR_COLUMN]: "",
+      [COINS_MEMBER_COLUMN]: fineEntry.coinPayment.recordedMember,
+      [COINS_CURRENT_BALANCE_COLUMN]: String(nextCoinsBalance),
+      [COINS_TRANSACTION_CODE_COLUMN]: `FineCoins${Date.now()}${normalizedEmail}`
+    },
+    { updateCacheFromSnapshot: true }
+  );
 
   if (client[CONTRACT_CODE_COLUMN]) {
-    await updateClientColumns(client[CONTRACT_CODE_COLUMN], {
-      [CLIENT_CURRENT_COINS_COLUMN]: String(nextCoinsBalance)
-    });
+    await updateClientColumns(
+      client[CONTRACT_CODE_COLUMN],
+      {
+        [CLIENT_CURRENT_COINS_COLUMN]: String(nextCoinsBalance)
+      },
+      { updateCacheFromSnapshot: true }
+    );
   }
 
   await updateFineSheetCell({
@@ -4916,6 +4991,28 @@ export async function createAutomaticFineForEmail(input: {
   });
 }
 
+export async function createAutomaticFineForEmailPaidByCoins(input: {
+  email: string;
+  amount: number;
+  content: string;
+  description?: string;
+  location?: string;
+  dueDate?: string;
+  operator?: string;
+}) {
+  const fine = await createAutomaticFineForEmail(input);
+  const coinPayment = await payFineByCoins({
+    email: input.email,
+    timestamp: formatCoinsSheetTimestamp(new Date(fine.eventAt)),
+    content: fine.content
+  });
+
+  return {
+    ...fine,
+    coinPayment
+  };
+}
+
 export async function managerResolveFineDispute(input: {
   email: string;
   timestamp: string;
@@ -4998,7 +5095,10 @@ function getLaundryCoinTransactionCode(machine: LaundryMachine, start: Date, ema
   return `Coins${action}${branch}T${month}${year}${email.trim().toLowerCase()}`;
 }
 
-async function appendCoinsSheetRow(entry: Record<string, string>) {
+async function appendCoinsSheetRow(
+  entry: Record<string, string>,
+  options?: { updateCacheFromSnapshot?: boolean }
+) {
   if (!spreadsheetId) {
     throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
   }
@@ -5025,6 +5125,26 @@ async function appendCoinsSheetRow(entry: Record<string, string>) {
       values: [row]
     }
   });
+
+  if (options?.updateCacheFromSnapshot) {
+    const rows = [...values.slice(1), row]
+      .map((sheetRow) => mapRow(headers, sheetRow.map((value) => String(value))) as unknown as CoinRow)
+      .filter((sheetRow) => sheetRow[EMAIL_COLUMN]?.trim());
+    const cachePayload: CoinsCache = {
+      syncedAt: new Date().toISOString(),
+      rows
+    };
+    coinsMemoryCache = setMemoryCache(cachePayload);
+    try {
+      await writeCachedJsonFile(coinsCacheFilePath, cachePayload);
+    } catch (error) {
+      console.warn(
+        "[coins] Sheet row appended, but the local coins cache file could not be saved:",
+        error instanceof Error ? error.message : error
+      );
+    }
+    return;
+  }
 
   await syncCoinsFromSheet();
 }
@@ -5758,7 +5878,31 @@ async function updateFineSheetCell(input: {
     }
   });
 
-  await syncFinesFromSheet();
+  // The sheet write is already authoritative. Update the local cache from the
+  // snapshot used to locate the row instead of doing another remote read. A
+  // follow-up Sheets quota/network error must not make a completed payment look
+  // like it failed to the resident.
+  const updatedRow = [...(sheetValues[rowIndex] ?? [])];
+  updatedRow[columnIndex] = input.value;
+  const updatedRows = sheetValues
+    .slice(1)
+    .map((row, index) => (index + 1 === rowIndex ? updatedRow : row))
+    .map((row) => mapRow(headers, row.map((value) => String(value))) as unknown as FineRow)
+    .filter((row) => row[FINE_EMAIL_COLUMN]?.trim());
+  const cachePayload: FinesCache = {
+    syncedAt: new Date().toISOString(),
+    rows: updatedRows
+  };
+
+  finesMemoryCache = setMemoryCache(cachePayload);
+  try {
+    await writeCachedJsonFile(finesCacheFilePath, cachePayload);
+  } catch (error) {
+    console.warn(
+      "[fines] Sheet row updated, but the local fines cache file could not be saved:",
+      error instanceof Error ? error.message : error
+    );
+  }
 }
 
 /**
@@ -5839,7 +5983,11 @@ export async function updateClientColumnsByRowNumber(
   return syncClientsFromSheet();
 }
 
-export async function updateClientColumns(maHd: string, values: Record<string, string>) {
+export async function updateClientColumns(
+  maHd: string,
+  values: Record<string, string>,
+  options?: { updateCacheFromSnapshot?: boolean }
+) {
   if (!spreadsheetId) {
     throw new Error("GOOGLE_SPREADSHEET_ID is not configured");
   }
@@ -5876,6 +6024,7 @@ export async function updateClientColumns(maHd: string, values: Record<string, s
   }
 
   const updateData: Array<{ range: string; values: string[][] }> = [];
+  const updatedTargetRow = [...(sheetValues[rowIndex] ?? [])];
   for (const [column, value] of updates) {
     const columnIndex = headers.findIndex((header) => header === column);
 
@@ -5883,10 +6032,12 @@ export async function updateClientColumns(maHd: string, values: Record<string, s
       throw new Error(`Column "${column}" was not found in the Google Sheet`);
     }
 
+    const sheetValue = coerceGoogleSheetLiteralTextValue(column, value);
     updateData.push({
       range: `${sheetName}!${toSheetColumn(columnIndex + 1)}${rowIndex + 1}`,
-      values: [[coerceGoogleSheetLiteralTextValue(column, value)]]
+      values: [[sheetValue]]
     });
+    updatedTargetRow[columnIndex] = sheetValue;
   }
 
   if (updateData.length > 0) {
@@ -5897,6 +6048,28 @@ export async function updateClientColumns(maHd: string, values: Record<string, s
         data: updateData
       }
     });
+  }
+
+  if (options?.updateCacheFromSnapshot) {
+    const rows = sheetValues
+      .slice(1)
+      .map((row, index) => (index + 1 === rowIndex ? updatedTargetRow : row))
+      .map((row) => mapRow(headers, row.map((value) => String(value))))
+      .filter((row) => row[CONTRACT_CODE_COLUMN] && isActiveClient(row));
+    const cachePayload: ClientCache = {
+      syncedAt: new Date().toISOString(),
+      rows
+    };
+    clientsMemoryCache = setMemoryCache(cachePayload);
+    try {
+      await writeCachedJsonFile(cacheFilePath, cachePayload);
+    } catch (error) {
+      console.warn(
+        "[clients] Sheet row updated, but the local client cache file could not be saved:",
+        error instanceof Error ? error.message : error
+      );
+    }
+    return cachePayload;
   }
 
   return syncClientsFromSheet();
@@ -7251,6 +7424,66 @@ function checkoutCellForHeader(rawHeader: string, p: CheckoutSheetAppendPayload)
   return "";
 }
 
+export type CheckoutSheetRecord = {
+  user: string;
+  email: string;
+  maHd: string;
+  name: string;
+  dateTimeCheckout: string;
+  quyTrinh: string;
+  photosLocalPaths: string;
+  branch: string;
+  bed: string;
+  source: string;
+};
+
+export async function listCheckoutSheetRows(): Promise<CheckoutSheetRecord[]> {
+  if (!spreadsheetId) return [];
+  const sheets = await getAuthorizedSheetsClient();
+  const quoted = `'${checkoutSheetName.replace(/'/g, "''")}'`;
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${quoted}!A:ZZ`
+  });
+  const rows = response.data.values ?? [];
+  if (rows.length < 2) return [];
+  const headers = (rows[0] ?? []).map((value) => repairMojibake(String(value ?? "")).trim());
+
+  return rows.slice(1).map((row) => {
+    const record: CheckoutSheetRecord = {
+      user: "",
+      email: "",
+      maHd: "",
+      name: "",
+      dateTimeCheckout: "",
+      quyTrinh: "",
+      photosLocalPaths: "",
+      branch: "",
+      bed: "",
+      source: ""
+    };
+    headers.forEach((header, index) => {
+      const normalized = repairMojibake(header)
+        .trim()
+        .toLowerCase()
+        .replace(/_/g, "")
+        .replace(/\s+/g, "");
+      const value = String(row[index] ?? "");
+      if (normalized === "user") record.user = value;
+      else if (normalized === "email") record.email = value;
+      else if (normalized === "mahd" || normalized === "mãhd") record.maHd = value;
+      else if (normalized === "name") record.name = value;
+      else if (normalized.includes("datetimecheckout") || normalized.includes("datecheckout")) record.dateTimeCheckout = value;
+      else if (normalized.includes("quytr") || normalized.includes("quytrình")) record.quyTrinh = value;
+      else if (normalized.includes("photoslocal") || normalized.includes("photopath")) record.photosLocalPaths = value;
+      else if (normalized.includes("branch")) record.branch = value;
+      else if (normalized === "bed" || normalized.includes("sốgiường") || normalized.includes("sogi")) record.bed = value;
+      else if (normalized === "source") record.source = value;
+    });
+    return record;
+  }).filter((record) => record.email.trim() || record.maHd.trim());
+}
+
 /** Append one row to the `check-out` tab; header row must exist (User, Email, MaHD, …). */
 export async function appendCheckoutSheetRow(p: CheckoutSheetAppendPayload): Promise<void> {
   if (!spreadsheetId) {
@@ -7267,6 +7500,36 @@ export async function appendCheckoutSheetRow(p: CheckoutSheetAppendPayload): Pro
     throw new Error(`Sheet "${checkoutSheetName}" is empty — add a header row.`);
   }
   const rawHeaders = (rows[0] ?? []).map((c) => repairMojibake(String(c ?? "")).trim());
+  const requiredHeaders = [
+    "User",
+    "Email",
+    "MaHD",
+    "Name",
+    "Date_time_checkout",
+    "Quy_trinh_checkout",
+    "Photos_local_paths",
+    "Branch",
+    "Bed",
+    "Source"
+  ];
+  const normalizeCheckoutHeader = (value: string) => repairMojibake(value)
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, "")
+    .replace(/\s+/g, "");
+  const normalizedHeaders = new Set(rawHeaders.map(normalizeCheckoutHeader));
+  const missingHeaders = requiredHeaders.filter(
+    (header) => !normalizedHeaders.has(normalizeCheckoutHeader(header))
+  );
+  if (missingHeaders.length > 0) {
+    rawHeaders.push(...missingHeaders);
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${quoted}!A1:${toSheetColumn(rawHeaders.length)}1`,
+      valueInputOption: "RAW",
+      requestBody: { values: [rawHeaders] }
+    });
+  }
   const row = rawHeaders.map((h) => checkoutCellForHeader(h, p));
   await sheets.spreadsheets.values.append({
     spreadsheetId,

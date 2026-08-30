@@ -21,6 +21,7 @@
     "host:status": "node scripts/host-manager.mjs status",
     "export:mac": "powershell -ExecutionPolicy Bypass -File scripts/export-mac-deploy.ps1",
     "backup:full": "bash scripts/backup-full-state.sh",
-    "ensure:backup-dir": "node scripts/ensure-backup-dir.mjs"
+    "ensure:backup-dir": "node scripts/ensure-backup-dir.mjs",
+    "sync:meta-ai-knowledge": "pnpm --filter cozorohome-api exec tsx ../scripts/sync-meta-ai-knowledge-doc.mts"
   }
 }

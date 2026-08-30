@@ -11,7 +11,7 @@ type Step = 1 | 2 | 3 | 4 | 5;
 type CheckoutContext = {
   eligible: boolean;
   reason?: string;
-  kind?: "termination" | "contract_due";
+  kind?: "termination" | "contract_due" | "resident";
   maHd?: string;
   name?: string;
   branch?: string;
@@ -21,6 +21,11 @@ type CheckoutContext = {
   daysUntilContractEnd?: number | null;
   completed?: boolean;
   submittedAt?: string;
+  deactivateAt?: string;
+  deactivatedAt?: string;
+  redoRequested?: boolean;
+  redoMessage?: string;
+  redoRequestedAt?: string;
 };
 
 const STEP_LABELS: Record<Step, string> = {
@@ -172,8 +177,21 @@ export function CheckoutFormClient() {
           photos: finalPhotos
         })
       });
-      const data = (await res.json()) as { ok?: boolean; error?: string };
+      const data = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        record?: { submittedAt: string; deactivateAt: string };
+      };
       if (!res.ok) throw new Error(data.error ?? "Submission failed");
+      setCtx((current) => current ? {
+        ...current,
+        completed: true,
+        submittedAt: data.record?.submittedAt,
+        deactivateAt: data.record?.deactivateAt,
+        redoRequested: false,
+        redoMessage: undefined,
+        redoRequestedAt: undefined
+      } : current);
       setDone(true);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Unable to submit check-out");
@@ -259,6 +277,11 @@ export function CheckoutFormClient() {
         <p className="mt-2 text-sm text-slate-600">
           Cảm ơn bạn đã hoàn thành các bước. Ảnh được lưu trên máy chủ Cozoro; thông tin đã được ghi nhận (và đẩy lên Google Sheet nếu cấu hình đúng).
         </p>
+        <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800">
+          {language === "vi"
+            ? `Bạn không thể đặt thêm dịch vụ. Tài khoản sẽ tự động ngừng hoạt động${ctx?.deactivateAt ? ` vào ${new Date(ctx.deactivateAt).toLocaleDateString("vi-VN")}` : " sau 10 ngày"}.`
+            : `You can no longer book services. Your account will automatically be deactivated${ctx?.deactivateAt ? ` on ${new Date(ctx.deactivateAt).toLocaleDateString("en-CA")}` : " after 10 days"}.`}
+        </p>
         <Link href="/" className="mt-6 inline-block rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-medium text-white">
           Về trang chủ
         </Link>
@@ -298,8 +321,26 @@ export function CheckoutFormClient() {
       <div>
         <p className="text-xs font-semibold uppercase tracking-widest text-rose-600">Check-out</p>
         <h1 className="mt-1 text-2xl font-bold text-slate-900">Quy trình Trả phòng</h1>
+        {ctx.redoRequested ? (
+          <div className="mt-3 rounded-2xl border-2 border-rose-300 bg-rose-50 p-4 text-sm text-rose-900">
+            <div className="font-bold">
+              {language === "vi" ? "Quản lý yêu cầu thực hiện lại check-out" : "Management requires a new check-out submission"}
+            </div>
+            <p className="mt-2 whitespace-pre-wrap leading-relaxed">{ctx.redoMessage || (language === "vi" ? "Vui lòng thực hiện lại toàn bộ các bước và gửi hình ảnh mới." : "Please repeat every step and submit new photos.")}</p>
+            {ctx.redoRequestedAt ? (
+              <p className="mt-2 text-xs text-rose-700">
+                {new Date(ctx.redoRequestedAt).toLocaleString(language === "vi" ? "vi-VN" : "en-CA")}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         <p className="mt-2 text-sm text-amber-900/90 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
           Vui lòng hoàn tất các bước trước <strong>12:00 PM</strong> để chúng tôi kịp chuẩn bị giường cho khách tiếp theo.
+        </p>
+        <p className="mt-2 rounded-xl border border-rose-300 bg-rose-50 px-3 py-3 text-sm font-semibold text-rose-800">
+          {language === "vi"
+            ? "Cảnh báo: Sau khi gửi hoàn tất check-out, bạn sẽ không thể đặt thêm bất kỳ dịch vụ nào. Tài khoản sẽ tự động ngừng hoạt động sau 10 ngày."
+            : "Warning: Once check-out is completed, you cannot book any more services. Your account will be automatically deactivated after 10 days."}
         </p>
         <p className="mt-2 text-sm text-slate-600">
           {ctx.name} · Giường {ctx.bed} · {ctx.branch}
@@ -563,6 +604,15 @@ export function CheckoutFormClient() {
                 <strong>Check-out trễ:</strong> Mỗi giờ trễ sau 12:00 PM có thể phát sinh phí (theo chính sách chi nhánh; tối đa đến 15:00, sau đó có thể tính thêm 1 ngày lưu trú). Hoàn tất trước 12:00 PM giúp kịp chuẩn bị giường.
               </span>
             </li>
+            <li className="flex gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-rose-800">
+              <span className="mt-0.5">⚠️</span>
+              <span>
+                <strong>{language === "vi" ? "Quyền truy cập tài khoản:" : "Account access:"}</strong>{" "}
+                {language === "vi"
+                  ? "Ngay sau khi hoàn tất check-out, bạn không thể đặt dịch vụ mới. Tài khoản sẽ tự động ngừng hoạt động sau 10 ngày."
+                  : "Immediately after check-out, you cannot make new service bookings. Your account will automatically be deactivated after 10 days."}
+              </span>
+            </li>
           </ul>
           <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
             <input
@@ -571,7 +621,11 @@ export function CheckoutFormClient() {
               onChange={(e) => setReadFinalNotes(e.target.checked)}
               className="mt-1 h-5 w-5 rounded border-slate-400 accent-slate-900"
             />
-            <span className="text-sm text-slate-700">Tôi đã đọc và hiểu các lưu ý trên.</span>
+            <span className="text-sm text-slate-700">
+              {language === "vi"
+                ? "Tôi hiểu rằng sau khi hoàn tất check-out, tôi không thể đặt dịch vụ và tài khoản sẽ tự động ngừng hoạt động sau 10 ngày."
+                : "I understand that after completing check-out I cannot book services, and my account will automatically be deactivated after 10 days."}
+            </span>
           </label>
           {message ? <p className="text-sm font-medium text-rose-600">{message}</p> : null}
           <div className="flex gap-2">

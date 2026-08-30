@@ -222,6 +222,14 @@ import type {
 import type { ReferralProgramSettings } from "./referral-program.js";
 import { getBranchRegistrationClosedError, getBranchAutomationClosedError } from "./branch-closure.js";
 import {
+  getMetaAiCustomInstructions,
+  getMetaAiKnowledgeStatus,
+  isMetaAiKnowledgeAdmin,
+  requireMetaAiKnowledgeAdmin,
+  startMetaAiKnowledgeSyncScheduler,
+  syncMetaAiKnowledgeDocument
+} from "./meta-ai-knowledge-doc.js";
+import {
   computeReferralCodeForEmail,
   getReferralProgramPublicMarketing,
   getReferralProgramSettings,
@@ -249,6 +257,7 @@ import {
   getCleaningManagerReviewQueue,
   getCleaningOverviewForUser,
   getUserCleaningContext,
+  CleaningLateCancellationConfirmationRequiredError,
   releaseCleaningTask,
   selfAssignCleaningTask,
   sweepOverdueCleaningTasks,
@@ -309,7 +318,13 @@ import {
   ensureCheckoutPhotosDir,
   checkoutPhotosDirPath,
   getCheckoutContext,
-  verifyCheckoutPhotoAccess
+  verifyCheckoutPhotoAccess,
+  assertResidentServiceBookingAllowed,
+  sweepCheckoutAccountDeactivations,
+  listCheckoutReviewCases,
+  getCheckoutReviewCase,
+  archiveCheckoutReviewCase,
+  sendCheckoutReviewNotice
 } from "./checkout.js";
 import { getShortTermConfig, updateShortTermConfig } from "./short-term-config.js";
 import {
@@ -1857,7 +1872,8 @@ const cleaningAiBenchmarkSettingsPutSchema = z.object({
   autoSkipManualAuditEnabled: z.boolean().optional()
 });
 const releaseCleaningSchema = z.object({
-  email: z.string().email()
+  email: z.string().email(),
+  confirmLatePenalty: z.boolean().optional()
 });
 const selfAssignCleaningSchema = z.object({
   email: z.string().email(),
@@ -2101,20 +2117,63 @@ app.get("/integrations/google/auth-url", (_request, response) => {
   }
 });
 
+app.get("/integrations/google/connect", (_request, response) => {
+  try {
+    const authUrl = createAuthUrl();
+    return response.redirect(authUrl);
+  } catch (error) {
+    return response.status(500).send(
+      error instanceof Error ? error.message : "Unable to create Google auth URL"
+    );
+  }
+});
+
 app.get("/integrations/google/oauth/callback", async (request, response) => {
+  const oauthError = typeof request.query.error === "string" ? request.query.error : "";
+  if (oauthError) {
+    const description =
+      typeof request.query.error_description === "string" ? request.query.error_description : "";
+    return response
+      .status(400)
+      .send(`Google OAuth was not completed (${oauthError}${description ? `: ${description}` : ""}).`);
+  }
+
   const code = typeof request.query.code === "string" ? request.query.code : "";
+  const grantedScope = typeof request.query.scope === "string" ? request.query.scope : undefined;
 
   if (!code) {
     return response.status(400).send("Missing OAuth code");
   }
 
   try {
-    await exchangeCodeForTokens(code);
-    await syncClientsFromSheet();
-    return response.send("Google Sheets connected. You can close this tab.");
+    const tokens = await exchangeCodeForTokens(code, grantedScope);
+    const scopeValue = typeof tokens.scope === "string" ? tokens.scope : "";
+    const hasDocuments = scopeValue
+      .split(/\s+/)
+      .some(
+        (scope) =>
+          scope === "https://www.googleapis.com/auth/documents" ||
+          scope === "https://www.googleapis.com/auth/drive"
+      );
+
+    try {
+      await syncClientsFromSheet();
+    } catch (syncError) {
+      console.error("[google-oauth] Sheets sync after OAuth failed (tokens were saved)", syncError);
+    }
+
+    return response.send(
+      [
+        "Google connected successfully. You can close this tab.",
+        hasDocuments
+          ? "Google Docs access is enabled — return to Manager → Settings → Tools and click Sync now."
+          : "Documents scope is still missing — try Reconnect Google again and approve all permissions."
+      ].join(" ")
+    );
   } catch (error) {
-    console.error(error);
-    return response.status(500).send("Google OAuth setup failed.");
+    console.error("[google-oauth] callback failed", error);
+    const message = error instanceof Error ? error.message : "Google OAuth setup failed.";
+    return response.status(500).send(`Google OAuth setup failed: ${message}`);
   }
 });
 
@@ -3518,6 +3577,7 @@ app.post("/controller/airfryer/start", async (request, response) => {
   }
 
   try {
+    await assertResidentServiceBookingAllowed(parsed.data.email);
     const result = await startAirFryerUse(parsed.data);
     const client = await getActiveClientByEmail(parsed.data.email);
     await appendControllerHistoryEntry({
@@ -3958,6 +4018,7 @@ app.post("/controller/microwave/d2/trigger", async (request, response) => {
   const inspection = String(request.body?.inspection ?? "").trim();
 
   try {
+    await assertResidentServiceBookingAllowed(email);
     const result = await startMicrowaveUse({ email, inspection });
     const client = await getActiveClientByEmail(email);
 
@@ -4017,6 +4078,7 @@ app.post("/controller/cooker/on", async (request, response) => {
     return response.status(400).json({ error: "Email, cooker id, and a live inspection photo are required" });
   }
   try {
+    await assertResidentServiceBookingAllowed(parsed.data.email);
     const result = await startCookerUse(parsed.data);
     const client = await getActiveClientByEmail(parsed.data.email);
     await appendControllerHistoryEntry({
@@ -4073,6 +4135,7 @@ app.post("/controller/cooker/reserve", async (request, response) => {
     return response.status(400).json({ error: "Email, cooker id, and start time are required" });
   }
   try {
+    await assertResidentServiceBookingAllowed(parsed.data.email);
     return response.status(201).json(await createCookerReservation(parsed.data));
   } catch (error) {
     return response.status(400).json({
@@ -6017,9 +6080,18 @@ app.post("/cleaning/tasks/:id/release", async (request, response) => {
   }
 
   try {
-    const task = await releaseCleaningTask(request.params.id, parsed.data.email);
+    const task = await releaseCleaningTask(request.params.id, parsed.data.email, {
+      confirmLatePenalty: parsed.data.confirmLatePenalty
+    });
     return response.json(task);
   } catch (error) {
+    if (error instanceof CleaningLateCancellationConfirmationRequiredError) {
+      return response.status(409).json({
+        error: error.message,
+        code: "LATE_CANCELLATION_CONFIRMATION_REQUIRED",
+        penalty: error.penalty
+      });
+    }
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to release cleaning task"
     });
@@ -6136,6 +6208,7 @@ app.post("/cleaning/self-assign", async (request, response) => {
   }
 
   try {
+    await assertResidentServiceBookingAllowed(parsed.data.email);
     const task = await selfAssignCleaningTask({
       email: parsed.data.email,
       date: parseCalendarDateInput(parsed.data.date),
@@ -6167,6 +6240,7 @@ app.post("/cleaning/self-assign/check", async (request, response) => {
   }
 
   try {
+    await assertResidentServiceBookingAllowed(parsed.data.email);
     const result = await checkSelfAssignCleaningTask({
       email: parsed.data.email,
       date: parseCalendarDateInput(parsed.data.date),
@@ -6502,6 +6576,7 @@ app.post("/laundry/bookings", async (request, response) => {
   }
 
   try {
+    await assertResidentServiceBookingAllowed(parsed.data.email);
     // Block laundry booking if the user marked that date as unavailable (away)
     const bookingStart = new Date(parsed.data.start);
     if (!Number.isNaN(bookingStart.getTime())) {
@@ -6686,6 +6761,14 @@ app.post("/bookings", async (request, response) => {
   const { userId, resourceId, startAt: startAtInput, endAt: endAtInput } = parsed.data;
   const startAt = new Date(startAtInput);
   const endAt = new Date(endAtInput);
+
+  try {
+    await assertResidentServiceBookingAllowed(userId);
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Service booking is unavailable after check-out."
+    });
+  }
 
   const resource = await prisma.resource.findUnique({
     where: { id: resourceId }
@@ -8299,6 +8382,76 @@ app.put("/manager/cleaning/ai-benchmark-settings", async (req, res) => {
     return res.json({ settings, autoSkipReady: report.autoSkipReady, autoSkipActive: report.autoSkipActive });
   } catch (error) {
     return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+// GET /manager/meta-ai-knowledge/access — whether this account may manage Meta AI fanpage doc sync
+app.get("/manager/meta-ai-knowledge/access", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim();
+  if (!actorEmail) {
+    return res.status(400).json({ error: "actorEmail is required" });
+  }
+
+  return res.json({ allowed: isMetaAiKnowledgeAdmin(actorEmail) });
+});
+
+// GET /manager/meta-ai-knowledge/status — Meta AI Google Doc sync metadata (admin only)
+app.get("/manager/meta-ai-knowledge/status", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim();
+  if (!actorEmail) {
+    return res.status(400).json({ error: "actorEmail is required" });
+  }
+
+  try {
+    await requireMetaAiKnowledgeAdmin(actorEmail);
+    const [status, customInstructions] = await Promise.all([
+      getMetaAiKnowledgeStatus(),
+      getMetaAiCustomInstructions()
+    ]);
+    return res.json({ ...status, customInstructions });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Forbidden";
+    const statusCode = message.includes("Only the Meta AI knowledge admin") ? 403 : 500;
+    return res.status(statusCode).json({ error: message });
+  }
+});
+
+// POST /manager/meta-ai-knowledge/sync — push fanpage knowledge to Google Doc (admin only)
+app.post("/manager/meta-ai-knowledge/sync", async (req, res) => {
+  const body = req.body as Record<string, unknown>;
+  const actorEmail = String(body.actorEmail ?? "").trim();
+  const force = body.force === true;
+
+  if (!actorEmail) {
+    return res.status(400).json({ error: "actorEmail is required" });
+  }
+
+  try {
+    await requireMetaAiKnowledgeAdmin(actorEmail);
+    const result = await syncMetaAiKnowledgeDocument({ force });
+    return res.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to sync Meta AI knowledge document";
+    const statusCode = message.includes("Only the Meta AI knowledge admin") ? 403 : 500;
+    return res.status(statusCode).json({ error: message });
+  }
+});
+
+// GET /manager/meta-ai-knowledge/google-auth-url — OAuth reconnect for Docs scope (admin only)
+app.get("/manager/meta-ai-knowledge/google-auth-url", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim();
+  if (!actorEmail) {
+    return res.status(400).json({ error: "actorEmail is required" });
+  }
+
+  try {
+    await requireMetaAiKnowledgeAdmin(actorEmail);
+    const authUrl = createAuthUrl();
+    return res.json({ authUrl });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to create Google auth URL";
+    const statusCode = message.includes("Only the Meta AI knowledge admin") ? 403 : 500;
+    return res.status(statusCode).json({ error: message });
   }
 });
 
@@ -10642,6 +10795,170 @@ app.get("/manager/termination-status", async (request, response) => {
   }
 });
 
+const checkoutReviewApprovalInFlight = new Set<string>();
+
+app.get("/manager/checkout-reviews", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "").trim().toLowerCase();
+  if (!actorEmail) {
+    return response.status(400).json({ error: "actorEmail is required" });
+  }
+  try {
+    const cases = await listCheckoutReviewCases(actorEmail);
+    const enriched = await Promise.all(
+      cases.map(async (entry) => {
+        const preview = await managerGetDepositRefundPreview({ actorEmail, maHd: entry.maHd });
+        if ("error" in preview && preview.error) {
+          return {
+            ...entry,
+            financial: null,
+            financialError: preview.error
+          };
+        }
+        return {
+          ...entry,
+          name: entry.name === entry.email ? preview.clientName : entry.name,
+          branch: entry.branch || preview.clientBranch,
+          bed: entry.bed || preview.clientBed,
+          financial: preview,
+          financialError: undefined
+        };
+      })
+    );
+    return response.json({
+      pending: enriched.filter((entry) => entry.status === "pending"),
+      archived: enriched.filter((entry) => entry.status === "archived")
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to load check-out reviews";
+    return response.status(message.toLowerCase().includes("staff only") ? 403 : 500).json({ error: message });
+  }
+});
+
+app.post("/manager/checkout-reviews/:id/approve", async (request, response) => {
+  const parsed = z.object({
+    actorEmail: z.string().email(),
+    refundAmountVnd: z.number().int().min(0)
+  }).safeParse(request.body ?? {});
+  if (!parsed.success) {
+    return response.status(400).json({ error: "actorEmail and a non-negative refundAmountVnd are required" });
+  }
+
+  const id = request.params.id;
+  const actorEmail = parsed.data.actorEmail.trim().toLowerCase();
+  if (checkoutReviewApprovalInFlight.has(id)) {
+    return response.status(409).json({ error: "This check-out case is already being approved." });
+  }
+  checkoutReviewApprovalInFlight.add(id);
+  try {
+    await requirePortalRole(actorEmail, ["owner", "app_admin"], "Only owners can approve check-out cases.");
+    const checkoutCase = await getCheckoutReviewCase(actorEmail, id);
+    if (!checkoutCase) {
+      return response.status(404).json({ error: "Check-out case not found." });
+    }
+    if (checkoutCase.status === "archived") {
+      return response.json({ ok: true, alreadyArchived: true, record: checkoutCase });
+    }
+    if (checkoutCase.awaitingRedo) {
+      return response.status(409).json({ error: "The resident must resubmit this check-out before approval." });
+    }
+
+    const latestCompensationNotice = [...checkoutCase.reviewNotices]
+      .reverse()
+      .find((notice) => notice.action === "compensation");
+    const emailResult = await managerSendDepositRefundEmail({
+      actorEmail,
+      maHd: checkoutCase.maHd,
+      refundAmountVnd: parsed.data.refundAmountVnd,
+      otherDeductionNote: checkoutCase.compensationAmountVnd > 0
+        ? latestCompensationNotice?.message
+        : undefined
+    });
+    if ("error" in emailResult && emailResult.error) {
+      return response.status(400).json({ error: emailResult.error });
+    }
+    if (!("sentTo" in emailResult) || !emailResult.sentTo) {
+      return response.status(500).json({ error: "Refund email did not return a recipient." });
+    }
+    const emailSentTo = emailResult.sentTo;
+
+    const archived = await archiveCheckoutReviewCase({
+      actorEmail,
+      id,
+      refundAmountVnd: parsed.data.refundAmountVnd,
+      refundEmailSentTo: emailSentTo
+    });
+    await logAction({
+      actorEmail,
+      actorRole: "owner",
+      action: "checkout.review.approve",
+      entityType: "CheckoutReview",
+      entityId: id,
+      entityLabel: checkoutCase.maHd,
+      details: `refundAmountVnd=${parsed.data.refundAmountVnd}; emailSentTo=${emailSentTo}`
+    });
+    return response.json({ ok: true, record: archived, emailSentTo });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to approve check-out case";
+    const forbidden = message.toLowerCase().includes("only owners") || message.toLowerCase().includes("permission");
+    return response.status(forbidden ? 403 : 500).json({ error: message });
+  } finally {
+    checkoutReviewApprovalInFlight.delete(id);
+  }
+});
+
+app.post("/manager/checkout-reviews/:id/notice", async (request, response) => {
+  const parsed = z.object({
+    actorEmail: z.string().email(),
+    action: z.enum(["redo_checkout", "compensation"]),
+    message: z.string().trim().min(10).max(5000),
+    compensationAmountVnd: z.number().int().min(0).max(1_000_000_000).optional()
+  }).superRefine((data, context) => {
+    if (data.action === "compensation" && (!data.compensationAmountVnd || data.compensationAmountVnd <= 0)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["compensationAmountVnd"],
+        message: "A positive compensation amount is required."
+      });
+    }
+  }).safeParse(request.body ?? {});
+  if (!parsed.success) {
+    return response.status(400).json({
+      error: parsed.error.issues[0]?.message ?? "Action, owner findings, and a valid compensation amount are required."
+    });
+  }
+
+  const id = request.params.id;
+  if (checkoutReviewApprovalInFlight.has(id)) {
+    return response.status(409).json({ error: "This check-out case is already being updated." });
+  }
+  checkoutReviewApprovalInFlight.add(id);
+  try {
+    const result = await sendCheckoutReviewNotice({
+      actorEmail: parsed.data.actorEmail,
+      id,
+      action: parsed.data.action,
+      message: parsed.data.message,
+      compensationAmountVnd: parsed.data.compensationAmountVnd
+    });
+    await logAction({
+      actorEmail: parsed.data.actorEmail.trim().toLowerCase(),
+      actorRole: "owner",
+      action: `checkout.review.${parsed.data.action}`,
+      entityType: "CheckoutReview",
+      entityId: id,
+      entityLabel: result.record.maHd,
+      details: `emailSentTo=${result.emailSentTo}; compensationAmountVnd=${parsed.data.compensationAmountVnd ?? 0}; message=${parsed.data.message}`
+    });
+    return response.json({ ok: true, ...result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to send check-out review notice";
+    const forbidden = message.toLowerCase().includes("only owners") || message.toLowerCase().includes("permission");
+    return response.status(forbidden ? 403 : 400).json({ error: message });
+  } finally {
+    checkoutReviewApprovalInFlight.delete(id);
+  }
+});
+
 app.get("/manager/deposit-refund-preview", async (request, response) => {
   const actorEmail = String(request.query.actorEmail ?? "").trim();
   const maHd = String(request.query.maHd ?? "").trim();
@@ -10744,7 +11061,7 @@ app.post("/client/checkout", express.json(), async (request, response) => {
       optionalStepPhotos?: Record<string, string[]>;
     };
     photos: string[];
-    source?: "termination" | "contract_due";
+    source?: "termination" | "contract_due" | "resident";
   };
   if (!email || !maHd) return response.status(400).json({ error: "email and maHd required" });
   try {
@@ -10860,6 +11177,28 @@ app.listen(port, "127.0.0.1", () => {
 
   startMaintenanceSyncInterval();
 
+  void sweepCheckoutAccountDeactivations().then((result) => {
+    if (result.deactivated > 0 || result.failed.length > 0) {
+      console.log(
+        `[checkout-deactivation] startup checked=${result.checked} deactivated=${result.deactivated} failed=${result.failed.length}`
+      );
+    }
+  }).catch((error) => {
+    console.error("[checkout-deactivation] startup failed", error);
+  });
+  const checkoutDeactivationTimer = setInterval(() => {
+    void sweepCheckoutAccountDeactivations().then((result) => {
+      if (result.deactivated > 0 || result.failed.length > 0) {
+        console.log(
+          `[checkout-deactivation] scheduled checked=${result.checked} deactivated=${result.deactivated} failed=${result.failed.length}`
+        );
+      }
+    }).catch((error) => {
+      console.error("[checkout-deactivation] scheduled failed", error);
+    });
+  }, 60 * 60 * 1000);
+  checkoutDeactivationTimer.unref();
+
   void captureMonthlyBedOccupancy().catch((error) => {
     console.error("[bed-occupancy] startup snapshot failed", error);
   });
@@ -10951,4 +11290,6 @@ app.listen(port, "127.0.0.1", () => {
     });
   }, 2 * 60 * 1000);
   cookerLeftoverTimer.unref();
+
+  startMetaAiKnowledgeSyncScheduler();
 });

@@ -1,5 +1,27 @@
 # Changelog
 
+## [3.9.20] - 2026-08-30
+
+- **Owner cleaning analytics**: Statistics → Cleaning tab now auto-calculates assignment-source breakdown (self-assign / auto / manager), 30-day vs prior-30-day trend, and a 6-month monthly chart; drill-down grouping includes assignment source.
+- **Bed occupancy trend chart**: Owner Statistics → Bed occupancy shows a D2/D7 line graph over monthly snapshots with hover details instead of a table-only view.
+- **Meta AI knowledge doc**: Manager Settings can sync fanpage/custom-instructions knowledge to a Google Doc for Meta AI (`POST /manager/meta-ai-knowledge/sync`).
+- **Check-out review workspace**: Client list check-out tab with pending/archived cases, owner approve/notice flows, and refund email on approval.
+- **Late cleaning cancellation**: Residents confirm coin fine when cancelling late; optional removal of unavailable-day marks on assigned schedules.
+
+## [3.9.17] - 2026-08-28
+
+- **Check-out review queue**: Client List now includes Pending and Archived check-out cases with submitted forms, photos, fees, fines, and deposit-refund calculations.
+- **Owner review actions**: Owners can request a new check-out submission or send a compensation warning with detailed findings; every notice is emailed and retained in the case history.
+- **Refund completion workflow**: Approved cases send an itemized refund email and archive only after successful delivery, including owner-recorded compensation deductions.
+- **Late cleaning cancellation**: Residents receive a clear warning and pay the late-cancellation fine in coins when confirming; unavailable days can optionally be removed from assigned schedules.
+
+## [3.9.16] - 2026-08-27
+
+- **Checkout available to every active resident**: Residents can complete checkout at any time, with bilingual warnings that new service bookings stop immediately after submission.
+- **Automatic post-checkout deactivation**: A completed checkout records a deactivation date 10 days later. The API checks overdue accounts at startup and hourly, then marks the resident inactive in the client sheet; existing booking cancellations remain available.
+- **Fine coin-payment reliability**: Fine, coin, and client caches now update from confirmed Google Sheets writes, so a successful coin payment is not reported as failed because of a follow-up sync error.
+- **Live fine status**: The resident fines page revalidates locally cached history with the server, updates a successfully paid fine immediately, and only enables coin payment from current server data.
+
 ## [3.9.12] - 2026-08-19
 
 - **9router LLM**: Cozoro Bee, manager AI, support assistant, and the Facebook/website bot prefer 9router (`gpt-5` via `NINE_ROUTER_API_KEY`) using the same host as luckynekoAI / MCCQE. Gemini 2.5 Flash remains the fallback when 9router is unset or fails.

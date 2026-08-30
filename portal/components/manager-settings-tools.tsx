@@ -27,6 +27,7 @@ type Props = {
   normalizedEmail: string;
   clients: ManagerSettingsToolsClient[];
   canManageDbBackup?: boolean;
+  canManageMetaAiKnowledge?: boolean;
   /** Matches `usePortalLanguage().t` — second arg may be params when omitting fallback. */
   t: (key: string, fallback?: string | Record<string, unknown>, params?: Record<string, string | number>) => string;
   onRefreshClients: () => Promise<void>;
@@ -60,7 +61,21 @@ type FridgeApiRow =
       onTime?: string | null;
     };
 
-type ToolPanelKey = "cleaning" | "fridge" | "bulk_coins" | "bulk_push" | "db_backup";
+type ToolPanelKey = "meta_ai_knowledge" | "cleaning" | "fridge" | "bulk_coins" | "bulk_push" | "db_backup";
+
+type MetaAiKnowledgeStatus = {
+  documentId: string;
+  documentUrl: string;
+  lastSyncedAt: string | null;
+  contentLength: number;
+  syncEnabled: boolean;
+  autoSyncIntervalDays: number;
+  googleDocsScopeGranted: boolean;
+  googleOAuthConnected: boolean;
+  sourceFile: string;
+  nextSyncEligible: boolean;
+  customInstructions?: string;
+};
 
 function ToolCollapsiblePanel({
   title,
@@ -114,8 +129,16 @@ function emptyFridgeRow(loading: boolean): FridgeBranchUi {
   };
 }
 
-export function ManagerSettingsTools({ normalizedEmail, clients, canManageDbBackup = false, t, onRefreshClients }: Props) {
+export function ManagerSettingsTools({
+  normalizedEmail,
+  clients,
+  canManageDbBackup = false,
+  canManageMetaAiKnowledge = false,
+  t,
+  onRefreshClients
+}: Props) {
   const [openToolPanels, setOpenToolPanels] = useState<Record<ToolPanelKey, boolean>>({
+    meta_ai_knowledge: false,
     cleaning: false,
     fridge: false,
     bulk_coins: false,
@@ -162,6 +185,98 @@ export function ManagerSettingsTools({ normalizedEmail, clients, canManageDbBack
     lastRestoredBy: string | null;
     tableCounts: Record<string, number>;
   } | null>(null);
+
+  const [metaAiLoading, setMetaAiLoading] = useState(false);
+  const [metaAiSyncing, setMetaAiSyncing] = useState(false);
+  const [metaAiMessage, setMetaAiMessage] = useState("");
+  const [metaAiError, setMetaAiError] = useState("");
+  const [metaAiStatus, setMetaAiStatus] = useState<MetaAiKnowledgeStatus | null>(null);
+  const [metaAiCopyMessage, setMetaAiCopyMessage] = useState("");
+
+  const loadMetaAiKnowledgeStatus = useCallback(async () => {
+    if (!canManageMetaAiKnowledge || !normalizedEmail) {
+      return;
+    }
+    setMetaAiLoading(true);
+    setMetaAiError("");
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/manager/meta-ai-knowledge/status?actorEmail=${encodeURIComponent(normalizedEmail)}`
+      );
+      const data = (await res.json()) as MetaAiKnowledgeStatus & { error?: string };
+      if (!res.ok) {
+        throw new Error(data.error ?? "Unable to load Meta AI knowledge status");
+      }
+      setMetaAiStatus(data);
+    } catch (error) {
+      setMetaAiError(error instanceof Error ? error.message : "Unable to load Meta AI knowledge status");
+    } finally {
+      setMetaAiLoading(false);
+    }
+  }, [canManageMetaAiKnowledge, normalizedEmail]);
+
+  useEffect(() => {
+    if (canManageMetaAiKnowledge && openToolPanels.meta_ai_knowledge) {
+      void loadMetaAiKnowledgeStatus();
+    }
+  }, [canManageMetaAiKnowledge, openToolPanels.meta_ai_knowledge, loadMetaAiKnowledgeStatus]);
+
+  const runMetaAiKnowledgeSync = async (force = false) => {
+    setMetaAiSyncing(true);
+    setMetaAiMessage("");
+    setMetaAiError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/manager/meta-ai-knowledge/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorEmail: normalizedEmail, force })
+      });
+      const data = (await res.json()) as {
+        error?: string;
+        skipped?: boolean;
+        reason?: string;
+        documentUrl?: string;
+        syncedAt?: string;
+        contentLength?: number;
+      };
+      if (!res.ok) {
+        throw new Error(data.error ?? "Sync failed");
+      }
+      if (data.skipped) {
+        setMetaAiMessage(data.reason ?? t("toolsMetaAiKnowledgeSkipped"));
+      } else {
+        setMetaAiMessage(
+          data.documentUrl
+            ? `${t("toolsMetaAiKnowledgeSynced")} · ${data.contentLength ?? 0} chars`
+            : t("toolsMetaAiKnowledgeSynced")
+        );
+      }
+      await loadMetaAiKnowledgeStatus();
+    } catch (error) {
+      setMetaAiError(error instanceof Error ? error.message : "Sync failed");
+    } finally {
+      setMetaAiSyncing(false);
+    }
+  };
+
+  const openMetaAiGoogleAuth = () => {
+    setMetaAiError("");
+    window.open(`${API_BASE_URL}/integrations/google/connect`, "_blank", "noopener,noreferrer");
+  };
+
+  const copyMetaAiCustomInstructions = async () => {
+    const text = metaAiStatus?.customInstructions?.trim();
+    if (!text) {
+      setMetaAiCopyMessage(t("toolsMetaAiKnowledgeNoInstructions"));
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setMetaAiCopyMessage(t("toolsMetaAiKnowledgeCopied"));
+    } catch {
+      setMetaAiCopyMessage(t("toolsMetaAiKnowledgeCopyFailed"));
+    }
+  };
 
   const loadDbBackupStatus = useCallback(async () => {
     if (!canManageDbBackup || !normalizedEmail) {
@@ -549,10 +664,117 @@ export function ManagerSettingsTools({ normalizedEmail, clients, canManageDbBack
   const bulkCoinsHelpBody = t("toolsBulkCoinsDesc");
   const bulkPushHelpBody = t("toolsBulkPushDesc");
   const dbBackupHelpBody = t("toolsDbBackupHelp");
+  const metaAiHelpBody = t("toolsMetaAiKnowledgeHelp");
   const helpAria = t("toolsSectionHelpLabel");
 
   return (
     <div className="space-y-6">
+      {canManageMetaAiKnowledge ? (
+        <ToolCollapsiblePanel
+          title={t("toolsMetaAiKnowledgeTitle")}
+          helpBody={metaAiHelpBody}
+          helpLabel={helpAria}
+          expanded={openToolPanels.meta_ai_knowledge}
+          onToggle={() => toggleToolPanel("meta_ai_knowledge")}
+        >
+          <p className="text-sm text-slate-600 dark:text-slate-400">{t("toolsMetaAiKnowledgeDesc")}</p>
+          {metaAiLoading ? <p className="mt-3 text-sm text-slate-500">{t("refreshing")}</p> : null}
+          {metaAiStatus?.documentUrl ? (
+            <p className="mt-3 text-sm">
+              <a
+                href={metaAiStatus.documentUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-violet-700 underline dark:text-violet-300"
+              >
+                {t("toolsMetaAiKnowledgeOpenDoc")}
+              </a>
+            </p>
+          ) : null}
+          {metaAiStatus?.lastSyncedAt ? (
+            <p className="mt-2 text-xs text-slate-500">
+              {t("toolsMetaAiKnowledgeLastSync")}: {formatCozoroDateTime(metaAiStatus.lastSyncedAt)}
+              {metaAiStatus.contentLength ? ` · ${metaAiStatus.contentLength} chars` : ""}
+            </p>
+          ) : (
+            <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">{t("toolsMetaAiKnowledgeNeverSynced")}</p>
+          )}
+          <p className="mt-2 text-xs text-slate-500">
+            {t("toolsMetaAiKnowledgeAutoSync", undefined, { days: metaAiStatus?.autoSyncIntervalDays ?? 3 })}
+          </p>
+          <p className="mt-1 text-xs text-amber-800 dark:text-amber-200">{t("toolsMetaAiKnowledgeOAuthHostNote")}</p>
+          <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50/60 p-4 dark:border-violet-900/40 dark:bg-violet-950/20">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                {t("toolsMetaAiKnowledgeCustomInstructionsTitle")}
+              </p>
+              <button
+                type="button"
+                onClick={() => void copyMetaAiCustomInstructions()}
+                className="rounded-lg border border-violet-300 bg-white px-3 py-1.5 text-sm font-medium text-violet-800 dark:border-violet-700 dark:bg-slate-900 dark:text-violet-200"
+              >
+                {t("toolsMetaAiKnowledgeCopyInstructions")}
+              </button>
+            </div>
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+              {t("toolsMetaAiKnowledgeCustomInstructionsDesc")}
+            </p>
+            <textarea
+              readOnly
+              rows={10}
+              value={metaAiStatus?.customInstructions ?? ""}
+              className="mt-3 w-full resize-y rounded-lg border border-violet-200 bg-white p-3 font-mono text-xs leading-relaxed text-slate-800 dark:border-violet-800 dark:bg-slate-950 dark:text-slate-100"
+            />
+            {metaAiCopyMessage ? (
+              <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-300">{metaAiCopyMessage}</p>
+            ) : null}
+          </div>
+          {!metaAiStatus?.googleOAuthConnected ? (
+            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
+              {t("toolsMetaAiKnowledgeOAuthMissing")}
+            </p>
+          ) : !metaAiStatus.googleDocsScopeGranted ? (
+            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
+              {t("toolsMetaAiKnowledgeDocsScopeMissing")}
+            </p>
+          ) : null}
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={metaAiSyncing}
+              onClick={() => void runMetaAiKnowledgeSync(false)}
+              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
+            >
+              {metaAiSyncing ? t("toolsMetaAiKnowledgeSyncing") : t("toolsMetaAiKnowledgeSyncNow")}
+            </button>
+            <button
+              type="button"
+              disabled={metaAiSyncing}
+              onClick={() => void runMetaAiKnowledgeSync(true)}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200"
+            >
+              {t("toolsMetaAiKnowledgeForceSync")}
+            </button>
+            <button
+              type="button"
+              onClick={() => void openMetaAiGoogleAuth()}
+              className="rounded-lg border border-violet-300 px-4 py-2 text-sm text-violet-800 dark:border-violet-700 dark:text-violet-200"
+            >
+              {t("toolsMetaAiKnowledgeReconnectGoogle")}
+            </button>
+            <button
+              type="button"
+              onClick={() => void loadMetaAiKnowledgeStatus()}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 dark:border-slate-600 dark:text-slate-200"
+            >
+              {t("refresh")}
+            </button>
+          </div>
+          {metaAiMessage ? <p className="mt-3 text-sm text-emerald-700 dark:text-emerald-300">{metaAiMessage}</p> : null}
+          {metaAiError ? <p className="mt-3 text-sm text-rose-600">{metaAiError}</p> : null}
+        </ToolCollapsiblePanel>
+      ) : null}
+
       <ToolCollapsiblePanel
         title={t("toolsCleaningRewardsTitle")}
         helpBody={cleaningHelpBody}

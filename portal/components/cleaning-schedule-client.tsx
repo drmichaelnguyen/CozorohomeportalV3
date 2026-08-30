@@ -77,6 +77,25 @@ type PendingSelfAssignment = {
   reason?: string;
 };
 
+type CleaningReleasePenalty = {
+  fineRate: number;
+  fineAmount: number;
+  message: string;
+  coinCost: number;
+  currentCoins: number;
+  remainingCoins?: number;
+  recordedMember?: string;
+  multiplier?: number;
+  canPay?: boolean;
+  paidWithCoins?: boolean;
+};
+
+type CleaningReleaseResponse = {
+  error?: string;
+  code?: string;
+  penalty?: CleaningReleasePenalty;
+};
+
 type SwapCandidate = {
   email: string;
   name: string;
@@ -640,15 +659,12 @@ export function CleaningScheduleClient({
     const assignedTasks = (overview?.tasks ?? []).filter(
       (task) => task.status === "ASSIGNED" && sameDay(new Date(task.scheduledDate), selectedDate)
     );
-    if (
+    const removeAssignedTasks =
       type === "UNAVAILABLE" &&
       assignedTasks.length > 0 &&
-      !window.confirm(
-        t("assignedTaskAwayWarning", undefined, { dates: formatCozoroDate(selectedDate) })
-      )
-    ) {
-      return;
-    }
+      window.confirm(
+        t("assignedTaskAwayDecision", undefined, { dates: formatCozoroDate(selectedDate) })
+      );
 
     setLoading(true);
     setMessage("");
@@ -673,8 +689,30 @@ export function CleaningScheduleClient({
         return;
       }
 
+      let releasedCount = 0;
+      const releaseErrors: string[] = [];
+      if (removeAssignedTasks) {
+        for (const task of assignedTasks) {
+          try {
+            const release = await requestTaskRelease(task);
+            if (release.released) {
+              releasedCount += 1;
+            }
+          } catch (error) {
+            releaseErrors.push(error instanceof Error ? error.message : t("unableToReleaseTask", "Unable to release this task."));
+          }
+        }
+      }
+
       await loadOverview(activeEmail, { refresh: true });
-      setMessage(type === "UNAVAILABLE" ? "Date marked unavailable." : "Date preference saved.");
+      const baseMessage = type === "UNAVAILABLE"
+        ? t("dateMarkedUnavailable", "Date marked unavailable.")
+        : t("datePreferenceSaved", "Date preference saved.");
+      const releaseSummary = releasedCount > 0
+        ? ` ${t("awayAssignedTasksRemoved", undefined, { count: String(releasedCount) })}`
+        : "";
+      const errorSummary = releaseErrors.length > 0 ? ` ${releaseErrors.join(" ")}` : "";
+      setMessage(`${baseMessage}${releaseSummary}${errorSummary}`);
       setDayNote("");
       setPendingSelfAssignment(null);
     } catch {
@@ -682,6 +720,63 @@ export function CleaningScheduleClient({
     } finally {
       setLoading(false);
     }
+  }
+
+  async function postTaskRelease(taskId: string, confirmLatePenalty = false) {
+    const response = await fetch(`${API_BASE_URL}/cleaning/tasks/${taskId}/release`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        email: activeEmail,
+        confirmLatePenalty
+      })
+    });
+    const data = await readJsonSafely<CleaningReleaseResponse>(response);
+    return { response, data };
+  }
+
+  async function requestTaskRelease(task: CleaningTask) {
+    let result = await postTaskRelease(task.id);
+    if (
+      result.response.status === 409 &&
+      result.data.code === "LATE_CANCELLATION_CONFIRMATION_REQUIRED" &&
+      result.data.penalty
+    ) {
+      const penalty = result.data.penalty;
+      if (penalty.canPay === false) {
+        window.alert(
+          t("lateCancelInsufficientCoins", undefined, {
+            required: penalty.coinCost.toLocaleString(),
+            available: penalty.currentCoins.toLocaleString()
+          })
+        );
+        return { released: false, cancelled: true, data: result.data };
+      }
+
+      const confirmed = window.confirm(
+        t("lateCancelConfirm", undefined, {
+          task: prettyTaskType(task.type),
+          date: formatCozoroDate(new Date(task.scheduledDate)),
+          amount: penalty.fineAmount.toLocaleString(),
+          coins: penalty.coinCost.toLocaleString(),
+          balance: penalty.currentCoins.toLocaleString(),
+          remaining: penalty.remainingCoins?.toLocaleString() ?? "0"
+        })
+      );
+      if (!confirmed) {
+        return { released: false, cancelled: true, data: result.data };
+      }
+
+      result = await postTaskRelease(task.id, true);
+    }
+
+    if (!result.response.ok) {
+      throw new Error(result.data.error ?? t("unableToReleaseTask", "Unable to release this task."));
+    }
+
+    return { released: true, cancelled: false, data: result.data };
   }
 
   async function submitAwayDates() {
@@ -692,22 +787,21 @@ export function CleaningScheduleClient({
       .join(", ");
     if (!window.confirm(t("confirmAwayDates", undefined, { dates: dateLabels }))) return;
 
-    const assignedDateSet = new Set(
-      (overview?.tasks ?? [])
-        .filter((task) => task.status === "ASSIGNED")
-        .map((task) => toApiCalendarDate(new Date(task.scheduledDate)))
+    const selectedDateSet = new Set(sortedDates);
+    const conflictingTasks = (overview?.tasks ?? []).filter(
+      (task) =>
+        task.status === "ASSIGNED" &&
+        selectedDateSet.has(toApiCalendarDate(new Date(task.scheduledDate)))
     );
-    const conflictingDates = sortedDates.filter((date) => assignedDateSet.has(date));
-    if (
-      conflictingDates.length > 0 &&
-      !window.confirm(
-        t("assignedTaskAwayWarning", undefined, {
-          dates: conflictingDates
-            .map((date) => formatCozoroDate(new Date(`${date}T00:00:00`), { month: "short", day: "numeric", year: "numeric" }))
-            .join(", ")
+    const removeAssignedTasks =
+      conflictingTasks.length > 0 &&
+      window.confirm(
+        t("assignedTaskAwayDecision", undefined, {
+          dates: Array.from(
+            new Set(conflictingTasks.map((task) => formatCozoroDate(new Date(task.scheduledDate))))
+          ).join(", ")
         })
-      )
-    ) return;
+      );
 
     setAwaySubmitting(true);
     setMessage("");
@@ -727,8 +821,30 @@ export function CleaningScheduleClient({
         setMessage(data.error ?? "Unable to save away dates.");
         return;
       }
+      let releasedCount = 0;
+      const releaseErrors: string[] = [];
+      if (removeAssignedTasks) {
+        for (const task of conflictingTasks) {
+          try {
+            const release = await requestTaskRelease(task);
+            if (release.released) {
+              releasedCount += 1;
+            }
+          } catch (error) {
+            releaseErrors.push(error instanceof Error ? error.message : t("unableToReleaseTask", "Unable to release this task."));
+          }
+        }
+      }
+
       await loadOverview(activeEmail, { refresh: true });
-      setMessage(`${data.updated ?? awayDates.size} date(s) marked as away.`);
+      const awaySummary = t("awayDatesSaved", undefined, {
+        count: String(data.updated ?? awayDates.size)
+      });
+      const releaseSummary = releasedCount > 0
+        ? ` ${t("awayAssignedTasksRemoved", undefined, { count: String(releasedCount) })}`
+        : "";
+      const errorSummary = releaseErrors.length > 0 ? ` ${releaseErrors.join(" ")}` : "";
+      setMessage(`${awaySummary}${releaseSummary}${errorSummary}`);
       setAwayDates(new Set());
       setAwayMode(false);
     } catch {
@@ -1078,36 +1194,28 @@ export function CleaningScheduleClient({
     setMessage("");
 
     try {
-      const response = await fetch(`${API_BASE_URL}/cleaning/tasks/${taskId}/release`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          email: activeEmail
-        })
-      });
-      const data = await readJsonSafely<{
-        error?: string;
-        penalty?: {
-          fineAmount: number;
-          message: string;
-        };
-      }>(response);
+      const task = (overview?.tasks ?? []).find((entry) => entry.id === taskId);
+      if (!task) {
+        setMessage(t("unableToReleaseTask", "Unable to release this task."));
+        return;
+      }
 
-      if (!response.ok) {
-        setMessage(data.error ?? "Unable to release this task.");
+      const release = await requestTaskRelease(task);
+      if (!release.released) {
+        setMessage(t("lateCancelKept", "The assigned task was kept."));
         return;
       }
 
       await loadOverview(activeEmail, { refresh: true });
       setMessage(
-        data.penalty?.fineAmount
-          ? `You were removed from this task and the system reassigned it. Fine applied: ${data.penalty.fineAmount}.`
-          : "You were removed from this task and the system reassigned it."
+        release.data.penalty?.paidWithCoins
+          ? t("taskRemovedCoinsPaid", undefined, {
+              coins: release.data.penalty.coinCost.toLocaleString()
+            })
+          : t("taskRemoved", "You were removed from this task and the system reassigned it.")
       );
-    } catch {
-      setMessage("Unable to release this task.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : t("unableToReleaseTask", "Unable to release this task."));
     } finally {
       setLoading(false);
     }

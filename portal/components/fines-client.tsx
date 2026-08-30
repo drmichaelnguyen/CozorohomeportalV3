@@ -98,6 +98,7 @@ export function FinesClient() {
   const [disputingFineKey, setDisputingFineKey] = useState("");
   const [message, setMessage] = useState("");
   const [entries, setEntries] = useState<FineEntry[]>([]);
+  const [fineHistoryIsLive, setFineHistoryIsLive] = useState(false);
   const [disputeDrafts, setDisputeDrafts] = useState<Record<string, string>>({});
   const [monthFilter, setMonthFilter] = useState("all");
   const [yearFilter, setYearFilter] = useState("all");
@@ -154,39 +155,51 @@ export function FinesClient() {
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
+    setFineHistoryIsLive(false);
     setMessage("");
     setEntries([]);
 
+    const cached = loadLocalCache(activeEmail);
     try {
-      const cached = loadLocalCache(activeEmail);
       if (cached) {
         setEntries(cached.entries);
         setMonthFilter("all");
         setYearFilter("all");
         setStatusFilter("all");
         setSortDirection("desc");
-        setMessage(`Fine history loaded from local storage. Last saved ${formatCozoroDateTime(cached.savedAt)}.`);
-      } else {
-        const response = await fetch(`${API_BASE_URL}/fines?email=${encodeURIComponent(activeEmail)}`);
-        const data = await readJsonSafely<{ entries?: FineEntry[]; error?: string }>(response);
-
-        if (!response.ok) {
-          setMessage(data.error ?? "Unable to load fine history.");
-          return;
-        }
-
-        const nextEntries = data.entries ?? [];
-        setEntries(nextEntries);
-        login(activeEmail);
-        saveLocalCache(activeEmail, nextEntries);
-        setMonthFilter("all");
-        setYearFilter("all");
-        setStatusFilter("all");
-        setSortDirection("desc");
-        setMessage("Fine history loaded.");
+        setMessage(`Checking saved fine history from ${formatCozoroDateTime(cached.savedAt)} against the server...`);
       }
+
+      // Cached fine rows are only a fast first paint. Always revalidate them so a
+      // completed payment cannot keep showing as unpaid on the next visit.
+      const response = await fetch(`${API_BASE_URL}/fines?email=${encodeURIComponent(activeEmail)}`);
+      const data = await readJsonSafely<{ entries?: FineEntry[]; error?: string }>(response);
+
+      if (!response.ok) {
+        setMessage(
+          cached
+            ? `${data.error ?? "Unable to load current fine history."} Showing the last saved copy.`
+            : data.error ?? "Unable to load fine history."
+        );
+        return;
+      }
+
+      const nextEntries = data.entries ?? [];
+      setEntries(nextEntries);
+      setFineHistoryIsLive(true);
+      login(activeEmail);
+      saveLocalCache(activeEmail, nextEntries);
+      setMonthFilter("all");
+      setYearFilter("all");
+      setStatusFilter("all");
+      setSortDirection("desc");
+      setMessage("Fine history loaded from the server.");
     } catch {
-      setMessage("API request failed. Make sure the API is running and Google Sheets is connected.");
+      setMessage(
+        cached
+          ? "Unable to check the server right now. Showing the last saved fine history; use Refresh before making a payment."
+          : "API request failed. Make sure the API is running and Google Sheets is connected."
+      );
     } finally {
       setLoading(false);
     }
@@ -199,10 +212,17 @@ export function FinesClient() {
     }
 
     setRefreshing(true);
+    setFineHistoryIsLive(false);
     setMessage("");
 
     try {
-      await fetch(`${API_BASE_URL}/fines/sync`, { method: "POST" });
+      const syncResponse = await fetch(`${API_BASE_URL}/fines/sync`, { method: "POST" });
+      const syncData = await readJsonSafely<{ error?: string }>(syncResponse);
+      if (!syncResponse.ok) {
+        setMessage(syncData.error ?? "Unable to sync fine history from Google Sheets.");
+        return;
+      }
+
       const response = await fetch(`${API_BASE_URL}/fines?email=${encodeURIComponent(activeEmail)}`);
       const data = await readJsonSafely<{ entries?: FineEntry[]; error?: string }>(response);
 
@@ -213,6 +233,7 @@ export function FinesClient() {
 
       const nextEntries = data.entries ?? [];
       setEntries(nextEntries);
+      setFineHistoryIsLive(true);
       saveLocalCache(activeEmail, nextEntries);
       setMonthFilter("all");
       setYearFilter("all");
@@ -249,14 +270,41 @@ export function FinesClient() {
         },
         body: JSON.stringify(payPayload)
       });
-      const data = await readJsonSafely<{ error?: string }>(response);
+      const data = await readJsonSafely<{ error?: string; currentCoins?: number }>(response);
 
       if (!response.ok) {
         setMessage(data.error ?? "Unable to pay this fine by coins.");
         return;
       }
 
-      await refreshFinesNow();
+      // The payment endpoint only returns success after the fine row and coin
+      // balance are written. Reflect that confirmed result immediately instead
+      // of depending on a second Google Sheets refresh.
+      setEntries((current) => {
+        const nextEntries = current.map((currentEntry) => {
+          const isPaidEntry =
+            getFineTimestamp(currentEntry.row) === payPayload.timestamp &&
+            String(currentEntry.row[CONTENT_COLUMN] ?? "").trim() === payPayload.content.trim();
+          const currentCoins = data.currentCoins ?? currentEntry.coinPayment.currentCoins;
+          const isAlreadyPaid = isPaidEntry || currentEntry.coinPayment.isPaid;
+
+          return {
+            ...currentEntry,
+            row: isPaidEntry
+              ? { ...currentEntry.row, [STATUS_COLUMN]: "Đã thanh toán bằng coins" }
+              : currentEntry.row,
+            coinPayment: {
+              ...currentEntry.coinPayment,
+              currentCoins,
+              canPay: !isAlreadyPaid && currentCoins >= currentEntry.coinPayment.coinCost,
+              isPaid: isAlreadyPaid
+            }
+          };
+        });
+        saveLocalCache(activeEmail, nextEntries);
+        return nextEntries;
+      });
+      setFineHistoryIsLive(true);
       setMessage("Fine paid by coins successfully.");
     } catch {
       setMessage("Unable to pay this fine by coins right now.");
@@ -311,6 +359,7 @@ export function FinesClient() {
     }
   }
   useEffect(() => {
+    setFineHistoryIsLive(false);
     const cached = loadLocalCache(activeEmail);
     if (!cached) {
       return;
@@ -574,11 +623,11 @@ export function FinesClient() {
                           Rank: {entry.coinPayment.recordedMember} • Rate: {entry.coinPayment.multiplier}x • Current coins:{" "}
                           {entry.coinPayment.currentCoins.toLocaleString()}
                         </div>
-                        {entry.coinPayment.canPay ? (
+                        {entry.coinPayment.canPay && fineHistoryIsLive ? (
                           <button
                             type="button"
                             onClick={() => void payFineNow(entry)}
-                            disabled={payingFineKey === `${entry.row[EMAIL_COLUMN]}-${getFineTimestamp(entry.row)}-${entry.row[CONTENT_COLUMN]}`}
+                            disabled={Boolean(payingFineKey)}
                             className="mt-3 rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
                           >
                             {payingFineKey === `${entry.row[EMAIL_COLUMN]}-${getFineTimestamp(entry.row)}-${entry.row[CONTENT_COLUMN]}`
@@ -589,6 +638,8 @@ export function FinesClient() {
                           <div className="mt-3 text-xs text-slate-500">
                             {entry.coinPayment.isPaid
                               ? "This fine is already paid."
+                              : !fineHistoryIsLive
+                                ? "Refresh fine history before paying."
                               : "Not enough coins to pay this fine."}
                           </div>
                         )}
@@ -604,5 +655,3 @@ export function FinesClient() {
     </div>
   );
 }
-
-

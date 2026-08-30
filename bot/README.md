@@ -75,6 +75,18 @@ Recommended sources:
 - exported Google Docs text URLs such as `https://docs.google.com/document/d/<doc-id>/export?format=txt`
 - approved public policy documents from the repo when you are ready
 
+### Meta AI fanpage Google Doc
+
+The Fanpage Meta AI knowledge doc is maintained from `bot/knowledge/meta-ai-fanpage-knowledge.md` plus a live appendix (D7 bed availability, referral discount, D2 closure notice).
+
+- **Custom instructions** (paste into Meta Business Suite): `bot/knowledge/meta-ai-custom-instructions.txt` — also shown in Manager → Settings → Tools → Meta AI with a Copy button.
+
+- Doc ID (default): `1Dn9gI9AqW6T_zYmM3Heul5ECaK0Nu1JUtKHmat3-r7k`
+- The API auto-syncs every **3 days** on startup and on a 3-day interval (`api/src/meta-ai-knowledge-doc.ts`).
+- Manual sync: `pnpm sync:meta-ai-knowledge` (add `--force` to ignore the 3-day guard).
+- One-time setup: enable **Google Docs API** in the same Google Cloud project as Sheets OAuth, then reconnect Google in the manager portal so the token includes the `documents` scope.
+- The bot also reads the published export URL via `bot/sources/remote-sources.json`.
+
 ## Run locally
 
 ```bash
