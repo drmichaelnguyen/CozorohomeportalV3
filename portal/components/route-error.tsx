@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { isChunkLoadFailure, reloadForStaleChunks } from "../lib/chunk-load-recovery";
+
 // Tier 1 — Critical services (device control, laundry booking)
 // Auto-retries after countdown; shows a "critical service" badge
 export function CriticalRouteError({
@@ -73,6 +75,20 @@ export function StandardRouteError({
   reset: () => void;
   serviceName?: string;
 }) {
+  const staleChunkError = isChunkLoadFailure(error);
+
+  useEffect(() => {
+    if (!staleChunkError) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      reloadForStaleChunks();
+    }, 1500);
+
+    return () => window.clearTimeout(timer);
+  }, [staleChunkError]);
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="flex items-start gap-3">
@@ -83,17 +99,29 @@ export function StandardRouteError({
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-slate-800">
-            {serviceName ? `${serviceName} could not load` : "Something went wrong"}
+            {staleChunkError
+              ? "App update detected / Phát hiện phiên bản mới"
+              : serviceName
+                ? `${serviceName} could not load`
+                : "Something went wrong"}
           </p>
           <p className="mt-1 text-xs text-slate-500 break-words">
-            {error.message || "An unexpected error occurred."}
+            {staleChunkError
+              ? "The page is reloading to fetch the latest version. Nếu mạng chậm, vui lòng đợi trang tải lại."
+              : error.message || "An unexpected error occurred."}
           </p>
           <button
             type="button"
-            onClick={reset}
+            onClick={() => {
+              if (staleChunkError) {
+                reloadForStaleChunks();
+                return;
+              }
+              reset();
+            }}
             className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:border-slate-300 hover:bg-slate-50 transition-colors"
           >
-            Try again
+            {staleChunkError ? "Reload now / Tải lại ngay" : "Try again"}
           </button>
         </div>
       </div>

@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.9.21] - 2026-08-31
+
+- **Stale chunk auto-recovery**: Portal detects failed `_next/static/chunks` loads after deploys and hard-reloads once with a cache-bust param, with bilingual fallback UI if the error boundary catches it first.
+- **HTML cache headers**: Page HTML is no longer stored aggressively (`no-cache, no-store`); hashed static chunks stay long-lived and immutable to reduce Vietnam mobile-carrier stale-bundle errors.
+
 ## [3.9.20] - 2026-08-30
 
 - **Owner cleaning analytics**: Statistics → Cleaning tab now auto-calculates assignment-source breakdown (self-assign / auto / manager), 30-day vs prior-30-day trend, and a 6-month monthly chart; drill-down grouping includes assignment source.

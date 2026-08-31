@@ -27,11 +27,20 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        source: "/(.*)",
+        source: "/_next/static/:path*",
         headers: [
           {
             key: "Cache-Control",
-            value: "no-transform"
+            value: "public, max-age=31536000, immutable, no-transform"
+          }
+        ]
+      },
+      {
+        source: "/((?!_next/static|_next/image|.*\\.(?:png|jpg|jpeg|gif|webp|ico|svg|txt|js|json|woff2?)$).*)",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "no-cache, no-store, must-revalidate, no-transform"
           }
         ]
       }

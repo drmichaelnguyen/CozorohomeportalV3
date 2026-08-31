@@ -22,6 +22,7 @@ import { BranchBroadcastPrompt } from "./branch-broadcast-prompt";
 import { CookerPolicyPrompt } from "./cooker-policy-prompt";
 import { PaymentRequirementPrompt } from "./payment-requirement-prompt";
 import { SelfAssignPromoPopup } from "./self-assign-promo-popup";
+import { ChunkLoadRecovery } from "./chunk-load-recovery";
 
 function SiteChrome({ children }: { children: React.ReactNode }) {
   const { language, setLanguage, t } = usePortalLanguage();
@@ -307,6 +308,7 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
       <RentDueBlockingOverlay />
       <AddToHomeScreenPrompt />
       <VersionBadge />
+      <ChunkLoadRecovery />
     </div>
   );
 }
