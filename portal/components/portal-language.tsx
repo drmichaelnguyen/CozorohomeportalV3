@@ -855,6 +855,33 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "Your contract is scheduled to end on {date}. You can extend it right here.",
     vi: "Hợp đồng của bạn dự kiến kết thúc vào {date}. Bạn có thể gia hạn ngay tại đây."
   },
+  contractBirthMonthTitle: { en: "Birth month — extend early", vi: "Tháng sinh nhật — gia hạn sớm" },
+  contractBirthMonthDesc: {
+    en: "Extend at least {minMonths} months this month for {multiplier}x extension coins — even before your contract ends. +{birthdayCoins} coins on your birthday.",
+    vi: "Gia hạn ít nhất {minMonths} tháng trong tháng này để nhận coin gia hạn x{multiplier} — kể cả khi hợp đồng chưa đến hạn. +{birthdayCoins} coin vào ngày sinh nhật."
+  },
+  birthMonthBonusTag: { en: "birth month x2", vi: "tháng sinh x2" },
+  birthMonthExtensionBanner: {
+    en: "Birth-month perk: extend {minMonths}+ months now for {multiplier}x extension coins (even before your contract ends), plus +{birthdayCoins} coins on your birthday.",
+    vi: "Ưu đãi tháng sinh: gia hạn từ {minMonths} tháng trở lên để nhận coin gia hạn x{multiplier} (kể cả khi hợp đồng chưa đến hạn), và +{birthdayCoins} coin vào ngày sinh nhật."
+  },
+  birthMonthExtensionBannerToday: {
+    en: "Happy birthday! +{birthdayCoins} coins are added today. Extend {minMonths}+ months this month for {multiplier}x extension coins.",
+    vi: "Chúc mừng sinh nhật! +{birthdayCoins} coin được cộng hôm nay. Gia hạn từ {minMonths} tháng trở lên trong tháng này để nhận coin gia hạn x{multiplier}."
+  },
+  birthMonthPromoEyebrow: { en: "Birth month", vi: "Tháng sinh nhật" },
+  birthMonthPromoTitle: { en: "Your birth-month perks", vi: "Ưu đãi tháng sinh nhật" },
+  birthMonthPromoTitleToday: { en: "Happy birthday!", vi: "Chúc mừng sinh nhật!" },
+  birthMonthPromoBody: {
+    en: "This month you can extend early for {multiplier}x extension coins on {minMonths}+ month extensions, and receive +{birthdayCoins} coins on your birthday.",
+    vi: "Trong tháng này bạn có thể gia hạn sớm để nhận coin gia hạn x{multiplier} (từ {minMonths} tháng trở lên), và +{birthdayCoins} coin vào ngày sinh nhật."
+  },
+  birthMonthPromoBodyToday: {
+    en: "+{birthdayCoins} birthday coins are added to your account today. Extend your contract this month (at least {minMonths} months) for {multiplier}x the usual extension coin bonus — even before your current contract ends.",
+    vi: "+{birthdayCoins} coin sinh nhật được cộng hôm nay. Gia hạn hợp đồng trong tháng này (ít nhất {minMonths} tháng) để nhận coin gia hạn x{multiplier} — kể cả khi hợp đồng chưa đến hạn."
+  },
+  birthMonthPromoCta: { en: "Extend contract", vi: "Gia hạn hợp đồng" },
+  birthMonthPromoDismiss: { en: "Not now", vi: "Để sau" },
   extendNow: { en: "Extend Now", vi: "Gia hạn ngay" },
 
   contractTransferTitle: { en: "Transfer branch or bed", vi: "Chuyển chi nhánh hoặc giường" },

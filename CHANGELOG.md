@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.9.23] - 2026-08-31
+
+- **Birthday coins**: Active long-term residents receive **30,000 coins** automatically on their birthday (Vietnam time), once per year, using `Ngày tháng năm sinh` from the client sheet. Ledger: `api/data/birthday-coin-grants.json`.
+- **Birth-month extension bonus**: Extensions approved during the resident’s birth month with **≥ 3 months** added earn **2×** the usual tiered extension coins (10k/25k/50k → 20k/50k/100k).
+- **Early extension in birth month**: Contract extension UI is available all month (not only in the last 30 days) so residents can extend before the current term ends.
+- **Promotion**: Birth-month in-app popup, Notification Center items (`BIRTH_MONTH_PROMO`, `BIRTHDAY_COINS`), and updated extension panel coin labels. API: `GET /clients/birthday-benefits?email=`.
+
 ## [3.9.22] - 2026-08-31
 
 - **Automatic Cloudflare portal cache purge**: Deploy runs a host-only purge for `app.cozorohome.com` when `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ZONE_ID` are set in `api/.env`. Stale chunk recovery also triggers the same purge (5-minute cooldown) before reloading the page.

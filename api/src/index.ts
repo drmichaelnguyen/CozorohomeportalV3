@@ -68,6 +68,10 @@ import { getClientGroupContext, getGroupMessages, markGroupRead, postGroupMessag
 import { VAPID_PUBLIC_KEY, savePushSubscription, deletePushSubscription, sendPushToEmail } from "./push.js";
 import { getCleaningRewardSettings, updateCleaningRewardSettings } from "./cleaning-reward-settings.js";
 import { runCleaningHeroAwards } from "./cleaning-hero-awards.js";
+import {
+  buildBirthdayBenefitsSummary
+} from "./birthday-benefits.js";
+import { runBirthdayCoinGrants } from "./birthday-coin-grants.js";
 import { getManagerFridgeDrainSchedule, upsertFridgeDrainCleaningDate } from "./fridge-drain-schedule.js";
 import {
   exportDatabaseToGoogleSheet,
@@ -2207,6 +2211,22 @@ app.post("/clients/sync", async (_request, response) => {
   } catch (error) {
     return response.status(500).json({
       error: error instanceof Error ? error.message : "Unable to sync clients from Google Sheets"
+    });
+  }
+});
+
+app.get("/clients/birthday-benefits", async (request, response) => {
+  const email = String(request.query.email ?? "").trim().toLowerCase();
+  if (!email) {
+    return response.status(400).json({ error: "email is required" });
+  }
+
+  try {
+    const client = await getActiveClientByEmail(email);
+    return response.json(buildBirthdayBenefitsSummary(client));
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to load birthday benefits."
     });
   }
 });
@@ -11241,6 +11261,16 @@ app.listen(port, "127.0.0.1", () => {
     });
   }, 6 * 60 * 60 * 1000);
   cleaningHeroTimer.unref();
+
+  void runBirthdayCoinGrants().catch((error) => {
+    console.error("[birthday-coins] startup grant run failed", error);
+  });
+  const birthdayCoinTimer = setInterval(() => {
+    void runBirthdayCoinGrants().catch((error) => {
+      console.error("[birthday-coins] scheduled grant run failed", error);
+    });
+  }, 6 * 60 * 60 * 1000);
+  birthdayCoinTimer.unref();
 
   void sweepLeftResidentCleaningSchedules().catch((error) => {
     console.error("[cleaning-left-resident-sweep] startup failed", error);

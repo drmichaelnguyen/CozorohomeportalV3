@@ -233,6 +233,31 @@ function ExtensionTermsFields({
   );
 }
 
+type BirthdayBenefits = {
+  isBirthMonth: boolean;
+  isBirthdayToday: boolean;
+  birthdayCoinGrant: number;
+  extensionCoinMultiplier: number;
+  extensionMinMonths: number;
+  extensionCoinTiers: { 3: number; 6: number; 12: number };
+};
+
+function baseExtensionCoins(months: number): number {
+  if (months >= 12) return 50_000;
+  if (months >= 6) return 25_000;
+  if (months >= 3) return 10_000;
+  return 0;
+}
+
+function displayExtensionCoins(months: number, benefits: BirthdayBenefits | null): number {
+  if (months === 3 && benefits?.isBirthMonth) return benefits.extensionCoinTiers[3];
+  if (months === 6 && benefits?.isBirthMonth) return benefits.extensionCoinTiers[6];
+  if (months === 12 && benefits?.isBirthMonth) return benefits.extensionCoinTiers[12];
+  const base = baseExtensionCoins(months);
+  if (!benefits?.isBirthMonth || months < benefits.extensionMinMonths) return base;
+  return base * benefits.extensionCoinMultiplier;
+}
+
 export function ContractExtension({
   email,
   endDateStr,
@@ -278,6 +303,7 @@ export function ContractExtension({
   const [pendingLoading, setPendingLoading] = useState(true);
   const [pendingEditForm, setPendingEditForm] = useState<ExtensionTermsForm | null>(null);
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
+  const [birthdayBenefits, setBirthdayBenefits] = useState<BirthdayBenefits | null>(null);
 
   const loadPendingExtension = useCallback(async () => {
     setPendingLoading(true);
@@ -306,6 +332,21 @@ export function ContractExtension({
   useEffect(() => {
     void loadPendingExtension();
   }, [loadPendingExtension]);
+
+  useEffect(() => {
+    let active = true;
+    fetch(`${API_BASE_URL}/clients/birthday-benefits?email=${encodeURIComponent(email)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: BirthdayBenefits | null) => {
+        if (active) setBirthdayBenefits(data);
+      })
+      .catch(() => {
+        if (active) setBirthdayBenefits(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [email]);
 
   useEffect(() => {
     setTermsForm(snapshotToForm(baseline));
@@ -374,6 +415,8 @@ export function ContractExtension({
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     return diffDays <= 30;
   }, [endDateStr]);
+
+  const showExtensionPanel = isNearingEnd || Boolean(birthdayBenefits?.isBirthMonth) || forceExpand;
 
   const termBounds = useMemo(() => {
     const oldEnd = parsePortalEndDateStr(endDateStr);
@@ -555,7 +598,7 @@ export function ContractExtension({
     );
   }
 
-  if (!isNearingEnd && !isSuccess && !forceExpand) {
+  if (!showExtensionPanel && !isSuccess && !forceExpand) {
     return null;
   }
 
@@ -676,8 +719,22 @@ export function ContractExtension({
             </svg>
           </div>
           <div>
-            <h2 className="text-lg font-bold text-amber-900">{t("contractEndingSoon")}</h2>
-            <p className="text-sm text-amber-800">{t("contractEndingDesc", { date: endDateStr })}</p>
+            <h2 className="text-lg font-bold text-amber-900">
+              {birthdayBenefits?.isBirthMonth && !isNearingEnd
+                ? t("contractBirthMonthTitle", "Birth month — extend early")
+                : t("contractEndingSoon")}
+            </h2>
+            <p className="text-sm text-amber-800">
+              {birthdayBenefits?.isBirthMonth && !isNearingEnd
+                ? t("contractBirthMonthDesc", {
+                    multiplier: String(birthdayBenefits.extensionCoinMultiplier),
+                    minMonths: String(birthdayBenefits.extensionMinMonths),
+                    birthdayCoins: birthdayBenefits.birthdayCoinGrant.toLocaleString(
+                      language === "vi" ? "vi-VN" : "en-US"
+                    )
+                  })
+                : t("contractEndingDesc", { date: endDateStr })}
+            </p>
           </div>
         </div>
         {!isExpanded && (
@@ -693,6 +750,25 @@ export function ContractExtension({
       {isExpanded && (
         <div className="mt-8 pt-6 border-t border-amber-200 animate-in fade-in slide-in-from-top-4 duration-300">
           <div className="space-y-6 max-w-2xl">
+            {birthdayBenefits?.isBirthMonth ? (
+              <div className="rounded-2xl border border-pink-300 bg-pink-50 px-4 py-3 text-sm text-pink-900">
+                {birthdayBenefits.isBirthdayToday
+                  ? t("birthMonthExtensionBannerToday", {
+                      birthdayCoins: birthdayBenefits.birthdayCoinGrant.toLocaleString(
+                        language === "vi" ? "vi-VN" : "en-US"
+                      ),
+                      minMonths: String(birthdayBenefits.extensionMinMonths),
+                      multiplier: String(birthdayBenefits.extensionCoinMultiplier)
+                    })
+                  : t("birthMonthExtensionBanner", {
+                      minMonths: String(birthdayBenefits.extensionMinMonths),
+                      multiplier: String(birthdayBenefits.extensionCoinMultiplier),
+                      birthdayCoins: birthdayBenefits.birthdayCoinGrant.toLocaleString(
+                        language === "vi" ? "vi-VN" : "en-US"
+                      )
+                    })}
+              </div>
+            ) : null}
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-amber-700 mb-3">
                 {t("selectExtensionDuration")}
@@ -714,9 +790,9 @@ export function ContractExtension({
                 {(
                   [
                     { months: 1, durKey: "extensionDuration1m", coins: 0, surcharge: 12 },
-                    { months: 3, durKey: "extensionDuration3m", coins: 10000, surcharge: 12 },
-                    { months: 6, durKey: "extensionDuration6m", coins: 25000, surcharge: 0 },
-                    { months: 12, durKey: "extensionDuration12m", coins: 50000, surcharge: 0 }
+                    { months: 3, durKey: "extensionDuration3m", coins: displayExtensionCoins(3, birthdayBenefits), surcharge: 12 },
+                    { months: 6, durKey: "extensionDuration6m", coins: displayExtensionCoins(6, birthdayBenefits), surcharge: 0 },
+                    { months: 12, durKey: "extensionDuration12m", coins: displayExtensionCoins(12, birthdayBenefits), surcharge: 0 }
                   ] as const
                 ).map((opt) => (
                   <button
@@ -742,7 +818,12 @@ export function ContractExtension({
                       <p className="mt-1.5 text-xs font-semibold text-emerald-700">
                         {t("extensionBonusCoinsLine", {
                           amount: opt.coins.toLocaleString(language === "vi" ? "vi-VN" : "en-US")
-                        })}{" "}
+                        })}
+                        {birthdayBenefits?.isBirthMonth &&
+                        opt.months >= birthdayBenefits.extensionMinMonths &&
+                        opt.coins > baseExtensionCoins(opt.months)
+                          ? ` (${t("birthMonthBonusTag", "birth month x2")})`
+                          : ""}{" "}
                         🪙
                       </p>
                     ) : (
@@ -792,6 +873,17 @@ export function ContractExtension({
                     date: formatDdMmYyyy(effectiveEndDate),
                     months: String(effectiveExtensionMonths)
                   })}
+                  {displayExtensionCoins(effectiveExtensionMonths, birthdayBenefits) > 0 ? (
+                    <>
+                      {" "}
+                      ·{" "}
+                      {t("extensionBonusCoinsLine", {
+                        amount: displayExtensionCoins(effectiveExtensionMonths, birthdayBenefits).toLocaleString(
+                          language === "vi" ? "vi-VN" : "en-US"
+                        )
+                      })}
+                    </>
+                  ) : null}
                 </p>
               )}
               {duration === "hostel" && (

@@ -71,6 +71,7 @@ Important release safety rules:
  - `api/.google-oauth.json`
  - important `api/data/*` files such as caches, staff access, and other operational state
  - `api/data/chat-attachments/` — binary files for support/group chat images (DB rows only store metadata; missing files make past attachments 404)
+ - `api/data/birthday-coin-grants.json` — yearly birthday coin grant ledger (prevents duplicate birthday payouts)
 - if `api/.google-oauth.json` is missing in production, Google Sheets / Gmail / Calendar startup calls can fail with `Google OAuth tokens are missing`
 
 Production sync rule:
@@ -144,7 +145,7 @@ const nextConfig: NextConfig = {
 | `chat-attachment.tsx` / `lib/chat-images.ts` | Client image compress + attachment thumbnail/viewer |
 | `notification-bell.tsx` | Header bell icon with total unread badge |
 | `notification-center-client.tsx` | Full notifications list page |
-| `contract-extension.tsx` | Near contract end: resident extends with preset months or a **chosen end date**, e-sign; creates a pending approval (no contract email until an owner approves). |
+| `contract-extension.tsx` | Near contract end (or **birth month** for early extend): resident extends with preset months or a **chosen end date**, e-sign; creates a pending approval (no contract email until an owner approves). Birth month shows 2× extension coin tiers for ≥3 months. |
 | `route-error.tsx` | Shared error boundary components (Critical / Standard) |
 
 **Roles:**
@@ -197,7 +198,8 @@ const nextConfig: NextConfig = {
 | `POST /manager/controller/cooker/inspections/ticket` | Staff leftover-on reminder or fine from inspection photos |
 | `GET /staff/clients/duplicates?actorEmail=` | List clients with multiple active rows in the sheet |
 | `POST /staff/clients/set-inactive` | Set a specific contract row (by maHd) to Hiá»‡n cÃ²n á»Ÿ = âˆ’1 |
-| `POST /clients/contracts/extend` | Resident contract extension: body includes `email` and `newContractEndDate` (`dd/mm/yyyy`) or legacy `extensionMonths`; writes a **pending** entry to contract-approvals JSON (duplicate guard for pending extension per email). |
+| `POST /clients/contracts/extend` | Resident contract extension: body includes `email` and `newContractEndDate` (`dd/mm/yyyy`) or legacy `extensionMonths`; writes a **pending** entry to contract-approvals JSON (duplicate guard for pending extension per email). Approved extensions grant tiered coins; **2× in birth month** when extension length is ≥3 months. |
+| `GET /clients/birthday-benefits?email=` | Resident birth-month perks: birthday coin amount, extension 2× multiplier, min extension months, and preview coin tiers (requires `Ngày tháng năm sinh` on file). |
 | `GET /manager/contract-approvals?actorEmail=` | **Owner, app_admin, manager** â€” list **pending** and **rejected** registration/extension approvals (approved excluded). |
 | `POST /manager/contract-approvals/:id/approve` | **Owner, app_admin** â€” run sheet/bridge workflow; marks approved. |
 | `POST /manager/contract-approvals/:id/reject` | **Owner, app_admin** â€” marks rejected (stays in queue for visibility). |
@@ -284,6 +286,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.23 | Birthday automation: +30k coins on birthday (scheduled job + yearly ledger); birth-month contract extension **2×** tiered coins for ≥3 months; early extension UI + promo popup and Notification Center notices; `GET /clients/birthday-benefits`. |
 | 3.9.12 | Portal and bot AI prefer 9router (`gpt-5`); resident cooker policy notice; D7 cooker IFTTT event names. |
 | 3.9.11 | Cooker check-in Report button; owners can view AI usage; analytics splits text chat vs computer vision tokens/cost. |
 | 3.9.10 | Cooker inspection is one live camera photo of cooker + kitchen (gallery uploads blocked); cooker controller shows a Beta badge. |

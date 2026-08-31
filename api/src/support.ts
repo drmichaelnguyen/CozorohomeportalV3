@@ -25,6 +25,14 @@ import { loadOpenAcComfortAlertsForStaff } from "./ac-comfort-votes.js";
 import { loadOpenHostelBookingAlertsForStaff } from "./hostel-booking-notifications.js";
 import { buildFridgeDrainReminderNotifications } from "./fridge-drain-schedule.js";
 import { listCleaningHeroAwardsForEmail } from "./cleaning-hero-awards.js";
+import {
+  BIRTHDAY_COIN_GRANT,
+  BIRTH_MONTH_EXTENSION_COIN_MULTIPLIER,
+  BIRTH_MONTH_EXTENSION_MIN_MONTHS,
+  buildBirthdayBenefitsSummary,
+  vietnamCalendarParts
+} from "./birthday-benefits.js";
+import { listBirthdayCoinGrantsForEmail } from "./birthday-coin-grants.js";
 import { listCookerLeftoverNoticesForEmail } from "./cooker-controller.js";
 import { isBranchAutomationDisabled, isCleaningTaskAutomationDisabled } from "./branch-closure.js";
 import { prisma } from "./prisma.js";
@@ -550,6 +558,8 @@ type ResidentNotificationItem = {
     | "PREPAID_PACKAGE"
     | "FRIDGE_DRAIN_REMINDER"
     | "CLEANING_HERO_AWARD"
+    | "BIRTHDAY_COINS"
+    | "BIRTH_MONTH_PROMO"
     | "COOKER_LEFT_ON";
   title: string;
   body: string;
@@ -908,6 +918,37 @@ async function buildResidentReminderNotifications(email: string) {
       unreadCount: 1,
       href: "/cleaning-schedule"
     });
+  }
+
+  const birthdayGrants = await listBirthdayCoinGrantsForEmail(normalizedEmail, { withinDays: 14 });
+  for (const grant of birthdayGrants) {
+    notifications.push({
+      id: `birthday-coins-${grant.id}`,
+      type: "BIRTHDAY_COINS",
+      title: "Happy birthday!",
+      body: `+${grant.coinsAwarded.toLocaleString()} birthday coins have been added to your account.`,
+      createdAt: grant.grantedAt,
+      unreadCount: 1,
+      href: "/account"
+    });
+  }
+
+  if (client) {
+    const birthdayBenefits = buildBirthdayBenefitsSummary(client, now);
+    if (birthdayBenefits.isBirthMonth) {
+      const calendar = vietnamCalendarParts(now);
+      notifications.push({
+        id: `birth-month-promo-${normalizedEmail}-${calendar.year}-${calendar.month}`,
+        type: "BIRTH_MONTH_PROMO",
+        title: "Birth month perks",
+        body: birthdayBenefits.isBirthdayToday
+          ? `Happy birthday! You receive ${BIRTHDAY_COIN_GRANT.toLocaleString()} coins today. Extend your contract this month (at least ${BIRTH_MONTH_EXTENSION_MIN_MONTHS} months) for ${BIRTH_MONTH_EXTENSION_COIN_MULTIPLIER}x the usual extension coin bonus — even before your current contract ends.`
+          : `It's your birth month! Extend your contract now (at least ${BIRTH_MONTH_EXTENSION_MIN_MONTHS} months) for ${BIRTH_MONTH_EXTENSION_COIN_MULTIPLIER}x the usual extension coin bonus — even if your contract is not due yet. You also receive ${BIRTHDAY_COIN_GRANT.toLocaleString()} coins on your birthday.`,
+        createdAt: now.toISOString(),
+        unreadCount: 1,
+        href: "/account#contract-extension-panel"
+      });
+    }
   }
 
   if (client) {

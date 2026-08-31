@@ -23,6 +23,8 @@ type ResidentNotification = {
     | "PREPAID_PACKAGE"
     | "FRIDGE_DRAIN_REMINDER"
     | "CLEANING_HERO_AWARD"
+    | "BIRTHDAY_COINS"
+    | "BIRTH_MONTH_PROMO"
     | "COOKER_LEFT_ON";
   conversationId?: string;
   title: string;

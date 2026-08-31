@@ -15,6 +15,11 @@ import {
   type PaymentPlanKind
 } from "./next-payment-date.js";
 import { getAccountNextPaymentDate, upsertAccountNextPayment } from "./account-next-payment.js";
+import {
+  BIRTH_MONTH_EXTENSION_MIN_MONTHS,
+  computeExtensionCoinReward,
+  isClientBirthMonth
+} from "./birthday-benefits.js";
 
 const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID ?? "";
 const paymentsSpreadsheetId = process.env.GOOGLE_PAYMENT_SPREADSHEET_ID ?? spreadsheetId;
@@ -6465,14 +6470,8 @@ function calendarMonthsBetweenContractStartAndEnd(newStart: Date, newEnd: Date):
   return Math.max(1, months);
 }
 
-export function extensionCoinRewardTier(extensionMonths: number): number {
-  if (extensionMonths >= 12) return 50000;
-  if (extensionMonths >= 6) return 25000;
-  if (extensionMonths >= 3) return 10000;
-  return 0;
-}
+export { extensionCoinRewardTier } from "./birthday-benefits.js";
 
-/** How the new row end date is chosen: fixed month count from current sheet end, or an explicit dd/mm/yyyy end date. */
 export type ContractExtensionTerm = { extensionMonths: number } | { newContractEndDate: string };
 
 export function resolveContractExtensionSubmission(
@@ -6776,8 +6775,10 @@ export async function extendClientContract(
     throw new Error("Could not connect to contract generation service.");
   }
 
-  // Award coins for contract extension (tiered by nominal extension length)
-  const coinReward = extensionCoinRewardTier(durationMonthsForSheet);
+  // Award coins for contract extension (tiered by nominal extension length; x2 in birth month for 3+ months)
+  const mappedRowForBenefits = mapRow(headers, targetRowData.map((value) => String(value)));
+  const birthMonthBonus = isClientBirthMonth(mappedRowForBenefits, now);
+  const coinReward = computeExtensionCoinReward(durationMonthsForSheet, birthMonthBonus);
   if (coinReward > 0) {
     try {
       const coinsColIndex = headers.indexOf(normalizeHeader(CLIENT_CURRENT_COINS_COLUMN));
@@ -6793,6 +6794,10 @@ export async function extendClientContract(
       const nameVal = nameIdx >= 0 ? (targetRowData[nameIdx] ?? "") : "";
       const bedVal = bedIdx >= 0 ? (targetRowData[bedIdx] ?? "") : "";
       const memberVal = memberIdx >= 0 ? (targetRowData[memberIdx] ?? "") : "";
+      const birthMonthNote =
+        birthMonthBonus && durationMonthsForSheet >= BIRTH_MONTH_EXTENSION_MIN_MONTHS
+          ? " · x2 tháng sinh nhật / birth-month bonus"
+          : "";
 
       await appendCoinsSheetRow({
         [COINS_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(new Date()),
@@ -6802,7 +6807,7 @@ export async function extendClientContract(
         [CLIENT_NAME_COLUMN]: nameVal,
         [CLIENT_BED_COLUMN]: bedVal,
         [COINS_BALANCE_COLUMN]: String(coinReward),
-        [COINS_EVENT_COLUMN]: `Gia hạn hợp đồng đến ${formatDate(newEndDate)} (${durationMonthsForSheet} tháng)`,
+        [COINS_EVENT_COLUMN]: `Gia hạn hợp đồng đến ${formatDate(newEndDate)} (${durationMonthsForSheet} tháng)${birthMonthNote}`,
         [COINS_OPERATOR_COLUMN]: "system",
         [COINS_MEMBER_COLUMN]: memberVal,
         [COINS_CURRENT_BALANCE_COLUMN]: String(newBalance),
