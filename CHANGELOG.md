@@ -1,5 +1,9 @@
 # Changelog
 
+## [3.9.22] - 2026-08-31
+
+- **Automatic Cloudflare portal cache purge**: Deploy runs a host-only purge for `app.cozorohome.com` when `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ZONE_ID` are set in `api/.env`. Stale chunk recovery also triggers the same purge (5-minute cooldown) before reloading the page.
+
 ## [3.9.21] - 2026-08-31
 
 - **Stale chunk auto-recovery**: Portal detects failed `_next/static/chunks` loads after deploys and hard-reloads once with a cache-bust param, with bilingual fallback UI if the error boundary catches it first.

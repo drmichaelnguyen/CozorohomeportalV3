@@ -447,6 +447,18 @@ async function runDeploy() {
 
   await runBuild();
 
+  console.log("Deploy: purging Cloudflare portal cache (if configured)...");
+  try {
+    await runCommand(process.execPath, [path.join(repoRoot, "scripts", "purge-cloudflare-portal-cache.mjs")], {
+      cwd: repoRoot,
+      stdio: "inherit"
+    });
+  } catch (error) {
+    console.warn(
+      `Cloudflare portal cache purge failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
   console.log("Deploy: syncing database schema (prisma db push)...");
   await runCorepack(["pnpm", "--filter", "cozorohome-api", "exec", "prisma", "db", "push"]);
 

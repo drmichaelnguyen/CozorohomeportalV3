@@ -75,6 +75,7 @@ import {
   restoreDatabaseFromGoogleSheet
 } from "./db-backup-sheets.js";
 import { getPortalUxSettings, updatePortalUxSettings } from "./portal-ux-settings.js";
+import { purgePortalCloudflareCache } from "./cloudflare-cache.js";
 import { getAiUsageAnalytics } from "./ai-usage.js";
 import { captureMonthlyBedOccupancy, getBedOccupancyHistory } from "./bed-occupancy.js";
 import { getChatAttachmentForViewer } from "./chat-attachments.js";
@@ -2070,6 +2071,28 @@ async function getUserBalance(userId: string, tx: Prisma.TransactionClient | typ
 
 app.get("/health", (_request, response) => {
   response.json({ ok: true, service: "cozorohome-api" });
+});
+
+app.post("/portal/cache-refresh", async (_request, response) => {
+  try {
+    const result = await purgePortalCloudflareCache({ respectCooldown: true });
+    if (!result.ok && result.skipped === "not_configured") {
+      return response.json({ ok: true, skipped: "not_configured" });
+    }
+    if (!result.ok) {
+      return response.status(502).json({ ok: false, error: result.error });
+    }
+    return response.json({
+      ok: true,
+      host: result.host,
+      skipped: result.skipped ?? null
+    });
+  } catch (error) {
+    return response.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to refresh portal cache"
+    });
+  }
 });
 
 app.post("/fines/pay-by-coins", async (request, response) => {

@@ -1,3 +1,5 @@
+import { API_BASE_URL } from "./api-base-url";
+
 const CHUNK_RELOAD_KEY = "cozorohome-chunk-reload";
 const CHUNK_RELOAD_COOLDOWN_MS = 30_000;
 
@@ -29,6 +31,17 @@ export function isChunkScriptTarget(target: EventTarget | null): target is HTMLS
   );
 }
 
+async function requestPortalCacheRefresh(): Promise<void> {
+  try {
+    await fetch(`${API_BASE_URL}/portal/cache-refresh`, {
+      method: "POST",
+      cache: "no-store"
+    });
+  } catch {
+    // Reload even if the purge request fails.
+  }
+}
+
 export function reloadForStaleChunks(): boolean {
   if (typeof window === "undefined") {
     return false;
@@ -42,8 +55,11 @@ export function reloadForStaleChunks(): boolean {
 
   sessionStorage.setItem(CHUNK_RELOAD_KEY, String(now));
 
-  const url = new URL(window.location.href);
-  url.searchParams.set("_cv", String(now));
-  window.location.replace(url.toString());
+  void requestPortalCacheRefresh().finally(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("_cv", String(now));
+    window.location.replace(url.toString());
+  });
+
   return true;
 }
