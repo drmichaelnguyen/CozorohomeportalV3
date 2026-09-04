@@ -1,5 +1,9 @@
 # Changelog
 
+## [3.9.27] - 2026-09-04
+
+- **Client Statistics → Member**: Per-client Member tab shows live/recorded Cozoro Member tier, current coins, progress to next tier, and inferred tier change history from that client’s coins rows.
+
 ## [3.9.26] - 2026-09-04
 
 - **Portal visit tracker**: Logged-in users record lightweight screen visits (`email`, `role`, `path`, `device`), deduped ~20 minutes per path, retained 90 days. Owner Analytics → **Visits** shows totals, top screens/users, and recent activity.

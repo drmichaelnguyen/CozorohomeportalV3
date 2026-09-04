@@ -10,6 +10,7 @@ import {
   getBunkBedGroupsTopFirst,
   type BranchLayoutRoom
 } from "../lib/branch-bed-layout";
+import { buildCozoroMemberProgram } from "../lib/cozoro-member";
 import {
   hasPrepaidBreakdownOverridesPayload,
   mergePrepaidEstimateWithOverrides,
@@ -63,7 +64,7 @@ import { CheckoutReviewClient } from "./checkout-review-client";
 
 
 type StaffRole = "manager" | "owner" | "app_admin" | "mechanic";
-type StatsTab = "laundry" | "coins" | "payments" | "fines";
+type StatsTab = "laundry" | "coins" | "payments" | "fines" | "member";
 type ClientAction =
   | "call"
   | "sms"
@@ -625,7 +626,7 @@ function makeKey(parts: Array<string | null | undefined>) {
 }
 
 /** Same identity fields as staff delete/update — do not use Object.values(row).slice(0,4); key order is not stable. */
-function makeWorkspaceStatsEntryKey(tab: Exclude<StatsTab, "laundry">, entry: { row: Record<string, string> }) {
+function makeWorkspaceStatsEntryKey(tab: Exclude<StatsTab, "laundry" | "member">, entry: { row: Record<string, string> }) {
   const row = entry.row;
   const ts = String(row["DẤU THỜI GIAN"] ?? row["ĐẤU THỜI GIAN"] ?? "").trim();
   if (tab === "fines") {
@@ -1246,6 +1247,118 @@ function summarizeCoins(entries: CoinEntry[], client: ManagerClientRecord | null
   ];
 }
 
+function previousMonthEarningsFromCoins(entries: CoinEntry[]) {
+  const now = new Date();
+  let targetMonth = now.getMonth() - 1;
+  let targetYear = now.getFullYear();
+  if (targetMonth < 0) {
+    targetMonth = 11;
+    targetYear -= 1;
+  }
+  let earned = 0;
+  for (const entry of entries) {
+    const delta = parseLooseNumber(findRowValue(entry.row, ["coins"]) || entry.row.COINS || entry.row["COINS"]);
+    if (delta <= 0) continue;
+    const raw = entry.parsedTimestamp || findRowValue(entry.row, ["dauthoigian"]) || entry.row["DẤU THỜI GIAN"] || "";
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) continue;
+    if (date.getMonth() === targetMonth && date.getFullYear() === targetYear) {
+      earned += delta;
+    }
+  }
+  return earned;
+}
+
+type ClientMemberTierChange = {
+  at: string;
+  fromTier: string;
+  toTier: string;
+  event: string;
+  source: "paid_upgrade" | "manual_event" | "coins_row";
+  coinDelta: number;
+};
+
+function normalizeMemberTierLabel(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "Silver";
+  const known = ["Silver", "Gold", "Platinum", "Diamond", "Elite"];
+  const match = known.find((tier) => tier.toLowerCase() === trimmed.toLowerCase());
+  return match ?? trimmed;
+}
+
+function memberTierHistoryFromCoins(entries: CoinEntry[]): ClientMemberTierChange[] {
+  const rows = entries
+    .map((entry) => {
+      const member = normalizeMemberTierLabel(
+        findRowValue(entry.row, ["cozoromember"]) || entry.row["Cozoro Member"] || ""
+      );
+      const at =
+        entry.parsedTimestamp ||
+        findRowValue(entry.row, ["dauthoigian"]) ||
+        entry.row["DẤU THỜI GIAN"] ||
+        "";
+      if (!member || !at) return null;
+      const event = findRowValue(entry.row, ["sukien"]) || entry.row["Sự kiện"] || "";
+      const coinDelta = parseLooseNumber(findRowValue(entry.row, ["coins"]) || entry.row.COINS || entry.row["COINS"]);
+      return { at, member, event, coinDelta, sortKey: at };
+    })
+    .filter((row): row is NonNullable<typeof row> => Boolean(row))
+    .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+
+  const changes: ClientMemberTierChange[] = [];
+  let previous: string | null = null;
+  for (const row of rows) {
+    if (previous && previous.toLowerCase() !== row.member.toLowerCase()) {
+      const event = row.event.trim();
+      const source: ClientMemberTierChange["source"] = /^Upgrade to\s+/i.test(event)
+        ? "paid_upgrade"
+        : /member\s*upgrade|nâng\s*hạng|nang hang/i.test(event)
+          ? "manual_event"
+          : "coins_row";
+      changes.push({
+        at: row.at,
+        fromTier: previous,
+        toTier: row.member,
+        event: event || "(tier snapshot changed)",
+        source,
+        coinDelta: row.coinDelta
+      });
+    }
+    previous = row.member;
+  }
+  return changes.reverse();
+}
+
+function summarizeMember(
+  entries: CoinEntry[],
+  client: ManagerClientRecord | null,
+  t: (key: string, fallback?: string) => string
+): StatSummaryItem[] {
+  if (!client) return [];
+  const previousMonthEarnings = previousMonthEarningsFromCoins(entries);
+  const program = buildCozoroMemberProgram({
+    rankValue: client.recordedMember,
+    branchId: client.branch,
+    totalAccumulatedCoins: client.totalCoins,
+    previousMonthEarnings
+  });
+  const mismatch = program.recordedRank.toLowerCase() !== program.liveRank.toLowerCase();
+  return [
+    { label: t("memberTierColLive"), value: program.liveRank, tone: "positive" },
+    {
+      label: t("memberTierColRecorded"),
+      value: program.recordedRank,
+      tone: mismatch ? "warning" : "default"
+    },
+    { label: t("memberTierColTotal"), value: formatNumber(program.totalAccumulatedCoins) },
+    {
+      label: t("memberTierColPrevMonth"),
+      value: formatNumber(program.previousMonthEarnings),
+      tone: program.previousMonthEarnings > 0 ? "positive" : "default"
+    }
+  ];
+}
+
 function summarizePayments(entries: PaymentEntry[], t: (key: string, fallback?: string) => string): StatSummaryItem[] {
   const amounts = entries.map((entry) =>
     parseLooseNumber(findRowValue(entry.row, ["sotien"]) || findRowValue(entry.row, ["amount"]))
@@ -1295,6 +1408,9 @@ function getSummaryItems(tab: StatsTab, workspace: WorkspacePayload | null, t: (
   }
   if (tab === "payments") {
     return summarizePayments(workspace.stats.payments, t);
+  }
+  if (tab === "member") {
+    return summarizeMember(workspace.stats.coins, workspace.client, t);
   }
   return summarizeFines(workspace.stats.fines, t);
 }
@@ -3989,6 +4105,20 @@ export function ManagerClient({
   const visibleRoomClients =
     visibleRooms.find((entry) => entry.room === selectedRoom)?.clients ?? [];
   const summaryItems = useMemo(() => getSummaryItems(activeTab, workspace, t), [activeTab, workspace, t]);
+  const selectedClientMemberProgram = useMemo(() => {
+    if (!workspace || activeTab !== "member") return null;
+    const previousMonthEarnings = previousMonthEarningsFromCoins(workspace.stats.coins);
+    return buildCozoroMemberProgram({
+      rankValue: workspace.client.recordedMember,
+      branchId: workspace.client.branch,
+      totalAccumulatedCoins: workspace.client.totalCoins,
+      previousMonthEarnings
+    });
+  }, [activeTab, workspace]);
+  const selectedClientMemberHistory = useMemo(() => {
+    if (!workspace || activeTab !== "member") return [];
+    return memberTierHistoryFromCoins(workspace.stats.coins);
+  }, [activeTab, workspace]);
   const roomDiagram = useMemo(() => buildBunkDiagram(visibleRoomClients), [visibleRoomClients]);
   const coinEventSuggestions = useMemo(() => {
     const historicalEvents =
@@ -11239,17 +11369,23 @@ export function ManagerClient({
                 <p className="mt-1 text-sm text-slate-600">{t("clientStatsDesc")}</p>
               </div>
               <div className="flex flex-wrap gap-2">
-                {(["laundry", "coins", "payments", "fines"] as StatsTab[]).map((tab) => (
+                {([
+                  { key: "laundry" as const, label: t("statsLaundryTab") },
+                  { key: "coins" as const, label: t("statsCoinsTab") },
+                  { key: "member" as const, label: t("statsMemberTab") },
+                  { key: "payments" as const, label: t("statsPaymentsTab") },
+                  { key: "fines" as const, label: t("statsFinesTab") }
+                ]).map((tab) => (
                   <button
-                    key={tab}
+                    key={tab.key}
                     type="button"
-                    onClick={() => void loadWorkspace(tab)}
+                    onClick={() => void loadWorkspace(tab.key)}
                     disabled={loading || !selectedClient}
                     className={`rounded-lg px-3 py-2 text-sm ${
-                      activeTab === tab && workspace ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700"
+                      activeTab === tab.key && workspace ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700"
                     } disabled:opacity-60`}
                   >
-                    {tab[0].toUpperCase() + tab.slice(1)}
+                    {tab.label}
                   </button>
                 ))}
               </div>
@@ -11289,15 +11425,120 @@ export function ManagerClient({
                         ? `${workspace.stats.coins.length} coin entries`
                         : activeTab === "payments"
                           ? t("analyticsPaymentsWithCount", { count: workspace.stats.payments.length })
-                          : `${workspace.stats.fines.length} fine entries`}
+                          : activeTab === "member"
+                            ? t("clientMemberHistoryCount", { count: selectedClientMemberHistory.length })
+                            : `${workspace.stats.fines.length} fine entries`}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowAllStatsEntries((current) => !current)}
-                    className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
-                  >
-                    {showAllStatsEntries ? t("hideDetails") : t("showDetails")}
-                  </button>
+                  {activeTab !== "member" ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllStatsEntries((current) => !current)}
+                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700"
+                    >
+                      {showAllStatsEntries ? t("hideDetails") : t("showDetails")}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            {workspace && activeTab === "member" ? (
+              <div className="mt-4 space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                {selectedClientMemberProgram ? (
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        {t("memberTierColLive")}
+                      </div>
+                      <div className="mt-2 text-xl font-semibold text-slate-900">
+                        {selectedClientMemberProgram.liveRank}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        {t("memberTierColRecorded")}
+                      </div>
+                      <div className="mt-2 text-xl font-semibold text-slate-900">
+                        {selectedClientMemberProgram.recordedRank}
+                      </div>
+                      {selectedClientMemberProgram.recordedRank.toLowerCase() !==
+                      selectedClientMemberProgram.liveRank.toLowerCase() ? (
+                        <div className="mt-1 text-xs font-medium text-amber-700">{t("memberTierMismatchHint")}</div>
+                      ) : null}
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        {t("currentBalance", "Current balance")}
+                      </div>
+                      <div className="mt-2 text-xl font-semibold text-slate-900">
+                        {formatNumber(parseLooseNumber(workspace.client.currentCoins))}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        {t("memberNextTierLabel")}
+                      </div>
+                      <div className="mt-2 text-sm font-semibold text-slate-900">
+                        {selectedClientMemberProgram.nextTier
+                          ? `${selectedClientMemberProgram.nextTier.name} · ${formatNumber(
+                              selectedClientMemberProgram.nextTier.remainingCoins
+                            )} ${t("memberNextTierRemaining")}`
+                          : t("memberNextTierMax")}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">{t("memberTierHistoryTitle")}</div>
+                  <p className="mt-1 text-xs text-slate-500">{t("memberTierHistoryHint")}</p>
+                </div>
+
+                <div className="max-h-[28rem] overflow-auto rounded-2xl border border-slate-200 bg-white">
+                  <table className="min-w-full divide-y divide-slate-200 text-sm">
+                    <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <tr>
+                        <th className="px-4 py-3">{t("colWhen")}</th>
+                        <th className="px-4 py-3">{t("memberTierHistoryChange")}</th>
+                        <th className="px-4 py-3">{t("colEvent")}</th>
+                        <th className="px-4 py-3">{t("memberTierHistorySource")}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {selectedClientMemberHistory.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="px-4 py-8 text-center text-slate-500">
+                            {t("memberTierHistoryEmpty")}
+                          </td>
+                        </tr>
+                      ) : (
+                        selectedClientMemberHistory.map((row, index) => (
+                          <tr key={`${row.at}-${row.fromTier}-${row.toTier}-${index}`}>
+                            <td className="px-4 py-2.5 whitespace-nowrap text-slate-700">{formatDateTime(row.at)}</td>
+                            <td className="px-4 py-2.5 font-medium text-slate-900">
+                              {row.fromTier} → {row.toTier}
+                            </td>
+                            <td className="px-4 py-2.5 text-slate-700">
+                              <div>{row.event}</div>
+                              {row.coinDelta !== 0 ? (
+                                <div className="text-xs text-slate-500">
+                                  {row.coinDelta > 0 ? "+" : ""}
+                                  {formatNumber(row.coinDelta)} coins
+                                </div>
+                              ) : null}
+                            </td>
+                            <td className="px-4 py-2.5 text-slate-600">
+                              {row.source === "paid_upgrade"
+                                ? t("memberTierHistorySourceUpgrade")
+                                : row.source === "manual_event"
+                                  ? t("memberTierHistorySourceManual")
+                                  : t("memberTierHistorySourceSnapshot")}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             ) : null}
@@ -11385,7 +11626,7 @@ export function ManagerClient({
               </div>
             ) : null}
 
-            {workspace && showAllStatsEntries && activeTab !== "laundry" ? (
+            {workspace && showAllStatsEntries && activeTab !== "laundry" && activeTab !== "member" ? (
               <div className="mt-4 space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-sm text-slate-600">
                   {t("compactPanelDesc")}
@@ -11416,7 +11657,7 @@ export function ManagerClient({
                     <tbody className="divide-y divide-slate-200 bg-white">
                       {(activeTab === "coins" ? workspace.stats.coins : activeTab === "payments" ? workspace.stats.payments : workspace.stats.fines).map((entry) => {
                         const key = makeWorkspaceStatsEntryKey(
-                          activeTab as Exclude<StatsTab, "laundry">,
+                          activeTab as Exclude<StatsTab, "laundry" | "member">,
                           entry
                         );
                         const preview = Object.entries(entry.row).filter(([, value]) => String(value ?? "").trim()).slice(0, 4);
@@ -11570,7 +11811,7 @@ export function ManagerClient({
                 </div>
                 {(activeTab === "coins" ? workspace.stats.coins : activeTab === "payments" ? workspace.stats.payments : workspace.stats.fines).map((entry) => {
                   const key = makeWorkspaceStatsEntryKey(
-                    activeTab as Exclude<StatsTab, "laundry">,
+                    activeTab as Exclude<StatsTab, "laundry" | "member">,
                     entry
                   );
                   const isEditing = editingId === `${activeTab}:${key}`;

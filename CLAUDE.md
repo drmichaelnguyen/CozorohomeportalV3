@@ -289,6 +289,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.27 | Client Details → Client Statistics adds Member tab (live/recorded tier + change history). |
 | 3.9.26 | Lightweight portal visit tracker (deduped screen opens) + Owner Analytics Visits tab; 90-day retention. |
 | 3.9.25 | Owner Analytics Members tab: live Cozoro Member ranking + inferred tier change history from coins sheet. |
 | 3.9.24 | Coin award correctness: release/swap base rewards, audit sheet clawback, extension birth-month locked at submit + idempotent txn, Feb 29 birthday, Hero APPROVED-only. |
