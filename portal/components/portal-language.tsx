@@ -2277,6 +2277,66 @@ const translations: Record<string, { en: string; vi: string }> = {
   refreshWithLabel: { en: "Refresh {label}", vi: "Làm mới {label}" },
   analyticsPaymentsTab: { en: "Payments", vi: "Thanh toán" },
   analyticsCoinsTab: { en: "Coins", vi: "Coin" },
+  analyticsMembersTab: { en: "Members", vi: "Thành viên" },
+  analyticsVisitsTab: { en: "Visits", vi: "Lượt mở" },
+  portalVisitAnalyticsTitle: { en: "Portal visits", vi: "Lượt mở ứng dụng" },
+  portalVisitAnalyticsDesc: {
+    en: "Lightweight opens and screen visits from logged-in users (deduped ~20 minutes per path). Kept 90 days.",
+    vi: "Lượt mở và màn hình nhẹ từ người đã đăng nhập (gộp ~20 phút mỗi đường dẫn). Giữ 90 ngày."
+  },
+  portalVisitAnalyticsLoadError: {
+    en: "Unable to load portal visit analytics.",
+    vi: "Không tải được thống kê lượt mở."
+  },
+  portalVisitDays: { en: "Last {days}d", vi: "{days} ngày" },
+  portalVisitTotalVisits: { en: "Visits", vi: "Lượt mở" },
+  portalVisitUniqueVisitors: { en: "Unique visitors", vi: "Người dùng khác nhau" },
+  portalVisitTopPaths: { en: "Top screens", vi: "Màn hình nhiều nhất" },
+  portalVisitTopUsers: { en: "Most active users", vi: "Người dùng hoạt động nhất" },
+  portalVisitRecent: { en: "Recent visits", vi: "Lượt mở gần đây" },
+  portalVisitEmpty: { en: "No visits in this period yet.", vi: "Chưa có lượt mở trong khoảng này." },
+  portalVisitColUser: { en: "User", vi: "Người dùng" },
+  portalVisitColPath: { en: "Screen", vi: "Màn hình" },
+  portalVisitColDevice: { en: "Device", vi: "Thiết bị" },
+  memberTierAnalyticsTitle: { en: "Cozoro Member ranking", vi: "Xếp hạng Thành viên Cozoro" },
+  memberTierAnalyticsDesc: {
+    en: "Live tier ranking for active long-term residents, plus inferred tier change history from the coins sheet.",
+    vi: "Xếp hạng hạng thành viên trực tiếp cho cư dân dài hạn đang ở, kèm lịch sử đổi hạng suy ra từ sheet coin."
+  },
+  memberTierAnalyticsUpdated: { en: "Updated {when}", vi: "Cập nhật {when}" },
+  memberTierAnalyticsRefresh: { en: "Refresh + sync coins", vi: "Làm mới + đồng bộ coin" },
+  memberTierAnalyticsLoadError: {
+    en: "Unable to load member tier analytics.",
+    vi: "Không tải được phân tích hạng thành viên."
+  },
+  memberTierMismatchLabel: { en: "Live ≠ recorded", vi: "Live ≠ đã ghi" },
+  memberTierMismatchHint: { en: "Live tier differs from sheet", vi: "Hạng live khác sheet" },
+  memberTierFilterAllBranches: { en: "All branches", vi: "Tất cả chi nhánh" },
+  memberTierClearTierFilter: { en: "Clear tier filter", vi: "Xóa lọc hạng" },
+  memberTierRankingTitle: { en: "Current ranking", vi: "Xếp hạng hiện tại" },
+  memberTierRankingHint: {
+    en: "Sorted by live tier, then total accumulated coins.",
+    vi: "Sắp theo hạng live, rồi tổng coin tích lũy."
+  },
+  memberTierSearchPlaceholder: { en: "Search name, email, bed…", vi: "Tìm tên, email, giường…" },
+  memberTierRankingEmpty: { en: "No residents match these filters.", vi: "Không có cư dân khớp bộ lọc." },
+  memberTierColLive: { en: "Live tier", vi: "Hạng live" },
+  memberTierColRecorded: { en: "Recorded", vi: "Đã ghi" },
+  memberTierColTotal: { en: "Total coins", vi: "Tổng coin" },
+  memberTierColCurrent: { en: "Current", vi: "Hiện có" },
+  memberTierColPrevMonth: { en: "Prev month earned", vi: "Kiếm tháng trước" },
+  memberTierHistoryTitle: { en: "Tier change history", vi: "Lịch sử đổi hạng" },
+  memberTierHistoryHint: {
+    en: "Inferred when the Cozoro Member column changes between coins rows (paid upgrades included). Silent sync recalcs may be missing.",
+    vi: "Suy ra khi cột Cozoro Member đổi giữa các dòng coin (gồm nâng hạng trả phí). Đồng bộ tự động im lặng có thể thiếu."
+  },
+  memberTierHistorySearchPlaceholder: { en: "Search history…", vi: "Tìm lịch sử…" },
+  memberTierHistoryEmpty: { en: "No tier changes found in coins history.", vi: "Không thấy đổi hạng trong lịch sử coin." },
+  memberTierHistoryChange: { en: "Change", vi: "Thay đổi" },
+  memberTierHistorySource: { en: "Source", vi: "Nguồn" },
+  memberTierHistorySourceUpgrade: { en: "Paid upgrade", vi: "Nâng hạng trả phí" },
+  memberTierHistorySourceManual: { en: "Manual event", vi: "Sự kiện thủ công" },
+  memberTierHistorySourceSnapshot: { en: "Coins snapshot", vi: "Ảnh chụp coin" },
   analyticsLaundryTab: { en: "Laundry", vi: "Giặt sấy" },
   analyticsFineTab: { en: "Fine", vi: "Tiền phạt" },
   analyticsCleaningTab: { en: "Cleaning", vi: "Vệ sinh" },

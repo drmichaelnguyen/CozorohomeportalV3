@@ -4246,6 +4246,8 @@ export async function managerAdjustCoins(input: {
   delta: number;
   reason: string;
   operator: string;
+  /** Stable id to prevent duplicate sheet rows on retries (birthday / hero / etc.). */
+  transactionCode?: string;
 }) {
   const managerClients = await getManagerClients();
   const client = managerClients.find((entry) => entry.maHd === input.maHd);
@@ -4259,6 +4261,24 @@ export async function managerAdjustCoins(input: {
     throw new Error("Coin adjustment must be greater than 0 or less than 0.");
   }
 
+  const coinsHistory = (await readCoinsSheetRows()) || [];
+  const stableTxn = input.transactionCode?.trim();
+  if (stableTxn) {
+    const alreadyWrote = coinsHistory.some(
+      (row) => (row[COINS_TRANSACTION_CODE_COLUMN] ?? "").trim() === stableTxn
+    );
+    if (alreadyWrote) {
+      console.warn(
+        `[managerAdjustCoins] Skipping duplicate adjustment for ${client.email} transaction ${stableTxn}`
+      );
+      return {
+        ok: true,
+        currentCoins: parseLooseInteger(client.currentCoins),
+        skippedDuplicate: true as const
+      };
+    }
+  }
+
   const currentCoins = parseLooseInteger(client.currentCoins);
   const totalCoins = parseLooseInteger(client.totalCoins);
   const coinsAddedThisMonth = parseLooseInteger(client.row["Coins được cộng tháng này"]);
@@ -4266,7 +4286,6 @@ export async function managerAdjustCoins(input: {
   const nextCoins = currentCoins + delta;
   const nextTotalCoins = delta > 0 ? totalCoins + delta : totalCoins;
 
-  const coinsHistory = (await readCoinsSheetRows()) || [];
   const previousMonthEarnings = calculatePreviousMonthEarnings(coinsHistory, client.email);
 
   const nextCozoroMember = calculateLiveCozoroMember({
@@ -4293,7 +4312,8 @@ export async function managerAdjustCoins(input: {
     [COINS_OPERATOR_COLUMN]: input.operator.trim(),
     [COINS_MEMBER_COLUMN]: nextCozoroMember,
     [COINS_CURRENT_BALANCE_COLUMN]: String(nextCoins),
-    [COINS_TRANSACTION_CODE_COLUMN]: `ManagerCoins${Date.now()}${client.email.trim().toLowerCase()}`
+    [COINS_TRANSACTION_CODE_COLUMN]:
+      stableTxn || `ManagerCoins${Date.now()}${client.email.trim().toLowerCase()}`
   });
 
   await updateClientColumns(client.maHd, {
@@ -4694,6 +4714,199 @@ export async function upgradeCozoroMemberByCoins(input: {
     currentCoins: nextCoins,
     upgradedTo: targetTier.name,
     upgradeCost
+  };
+}
+
+export type MemberTierRankingEntry = {
+  rank: number;
+  maHd: string;
+  email: string;
+  name: string;
+  branch: string;
+  bed: string;
+  recordedMember: string;
+  liveTier: string;
+  tierChanged: boolean;
+  currentCoins: number;
+  totalCoins: number;
+  previousMonthEarnings: number;
+  tierIndex: number;
+};
+
+export type MemberTierChangeEntry = {
+  at: string;
+  email: string;
+  name: string;
+  branch: string;
+  maHd: string;
+  fromTier: string;
+  toTier: string;
+  event: string;
+  source: "paid_upgrade" | "coins_row" | "manual_event";
+  coinDelta: number | null;
+};
+
+export type MemberTierAnalyticsPayload = {
+  ranking: MemberTierRankingEntry[];
+  tierCounts: Array<{ tier: string; count: number }>;
+  history: MemberTierChangeEntry[];
+  historyNote: string;
+  generatedAt: string;
+};
+
+function normalizeTierLabel(value: string | undefined) {
+  const tier = getCozoroMemberTier(value);
+  return tier?.name ?? ((value ?? "").trim() || "Silver");
+}
+
+function classifyMemberTierChangeSource(event: string): MemberTierChangeEntry["source"] {
+  const trimmed = event.trim();
+  if (/^Upgrade to\s+/i.test(trimmed)) return "paid_upgrade";
+  if (/member\s*upgrade|nâng\s*hạng|nang hang/i.test(trimmed)) return "manual_event";
+  return "coins_row";
+}
+
+/**
+ * Owner analytics: live member-tier ranking for active long-term clients,
+ * plus inferred tier change history from the coins sheet.
+ */
+export async function getMemberTierAnalytics(options?: {
+  forceCoinsSync?: boolean;
+  historyLimit?: number;
+}): Promise<MemberTierAnalyticsPayload> {
+  const historyLimit = Math.min(500, Math.max(20, options?.historyLimit ?? 150));
+  if (options?.forceCoinsSync) {
+    await syncCoinsFromSheet();
+  }
+
+  const [clients, coinsCache] = await Promise.all([getManagerClients(), readCachedCoins()]);
+  const coinsHistory = coinsCache?.rows ?? [];
+
+  const ranking: Omit<MemberTierRankingEntry, "rank">[] = [];
+  for (const client of clients) {
+    if (String(client.activeStay ?? "").trim() !== "1") continue;
+    const maHd = String(client.maHd ?? "").trim().toUpperCase();
+    if (maHd.startsWith("SHORTTERM")) continue;
+
+    const totalCoins = parseLooseInteger(client.totalCoins);
+    const currentCoins = parseLooseInteger(client.currentCoins);
+    const recordedMember = normalizeTierLabel(client.recordedMember);
+    const previousMonthEarnings = calculatePreviousMonthEarnings(coinsHistory, client.email);
+    const liveTier = normalizeTierLabel(
+      calculateLiveCozoroMember({
+        branchId: client.branch,
+        totalAccumulatedCoins: client.totalCoins,
+        recordedMember: client.recordedMember,
+        previousMonthEarnings
+      })
+    );
+    const tierIndex = Math.max(0, getCozoroMemberTierIndex(liveTier));
+
+    ranking.push({
+      maHd: client.maHd,
+      email: client.email.trim().toLowerCase(),
+      name: client.name.trim() || client.email,
+      branch: normalizeClientBranch(client.branch) || client.branch || "",
+      bed: String(client.bed ?? "").trim(),
+      recordedMember,
+      liveTier,
+      tierMismatch: recordedMember.toLowerCase() !== liveTier.toLowerCase(),
+      currentCoins,
+      totalCoins,
+      previousMonthEarnings,
+      tierIndex
+    });
+  }
+
+  ranking.sort((a, b) => {
+    if (b.tierIndex !== a.tierIndex) return b.tierIndex - a.tierIndex;
+    if (b.totalCoins !== a.totalCoins) return b.totalCoins - a.totalCoins;
+    return a.name.localeCompare(b.name);
+  });
+
+  const ranked: MemberTierRankingEntry[] = ranking.map((entry, index) => ({
+    ...entry,
+    rank: index + 1
+  }));
+
+  const tierCountMap = new Map<string, number>();
+  for (const tier of cozoroMemberTiers) {
+    tierCountMap.set(tier.name, 0);
+  }
+  for (const entry of ranked) {
+    tierCountMap.set(entry.liveTier, (tierCountMap.get(entry.liveTier) ?? 0) + 1);
+  }
+  const tierCounts = [...tierCountMap.entries()].map(([tier, count]) => ({ tier, count }));
+
+  const byEmail = new Map<
+    string,
+    Array<{
+      at: string;
+      sortKey: string;
+      name: string;
+      branch: string;
+      maHd: string;
+      member: string;
+      event: string;
+      coinDelta: number;
+    }>
+  >();
+
+  for (const row of coinsHistory) {
+    const email = String(row[EMAIL_COLUMN] ?? "").trim().toLowerCase();
+    if (!email) continue;
+    const memberRaw = String(row[COINS_MEMBER_COLUMN] ?? "").trim();
+    if (!memberRaw) continue;
+    const tsRaw = String(row[COINS_TIMESTAMP_COLUMN] ?? "").trim();
+    const parsed = parseSheetTimestamp(tsRaw);
+    const sortKey = parsed ?? tsRaw;
+    if (!sortKey) continue;
+    const list = byEmail.get(email) ?? [];
+    list.push({
+      at: parsed ?? tsRaw,
+      sortKey,
+      name: String(row[CLIENT_NAME_COLUMN] ?? "").trim() || email,
+      branch: normalizeClientBranch(String(row["Chi nhánh Cozoro dorm"] ?? "")) || String(row["Chi nhánh Cozoro dorm"] ?? ""),
+      maHd: String(row[CONTRACT_CODE_COLUMN] ?? "").trim(),
+      member: normalizeTierLabel(memberRaw),
+      event: String(row[COINS_EVENT_COLUMN] ?? "").trim(),
+      coinDelta: parseLooseInteger(row[COINS_BALANCE_COLUMN])
+    });
+    byEmail.set(email, list);
+  }
+
+  const history: MemberTierChangeEntry[] = [];
+  for (const [email, rows] of byEmail) {
+    rows.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+    let previousMember: string | null = null;
+    for (const row of rows) {
+      if (previousMember && previousMember.toLowerCase() !== row.member.toLowerCase()) {
+        history.push({
+          at: row.at,
+          email,
+          name: row.name,
+          branch: row.branch,
+          maHd: row.maHd,
+          fromTier: previousMember,
+          toTier: row.member,
+          event: row.event || "(tier snapshot changed)",
+          source: classifyMemberTierChangeSource(row.event),
+          coinDelta: Number.isFinite(row.coinDelta) ? row.coinDelta : null
+        });
+      }
+      previousMember = row.member;
+    }
+  }
+
+  history.sort((a, b) => b.at.localeCompare(a.at));
+
+  return {
+    ranking: ranked,
+    tierCounts,
+    history: history.slice(0, historyLimit),
+    historyNote:
+      "History is inferred from coins-sheet Cozoro Member snapshots (including paid upgrades). Silent sync recalcs and manual roster edits without a coins row are not listed.",
+    generatedAt: new Date().toISOString()
   };
 }
 
@@ -5195,6 +5408,70 @@ export async function awardCleaningCoinsToSheet(input: {
     [COINS_MEMBER_COLUMN]: recordedMember,
     [COINS_CURRENT_BALANCE_COLUMN]: String(nextCoins),
     [COINS_TRANSACTION_CODE_COLUMN]: transactionCode
+  });
+
+  if (client && client[CONTRACT_CODE_COLUMN]) {
+    await updateClientColumns(client[CONTRACT_CODE_COLUMN], {
+      [CLIENT_CURRENT_COINS_COLUMN]: String(nextCoins)
+    });
+  }
+}
+
+/** Claw back cleaning reward coins from the sheet after a post-approve reject. */
+export async function reverseCleaningCoinsOnSheet(input: {
+  userEmail: string;
+  userName: string | null;
+  branchId: string;
+  rewardCoins: number;
+  taskId: string;
+  reviewedBy: string;
+}) {
+  if (!Number.isFinite(input.rewardCoins) || input.rewardCoins <= 0) {
+    return;
+  }
+
+  const normalizedEmail = input.userEmail.trim().toLowerCase();
+  const awardCode = `CleaningReward${input.taskId}`;
+  const reversalCode = `CleaningReversal${input.taskId}`;
+  const existingEntries = await getCoinsForEmail(normalizedEmail);
+  const alreadyReversed = existingEntries.some(
+    (entry) => (entry.row[COINS_TRANSACTION_CODE_COLUMN] ?? "").trim() === reversalCode
+  );
+  if (alreadyReversed) {
+    console.warn(
+      `[CleaningCoins] Skipping duplicate reversal for ${normalizedEmail} transaction ${reversalCode}`
+    );
+    return;
+  }
+
+  const wasAwarded = existingEntries.some(
+    (entry) => (entry.row[COINS_TRANSACTION_CODE_COLUMN] ?? "").trim() === awardCode
+  );
+  if (!wasAwarded) {
+    // Never approved on sheet — nothing to reverse.
+    return;
+  }
+
+  const client = await getActiveClientByEmail(normalizedEmail);
+  const currentCoins = client
+    ? Number.parseInt(String(client[CLIENT_CURRENT_COINS_COLUMN] ?? "0").replace(/[^0-9-]/g, ""), 10) || 0
+    : 0;
+  const nextCoins = Math.max(0, currentCoins - input.rewardCoins);
+  const recordedMember = client ? (client[COINS_MEMBER_COLUMN] ?? "") : "";
+
+  await appendCoinsSheetRow({
+    [COINS_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(new Date()),
+    [CONTRACT_CODE_COLUMN]: client ? (client[CONTRACT_CODE_COLUMN] ?? "") : "",
+    ["Chi nhánh Cozoro dorm"]: input.branchId.replace("D", ""),
+    [EMAIL_COLUMN]: normalizedEmail,
+    [CLIENT_NAME_COLUMN]: input.userName ?? (client ? (client[CLIENT_NAME_COLUMN] ?? "") : ""),
+    [CLIENT_BED_COLUMN]: client ? (client[CLIENT_BED_COLUMN] ?? "") : "",
+    [COINS_BALANCE_COLUMN]: String(-input.rewardCoins),
+    [COINS_EVENT_COLUMN]: "Hoàn coins vệ sinh (từ chối sau duyệt)",
+    [COINS_OPERATOR_COLUMN]: input.reviewedBy.trim(),
+    [COINS_MEMBER_COLUMN]: recordedMember,
+    [COINS_CURRENT_BALANCE_COLUMN]: String(nextCoins),
+    [COINS_TRANSACTION_CODE_COLUMN]: reversalCode
   });
 
   if (client && client[CONTRACT_CODE_COLUMN]) {
@@ -6523,6 +6800,63 @@ export function resolveContractExtensionSubmission(
   throw new Error("Provide newContractEndDate or extensionMonths.");
 }
 
+async function writeExtensionCoinAward(input: {
+  targetRowData: string[];
+  headers: string[];
+  normalizedEmail: string;
+  email: string;
+  durationMonthsForSheet: number;
+  newEndDate: Date;
+  coinReward: number;
+  birthMonthBonus: boolean;
+  transactionCode: string;
+}) {
+  const { targetRowData, headers, normalizedEmail, email, durationMonthsForSheet, newEndDate, coinReward, birthMonthBonus, transactionCode } =
+    input;
+  const coinsColIndex = headers.indexOf(normalizeHeader(CLIENT_CURRENT_COINS_COLUMN));
+  const currentCoins = coinsColIndex >= 0 ? parseLooseInteger(targetRowData[coinsColIndex] ?? "0") : 0;
+  const newBalance = currentCoins + coinReward;
+  const contractCodeIdx = headers.indexOf(normalizeHeader(CONTRACT_CODE_COLUMN));
+  const branchIdx = headers.indexOf(normalizeHeader("Chi nhánh Cozoro dorm"));
+  const nameIdx = headers.indexOf(normalizeHeader(CLIENT_NAME_COLUMN));
+  const bedIdx = headers.indexOf(normalizeHeader(CLIENT_BED_COLUMN));
+  const memberIdx = headers.indexOf(normalizeHeader(COINS_MEMBER_COLUMN));
+  const contractCodeVal = contractCodeIdx >= 0 ? (targetRowData[contractCodeIdx] ?? "") : "";
+  const branchVal = normalizeClientBranch(branchIdx >= 0 ? (targetRowData[branchIdx] ?? "") : "").replace("D", "");
+  const nameVal = nameIdx >= 0 ? (targetRowData[nameIdx] ?? "") : "";
+  const bedVal = bedIdx >= 0 ? (targetRowData[bedIdx] ?? "") : "";
+  const memberVal = memberIdx >= 0 ? (targetRowData[memberIdx] ?? "") : "";
+  const birthMonthNote =
+    birthMonthBonus && durationMonthsForSheet >= BIRTH_MONTH_EXTENSION_MIN_MONTHS
+      ? " · x2 tháng sinh nhật / birth-month bonus"
+      : "";
+
+  await appendCoinsSheetRow({
+    [COINS_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(new Date()),
+    [CONTRACT_CODE_COLUMN]: contractCodeVal,
+    ["Chi nhánh Cozoro dorm"]: branchVal,
+    [EMAIL_COLUMN]: normalizedEmail,
+    [CLIENT_NAME_COLUMN]: nameVal,
+    [CLIENT_BED_COLUMN]: bedVal,
+    [COINS_BALANCE_COLUMN]: String(coinReward),
+    [COINS_EVENT_COLUMN]: `Gia hạn hợp đồng đến ${formatDate(newEndDate)} (${durationMonthsForSheet} tháng)${birthMonthNote}`,
+    [COINS_OPERATOR_COLUMN]: "system",
+    [COINS_MEMBER_COLUMN]: memberVal,
+    [COINS_CURRENT_BALANCE_COLUMN]: String(newBalance),
+    [COINS_TRANSACTION_CODE_COLUMN]: transactionCode
+  });
+
+  if (contractCodeVal) {
+    await updateClientColumns(contractCodeVal, {
+      [CLIENT_CURRENT_COINS_COLUMN]: String(newBalance)
+    });
+  }
+
+  console.log(
+    `[ContractExtension] Awarded ${coinReward} coins to ${email} for ${durationMonthsForSheet}-month extension. New balance: ${newBalance}`
+  );
+}
+
 export async function extendClientContract(
   email: string,
   term: ContractExtensionTerm,
@@ -6532,6 +6866,13 @@ export async function extendClientContract(
     clientSignatureTimestamp?: string;
     ownerApprovedBy?: string;
     ownerApprovedAt?: string;
+    /** Pending approval id — used as stable coin transaction key. */
+    approvalId?: string;
+    /**
+     * When set, drives birth-month ×2 from the resident submit moment
+     * (not owner approval time). Omit only for legacy / direct calls.
+     */
+    birthMonthBonus?: boolean;
   } | null,
   fieldOverrides?: ContractExtensionTermsSnapshot | null
 ) {
@@ -6777,50 +7118,54 @@ export async function extendClientContract(
 
   // Award coins for contract extension (tiered by nominal extension length; x2 in birth month for 3+ months)
   const mappedRowForBenefits = mapRow(headers, targetRowData.map((value) => String(value)));
-  const birthMonthBonus = isClientBirthMonth(mappedRowForBenefits, now);
+  const birthMonthBonus =
+    typeof approval?.birthMonthBonus === "boolean"
+      ? approval.birthMonthBonus
+      : isClientBirthMonth(mappedRowForBenefits, now);
   const coinReward = computeExtensionCoinReward(durationMonthsForSheet, birthMonthBonus);
   if (coinReward > 0) {
     try {
-      const coinsColIndex = headers.indexOf(normalizeHeader(CLIENT_CURRENT_COINS_COLUMN));
-      const currentCoins = coinsColIndex >= 0 ? parseLooseInteger(targetRowData[coinsColIndex] ?? "0") : 0;
-      const newBalance = currentCoins + coinReward;
-      const contractCodeIdx = headers.indexOf(normalizeHeader(CONTRACT_CODE_COLUMN));
-      const branchIdx = headers.indexOf(normalizeHeader("Chi nhánh Cozoro dorm"));
-      const nameIdx = headers.indexOf(normalizeHeader(CLIENT_NAME_COLUMN));
-      const bedIdx = headers.indexOf(normalizeHeader(CLIENT_BED_COLUMN));
-      const memberIdx = headers.indexOf(normalizeHeader(COINS_MEMBER_COLUMN));
-      const contractCodeVal = contractCodeIdx >= 0 ? (targetRowData[contractCodeIdx] ?? "") : "";
-      const branchVal = normalizeClientBranch(branchIdx >= 0 ? (targetRowData[branchIdx] ?? "") : "").replace("D", "");
-      const nameVal = nameIdx >= 0 ? (targetRowData[nameIdx] ?? "") : "";
-      const bedVal = bedIdx >= 0 ? (targetRowData[bedIdx] ?? "") : "";
-      const memberVal = memberIdx >= 0 ? (targetRowData[memberIdx] ?? "") : "";
-      const birthMonthNote =
-        birthMonthBonus && durationMonthsForSheet >= BIRTH_MONTH_EXTENSION_MIN_MONTHS
-          ? " · x2 tháng sinh nhật / birth-month bonus"
-          : "";
+      const approvalId = approval?.approvalId?.trim();
+      const transactionCode = approvalId
+        ? `ContractExtApproval${approvalId}`
+        : `ContractExt${durationMonthsForSheet}m${Date.now()}`;
 
-      await appendCoinsSheetRow({
-        [COINS_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(new Date()),
-        [CONTRACT_CODE_COLUMN]: contractCodeVal,
-        ["Chi nhánh Cozoro dorm"]: branchVal,
-        [EMAIL_COLUMN]: normalizedEmail,
-        [CLIENT_NAME_COLUMN]: nameVal,
-        [CLIENT_BED_COLUMN]: bedVal,
-        [COINS_BALANCE_COLUMN]: String(coinReward),
-        [COINS_EVENT_COLUMN]: `Gia hạn hợp đồng đến ${formatDate(newEndDate)} (${durationMonthsForSheet} tháng)${birthMonthNote}`,
-        [COINS_OPERATOR_COLUMN]: "system",
-        [COINS_MEMBER_COLUMN]: memberVal,
-        [COINS_CURRENT_BALANCE_COLUMN]: String(newBalance),
-        [COINS_TRANSACTION_CODE_COLUMN]: `ContractExt${durationMonthsForSheet}m${Date.now()}`
-      });
-
-      if (contractCodeVal) {
-        await updateClientColumns(contractCodeVal, {
-          [CLIENT_CURRENT_COINS_COLUMN]: String(newBalance)
+      if (approvalId) {
+        const existingCoinRows = await getCoinsForEmail(normalizedEmail);
+        const alreadyAwarded = existingCoinRows.some(
+          (entry) => (entry.row[COINS_TRANSACTION_CODE_COLUMN] ?? "").trim() === transactionCode
+        );
+        if (alreadyAwarded) {
+          console.warn(
+            `[ContractExtension] Skipping duplicate coin award for ${email} transaction ${transactionCode}`
+          );
+          // skip award body below
+        } else {
+          await writeExtensionCoinAward({
+            targetRowData,
+            headers,
+            normalizedEmail,
+            email,
+            durationMonthsForSheet,
+            newEndDate,
+            coinReward,
+            birthMonthBonus,
+            transactionCode
+          });
+        }
+      } else {
+        await writeExtensionCoinAward({
+          targetRowData,
+          headers,
+          normalizedEmail,
+          email,
+          durationMonthsForSheet,
+          newEndDate,
+          coinReward,
+          birthMonthBonus,
+          transactionCode
         });
       }
-
-      console.log(`[ContractExtension] Awarded ${coinReward} coins to ${email} for ${durationMonthsForSheet}-month extension. New balance: ${newBalance}`);
     } catch (coinErr) {
       console.error(`[ContractExtension] Failed to award coins for ${email}:`, coinErr);
       // Don't throw — coin award failure should not block the extension itself

@@ -122,8 +122,8 @@ async function findTopSelfAssignCompleter(from: Date, to: Date): Promise<WinnerC
     where: {
       isSelfAssigned: true,
       scheduledDate: { gte: from, lte: to },
-      // Completed work excluding rejected (and excluding missed / still assigned)
-      status: { in: [CleaningTaskStatus.APPROVED, CleaningTaskStatus.DONE_PENDING_AUDIT] }
+      // Only audited approvals — pending / rejected must not decide the winner.
+      status: CleaningTaskStatus.APPROVED
     },
     select: {
       userEmail: true,
@@ -198,28 +198,25 @@ async function awardHeroForPeriod(
   const resolvedMaHd = client ? String(client[CONTRACT_CODE_COLUMN] ?? "").trim() : "";
   if (!resolvedMaHd) {
     console.warn(
-      `[cleaning-hero] No active client contract for winner ${winner.userEmail}; skipping coin grant for ${awardId}`
+      `[cleaning-hero] No active client contract for winner ${winner.userEmail}; recording skip sentinel for ${awardId}`
     );
+    ledger.awards.push({
+      id: awardId,
+      periodType,
+      periodKey,
+      userEmail: winner.userEmail,
+      userName: winner.userName,
+      completedCount: winner.completedCount,
+      coinsAwarded: 0,
+      title: titles.en,
+      titleVi: titles.vi,
+      awardedAt: new Date().toISOString()
+    });
+    await writeLedger(ledger);
     return null;
   }
 
-  await managerAdjustCoins({
-    maHd: resolvedMaHd,
-    delta: coinsAwarded,
-    reason: `${titles.en} — ${periodKey} (${winner.completedCount} self-assign completions)`,
-    operator: "Cozoro Hero Awards"
-  });
-
-  await prisma.coinLedger.create({
-    data: {
-      userId: winner.userEmail,
-      delta: coinsAwarded,
-      reason: CoinReason.ADJUSTMENT,
-      refType: "cleaning_hero_award",
-      refId: awardId
-    }
-  });
-
+  // Claim award id before sheet write to prevent double-pay on crash/retry.
   const award: CleaningHeroAward = {
     id: awardId,
     periodType,
@@ -232,9 +229,40 @@ async function awardHeroForPeriod(
     titleVi: titles.vi,
     awardedAt: new Date().toISOString()
   };
-
   ledger.awards.push(award);
   await writeLedger(ledger);
+
+  try {
+    await managerAdjustCoins({
+      maHd: resolvedMaHd,
+      delta: coinsAwarded,
+      reason: `${titles.en} — ${periodKey} (${winner.completedCount} self-assign completions)`,
+      operator: "Cozoro Hero Awards",
+      transactionCode: awardId
+    });
+
+    try {
+      await prisma.coinLedger.create({
+        data: {
+          userId: winner.userEmail,
+          delta: coinsAwarded,
+          reason: CoinReason.ADJUSTMENT,
+          refType: "cleaning_hero_award",
+          refId: awardId
+        }
+      });
+    } catch (prismaError) {
+      console.error(
+        `[cleaning-hero] Sheet paid but Prisma ledger failed for ${awardId}:`,
+        prismaError instanceof Error ? prismaError.message : prismaError
+      );
+    }
+  } catch (error) {
+    ledger.awards = ledger.awards.filter((entry) => entry.id !== awardId);
+    await writeLedger(ledger);
+    throw error;
+  }
+
   console.log(
     `[cleaning-hero] Awarded ${coinsAwarded} coins to ${winner.userEmail} for ${awardId} (${winner.completedCount} completions)`
   );

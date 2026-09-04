@@ -69,9 +69,15 @@ import { VAPID_PUBLIC_KEY, savePushSubscription, deletePushSubscription, sendPus
 import { getCleaningRewardSettings, updateCleaningRewardSettings } from "./cleaning-reward-settings.js";
 import { runCleaningHeroAwards } from "./cleaning-hero-awards.js";
 import {
-  buildBirthdayBenefitsSummary
+  buildBirthdayBenefitsSummary,
+  isClientBirthMonth
 } from "./birthday-benefits.js";
 import { runBirthdayCoinGrants } from "./birthday-coin-grants.js";
+import {
+  getPortalVisitAnalytics,
+  purgeOldPortalVisits,
+  recordPortalVisit
+} from "./portal-visits.js";
 import { getManagerFridgeDrainSchedule, upsertFridgeDrainCleaningDate } from "./fridge-drain-schedule.js";
 import {
   exportDatabaseToGoogleSheet,
@@ -139,6 +145,7 @@ import {
   getManagerClients,
   getManagerInactiveClients,
   getManagerFines,
+  getMemberTierAnalytics,
   disputeFine,
   managerAdjustCoins,
   managerCreatePaymentReceipt,
@@ -451,6 +458,8 @@ type PendingContractApproval = {
     bedNumber?: number | null;
     residentName?: string;
     contractCode?: string;
+    /** Locked at resident submit time — drives birth-month ×2 coin bonus on approve. */
+    birthMonthBonus?: boolean;
     baseline?: ContractExtensionTermsSnapshot;
     proposed?: ContractExtensionTermsSnapshot;
     negotiation?: ContractExtensionNegotiation;
@@ -2302,6 +2311,7 @@ app.post("/clients/contracts/extend", async (request, response) => {
         }
         const branchId = normalizeClientBranch(String(active[CLIENT_BRANCH_COLUMN] ?? ""));
         const bedParsed = Number.parseInt(String(active[CLIENT_BED_COLUMN] ?? "").replace(/[^0-9]/g, ""), 10);
+        const birthMonthBonus = isClientBirthMonth(active, new Date(submittedAt));
         const next: PendingContractApproval = {
           id: randomUUID(),
           type: "extension",
@@ -2319,6 +2329,7 @@ app.post("/clients/contracts/extend", async (request, response) => {
             bedNumber: proposed.bedNumber ?? (Number.isFinite(bedParsed) ? bedParsed : null),
             residentName: String(active[CLIENT_NAME_COLUMN] ?? "").trim(),
             contractCode: String(active[CONTRACT_CODE_COLUMN] ?? "").trim(),
+            birthMonthBonus,
             baseline,
             proposed,
             negotiation: {
@@ -8173,6 +8184,73 @@ app.get("/manager/bed-occupancy-history", async (req, res) => {
   }
 });
 
+app.get("/manager/member-tier-analytics", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim().toLowerCase();
+  const sync = String(req.query.sync ?? "").trim() === "1";
+  const historyLimit = Number.parseInt(String(req.query.historyLimit ?? "150"), 10);
+  try {
+    await requirePortalRole(
+      actorEmail,
+      ["owner", "app_admin"],
+      "Only owners or app admins can view member tier analytics."
+    );
+    return res.json(
+      await getMemberTierAnalytics({
+        forceCoinsSync: sync,
+        historyLimit: Number.isFinite(historyLimit) ? historyLimit : 150
+      })
+    );
+  } catch (error) {
+    return res.status((error as Error & { statusCode?: number }).statusCode ?? 403).json({
+      error: error instanceof Error ? error.message : "Unable to load member tier analytics."
+    });
+  }
+});
+
+app.post("/portal/visits", async (req, res) => {
+  const parsed = z
+    .object({
+      email: z.string().email(),
+      role: z.string().trim().max(40).optional(),
+      path: z.string().trim().min(1).max(200),
+      branchId: z.string().trim().max(10).optional(),
+      device: z.enum(["mobile", "desktop", "tablet"]).optional()
+    })
+    .safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid visit payload" });
+  }
+  try {
+    const result = await recordPortalVisit(parsed.data);
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return res.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to record visit."
+    });
+  }
+});
+
+app.get("/manager/portal-visit-analytics", async (req, res) => {
+  const actorEmail = String(req.query.actorEmail ?? "").trim().toLowerCase();
+  const days = Number.parseInt(String(req.query.days ?? "14"), 10);
+  try {
+    await requirePortalRole(
+      actorEmail,
+      ["owner", "app_admin"],
+      "Only owners or app admins can view portal visit analytics."
+    );
+    return res.json(
+      await getPortalVisitAnalytics({
+        days: Number.isFinite(days) ? days : 14
+      })
+    );
+  } catch (error) {
+    return res.status((error as Error & { statusCode?: number }).statusCode ?? 403).json({
+      error: error instanceof Error ? error.message : "Unable to load portal visit analytics."
+    });
+  }
+});
+
 app.post("/manager/bed-occupancy-history/capture", async (req, res) => {
   const actorEmail = String(req.body?.actorEmail ?? "").trim().toLowerCase();
   try {
@@ -10173,7 +10251,12 @@ app.post("/manager/contract-approvals/:id/approve", async (request, response) =>
           clientSignatureDataUrl: item.clientSignatureDataUrl,
           clientSignatureTimestamp: item.clientSignatureTimestamp,
           ownerApprovedBy: parsed.data.actorEmail.trim().toLowerCase(),
-          ownerApprovedAt: approvedAt
+          ownerApprovedAt: approvedAt,
+          approvalId: item.id,
+          birthMonthBonus:
+            typeof extension.birthMonthBonus === "boolean"
+              ? extension.birthMonthBonus
+              : undefined
         },
         effectiveProposed
       );
@@ -11271,6 +11354,16 @@ app.listen(port, "127.0.0.1", () => {
     });
   }, 6 * 60 * 60 * 1000);
   birthdayCoinTimer.unref();
+
+  void purgeOldPortalVisits().catch((error) => {
+    console.error("[portal-visits] startup purge failed", error);
+  });
+  const portalVisitPurgeTimer = setInterval(() => {
+    void purgeOldPortalVisits().catch((error) => {
+      console.error("[portal-visits] scheduled purge failed", error);
+    });
+  }, 24 * 60 * 60 * 1000);
+  portalVisitPurgeTimer.unref();
 
   void sweepLeftResidentCleaningSchedules().catch((error) => {
     console.error("[cleaning-left-resident-sweep] startup failed", error);

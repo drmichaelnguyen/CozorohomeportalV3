@@ -196,6 +196,9 @@ const nextConfig: NextConfig = {
 | `POST /manager/controller/cooker/command` | Staff ON/OFF override (IFTTT events optional until configured) |
 | `GET /manager/controller/cooker/inspections?actorEmail=` | Staff kitchen photo inspection list (manager, owner, app_admin) |
 | `POST /manager/controller/cooker/inspections/ticket` | Staff leftover-on reminder or fine from inspection photos |
+| `GET /manager/member-tier-analytics?actorEmail=` | **Owner, app_admin** — live Cozoro Member ranking + inferred tier change history from coins sheet. |
+| `POST /portal/visits` | Logged-in client beacon: record screen visit (`email`, `role`, `path`, `device`); server dedupes same email+path within ~20 minutes. |
+| `GET /manager/portal-visit-analytics?actorEmail=&days=` | **Owner, app_admin** — portal visit totals, top paths/users, recent visits (default 14 days). |
 | `GET /staff/clients/duplicates?actorEmail=` | List clients with multiple active rows in the sheet |
 | `POST /staff/clients/set-inactive` | Set a specific contract row (by maHd) to Hiá»‡n cÃ²n á»Ÿ = âˆ’1 |
 | `POST /clients/contracts/extend` | Resident contract extension: body includes `email` and `newContractEndDate` (`dd/mm/yyyy`) or legacy `extensionMonths`; writes a **pending** entry to contract-approvals JSON (duplicate guard for pending extension per email). Approved extensions grant tiered coins; **2× in birth month** when extension length is ≥3 months. |
@@ -270,12 +273,12 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 - **Self-assign**: residents can claim open slots for future dates only, **max 30 days ahead**
 - **Self-assign coin multipliers** (vs manager/system base reward): weekday **x2**, weekend **x2.5**, Vietnam national holiday **x3** (holiday calendar on cleaning UI; holiday wins over weekend)
-- **Cozoro Hero awards** (highest completed self-assign count in the period, excluding rejected): month **+30,000**, quarter **+50,000**, year **+100,000** ("Cozoro Hero of the Year"); coins + Notification Center notice; awards closed periods once
+- **Cozoro Hero awards** (highest **APPROVED** self-assign completions in the period): month **+30,000**, quarter **+50,000**, year **+100,000** ("Cozoro Hero of the Year"); coins + Notification Center notice; awards closed periods once
 - **Contract end cleanup**: cleaning schedule is removed only after the resident **confirms they left** (checkout form), or when staff mark them inactive (−1 with no remaining active row). An expired contract end date alone does **not** remove tasks while the account stays active. Hostel short-term guests (`SHORTTERM-*`) are never on the cleaning schedule.
 - **Take Over**: if today is after 20:00 and an assigned resident hasn't completed the task, others can take over
 - **Task types**: `KITCHEN_D2`, `KITCHEN_D7`, `TRASH_D7`
 - **Completion window**: `KITCHEN_D7` = 17:00–23:00 on assigned date; others = any time that day
-- **Release penalties**: 5+ days ahead = no fine; 1–4 days = 50%; same day = 75%; past = no release
+- **Release penalties**: 5+ days ahead = no fine; 1–4 days = 50%; same day = 75%; past = no release. Release/swap replacement recalculates base `rewardCoins` and clears `isSelfAssigned`.
 - **Calendar colors**: green = open slot, blue = taken by another resident, amber dot = your task, rose = Vietnam national holiday
 - **Auto / manager ranking** (shared): Preferred → Available → unmarked, then fewest **per-type** tasks in 60 days, then soft demotion from recent manager corrections, then name. Background auto, manager available-users list, bulk preview/commit, release replacement, and swap candidates all use this order. Full write-up: [`docs/cleaning-auto-assign.md`](docs/cleaning-auto-assign.md).
 - **Post-release re-place**: releaser is only put on a later same-type open slot within 15 days if they are the top underdue candidate for that slot (not blindly the next empty day).
@@ -286,6 +289,9 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.26 | Lightweight portal visit tracker (deduped screen opens) + Owner Analytics Visits tab; 90-day retention. |
+| 3.9.25 | Owner Analytics Members tab: live Cozoro Member ranking + inferred tier change history from coins sheet. |
+| 3.9.24 | Coin award correctness: release/swap base rewards, audit sheet clawback, extension birth-month locked at submit + idempotent txn, Feb 29 birthday, Hero APPROVED-only. |
 | 3.9.23 | Birthday automation: +30k coins on birthday (scheduled job + yearly ledger); birth-month contract extension **2×** tiered coins for ≥3 months; early extension UI + promo popup and Notification Center notices; `GET /clients/birthday-benefits`. |
 | 3.9.12 | Portal and bot AI prefer 9router (`gpt-5`); resident cooker policy notice; D7 cooker IFTTT event names. |
 | 3.9.11 | Cooker check-in Report button; owners can view AI usage; analytics splits text chat vs computer vision tokens/cost. |

@@ -88,9 +88,24 @@ export function isBirthMonth(dob: ParsedDateOfBirth, now = new Date()): boolean 
   return dob.month === calendar.month;
 }
 
+function isGregorianLeapYear(year: number) {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
 export function isBirthdayToday(dob: ParsedDateOfBirth, now = new Date()): boolean {
   const calendar = vietnamCalendarParts(now);
-  return dob.month === calendar.month && dob.day === calendar.day;
+  if (dob.month === calendar.month && dob.day === calendar.day) return true;
+  // Feb 29 DOB: celebrate on Feb 28 in non-leap years (VN calendar).
+  if (
+    dob.month === 2 &&
+    dob.day === 29 &&
+    calendar.month === 2 &&
+    calendar.day === 28 &&
+    !isGregorianLeapYear(calendar.year)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export function isClientBirthMonth(row: Record<string, string>, now = new Date()): boolean {

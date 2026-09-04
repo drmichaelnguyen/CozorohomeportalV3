@@ -81,6 +81,7 @@ export async function runBirthdayCoinGrants(now = new Date()): Promise<{ awarded
   const clients = await getManagerClients();
   const ledger = await readLedger();
   const awarded: BirthdayCoinGrant[] = [];
+  let ledgerDirty = false;
 
   for (const client of clients) {
     const row = client.row;
@@ -99,35 +100,68 @@ export async function runBirthdayCoinGrants(now = new Date()): Promise<{ awarded
       continue;
     }
 
+    // Claim the grant id in the ledger before the sheet write so a crash mid-way
+    // cannot double-pay on the next scheduled run. Roll back the claim if sheet fails.
+    const grant: BirthdayCoinGrant = {
+      id: grantId,
+      email,
+      year: calendar.year,
+      coinsAwarded: BIRTHDAY_COIN_GRANT,
+      grantedAt: now.toISOString()
+    };
+    ledger.grants.push(grant);
+    ledgerDirty = true;
+    try {
+      await writeLedger(ledger);
+    } catch (error) {
+      ledger.grants = ledger.grants.filter((entry) => entry.id !== grantId);
+      console.error(
+        `[birthday-coins] Failed to claim ledger for ${email}:`,
+        error instanceof Error ? error.message : error
+      );
+      continue;
+    }
+
     try {
       await managerAdjustCoins({
         maHd,
         delta: BIRTHDAY_COIN_GRANT,
         reason: `Quà sinh nhật / Birthday gift ${calendar.year}`,
-        operator: "Cozoro Birthday"
+        operator: "Cozoro Birthday",
+        transactionCode: grantId
       });
 
-      await prisma.coinLedger.create({
-        data: {
-          userId: email,
-          delta: BIRTHDAY_COIN_GRANT,
-          reason: CoinReason.ADJUSTMENT,
-          refType: "birthday_grant",
-          refId: grantId
-        }
-      });
+      try {
+        await prisma.coinLedger.create({
+          data: {
+            userId: email,
+            delta: BIRTHDAY_COIN_GRANT,
+            reason: CoinReason.ADJUSTMENT,
+            refType: "birthday_grant",
+            refId: grantId
+          }
+        });
+      } catch (prismaError) {
+        // Sheet already paid — keep the JSON claim so we do not retry the sheet.
+        console.error(
+          `[birthday-coins] Sheet paid but Prisma ledger failed for ${email}:`,
+          prismaError instanceof Error ? prismaError.message : prismaError
+        );
+      }
 
-      const grant: BirthdayCoinGrant = {
-        id: grantId,
-        email,
-        year: calendar.year,
-        coinsAwarded: BIRTHDAY_COIN_GRANT,
-        grantedAt: now.toISOString()
-      };
-      ledger.grants.push(grant);
       awarded.push(grant);
       console.log(`[birthday-coins] Awarded ${BIRTHDAY_COIN_GRANT} coins to ${email} for ${grantId}`);
     } catch (error) {
+      ledger.grants = ledger.grants.filter((entry) => entry.id !== grantId);
+      ledgerDirty = true;
+      try {
+        await writeLedger(ledger);
+      } catch (rollbackError) {
+        console.error(
+          `[birthday-coins] Failed to roll back ledger claim for ${email}:`,
+          rollbackError instanceof Error ? rollbackError.message : rollbackError
+        );
+      }
       console.error(
         `[birthday-coins] Failed for ${email}:`,
         error instanceof Error ? error.message : error
@@ -135,8 +169,13 @@ export async function runBirthdayCoinGrants(now = new Date()): Promise<{ awarded
     }
   }
 
-  if (awarded.length > 0) {
-    await writeLedger(ledger);
+  if (ledgerDirty && awarded.length === 0) {
+    // Ensure final ledger state is persisted after rollbacks with no successful awards.
+    try {
+      await writeLedger(ledger);
+    } catch {
+      /* already logged per-grant */
+    }
   }
 
   return { awarded };

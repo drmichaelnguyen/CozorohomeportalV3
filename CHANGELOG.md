@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.9.26] - 2026-09-04
+
+- **Portal visit tracker**: Logged-in users record lightweight screen visits (`email`, `role`, `path`, `device`), deduped ~20 minutes per path, retained 90 days. Owner Analytics → **Visits** shows totals, top screens/users, and recent activity.
+
+## [3.9.25] - 2026-09-04
+
+- **Member tier analytics**: Owner Client Analytics adds a **Members** tab with live Cozoro Member ranking (tier + total/current coins + prev-month earnings) and inferred tier change history from the coins sheet (paid upgrades and member-column snapshots).
+
+## [3.9.24] - 2026-09-04
+
+- **Coin award correctness**: Cleaning release/swap recipients no longer inherit self-assign multipliers or Hero credit; rewards recalculate at base rate.
+- **Audit clawback**: Rejecting an already-approved cleaning task now reverses Google Sheet coins (not only Prisma ledger); approve is limited to `DONE_PENDING_AUDIT` and duplicate Prisma credits are blocked.
+- **Extension coins**: Birth-month ×2 is locked at resident submit time; coin rows use stable `ContractExtApproval{id}` so approve retries cannot double-pay.
+- **Birthday / Hero hardening**: Feb 29 birthdays grant on Feb 28 in non-leap years; Hero winners count only `APPROVED` self-assign tasks; birthday/Hero claim ledger before sheet write with stable transaction codes.
+
 ## [3.9.23] - 2026-08-31
 
 - **Birthday coins**: Active long-term residents receive **30,000 coins** automatically on their birthday (Vietnam time), once per year, using `Ngày tháng năm sinh` from the client sheet. Ledger: `api/data/birthday-coin-grants.json`.

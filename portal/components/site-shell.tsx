@@ -24,6 +24,7 @@ import { PaymentRequirementPrompt } from "./payment-requirement-prompt";
 import { SelfAssignPromoPopup } from "./self-assign-promo-popup";
 import { BirthMonthPromoPopup } from "./birth-month-promo-popup";
 import { ChunkLoadRecovery } from "./chunk-load-recovery";
+import { PortalVisitTracker } from "./portal-visit-tracker";
 
 function SiteChrome({ children }: { children: React.ReactNode }) {
   const { language, setLanguage, t } = usePortalLanguage();
@@ -311,6 +312,7 @@ function SiteChrome({ children }: { children: React.ReactNode }) {
       <AddToHomeScreenPrompt />
       <VersionBadge />
       <ChunkLoadRecovery />
+      {isSessionLoaded && isLoggedIn && sessionEmail ? <PortalVisitTracker /> : null}
     </div>
   );
 }

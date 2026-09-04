@@ -19,6 +19,7 @@ import {
   ClientRow,
   CleaningCalendarEvent,
   awardCleaningCoinsToSheet,
+  reverseCleaningCoinsOnSheet,
   createAutomaticFineForEmail,
   createAutomaticFineForEmailPaidByCoins,
   deleteCleaningCalendarEvent,
@@ -2282,6 +2283,13 @@ export async function releaseCleaningTask(
   }
 
   const newFloor = task.type === CleaningTaskType.TRASH_D7 ? replacementUser.floor : task.floor;
+  const rewardSettings = await getCleaningRewardSettings();
+  const { rewardCoins: replacementRewardCoins } = computeCleaningRewardCoins(
+    rewardSettings,
+    task.type,
+    task.scheduledDate,
+    false
+  );
   const coinQuote = releasePenalty.fineAmount > 0
     ? await getFineCoinPaymentQuoteForEmail(normalizedEmail, releasePenalty.fineAmount)
     : null;
@@ -2317,7 +2325,7 @@ export async function releaseCleaningTask(
           userName: replacementUser.name,
           branchId: replacementUser.branchId,
           floor: newFloor,
-          rewardCoins: task.rewardCoins,
+          rewardCoins: replacementRewardCoins,
           type: task.type,
           status: task.status,
           completedAt: task.completedAt,
@@ -2365,7 +2373,11 @@ export async function releaseCleaningTask(
         userEmail: replacementUser.email,
         userName: replacementUser.name,
         branchId: replacementUser.branchId,
-        floor: newFloor
+        floor: newFloor,
+        // Replacement is auto-picked — do not inherit self-assign multiplier / Hero credit.
+        rewardCoins: replacementRewardCoins,
+        isSelfAssigned: false,
+        assignmentSource: CleaningAssignmentSource.SYSTEM
       }
     });
 
@@ -3350,6 +3362,19 @@ export async function auditCleaningTask(input: {
     throw new Error("Cleaning task not found");
   }
 
+  if (input.decision === CleaningAuditDecision.APPROVE) {
+    if (task.status !== CleaningTaskStatus.DONE_PENDING_AUDIT) {
+      throw new Error("Only tasks pending audit can be approved");
+    }
+  } else if (input.decision === CleaningAuditDecision.REJECT) {
+    if (
+      task.status !== CleaningTaskStatus.DONE_PENDING_AUDIT &&
+      task.status !== CleaningTaskStatus.APPROVED
+    ) {
+      throw new Error("Only pending or approved cleaning tasks can be rejected");
+    }
+  }
+
   const nextStatus =
     input.decision === CleaningAuditDecision.APPROVE
       ? CleaningTaskStatus.APPROVED
@@ -3374,15 +3399,24 @@ export async function auditCleaningTask(input: {
     });
 
     if (input.decision === CleaningAuditDecision.APPROVE) {
-      await tx.coinLedger.create({
-        data: {
-          userId: updated.userEmail,
-          delta: updated.rewardCoins,
-          reason: CoinReason.CLEANING_REWARD,
+      const existingReward = await tx.coinLedger.findFirst({
+        where: {
           refType: "cleaning_task",
-          refId: updated.id
+          refId: updated.id,
+          reason: CoinReason.CLEANING_REWARD
         }
       });
+      if (!existingReward) {
+        await tx.coinLedger.create({
+          data: {
+            userId: updated.userEmail,
+            delta: updated.rewardCoins,
+            reason: CoinReason.CLEANING_REWARD,
+            refType: "cleaning_task",
+            refId: updated.id
+          }
+        });
+      }
     }
 
     if (input.decision === CleaningAuditDecision.REJECT) {
@@ -3395,15 +3429,24 @@ export async function auditCleaningTask(input: {
       });
 
       if (existingReward) {
-        await tx.coinLedger.create({
-          data: {
-            userId: updated.userEmail,
-            delta: -updated.rewardCoins,
-            reason: CoinReason.CLEANING_REVERSAL,
+        const existingReversal = await tx.coinLedger.findFirst({
+          where: {
             refType: "cleaning_task",
-            refId: updated.id
+            refId: updated.id,
+            reason: CoinReason.CLEANING_REVERSAL
           }
         });
+        if (!existingReversal) {
+          await tx.coinLedger.create({
+            data: {
+              userId: updated.userEmail,
+              delta: -updated.rewardCoins,
+              reason: CoinReason.CLEANING_REVERSAL,
+              refType: "cleaning_task",
+              refId: updated.id
+            }
+          });
+        }
       }
     }
 
@@ -3462,6 +3505,17 @@ export async function auditCleaningTask(input: {
 
   if (input.decision === CleaningAuditDecision.APPROVE) {
     await awardCleaningCoinsToSheet({
+      userEmail: updatedTask.userEmail,
+      userName: updatedTask.userName,
+      branchId: updatedTask.branchId,
+      rewardCoins: updatedTask.rewardCoins,
+      taskId: updatedTask.id,
+      reviewedBy: input.reviewer
+    });
+  }
+
+  if (input.decision === CleaningAuditDecision.REJECT && task.status === CleaningTaskStatus.APPROVED) {
+    await reverseCleaningCoinsOnSheet({
       userEmail: updatedTask.userEmail,
       userName: updatedTask.userName,
       branchId: updatedTask.branchId,
@@ -4516,6 +4570,13 @@ export async function acceptSwapRequest(requestId: string, targetEmail: string) 
   if (!targetUser) throw new CleaningSwapError("Your resident account could not be found", "NOT_FOUND");
 
   const newFloor = task.type === CleaningTaskType.TRASH_D7 ? (targetUser.floor ?? task.floor) : task.floor;
+  const rewardSettings = await getCleaningRewardSettings();
+  const { rewardCoins: swapRewardCoins } = computeCleaningRewardCoins(
+    rewardSettings,
+    task.type,
+    task.scheduledDate,
+    false
+  );
 
   // DB transaction: mark accepted, cancel other pending swaps for this task, update task
   const updatedTask = await prisma.$transaction(async (tx) => {
@@ -4542,7 +4603,19 @@ export async function acceptSwapRequest(requestId: string, targetEmail: string) 
 
     return tx.cleaningTask.update({
       where: { id: task.id },
-      data: { userEmail: normalizedTarget, userName: targetUser.name, branchId: targetUser.branchId, floor: newFloor }
+      data: {
+        userEmail: normalizedTarget,
+        userName: targetUser.name,
+        branchId: targetUser.branchId,
+        floor: newFloor,
+        // Acceptor did not self-assign — reset multiplier and Hero eligibility.
+        rewardCoins: swapRewardCoins,
+        isSelfAssigned: false,
+        assignmentSource:
+          task.assignmentSource === CleaningAssignmentSource.MANAGER
+            ? CleaningAssignmentSource.MANAGER
+            : CleaningAssignmentSource.SYSTEM
+      }
     });
   });
 
@@ -4559,7 +4632,7 @@ export async function acceptSwapRequest(requestId: string, targetEmail: string) 
         userName: targetUser.name,
         branchId: targetUser.branchId,
         floor: newFloor,
-        rewardCoins: task.rewardCoins,
+        rewardCoins: swapRewardCoins,
         type: task.type,
         status: task.status,
         completedAt: task.completedAt,

@@ -57,6 +57,8 @@ import { ManagerSettingsTools } from "./manager-settings-tools";
 import { ManagerResidentGuidesEditor } from "./manager-resident-guides-editor";
 import { AdminAiUsageAnalytics } from "./admin-ai-usage-analytics";
 import { BedOccupancyAnalytics } from "./bed-occupancy-analytics";
+import { MemberTierAnalytics } from "./member-tier-analytics";
+import { PortalVisitAnalytics } from "./portal-visit-analytics";
 import { CheckoutReviewClient } from "./checkout-review-client";
 
 
@@ -277,7 +279,7 @@ type PricingSettingsSectionKey =
 type ManagerSettingsMainSection = "pricing" | "resident_guides" | "tools" | "ai_usage";
 type PricingSettingsSubTab = "long_term" | "short_term" | "referral" | "staff";
 type ClientSubTab = "list" | "details" | "checkout" | "analytics";
-type OwnerAnalyticsTab = "payments" | "coins" | "laundry" | "fines" | "cleaning" | "airfryer" | "occupancy";
+type OwnerAnalyticsTab = "payments" | "coins" | "laundry" | "fines" | "cleaning" | "airfryer" | "occupancy" | "members" | "visits";
 type PaymentAnalyticsChartView = "bar" | "donut";
 type PaymentAnalyticsDimension = "receiver" | "branch" | "category" | "bed" | "year" | "month";
 type PaymentAnalyticsPathItem = { dimension: PaymentAnalyticsDimension; value: string };
@@ -2222,12 +2224,14 @@ function OwnerAnalyticsDashboard({
   paymentRows,
   normalizedEmail,
   paymentLoading,
-  onRefreshPayments
+  onRefreshPayments,
+  onOpenClient
 }: {
   paymentRows: Record<string, string>[];
   normalizedEmail: string;
   paymentLoading: boolean;
   onRefreshPayments: () => void;
+  onOpenClient?: (maHd: string) => void;
 }) {
   const { t } = usePortalLanguage();
   const [activeTab, setActiveTab] = useState<OwnerAnalyticsTab>("payments");
@@ -2255,6 +2259,8 @@ function OwnerAnalyticsDashboard({
   const tabItems: Array<{ key: OwnerAnalyticsTab; label: string }> = [
     { key: "payments", label: t("analyticsPaymentsTab") },
     { key: "coins", label: t("analyticsCoinsTab") },
+    { key: "members", label: t("analyticsMembersTab") },
+    { key: "visits", label: t("analyticsVisitsTab") },
     { key: "laundry", label: t("analyticsLaundryTab") },
     { key: "fines", label: t("analyticsFineTab") },
     { key: "cleaning", label: t("analyticsCleaningTab") },
@@ -2543,8 +2549,8 @@ function OwnerAnalyticsDashboard({
               void loadLaundryHistory();
             } else if (activeTab === "airfryer") {
               void loadControllerHistory();
-            } else if (activeTab === "occupancy") {
-              // The occupancy panel loads its own snapshot history.
+            } else if (activeTab === "occupancy" || activeTab === "members" || activeTab === "visits") {
+              // Custom panels load / refresh themselves.
             } else {
               void loadCleaningTasks();
             }
@@ -2572,6 +2578,10 @@ function OwnerAnalyticsDashboard({
 
       {activeTab === "occupancy" ? (
         <BedOccupancyAnalytics actorEmail={normalizedEmail} />
+      ) : activeTab === "members" ? (
+        <MemberTierAnalytics actorEmail={normalizedEmail} onOpenClient={onOpenClient} />
+      ) : activeTab === "visits" ? (
+        <PortalVisitAnalytics actorEmail={normalizedEmail} />
       ) : activeTab === "payments" ? (
         <PaymentAnalyticsDashboard rows={paymentRows} loading={paymentLoading} onRefresh={onRefreshPayments} t={t} />
       ) : activeTab === "coins" ? (
@@ -8083,6 +8093,10 @@ export function ManagerClient({
             normalizedEmail={normalizedEmail}
             paymentLoading={loading}
             onRefreshPayments={() => void loadPaymentPurposeRows()}
+            onOpenClient={(maHd) => {
+              setSelectedMaHd(maHd);
+              setClientSubTab("details");
+            }}
           />
         ) : (
           <div ref={managerClientWorkspaceRef} className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">

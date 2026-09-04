@@ -810,3 +810,19 @@ model WebLeadMessage {
 
   @@index([conversationId, createdAt])
 }
+
+/// Lightweight portal open / screen visit (deduped per email+path ~20 min).
+model PortalVisit {
+  id        String   @id @default(cuid())
+  email     String
+  role      String?
+  path      String
+  branchId  String?
+  device    String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([email, createdAt])
+  @@index([path, createdAt])
+  @@index([email, path, createdAt])
+}
