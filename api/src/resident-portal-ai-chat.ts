@@ -6,7 +6,7 @@
  * Tools only return data scoped to the authenticated resident email (server-enforced).
  */
 
-import { CleaningAvailabilityType } from "@prisma/client";
+import { CleaningAvailabilityType, CleaningTaskType } from "@prisma/client";
 
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
 import { recordGeminiUsage } from "./ai-usage.js";
@@ -21,7 +21,12 @@ import {
 
 import { computePrepaidNextPaymentEstimate } from "./calculation-engine.js";
 import { calculateRentBreakdownForBillingMonth } from "./monthly-rent-breakdown.js";
-import { getCleaningOverviewForUser } from "./cleaning.js";
+import {
+  checkSelfAssignCleaningTask,
+  getCleaningOverviewForUser,
+  listOpenSelfAssignSlotsForUser,
+  selfAssignCleaningTask
+} from "./cleaning.js";
 import {
   createLaundryBooking,
   getActiveClientByEmail,
@@ -31,6 +36,7 @@ import {
   getLaundryBookingContextForEmail,
   getLaundryBookingsForEmail,
   getPaymentsForEmail,
+  getResidentMemberTierSnapshot,
   type LaundryPaymentMethod
 } from "./google-sheets.js";
 import { getConfirmedPrepaidBillingForResident } from "./manager-prepaid-package.js";
@@ -108,6 +114,9 @@ const PROFILE_COLUMNS = [
   "Ngày hết hạn hợp đồng",
   "Số tiền cọc",
   "Cozoro coins hiện có",
+  "Tổng Coins tích luỹ",
+  "Cozoro Member",
+  "Giới tính",
   "Bạn muốn thanh toán chi phí như thế nào?"
 ];
 
@@ -455,6 +464,133 @@ async function executeResidentTool(
       const snap = await buildRentSnapshot(residentEmail.trim().toLowerCase());
       return { ok: true, rentJson: clipJson(snap, 14000) };
     }
+    case "list_open_cleaning_slots": {
+      const limitRaw = Number(args.limit ?? 8);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 20) : 8;
+      const typeFilter = String(args.type ?? "").trim().toUpperCase();
+      const includeTakeOver = args.includeTakeOver !== false;
+      try {
+        let slots = await listOpenSelfAssignSlotsForUser(residentEmail, { limit: 20, includeTakeOver });
+        if (
+          typeFilter === CleaningTaskType.KITCHEN_D2 ||
+          typeFilter === CleaningTaskType.KITCHEN_D7 ||
+          typeFilter === CleaningTaskType.TRASH_D7
+        ) {
+          slots = slots.filter((slot) => slot.type === typeFilter);
+        }
+        slots = slots.slice(0, limit);
+        return {
+          ok: true,
+          slots,
+          hint:
+            "Present these open slots to the resident. After they pick one, call propose_self_assign, then only call confirm_self_assign after they clearly confirm."
+        };
+      } catch (e) {
+        return { ok: false, message: e instanceof Error ? e.message : "Unable to list open cleaning slots." };
+      }
+    }
+    case "propose_self_assign": {
+      const dateRaw = String(args.date ?? "").trim();
+      const typeRaw = String(args.type ?? "").trim().toUpperCase();
+      const dateMatch = dateRaw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!dateMatch) {
+        return { ok: false, message: "date must be YYYY-MM-DD." };
+      }
+      if (
+        typeRaw !== CleaningTaskType.KITCHEN_D2 &&
+        typeRaw !== CleaningTaskType.KITCHEN_D7 &&
+        typeRaw !== CleaningTaskType.TRASH_D7
+      ) {
+        return { ok: false, message: "type must be KITCHEN_D2, KITCHEN_D7, or TRASH_D7." };
+      }
+      const date = new Date(
+        Date.UTC(
+          Number.parseInt(dateMatch[1], 10),
+          Number.parseInt(dateMatch[2], 10) - 1,
+          Number.parseInt(dateMatch[3], 10),
+          0,
+          0,
+          0,
+          0
+        )
+      );
+      try {
+        const check = await checkSelfAssignCleaningTask({
+          email: residentEmail,
+          date,
+          type: typeRaw
+        });
+        return {
+          ok: true,
+          proposal: {
+            date: dateRaw,
+            type: typeRaw,
+            ...check
+          },
+          hint: check.canSubmit
+            ? "Ask the resident to confirm this exact date and type. Only then call confirm_self_assign."
+            : "Explain why this slot cannot be claimed and offer alternatives from list_open_cleaning_slots."
+        };
+      } catch (e) {
+        return { ok: false, message: e instanceof Error ? e.message : "Unable to propose self-assign." };
+      }
+    }
+    case "confirm_self_assign": {
+      const dateRaw = String(args.date ?? "").trim();
+      const typeRaw = String(args.type ?? "").trim().toUpperCase();
+      const confirmed = args.residentConfirmed === true || String(args.residentConfirmed ?? "").toLowerCase() === "true";
+      if (!confirmed) {
+        return {
+          ok: false,
+          message: "Set residentConfirmed=true only after the resident clearly agrees to this date and type."
+        };
+      }
+      const dateMatch = dateRaw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!dateMatch) {
+        return { ok: false, message: "date must be YYYY-MM-DD." };
+      }
+      if (
+        typeRaw !== CleaningTaskType.KITCHEN_D2 &&
+        typeRaw !== CleaningTaskType.KITCHEN_D7 &&
+        typeRaw !== CleaningTaskType.TRASH_D7
+      ) {
+        return { ok: false, message: "type must be KITCHEN_D2, KITCHEN_D7, or TRASH_D7." };
+      }
+      const date = new Date(
+        Date.UTC(
+          Number.parseInt(dateMatch[1], 10),
+          Number.parseInt(dateMatch[2], 10) - 1,
+          Number.parseInt(dateMatch[3], 10),
+          0,
+          0,
+          0,
+          0
+        )
+      );
+      try {
+        const task = await selfAssignCleaningTask({
+          email: residentEmail,
+          date,
+          type: typeRaw
+        });
+        return {
+          ok: true,
+          task: {
+            id: task.id,
+            type: task.type,
+            scheduledDate: task.scheduledDate,
+            rewardCoins: task.rewardCoins,
+            status: task.status,
+            isSelfAssigned: task.isSelfAssigned
+          }
+        };
+      } catch (e) {
+        return { ok: false, message: e instanceof Error ? e.message : "Self-assign failed." };
+      }
+    }
+    case "get_my_member_status": {
+      return getResidentMemberTierSnapshot(residentEmail);
+    }
     default:
       return { ok: false, message: `Unknown tool: ${name}` };
   }
@@ -466,7 +602,7 @@ const TOOLS: GeminiTool[] = [
       {
         name: "get_my_profile",
         description:
-          "Load this resident's own contract row fields (name, branch, room, bed, contract dates, deposit, coins on sheet, payment plan). No other residents.",
+          "Load this resident's own contract row fields (name, branch, room, bed, gender, contract dates, deposit, coins, accumulated coins, Cozoro Member tier, payment plan). No other residents.",
         parameters: { type: "OBJECT", properties: {} }
       },
       {
@@ -552,14 +688,81 @@ const TOOLS: GeminiTool[] = [
         description:
           "Current month rent status, breakdown or prepaid next-payment estimate — only for this resident.",
         parameters: { type: "OBJECT", properties: {} }
+      },
+      {
+        name: "get_my_member_status",
+        description:
+          "This resident's Cozoro Member tier (recorded vs live), current/accumulated coins, previous-month earnings vs maintain thresholds, recent tier changes, and ranking policy (Silver/Gold/Platinum/Diamond/Elite). Use for hạng / Diamond / Gold / Vàng / tier drop questions.",
+        parameters: { type: "OBJECT", properties: {} }
+      },
+      {
+        name: "list_open_cleaning_slots",
+        description:
+          "List open cleaning self-assign slots for this resident (bonus coins). Use when they want to claim a cleaning date, find open kitchen/trash slots, or ask Cozoro Bee to self-assign for them.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            limit: { type: "NUMBER", description: "Max slots to return (default 8, max 20)" },
+            type: {
+              type: "STRING",
+              description: "Optional filter: KITCHEN_D2, KITCHEN_D7, or TRASH_D7",
+              enum: ["KITCHEN_D2", "KITCHEN_D7", "TRASH_D7"]
+            },
+            includeTakeOver: {
+              type: "BOOLEAN",
+              description: "Include tonight take-over slots after 20:00 VN (default true)"
+            }
+          }
+        }
+      },
+      {
+        name: "propose_self_assign",
+        description:
+          "Validate one cleaning self-assign candidate (date + type) and return canSubmit, reward preview, and take-over flag. Call after the resident picks a slot from list_open_cleaning_slots.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            date: { type: "STRING", description: "Calendar date YYYY-MM-DD" },
+            type: {
+              type: "STRING",
+              description: "KITCHEN_D2, KITCHEN_D7, or TRASH_D7",
+              enum: ["KITCHEN_D2", "KITCHEN_D7", "TRASH_D7"]
+            }
+          },
+          required: ["date", "type"]
+        }
+      },
+      {
+        name: "confirm_self_assign",
+        description:
+          "Assign an open cleaning slot to this resident after they clearly confirm. Requires residentConfirmed=true. Prefer propose_self_assign first.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            date: { type: "STRING", description: "Calendar date YYYY-MM-DD" },
+            type: {
+              type: "STRING",
+              description: "KITCHEN_D2, KITCHEN_D7, or TRASH_D7",
+              enum: ["KITCHEN_D2", "KITCHEN_D7", "TRASH_D7"]
+            },
+            residentConfirmed: {
+              type: "BOOLEAN",
+              description: "Must be true only after explicit resident confirmation"
+            }
+          },
+          required: ["date", "type", "residentConfirmed"]
+        }
       }
     ]
   }
 ];
 
-function buildSystemPrompt(language: UiLanguage, residentEmail: string) {
+function buildSystemPrompt(language: UiLanguage, residentEmail: string, genderHint?: string) {
   const uiLang = language === "vi" ? "Vietnamese (tiếng Việt)" : "English";
-  const common = `You are **Cozoro Bee**, the friendly bee mascot of CozoroHome — a co-living resident portal in Ho Chi Minh City. You speak in first person as Cozoro Bee (warm, concise, never arrogant).
+  const genderLine = genderHint
+    ? `- Roster gender (Giới tính): **${genderHint}** — use this for playful address forms below.`
+    : `- Roster gender unknown — use soft neutral "bạn" / "cậu"; do not guess princess/lord titles.`;
+  const common = `You are **Cozoro Bee**, the friendly bee mascot of CozoroHome — a co-living resident portal in Ho Chi Minh City. You speak in first person as Cozoro Bee (warm, concise, witty, never arrogant).
 
 ## Portal UI language (mandatory)
 - The resident chose **${uiLang}** in the app. **Every** visible reply (including after tool calls and when summarizing errors) must be written in ${uiLang}.
@@ -567,24 +770,41 @@ function buildSystemPrompt(language: UiLanguage, residentEmail: string) {
 
 ## Authenticated portal email
 - The only account you may access (resident **or** staff in user view): ${residentEmail}
+${genderLine}
+
+## Tone (dí dỏm + teen code)
+- Be **hài hước, dí dỏm** like a cute dorm bee buddy — not stiff corporate support.
+- When Vietnamese: sprinkle **teen code / slang** generously but still readable — iu, xỉu, xỉu up, chốt, quà, quà quá, say hi, oke la / okela, đỉnh, real, hơi bị, hehe, hí hí, ú òa, bestie, slay, flex, vibe, mood, deal, check, drop, inbox, reply liền, đi nha, nha nha, thui, thôiii, đúng bài, hết bài, mê, cưng, xinh xỉu, cháy quá, nét căng, ổn áp, chốt đơn vibe. Keep numbers and rules clear.
+- **Gendered playful address** (from roster gender above):
+  - **Female / nữ / F:** vary "xin chào công chúa", "thưa quý cô", "xin chào nàng", "nàng có khỏe không", "iu công chúa", "bestie ơi", "cưng ơi" — warm, never creepy.
+  - **Male / nam / M:** vary "xin chào quàng thượng", "thưa quý ngài", "thưa anh iu", "say hi anh trai", "anh trai ơi", "anh ơi", "bro ơi", "quàng thượng ơi" — cheeky, never mocking.
+  - Rotate openings; do not spam the same title every turn. Mid-chat shorten to "nàng" / "anh iu" / "anh trai" / "cậu" / "bestie" sometimes.
+- On serious topics (fines, payment fights, safety), prioritize clarity; humor is a light sprinkle only.
+- English UI: keep witty and warm; short Vietnamese pet titles are OK if they fit, but stay mostly English.
 
 ## Hard rules
 - You must **never** reveal or infer other residents' names, emails, rooms, fines, or schedules.
-- **You cannot delete or alter official records** (Google Sheet roster rows, contracts, fines, payments, coins ledger, other residents' bookings, or chat history). Your tools are read-only except **book_my_laundry**, which only creates a booking for this email. If someone asks to delete data, say clearly that only staff can do that through the office — do not imply you deleted anything or that they succeeded without staff.
+- **You cannot delete or alter official records** (Google Sheet roster rows, contracts, fines, payments, coins ledger, other residents' bookings, or chat history). Your tools are read-only except **book_my_laundry** and **confirm_self_assign**, which only create a laundry booking or cleaning self-assign for this email. If someone asks to delete data, say clearly that only staff can do that through the office — do not imply you deleted anything or that they succeeded without staff.
 - Only use facts returned by your tools (each tool is server-scoped to this email's sheet rows and portal data).
 - If tools return nothing or an error, say so honestly; do not invent numbers.
-- Prefer **concise** answers. Offer step-by-step only when booking laundry or interpreting a schedule.
+- Prefer **concise** answers. Offer step-by-step only when booking laundry, self-assigning cleaning, or interpreting a schedule.
 - **Laundry booking workflow (mandatory):**
   1. Call **get_my_laundry_status** first — machines are already limited to **the resident's branch**; never use another branch's machineId.
   2. Ask whether they want a **washer** or **dryer** (if not already clear).
   3. Ask for a **date and time**, OR if they want the **soonest** slot — then call **suggest_closest_laundry_slot** (omit preferredStartIso) or pass their requested time as **preferredStartIso** to find the nearest open slot on an eligible machine of that type.
   4. If their exact time is not open, call **get_laundry_open_slots** for the chosen machineId and/or **suggest_closest_laundry_slot** and **propose the closest available** start time in plain language (local timezone context: Vietnam).
   5. Only then call **book_my_laundry** with a start ISO that is still open for that machineId (re-check slots if needed).
+- **Cleaning self-assign workflow (mandatory when they want to claim a cleaning slot via chat):**
+  1. Call **list_open_cleaning_slots** (optionally filter by type). Summarize a few options with dates, task type, and estimated coins (mention early-bird / streak bonuses when present).
+  2. When they pick a date/type, call **propose_self_assign** and tell them the reward preview (and take-over note if applicable).
+  3. Wait for a clear yes / confirm. Only then call **confirm_self_assign** with the same date/type and **residentConfirmed=true**.
+  4. Never invent open slots; never assign without confirmation; never claim another resident's name.
 - For **coins / rent / fines**: call **get_my_financial_overview** when they ask about balance, payments, or penalties together; otherwise **get_my_coins** or **get_my_rent_status** as appropriate.
+- For **member tier / ranking / hạng / Diamond / Gold / Vàng / Platinum / Elite** (including “why did my tier drop?”): call **get_my_member_status** first. Explain with their recorded vs live tier, previousMonthEarnings vs maintainCoins, and rankingPolicy. Do **not** invent a system “gold reset” of lifetime coins — a Diamond→Gold drop usually means last month’s earned coins were below Diamond’s 20,000 maintain rule while Gold (5,000) still matched. Cite tool numbers only; empty recentTierChanges may mean silent sync. Suggest **Account / Coins** for the full UI, or the human Support thread for disputes.
 - Payments/rent: summarize amounts and due status clearly; mention if figures are estimates from the roster.
 - This Bee chat is **not** the same as the human **Messages / Support** thread — still be professional; for disputes or sensitive issues, suggest that thread.
-- When introducing yourself, say you are **Cozoro Bee**, CozoroHome's bee mascot (in Vietnamese you may say "mình là Cozoro Bee, linh vật ong của CozoroHome").
-- **Self-assign coin bonus (side joke only):** if the resident asks about cleaning, Schedule, tự đăng ký / self-assign, trực bếp, trash, or coins from cleaning, help with their **main** question first. Then add **one short funny aside** encouraging them to claim open slots themselves for higher coins than system/manager assign — weekday **x2**, weekend **x2.5**, Vietnam holiday **x3** (e.g. buzz about "green dates = sweeter coin nectar"). Never make the joke the whole answer; never drop it into unrelated topics (rent, laundry booking, passwords).`;
+- When introducing yourself, say you are **Cozoro Bee**, CozoroHome's bee mascot (in Vietnamese you may say "mình là Cozoro Bee, linh vật ong của CozoroHome" — plus a playful gender greeting when known).
+- **Self-assign coin bonus (side joke only):** if the resident asks about cleaning, Schedule, tự đăng ký / self-assign, trực bếp, trash, or coins from cleaning, help with their **main** question first (use the self-assign tools when they want to claim a slot). Then add **one short funny aside** encouraging them to claim open slots themselves for higher coins than system/manager assign — weekday **x2**, weekend **x2.5**, Vietnam holiday **x3**, plus early-bird/streak micro-bonuses when relevant (e.g. buzz about "green dates = sweeter coin nectar"). Never make the joke the whole answer; never drop it into unrelated topics (rent, laundry booking, passwords).`;
 
   if (language === "vi") {
     return `${common}
@@ -593,14 +813,18 @@ function buildSystemPrompt(language: UiLanguage, residentEmail: string) {
 - Chỉ máy thuộc **chi nhánh đang ở** (dữ liệu từ get_my_laundry_status). Hỏi rõ **máy giặt hay máy sấy** nếu chưa rõ.
 - Hỏi **ngày giờ** hoặc nếu muốn **sớm nhất** thì dùng suggest_closest_laundry_slot (bỏ preferredStartIso). Nếu giờ họ chọn không còn trống, đề xuất **khung giờ gần nhất** còn mở (có thể gọi suggest_closest_laundry_slot với preferredStartIso).
 
+## Tự đăng ký vệ sinh (self-assign)
+- Dùng list_open_cleaning_slots → propose_self_assign → chỉ confirm_self_assign sau khi cư dân xác nhận rõ.
+- Nêu ước tính coin (kể cả early-bird / streak nếu có). Không bịa lịch trống.
+
 ## Ngôn ngữ
-- Luôn trả lời bằng **tiếng Việt** rõ ràng, thân thiện (kể cả khi lịch sử chat có câu tiếng Anh); xưng hô là Cozoro Bee ("mình") như linh vật ong nhỏ (có thể giữ từ tiếng Anh ngắn: laundry, coins).`;
+- Luôn trả lời bằng **tiếng Việt** rõ ràng, thân thiện, dí dỏm + teen code vừa phải–hơi nhiều (kể cả khi lịch sử chat có câu tiếng Anh); xưng hô là Cozoro Bee ("mình") như linh vật ong nhỏ. Nam: ưu tiên xoay **anh trai / anh iu / quàng thượng / bro**; nữ: **công chúa / nàng / quý cô / bestie**. Có thể giữ từ tiếng Anh ngắn: laundry, coins, say hi, vibe, okela.`;
   }
 
   return `${common}
 
 ## Language
-- Always reply in **clear English** as Cozoro Bee (friendly "I" voice), even if earlier turns in the chat were Vietnamese. Short Vietnamese words in the resident's message are fine to mirror.`;
+- Always reply in **clear English** as Cozoro Bee (friendly witty "I" voice), even if earlier turns in the chat were Vietnamese. Short Vietnamese pet titles / teen words are fine to sprinkle if they fit.`;
 }
 
 export async function handleResidentPortalAiChat(
@@ -676,7 +900,16 @@ export async function handleResidentPortalAiChat(
     return { reply: founderEgg.reply, showStarfieldEffect: founderEgg.showStarfieldEffect };
   }
 
-  const systemPrompt = buildSystemPrompt(language, residentEmail.trim().toLowerCase());
+  const normalizedEmail = residentEmail.trim().toLowerCase();
+  let genderHint: string | undefined;
+  try {
+    const clientRow = await getActiveClientByEmail(normalizedEmail);
+    const g = String(clientRow?.["Giới tính"] ?? "").trim();
+    if (g) genderHint = g;
+  } catch {
+    // ignore roster lookup failures for tone only
+  }
+  const systemPrompt = buildSystemPrompt(language, normalizedEmail, genderHint);
 
   const limitedHistory = history.slice(-AI_CHAT_CONTEXT_MESSAGE_LIMIT);
   const contents: LlmChatContent[] = limitedHistory.map((msg) => ({
@@ -684,7 +917,6 @@ export async function handleResidentPortalAiChat(
     parts: [{ text: msg.text }]
   }));
 
-  const normalizedEmail = residentEmail.trim().toLowerCase();
   let maxRounds = 8;
 
   while (maxRounds-- > 0) {
@@ -693,7 +925,7 @@ export async function handleResidentPortalAiChat(
       systemPrompt,
       contents,
       tools: TOOLS,
-      temperature: 0.25,
+      temperature: 0.4,
       maxOutputTokens: 1024,
       geminiKind: "resident"
     });

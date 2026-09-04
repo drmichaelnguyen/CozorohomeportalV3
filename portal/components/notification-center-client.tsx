@@ -19,6 +19,7 @@ type ResidentNotification = {
     | "NEW_FINE"
     | "LAUNDRY_REMINDER"
     | "CLEANING_REMINDER"
+    | "SELF_ASSIGN_OPPORTUNITY"
     | "CLEANING_AUDIT_RESULT"
     | "PREPAID_PACKAGE"
     | "FRIDGE_DRAIN_REMINDER"

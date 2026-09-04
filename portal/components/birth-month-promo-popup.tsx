@@ -2,10 +2,21 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
 import { isShortTermContractCode } from "../lib/resident-guides-types";
+import {
+  BIRTH_MONTH_PROMO_BODIES,
+  BIRTH_MONTH_PROMO_BODIES_TODAY,
+  BIRTH_MONTH_PROMO_CTAS,
+  BIRTH_MONTH_PROMO_EYEBROWS,
+  BIRTH_MONTH_PROMO_TITLES,
+  BIRTH_MONTH_PROMO_TITLES_TODAY,
+  fillPromoTemplate,
+  pickRotatingLine,
+  SELF_ASSIGN_PROMO_DISMISSES
+} from "../lib/rotating-promo-copy";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 
@@ -39,7 +50,7 @@ function markPromoDismissed(email: string, year: number, month: number) {
 }
 
 export function BirthMonthPromoPopup() {
-  const { t, language } = usePortalLanguage();
+  const { language } = usePortalLanguage();
   const { sessionEmail, sessionRole, isLoggedIn, isSessionLoaded } = usePortalSession();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -47,6 +58,7 @@ export function BirthMonthPromoPopup() {
   const [benefits, setBenefits] = useState<BirthdayBenefits | null>(null);
 
   const normalizedEmail = sessionEmail.trim().toLowerCase();
+  const lang = language === "vi" ? "vi" : "en";
   const isResidentSession =
     isSessionLoaded &&
     isLoggedIn &&
@@ -111,17 +123,47 @@ export function BirthMonthPromoPopup() {
     return () => window.clearTimeout(timer);
   }, [benefits, isResidentSession, normalizedEmail, isHostelGuest]);
 
+  const copy = useMemo(() => {
+    if (!benefits) return null;
+    const seed = normalizedEmail || "guest";
+    const amount = benefits.birthdayCoinGrant.toLocaleString(lang === "vi" ? "vi-VN" : "en-US");
+    const vars = {
+      birthdayCoins: amount,
+      minMonths: String(benefits.extensionMinMonths),
+      multiplier: String(benefits.extensionCoinMultiplier)
+    };
+    const today = benefits.isBirthdayToday;
+    return {
+      eyebrow: pickRotatingLine("birth-eyebrow", seed, BIRTH_MONTH_PROMO_EYEBROWS, lang),
+      title: pickRotatingLine(
+        today ? "birth-title-today" : "birth-title",
+        seed,
+        today ? BIRTH_MONTH_PROMO_TITLES_TODAY : BIRTH_MONTH_PROMO_TITLES,
+        lang
+      ),
+      body: fillPromoTemplate(
+        pickRotatingLine(
+          today ? "birth-body-today" : "birth-body",
+          seed,
+          today ? BIRTH_MONTH_PROMO_BODIES_TODAY : BIRTH_MONTH_PROMO_BODIES,
+          lang
+        ),
+        vars
+      ),
+      cta: pickRotatingLine("birth-cta", seed, BIRTH_MONTH_PROMO_CTAS, lang),
+      dismiss: pickRotatingLine("birth-dismiss", seed, SELF_ASSIGN_PROMO_DISMISSES, lang)
+    };
+  }, [benefits, normalizedEmail, lang]);
+
   function dismiss() {
     const now = new Date();
     markPromoDismissed(normalizedEmail, now.getFullYear(), now.getMonth() + 1);
     setOpen(false);
   }
 
-  if (!open || !benefits?.isBirthMonth) {
+  if (!open || !benefits?.isBirthMonth || !copy) {
     return null;
   }
-
-  const amount = benefits.birthdayCoinGrant.toLocaleString(language === "vi" ? "vi-VN" : "en-US");
 
   return (
     <div
@@ -133,43 +175,29 @@ export function BirthMonthPromoPopup() {
       <div className="w-full max-w-md rounded-3xl border border-pink-200 bg-white shadow-2xl dark:border-pink-800 dark:bg-slate-900">
         <div className="border-b border-pink-100 bg-pink-50 px-4 py-3 sm:px-5 dark:border-pink-900/60 dark:bg-pink-950/50">
           <p className="text-[11px] font-bold uppercase tracking-wider text-pink-700 dark:text-pink-300">
-            {t("birthMonthPromoEyebrow", "Birth month")}
+            {copy.eyebrow}
           </p>
           <h3 id="birth-month-promo-title" className="mt-1 text-base font-semibold text-pink-950 dark:text-pink-50">
-            {benefits.isBirthdayToday
-              ? t("birthMonthPromoTitleToday", "Happy birthday!")
-              : t("birthMonthPromoTitle", "Your birth-month perks")}
+            {copy.title}
           </h3>
         </div>
 
         <div className="space-y-3 px-4 py-4 sm:px-5">
-          <p className="text-sm leading-relaxed text-slate-700 dark:text-slate-200">
-            {benefits.isBirthdayToday
-              ? t("birthMonthPromoBodyToday", {
-                  birthdayCoins: amount,
-                  minMonths: String(benefits.extensionMinMonths),
-                  multiplier: String(benefits.extensionCoinMultiplier)
-                })
-              : t("birthMonthPromoBody", {
-                  birthdayCoins: amount,
-                  minMonths: String(benefits.extensionMinMonths),
-                  multiplier: String(benefits.extensionCoinMultiplier)
-                })}
-          </p>
+          <p className="text-sm leading-relaxed text-slate-700 dark:text-slate-200">{copy.body}</p>
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <Link
               href={onAccountPage ? "#contract-extension-panel" : "/account#contract-extension-panel"}
               onClick={dismiss}
               className="inline-flex flex-1 items-center justify-center rounded-xl bg-pink-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-pink-700 sm:flex-none"
             >
-              {t("birthMonthPromoCta", "Extend contract")}
+              {copy.cta}
             </Link>
             <button
               type="button"
               onClick={dismiss}
               className="inline-flex rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
             >
-              {t("birthMonthPromoDismiss", "Not now")}
+              {copy.dismiss}
             </button>
           </div>
         </div>

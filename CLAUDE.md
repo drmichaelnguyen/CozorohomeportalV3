@@ -180,7 +180,7 @@ const nextConfig: NextConfig = {
 | `POST /cleaning/self-assign` | Submit self-assignment |
 | `POST /cleaning/tasks/:id/complete` | Mark task done |
 | `POST /cleaning/tasks/:id/release` | Release task (with penalty calculation) |
-| `GET /support/notifications?email=` | Resident notifications by type (SUPPORT_REPLY, PAYMENT_DUE, NEW_FINE, LAUNDRY_REMINDER, CLEANING_REMINDER) |
+| `GET /support/notifications?email=` | Resident notifications by type (SUPPORT_REPLY, PAYMENT_DUE, NEW_FINE, LAUNDRY_REMINDER, CLEANING_REMINDER, SELF_ASSIGN_OPPORTUNITY) |
 | `GET /support/attachments/:id` | Stream a chat image for an authorized viewer (`email` query); files under `api/data/chat-attachments/` |
 | Support / group message POSTs | Optional `attachments[]` (`dataUrl`, `fileName`, `width`, `height`) — max 3 images, JPEG/PNG/WebP, ~2 MB each after client compress |
 | `GET /manager/support/conversations?operatorEmail=` | Manager inbox list |
@@ -271,11 +271,15 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 ## Cleaning Schedule Business Rules
 
-- **Self-assign**: residents can claim open slots for future dates only, **max 30 days ahead**
+- **Self-assign**: residents can claim open slots for future dates only, **max 30 days ahead**; **Take Over** allows claiming today's incomplete occupied slot after **20:00 Vietnam time**
 - **Self-assign coin multipliers** (vs manager/system base reward): weekday **x2**, weekend **x2.5**, Vietnam national holiday **x3** (holiday calendar on cleaning UI; holiday wins over weekend)
+- **Self-assign micro-bonuses**: early-bird **+2,000** when claiming ≥7 days ahead; streak **+2,000** on every 3rd self-assign in the calendar month (stacks on multipliers)
+- **Open-slot alerts**: `SELF_ASSIGN_OPPORTUNITY` notifications + Schedule badge when open slots exist; Cozoro Bee can list/propose/confirm self-assign in chat
+- **Social soft pressure**: branch monthly self-assign leaderboard snippet (first names only) + weekly peer claim note; soft nudge on system-assigned tasks
+- **Low-friction claim**: Home/Schedule **Claim next open** CTA and one-tap Claim on open-date chips (confirm once)
 - **Cozoro Hero awards** (highest **APPROVED** self-assign completions in the period): month **+30,000**, quarter **+50,000**, year **+100,000** ("Cozoro Hero of the Year"); coins + Notification Center notice; awards closed periods once
 - **Contract end cleanup**: cleaning schedule is removed only after the resident **confirms they left** (checkout form), or when staff mark them inactive (−1 with no remaining active row). An expired contract end date alone does **not** remove tasks while the account stays active. Hostel short-term guests (`SHORTTERM-*`) are never on the cleaning schedule.
-- **Take Over**: if today is after 20:00 and an assigned resident hasn't completed the task, others can take over
+- **Take Over**: if today is after **20:00 Vietnam time** and an assigned resident hasn't completed the task (`ASSIGNED`), others can take over
 - **Task types**: `KITCHEN_D2`, `KITCHEN_D7`, `TRASH_D7`
 - **Completion window**: `KITCHEN_D7` = 17:00–23:00 on assigned date; others = any time that day
 - **Release penalties**: 5+ days ahead = no fine; 1–4 days = 50%; same day = 75%; past = no release. Release/swap replacement recalculates base `rewardCoins` and clears `isSelfAssigned`.
@@ -289,6 +293,8 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.29 | Self-assign social soft pressure + claim-next friction cuts; resident AI teen-code tone + member-tier tool; rotating teen-code daily popups (referral / self-assign / birth-month / cleaning+laundry). |
+| 3.9.28 | Self-assign open-slot notifications + badge; early-bird/streak bonuses; Take Over after 20:00 VN; Bee chat self-assign with confirm. Resident AI can explain Cozoro Member tier (recorded vs live, maintain thresholds). |
 | 3.9.27 | Client Details → Client Statistics adds Member tab (live/recorded tier + change history). |
 | 3.9.26 | Lightweight portal visit tracker (deduped screen opens) + Owner Analytics Visits tab; 90-day retention. |
 | 3.9.25 | Owner Analytics Members tab: live Cozoro Member ranking + inferred tier change history from coins sheet. |

@@ -4910,6 +4910,198 @@ export async function getMemberTierAnalytics(options?: {
   };
 }
 
+export type ResidentMemberTierSnapshot = {
+  ok: true;
+  email: string;
+  name: string;
+  branch: string;
+  recordedTier: string;
+  liveTier: string;
+  tierMismatch: boolean;
+  currentCoins: number;
+  totalAccumulatedCoins: number;
+  previousMonthEarnings: number;
+  previousMonthLabel: string;
+  maintainCoinsForRecordedTier: number;
+  maintainCoinsForLiveTier: number;
+  maintainsRecordedTier: boolean;
+  recentTierChanges: Array<{
+    at: string;
+    fromTier: string;
+    toTier: string;
+    event: string;
+    source: MemberTierChangeEntry["source"];
+    coinDelta: number | null;
+  }>;
+  rankingPolicy: {
+    tierOrder: string[];
+    tiers: Array<{
+      name: string;
+      accumulatedThreshold: number;
+      previousMonthMaintainCoins: number;
+      oneTimeUpgradeCost: number;
+    }>;
+    rulesSummary: string[];
+  };
+  explanationHint: string;
+  historyNote: string;
+  generatedAt: string;
+};
+
+/**
+ * Per-resident member tier + coins snapshot for portal AI (Bee / Support Assistant).
+ * Uses the same live-tier math and coins-sheet history inference as owner analytics.
+ */
+export async function getResidentMemberTierSnapshot(email: string): Promise<
+  | ResidentMemberTierSnapshot
+  | { ok: false; message: string; email: string }
+> {
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) {
+    return { ok: false, message: "Email is required.", email: "" };
+  }
+
+  const [client, coinsCacheRaw] = await Promise.all([
+    getActiveClientByEmail(normalizedEmail),
+    readCachedCoins()
+  ]);
+
+  if (!client) {
+    return {
+      ok: false,
+      message: "No active contract row for this email.",
+      email: normalizedEmail
+    };
+  }
+
+  const coinsCache = coinsCacheRaw ?? (await syncCoinsFromSheet());
+  const coinsHistory = coinsCache?.rows ?? [];
+  const name =
+    String(client[CLIENT_NAME_COLUMN] ?? client["Họ và tên"] ?? client["HỌ VÀ TÊN"] ?? "").trim() ||
+    normalizedEmail;
+  const branch = normalizeClientBranch(getClientBranchValue(client)) || String(client["Chi nhánh Cozoro dorm"] ?? "").trim();
+  const recordedTier = normalizeTierLabel(client[COINS_MEMBER_COLUMN] ?? client["Cozoro Member"]);
+  const totalAccumulatedCoins = parseLooseInteger(client["Tổng Coins tích luỹ"]);
+  const currentCoins = parseLooseInteger(
+    client[CLIENT_CURRENT_COINS_COLUMN] ?? client["Cozoro coins hiện có"]
+  );
+  const previousMonthEarnings = calculatePreviousMonthEarnings(coinsHistory, normalizedEmail);
+  const liveTier = normalizeTierLabel(
+    calculateLiveCozoroMember({
+      branchId: branch,
+      totalAccumulatedCoins: String(totalAccumulatedCoins),
+      recordedMember: recordedTier,
+      previousMonthEarnings
+    })
+  );
+
+  const recordedTierDef = getCozoroMemberTier(recordedTier);
+  const liveTierDef = getCozoroMemberTier(liveTier);
+  const maintainCoinsForRecordedTier = recordedTierDef?.maintainCoins ?? 0;
+  const maintainCoinsForLiveTier = liveTierDef?.maintainCoins ?? 0;
+  const maintainsRecordedTier = previousMonthEarnings >= maintainCoinsForRecordedTier;
+
+  const now = new Date();
+  let prevMonth = now.getMonth() - 1;
+  let prevYear = now.getFullYear();
+  if (prevMonth < 0) {
+    prevMonth = 11;
+    prevYear--;
+  }
+  const previousMonthLabel = `${String(prevMonth + 1).padStart(2, "0")}/${prevYear}`;
+
+  const tierRows: Array<{
+    at: string;
+    sortKey: string;
+    member: string;
+    event: string;
+    coinDelta: number;
+  }> = [];
+  for (const row of coinsHistory) {
+    if (String(row[EMAIL_COLUMN] ?? "").trim().toLowerCase() !== normalizedEmail) continue;
+    const memberRaw = String(row[COINS_MEMBER_COLUMN] ?? "").trim();
+    if (!memberRaw) continue;
+    const tsRaw = String(row[COINS_TIMESTAMP_COLUMN] ?? "").trim();
+    const parsed = parseSheetTimestamp(tsRaw);
+    const sortKey = parsed ?? tsRaw;
+    if (!sortKey) continue;
+    tierRows.push({
+      at: parsed ?? tsRaw,
+      sortKey,
+      member: normalizeTierLabel(memberRaw),
+      event: String(row[COINS_EVENT_COLUMN] ?? "").trim(),
+      coinDelta: parseLooseInteger(row[COINS_BALANCE_COLUMN])
+    });
+  }
+  tierRows.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+
+  const recentTierChanges: ResidentMemberTierSnapshot["recentTierChanges"] = [];
+  let previousMember: string | null = null;
+  for (const row of tierRows) {
+    if (previousMember && previousMember.toLowerCase() !== row.member.toLowerCase()) {
+      recentTierChanges.push({
+        at: row.at,
+        fromTier: previousMember,
+        toTier: row.member,
+        event: row.event || "(tier snapshot changed)",
+        source: classifyMemberTierChangeSource(row.event),
+        coinDelta: Number.isFinite(row.coinDelta) ? row.coinDelta : null
+      });
+    }
+    previousMember = row.member;
+  }
+  recentTierChanges.reverse();
+
+  let explanationHint: string;
+  if (!maintainsRecordedTier && recordedTier.toLowerCase() !== liveTier.toLowerCase()) {
+    explanationHint = `Previous-month earnings (${previousMonthEarnings.toLocaleString("en-US")}) are below the ${recordedTier} maintenance requirement (${maintainCoinsForRecordedTier.toLocaleString("en-US")}). Live tier is therefore ${liveTier}. This is automatic maintenance math — not a manual “gold reset” of lifetime accumulated coins.`;
+  } else if (recordedTier.toLowerCase() !== liveTier.toLowerCase()) {
+    explanationHint = `Recorded roster tier (${recordedTier}) differs from live calculated tier (${liveTier}). Cite both numbers; do not invent a reset story.`;
+  } else {
+    explanationHint = `Recorded and live tiers both show ${liveTier}. Previous-month earnings: ${previousMonthEarnings.toLocaleString("en-US")}; ${liveTier} needs ${maintainCoinsForLiveTier.toLocaleString("en-US")} earned last month to maintain.`;
+  }
+
+  return {
+    ok: true,
+    email: normalizedEmail,
+    name,
+    branch,
+    recordedTier,
+    liveTier,
+    tierMismatch: recordedTier.toLowerCase() !== liveTier.toLowerCase(),
+    currentCoins,
+    totalAccumulatedCoins,
+    previousMonthEarnings,
+    previousMonthLabel,
+    maintainCoinsForRecordedTier,
+    maintainCoinsForLiveTier,
+    maintainsRecordedTier,
+    recentTierChanges: recentTierChanges.slice(0, 8),
+    rankingPolicy: {
+      tierOrder: cozoroMemberTiers.map((t) => t.name),
+      tiers: cozoroMemberTiers.map((t) => ({
+        name: t.name,
+        accumulatedThreshold: t.threshold,
+        previousMonthMaintainCoins: t.maintainCoins,
+        oneTimeUpgradeCost: t.upgradeCoins
+      })),
+      rulesSummary: [
+        "Tier order: Silver → Gold → Platinum → Diamond → Elite.",
+        "Lifetime accumulated coins (Tổng Coins tích luỹ) set which tiers you can qualify for.",
+        "Coins earned in the previous calendar month decide whether you maintain a tier (and upgrade eligibility).",
+        "Diamond needs 300,000 accumulated AND 20,000 earned last month to maintain; Elite needs 800,000 + 40,000.",
+        "Gold needs 100,000 accumulated AND 5,000 earned last month to maintain.",
+        "If last month's earnings fall below the recorded tier's maintain amount, live tier drops to the best tier still satisfied — accumulated coins are not wiped.",
+        "Paid upgrade fees (Diamond 10k / Elite 40k current coins) apply only when upgrading into that tier; losing and re-upgrading requires paying again."
+      ]
+    },
+    explanationHint,
+    historyNote:
+      "recentTierChanges are inferred from coins-sheet Cozoro Member column snapshots. Silent roster sync without a coins row may not appear.",
+    generatedAt: new Date().toISOString()
+  };
+}
+
 export async function managerCreateFine(input: {
   maHd: string;
   amount: number;

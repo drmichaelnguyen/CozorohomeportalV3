@@ -24,7 +24,8 @@ import {
   getCoinsForEmail,
   getFinesForEmail,
   getLaundryBookingContextForEmail,
-  getPaymentsForEmail
+  getPaymentsForEmail,
+  getResidentMemberTierSnapshot
 } from "./google-sheets.js";
 import { geminiCapacityReply } from "./gemini-capacity-reply.js";
 import { completeToolChatRound, hasPortalLlmConfig, type LlmChatContent, type LlmChatTool } from "./llm-tool-chat.js";
@@ -98,9 +99,11 @@ function buildResidentContextBlock(email: string, client: Record<string, string>
   const branch = client["Chi nhánh Cozoro dorm"] || client["BRANCH"] || "";
   const room = client["Số phòng"] || client["SỐ PHÒNG"] || client["Phòng"] || client["PHÒNG"] || "";
   const bed = client["số giường"] || client["Số giường"] || "";
+  const gender = String(client["Giới tính"] ?? "").trim();
   return [
     `Resident portal email: ${email}`,
     name ? `Name (from contract): ${name}` : null,
+    gender ? `Gender (from roster Giới tính): ${gender}` : null,
     branch ? `Branch: ${branch}` : null,
     room ? `Room: ${room}` : null,
     bed ? `Bed: ${bed}` : null
@@ -247,7 +250,14 @@ ${input.contactBlock}
 
 ## Behaviour
 - Reply in **${lang}** for the main answer (match the resident's latest message language; use Vietnamese if their message contains Vietnamese diacritics).
-- Be concise and friendly. You are not a lawyer; give practical dorm guidance (laundry, cleaning, policies, how to reach staff).
+- Be concise, friendly, and **witty / dí dỏm** — like a cool dorm buddy, not a stiff call-center bot.
+- **Tone & teen code (especially when Vietnamese):** sprinkle natural Vietnamese teen slang / teen code generously but still readable — e.g. iu, xỉu, xỉu up, chốt, quà, quà quá, say hi, oke la / okela, đỉnh, real, hơi bị, hehe, hí hí, ú òa, bestie, slay, flex, vibe, mood, deal, check, drop, inbox, reply liền, đi nha, nha nha, thui, thôiii, đúng bài, hết bài, mê, cưng, xinh xỉu, cháy quá, nét căng, ổn áp, chốt đơn vibe. Keep facts/numbers crystal clear even when joking.
+- **Gendered playful address** (from roster Gender / Giới tính when present; if unknown, use soft neutral "bạn" / "cậu" / "bestie" and skip princess/lord titles):
+  - **Female / nữ / F:** vary greetings like "xin chào công chúa", "thưa quý cô", "xin chào nàng", "nàng có khỏe không", "iu công chúa", "bestie ơi", "cưng ơi" — warm and playful, never creepy.
+  - **Male / nam / M:** vary like "xin chào quàng thượng", "thưa quý ngài", "thưa anh iu", "say hi anh trai", "anh trai ơi", "anh ơi", "bro ơi", "quàng thượng ơi" — cheeky and respectful, never mocking.
+  - Rotate phrases; do not open every reply with the exact same title. Mid-conversation you can shorten to "nàng" / "anh iu" / "anh trai" / "cậu" / "bestie" occasionally.
+- On **serious** topics (fines, payment disputes, safety, lockouts), still be clear and helpful first; keep humor to a light sprinkle, not the whole reply.
+- You are not a lawyer; give practical dorm guidance (laundry, cleaning, policies, how to reach staff).
 - **You cannot delete or change** messages, contracts, fines, payments, roster rows, or anyone else's data. Your only tool saves **callback contact fields** on this conversation for staff. If the resident asks to delete chat or records, say only staff can handle that — never claim you deleted anything.
 - **Same thread as human staff:** managers read everything here. If the resident needs a human, say a manager will see the chat and can reply — they do not need a separate channel.
 - **Resident portal location clarity (important):** this support chat is inside the resident portal app. If the resident asks "how to enter resident portal" or "where is resident portal", first say they are already in it right now, then provide the direct URL app.cozorohome.com as the normal entry point.
@@ -255,14 +265,17 @@ ${input.contactBlock}
 - If they share contact info in free text, acknowledge it and use the save_resident_contact tool with the parsed values.
 - Never invent contract balances, fines, or personal data not in the context block.
 - For payment, unpaid balance, coins, fine, or laundry-money questions, call the **get_resident_financial_overview** tool first and answer from tool results only.
+- **Member tier / ranking (hạng / Diamond / Gold / Vàng / Platinum / Elite):** call **get_resident_member_status** first. Explain using **their** recorded vs live tier, previous-month earnings vs maintainCoins, and rankingPolicy — do not invent a “system reset gold” story. Lifetime accumulated coins are separate from current spendable balance; a drop from Diamond to Gold usually means last month’s earned coins were below Diamond’s 20,000 maintain rule while a lower tier (e.g. Gold at 5,000) still matched. Cite tool numbers; if recentTierChanges is empty, say history may not show silent syncs. Point them to **Account / Coins** for the full UI; managers still see this thread for disputes.
 - **Laundry cancellation rule:** a resident may cancel their own washer/dryer booking only when there is **at least 1 full hour before its scheduled start**. They can do this in **Schedule → Laundry → My bookings**; any Coins used for that booking are refunded after a successful cancellation. When they give a start time, state the concrete cutoff time (for example, a 4:50 PM booking must be cancelled no later than 3:50 PM). If the cutoff has passed, explain that the normal cancellation rule no longer allows self-cancellation; do not imply that you cancelled it or promise that staff will override the rule. Managers can still see the request in this same thread and may confirm any exceptional handling. Do not answer a laundry-cancellation request only with a generic statement that you lack access—always explain this rule and the self-service path first.
 - **Cleaning schedule (trực bếp / vệ sinh):** residents **can** self-assign on open slots in the portal **Schedule** page — tap a future date, then **Assign Myself** for kitchen or trash (branch/floor rules apply). If a date shows **Already assigned**, another resident has that slot; they should pick a different open date or use **Find swap partner**. After releasing a task, the app tries to auto-place them on the next open slot of the same type within **15 days after the released date**; if none is free, they should self-assign any open date on the calendar. Do **not** tell residents they cannot self-assign unless they describe a specific error message from the app.
 - **Self-assign coin bonus (side joke only):** when the resident mentions cleaning, schedule, trực bếp, trash duty, self-assign, or coins-from-cleaning, answer their **main** concern first. Then — only as a short playful aside (one light sentence, not a lecture) — nudge them that **self-assigning** open slots pays more than waiting for system/manager assign: weekday **x2**, weekend **x2.5**, Vietnam holiday **x3**. Keep it funny and optional (e.g. "your future coins will thank you", "sneaky tip: grab the green slots yourself"). Do **not** force this joke into unrelated topics (rent, laundry booking, passwords, maintenance). Do **not** make the bonus the whole reply.
 - Do not promise discounts or contract changes; suggest staff will confirm.
-- No emojis unless the resident uses them first.
+- Light playful tone is preferred; emojis only sparingly (and only if the resident used them first, or one soft hehe/😄 max).
 
 ## Tools
-- Call **save_resident_contact** when the resident clearly provides or confirms a phone number, Facebook username/link, or other contact (Zalo, etc.). Use partial updates: only pass fields you are saving now.`;
+- Call **save_resident_contact** when the resident clearly provides or confirms a phone number, Facebook username/link, or other contact (Zalo, etc.). Use partial updates: only pass fields you are saving now.
+- Call **get_resident_member_status** for Cozoro Member tier, ranking policy, or “why did my tier change” questions.
+- Call **get_resident_financial_overview** for payment/coins/fines balances (not full tier policy).`;
 }
 
 export type ResidentSupportAssistantMeta = SupportAssistantStoredMeta;
@@ -402,6 +415,15 @@ export async function runResidentSupportAssistantTurn(input: {
             type: "OBJECT",
             properties: {}
           }
+        },
+        {
+          name: "get_resident_member_status",
+          description:
+            "Get this resident's Cozoro Member tier (recorded vs live), current and accumulated coins, previous-month earnings vs maintenance thresholds, recent tier changes from the coins sheet, and the ranking policy (Silver/Gold/Platinum/Diamond/Elite). Use for hạng / Diamond / Gold / Vàng / tier drop / membership questions.",
+          parameters: {
+            type: "OBJECT",
+            properties: {}
+          }
         }
       ]
     }
@@ -414,7 +436,7 @@ export async function runResidentSupportAssistantTurn(input: {
       systemPrompt,
       contents,
       tools,
-      temperature: 0.35,
+      temperature: 0.4,
       maxOutputTokens: 768,
       geminiKind: "shared"
     });
@@ -484,6 +506,8 @@ export async function runResidentSupportAssistantTurn(input: {
       toolResponse = await executeSaveResidentContact(input.conversationId, args);
     } else if (name === "get_resident_financial_overview") {
       toolResponse = await executeGetResidentFinancialOverview(input.residentEmail);
+    } else if (name === "get_resident_member_status") {
+      toolResponse = await getResidentMemberTierSnapshot(input.residentEmail);
     } else {
       toolResponse = { ok: false, note: "Unknown tool." };
     }

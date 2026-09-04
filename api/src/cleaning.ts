@@ -33,7 +33,8 @@ import {
   readCachedClients,
   syncClientsFromSheet,
   transferSwapCoins,
-  updateCleaningCalendarEvent
+  updateCleaningCalendarEvent,
+  COZORO_TIMEZONE
 } from "./google-sheets.js";
 import { isBranchAutomationDisabled, isCleaningTaskAutomationDisabled } from "./branch-closure.js";
 import { logAction } from "./action-log.js";
@@ -168,6 +169,22 @@ export type SelfAssignCheckResult = {
   canSubmit: boolean;
   reason?: string;
   suggestions?: string[];
+  isTakeOver?: boolean;
+  rewardCoinsPreview?: number;
+  earlyBirdBonus?: number;
+  streakBonus?: number;
+};
+
+export type OpenSelfAssignSlot = {
+  date: string;
+  type: CleaningTaskType;
+  rewardCoinsPreview: number;
+  multiplier: number;
+  tier: string;
+  earlyBirdBonus: number;
+  streakBonus: number;
+  daysAhead: number;
+  isTakeOver?: boolean;
 };
 
 const cacheDirPath = path.join(process.cwd(), "data");
@@ -544,6 +561,39 @@ function isFutureCalendarDate(date: Date) {
   return normalizeCalendarDate(date).getTime() > normalizeCalendarDate(new Date()).getTime();
 }
 
+function isTodayCalendarDate(date: Date, now = new Date()) {
+  return normalizeCalendarDate(date).getTime() === normalizeCalendarDate(now).getTime();
+}
+
+function getHourInCozoroTimeZone(now = new Date()) {
+  const raw = new Intl.DateTimeFormat("en-US", {
+    timeZone: COZORO_TIMEZONE,
+    hour: "numeric",
+    hour12: false
+  }).format(now);
+  const hour = Number.parseInt(raw, 10);
+  if (!Number.isFinite(hour)) return 0;
+  return hour === 24 ? 0 : hour;
+}
+
+/** Today (VN calendar) after 20:00 — residents may take over an incomplete assigned slot. */
+function canTakeOverAssignedSlot(
+  existingSlot: { status: CleaningTaskStatus; userEmail: string },
+  claimantEmail: string,
+  date: Date,
+  now = new Date()
+) {
+  if (existingSlot.status !== CleaningTaskStatus.ASSIGNED) return false;
+  if (existingSlot.userEmail.trim().toLowerCase() === claimantEmail.trim().toLowerCase()) return false;
+  if (!isTodayCalendarDate(date, now)) return false;
+  return getHourInCozoroTimeZone(now) >= 20;
+}
+
+function isSelfAssignDateAllowed(date: Date, now = new Date()) {
+  if (isFutureCalendarDate(date)) return true;
+  return isTodayCalendarDate(date, now) && getHourInCozoroTimeZone(now) >= 20;
+}
+
 function canReleaseCalendarDate(date: Date) {
   const today = normalizeCalendarDate(new Date());
   const normalized = normalizeCalendarDate(date);
@@ -553,6 +603,45 @@ function canReleaseCalendarDate(date: Date) {
 function getCalendarDayDiff(from: Date, to: Date) {
   const millisecondsPerDay = 24 * 60 * 60 * 1000;
   return Math.round((normalizeCalendarDate(to).getTime() - normalizeCalendarDate(from).getTime()) / millisecondsPerDay);
+}
+
+async function countSelfAssignsThisMonth(email: string, aroundDate: Date) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const y = aroundDate.getUTCFullYear();
+  const m = aroundDate.getUTCMonth();
+  const monthStart = new Date(Date.UTC(y, m, 1, 0, 0, 0, 0));
+  const monthEnd = new Date(Date.UTC(y, m + 1, 0, 23, 59, 59, 999));
+  return prisma.cleaningTask.count({
+    where: {
+      userEmail: normalizedEmail,
+      isSelfAssigned: true,
+      scheduledDate: { gte: monthStart, lte: monthEnd },
+      status: { notIn: [CleaningTaskStatus.MISSED, CleaningTaskStatus.REJECTED] }
+    }
+  });
+}
+
+async function resolveSelfAssignRewardPreview(type: CleaningTaskType, scheduledDate: Date, email: string) {
+  const settings = await getCleaningRewardSettings();
+  const daysAhead = getCalendarDayDiff(new Date(), scheduledDate);
+  const prior = await countSelfAssignsThisMonth(email, scheduledDate);
+  return computeCleaningRewardCoins(settings, type, scheduledDate, true, {
+    daysAhead,
+    monthlySelfAssignIndex: prior + 1
+  });
+}
+
+async function resolveAssignmentRewardCoins(
+  type: CleaningTaskType,
+  scheduledDate: Date,
+  isSelfAssigned: boolean,
+  email: string
+) {
+  if (!isSelfAssigned) {
+    const settings = await getCleaningRewardSettings();
+    return computeCleaningRewardCoins(settings, type, scheduledDate, false);
+  }
+  return resolveSelfAssignRewardPreview(type, scheduledDate, email);
 }
 
 function getCleaningReleasePenalty(date: Date) {
@@ -1336,12 +1425,11 @@ async function assignTaskToUser(input: {
     }
 
     const isSelfAssigned = input.isSelfAssigned ?? false;
-    const rewardSettings = await getCleaningRewardSettings();
-    const { rewardCoins } = computeCleaningRewardCoins(
-      rewardSettings,
+    const { rewardCoins } = await resolveAssignmentRewardCoins(
       input.type,
       normalizedTaskDate,
-      isSelfAssigned
+      isSelfAssigned,
+      normalizedEmail
     );
 
       const reassignedTask = await updateCleaningTask({
@@ -1441,6 +1529,13 @@ async function assignTaskToUser(input: {
       if (raceSlot.userEmail.toLowerCase() === normalizedEmail || input.allowExistingSlotReassign === false) {
         return raceSlot;
       }
+      const raceIsSelfAssigned = input.isSelfAssigned ?? false;
+      const { rewardCoins: raceRewardCoins } = await resolveAssignmentRewardCoins(
+        input.type,
+        normalizedTaskDate,
+        raceIsSelfAssigned,
+        normalizedEmail
+      );
       const raceReassigned = await updateCleaningTask({
         where: { id: raceSlot.id },
         data: {
@@ -1448,8 +1543,9 @@ async function assignTaskToUser(input: {
           userName: input.user.name,
           branchId: input.user.branchId,
           floor: slotFloor,
-          isSelfAssigned: input.isSelfAssigned ?? false,
-          assignmentSource: input.assignmentSource ?? (input.isSelfAssigned ? CleaningAssignmentSource.SELF : undefined),
+          rewardCoins: raceRewardCoins,
+          isSelfAssigned: raceIsSelfAssigned,
+          assignmentSource: input.assignmentSource ?? (raceIsSelfAssigned ? CleaningAssignmentSource.SELF : undefined),
           assignedByEmail: input.assignedByEmail ?? undefined,
           assignedByName: input.assignedByName ?? undefined
         }
@@ -1666,12 +1762,11 @@ async function createCleaningTaskRecord(input: {
   assignedByName?: string | null;
 }) {
   const normalizedScheduledDate = normalizeCalendarDate(input.scheduledDate);
-  const rewardSettings = await getCleaningRewardSettings();
-  const { rewardCoins } = computeCleaningRewardCoins(
-    rewardSettings,
+  const { rewardCoins } = await resolveAssignmentRewardCoins(
     input.type,
     normalizedScheduledDate,
-    Boolean(input.isSelfAssigned)
+    Boolean(input.isSelfAssigned),
+    input.user.email
   );
   const target = getCleaningCalendarTarget(input.type, { floor: input.floor ?? input.user.floor });
   const calendarId: string | null = target?.calendarId ?? null;
@@ -2002,8 +2097,8 @@ export async function selfAssignCleaningTask(input: {
   date: Date;
   type: CleaningTaskType;
 }) {
-  if (!isFutureCalendarDate(input.date)) {
-    throw new Error("Self-assignment is only available for future dates");
+  if (!isSelfAssignDateAllowed(input.date)) {
+    throw new Error("Self-assignment is only available for future dates (or today after 20:00 VN for take-over)");
   }
   const daysAhead = getCalendarDayDiff(new Date(), input.date);
   if (daysAhead > SELF_ASSIGN_MAX_DAYS_AHEAD) {
@@ -2063,15 +2158,20 @@ export async function selfAssignCleaningTask(input: {
     }
   });
 
+  let takeOver = false;
   if (existingSlot && existingSlot.userEmail.toLowerCase() !== normalizedEmail) {
-    const suggestions = await getNearestOpenDatesForUser({
-      user,
-      type: input.type,
-      fromDate: normalizedTaskDate,
-      floor: slotFloor,
-      limit: 5
-    });
-    throw new CleaningSelfAssignConflictError(suggestions);
+    if (canTakeOverAssignedSlot(existingSlot, normalizedEmail, normalizedTaskDate)) {
+      takeOver = true;
+    } else {
+      const suggestions = await getNearestOpenDatesForUser({
+        user,
+        type: input.type,
+        fromDate: normalizedTaskDate,
+        floor: slotFloor,
+        limit: 5
+      });
+      throw new CleaningSelfAssignConflictError(suggestions);
+    }
   }
 
   const assignedTask = await assignTaskToUser({
@@ -2079,17 +2179,17 @@ export async function selfAssignCleaningTask(input: {
       date: normalizedTaskDate,
       type: input.type,
       floor: slotFloor,
-      allowExistingSlotReassign: false,
+      allowExistingSlotReassign: takeOver,
       isSelfAssigned: true,
       assignmentSource: CleaningAssignmentSource.SELF,
       assignedByEmail: normalizedEmail,
-      assignedByName: "Self assign"
+      assignedByName: takeOver ? "Self assign take-over" : "Self assign"
     });
   await logAction({
     actorEmail: normalizedEmail,
-    actorName: "Self assign",
+    actorName: takeOver ? "Self assign take-over" : "Self assign",
     actorRole: "resident",
-    action: "cleaning.task.self_assign",
+    action: takeOver ? "cleaning.task.take_over" : "cleaning.task.self_assign",
     entityType: "CleaningTask",
     entityId: assignedTask.id,
     entityLabel: `${assignedTask.type}|${assignedTask.scheduledDate.toISOString().slice(0, 10)}`
@@ -2102,10 +2202,10 @@ export async function checkSelfAssignCleaningTask(input: {
   date: Date;
   type: CleaningTaskType;
 }): Promise<SelfAssignCheckResult> {
-  if (!isFutureCalendarDate(input.date)) {
+  if (!isSelfAssignDateAllowed(input.date)) {
     return {
       canSubmit: false,
-      reason: "Self-assignment is only available for future dates."
+      reason: "Self-assignment is only available for future dates (or today after 20:00 VN for take-over)."
     };
   }
 
@@ -2189,23 +2289,321 @@ export async function checkSelfAssignCleaningTask(input: {
     }
   });
 
+  let isTakeOver = false;
   if (existingSlot && existingSlot.userEmail.toLowerCase() !== normalizedEmail) {
-    const suggestions = await getNearestOpenDatesForUser({
-      user,
-      type: input.type,
-      fromDate: normalizedTaskDate,
-      floor: slotFloor,
-      limit: 5
-    });
-    return {
-      canSubmit: false,
-      reason: "This date is already scheduled to another guest.",
-      suggestions
-    };
+    if (canTakeOverAssignedSlot(existingSlot, normalizedEmail, normalizedTaskDate)) {
+      isTakeOver = true;
+    } else {
+      const suggestions = await getNearestOpenDatesForUser({
+        user,
+        type: input.type,
+        fromDate: normalizedTaskDate,
+        floor: slotFloor,
+        limit: 5
+      });
+      return {
+        canSubmit: false,
+        reason: "This date is already scheduled to another guest.",
+        suggestions
+      };
+    }
   }
 
+  const reward = await resolveSelfAssignRewardPreview(input.type, normalizedTaskDate, normalizedEmail);
   return {
-    canSubmit: true
+    canSubmit: true,
+    isTakeOver,
+    rewardCoinsPreview: reward.rewardCoins,
+    earlyBirdBonus: reward.earlyBirdBonus,
+    streakBonus: reward.streakBonus
+  };
+}
+
+/** Open (or take-over-eligible) self-assign slots for a resident within the self-assign horizon. */
+export async function listOpenSelfAssignSlotsForUser(
+  email: string,
+  options?: { limit?: number; includeTakeOver?: boolean; skipCalendarSync?: boolean }
+): Promise<OpenSelfAssignSlot[]> {
+  const limit = Math.min(Math.max(options?.limit ?? 12, 1), 40);
+  const includeTakeOver = options?.includeTakeOver !== false;
+  const normalizedEmail = email.trim().toLowerCase();
+  if (await isHostelShortTermGuestEmail(normalizedEmail)) {
+    return [];
+  }
+  const user = await getUserCleaningContext(normalizedEmail);
+  if (!user) {
+    return [];
+  }
+  if (await getContractCleaningOptOutByContractCode(getUserContractCode(user))) {
+    return [];
+  }
+
+  const today = normalizeCalendarDate(new Date());
+  const horizonEnd = addDays(today, SELF_ASSIGN_MAX_DAYS_AHEAD);
+  if (!options?.skipCalendarSync) {
+    await syncCleaningCalendarWindow(today, horizonEnd);
+  }
+
+  const allowedTypes = getAllowedTaskTypesForUser(user);
+  if (allowedTypes.length === 0) {
+    return [];
+  }
+
+  const monthKeys = new Set<string>();
+  for (let cursor = today; cursor.getTime() <= horizonEnd.getTime(); cursor = addDays(cursor, 1)) {
+    monthKeys.add(cleaningMonthKeyFromDate(cursor));
+  }
+  const [optOuts, availabilityEntries, myTasks, occupiedTasks, settings] = await Promise.all([
+    prisma.cleaningOptOut.findMany({
+      where: { userEmail: normalizedEmail, month: { in: [...monthKeys] } },
+      select: { month: true }
+    }),
+    prisma.cleaningAvailability.findMany({
+      where: {
+        userEmail: normalizedEmail,
+        date: { gte: today, lte: horizonEnd },
+        type: CleaningAvailabilityType.UNAVAILABLE
+      },
+      select: { date: true }
+    }),
+    findManyCleaningTasks({
+      where: {
+        userEmail: normalizedEmail,
+        scheduledDate: {
+          gte: calendarRangeStart(today),
+          lte: calendarRangeEnd(horizonEnd)
+        }
+      }
+    }),
+    prisma.cleaningTask.findMany({
+      where: {
+        type: { in: allowedTypes },
+        scheduledDate: {
+          gte: calendarRangeStart(today),
+          lte: calendarRangeEnd(horizonEnd)
+        },
+        status: { in: [CleaningTaskStatus.ASSIGNED, CleaningTaskStatus.DONE_PENDING_AUDIT] },
+        userEmail: { not: normalizedEmail }
+      },
+      select: {
+        type: true,
+        scheduledDate: true,
+        floor: true,
+        status: true,
+        userEmail: true
+      }
+    }),
+    getCleaningRewardSettings()
+  ]);
+
+  const optedOutMonths = new Set(optOuts.map((row) => row.month));
+  const unavailableDates = new Set(availabilityEntries.map((row) => formatCalendarDate(row.date)));
+  const myTaskKeys = new Set(
+    myTasks.map((task) => `${formatCalendarDate(task.scheduledDate)}|${task.type}`)
+  );
+
+  const priorByMonth = new Map<string, number>();
+  await Promise.all(
+    [...monthKeys].map(async (month) => {
+      const [y, m] = month.split("-").map((part) => Number.parseInt(part, 10));
+      const monthStart = new Date(Date.UTC(y, m - 1, 1, 0, 0, 0, 0));
+      priorByMonth.set(month, await countSelfAssignsThisMonth(normalizedEmail, monthStart));
+    })
+  );
+  const previewClaimedByMonth = new Map<string, number>();
+
+  const slots: OpenSelfAssignSlot[] = [];
+  for (let cursor = today; cursor.getTime() <= horizonEnd.getTime() && slots.length < limit; cursor = addDays(cursor, 1)) {
+    if (!isSelfAssignDateAllowed(cursor)) {
+      continue;
+    }
+    const dateKey = formatCalendarDate(cursor);
+    if (unavailableDates.has(dateKey)) {
+      continue;
+    }
+    const month = cleaningMonthKeyFromDate(cursor);
+    if (optedOutMonths.has(month)) {
+      continue;
+    }
+
+    const daysAhead = getCalendarDayDiff(new Date(), cursor);
+    let addedSlotForDay = false;
+    for (const type of allowedTypes) {
+      if (slots.length >= limit) {
+        break;
+      }
+      if (myTaskKeys.has(`${dateKey}|${type}`)) {
+        continue;
+      }
+
+      const occupied = occupiedTasks.find((slot) => {
+        if (formatCalendarDate(slot.scheduledDate) !== dateKey || slot.type !== type) {
+          return false;
+        }
+        if (type === CleaningTaskType.TRASH_D7 && (slot.floor ?? null) !== (user.floor ?? null)) {
+          return false;
+        }
+        return true;
+      });
+
+      let isTakeOver = false;
+      if (occupied) {
+        if (
+          !includeTakeOver ||
+          !canTakeOverAssignedSlot(
+            { status: occupied.status, userEmail: occupied.userEmail },
+            normalizedEmail,
+            cursor
+          )
+        ) {
+          continue;
+        }
+        isTakeOver = true;
+      }
+
+      const prior = priorByMonth.get(month) ?? 0;
+      const previewClaimed = previewClaimedByMonth.get(month) ?? 0;
+      const monthlySelfAssignIndex = prior + previewClaimed + 1;
+      const reward = computeCleaningRewardCoins(settings, type, cursor, true, {
+        daysAhead,
+        monthlySelfAssignIndex
+      });
+      addedSlotForDay = true;
+
+      slots.push({
+        date: dateKey,
+        type,
+        rewardCoinsPreview: reward.rewardCoins,
+        multiplier: reward.multiplier,
+        tier: reward.tier,
+        earlyBirdBonus: reward.earlyBirdBonus,
+        streakBonus: reward.streakBonus,
+        daysAhead,
+        isTakeOver
+      });
+    }
+    if (addedSlotForDay) {
+      previewClaimedByMonth.set(month, (previewClaimedByMonth.get(month) ?? 0) + 1);
+    }
+  }
+
+  return slots;
+}
+
+function softPressureDisplayName(fullName: string, isYou: boolean) {
+  if (isYou) return "You";
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  const first = parts[0] || "Neighbor";
+  return first.length > 14 ? `${first.slice(0, 13)}…` : first;
+}
+
+/** Soft social proof for self-assign (first names + counts only; no emails). */
+export async function buildSelfAssignSocialProof(input: {
+  email: string;
+  branchId: "D2" | "D7";
+  userName?: string | null;
+}) {
+  const normalizedEmail = input.email.trim().toLowerCase();
+  const month = cleaningMonthKeyFromDate(normalizeCalendarDate(new Date()));
+  const [year, monthNum] = month.split("-").map((part) => Number.parseInt(part, 10));
+  const monthStart = new Date(Date.UTC(year, monthNum - 1, 1, 0, 0, 0, 0));
+  const monthEnd = new Date(Date.UTC(year, monthNum, 0, 23, 59, 59, 999));
+  const weekStart = addDays(normalizeCalendarDate(new Date()), -6);
+
+  const branchSelfAssignTasks = await prisma.cleaningTask.findMany({
+    where: {
+      branchId: input.branchId,
+      isSelfAssigned: true,
+      scheduledDate: { gte: monthStart, lte: monthEnd },
+      status: { notIn: [CleaningTaskStatus.MISSED, CleaningTaskStatus.REJECTED] }
+    },
+    select: {
+      userEmail: true,
+      userName: true,
+      createdAt: true
+    }
+  });
+
+  const counts = new Map<string, { name: string; count: number }>();
+  for (const task of branchSelfAssignTasks) {
+    const key = task.userEmail.trim().toLowerCase();
+    const existing = counts.get(key) ?? { name: task.userName || key, count: 0 };
+    existing.count += 1;
+    if (task.userName?.trim()) {
+      existing.name = task.userName.trim();
+    }
+    counts.set(key, existing);
+  }
+
+  if (!counts.has(normalizedEmail) && input.userName?.trim()) {
+    counts.set(normalizedEmail, { name: input.userName.trim(), count: 0 });
+  }
+
+  const ranked = [...counts.entries()]
+    .filter(([, value]) => value.count > 0)
+    .sort((left, right) => right[1].count - left[1].count || left[0].localeCompare(right[0]));
+
+  const yourCount = counts.get(normalizedEmail)?.count ?? 0;
+  const top = ranked.slice(0, 5).map(([email, value]) => {
+    const isYou = email === normalizedEmail;
+    return {
+      displayName: softPressureDisplayName(value.name, isYou),
+      count: value.count,
+      isYou
+    };
+  });
+
+  if (yourCount > 0 && !top.some((entry) => entry.isYou)) {
+    top.push({
+      displayName: softPressureDisplayName(input.userName ?? "You", true),
+      count: yourCount,
+      isYou: true
+    });
+  }
+
+  const peersClaimedLast7Days = branchSelfAssignTasks.filter((task) => {
+    if (task.userEmail.trim().toLowerCase() === normalizedEmail) return false;
+    return task.createdAt.getTime() >= weekStart.getTime();
+  }).length;
+
+  return {
+    month,
+    branchId: input.branchId,
+    yourCount,
+    branchSelfAssignCount: branchSelfAssignTasks.length,
+    peersClaimedLast7Days,
+    top
+  };
+}
+
+async function attachSelfAssignEncouragement<T extends {
+  user?: { branchId: string; floor?: number | null; name?: string } | null;
+  cleaningExcluded?: boolean;
+}>(overview: T, email: string) {
+  if (overview.cleaningExcluded || !overview.user?.branchId) {
+    return {
+      ...overview,
+      selfAssignSocial: null,
+      nextOpenSelfAssignSlots: [] as OpenSelfAssignSlot[]
+    };
+  }
+  const branchId = overview.user.branchId === "D2" ? "D2" : "D7";
+  const [selfAssignSocial, nextOpenSelfAssignSlots] = await Promise.all([
+    buildSelfAssignSocialProof({
+      email,
+      branchId,
+      userName: overview.user.name ?? null
+    }),
+    listOpenSelfAssignSlotsForUser(email, {
+      limit: 3,
+      includeTakeOver: true,
+      skipCalendarSync: true
+    })
+  ]);
+  return {
+    ...overview,
+    selfAssignSocial,
+    nextOpenSelfAssignSlots
   };
 }
 
@@ -2537,7 +2935,9 @@ async function buildCleaningOverviewForUser(email: string) {
       holiday: rewardSettings.selfAssignHolidayMultiplier
     },
     holidays,
-    photoRequiredTaskTypes
+    photoRequiredTaskTypes,
+    selfAssignSocial: null,
+    nextOpenSelfAssignSlots: [] as OpenSelfAssignSlot[]
   };
 }
 
@@ -2591,7 +2991,9 @@ export async function getCleaningOverviewForUser(email: string, options?: { forc
       },
       holidays: [],
       cleaningExcluded: true as const,
-      cleaningExcludedReason: "hostel_short_term" as const
+      cleaningExcludedReason: "hostel_short_term" as const,
+      selfAssignSocial: null,
+      nextOpenSelfAssignSlots: []
     };
   }
 
@@ -2603,27 +3005,33 @@ export async function getCleaningOverviewForUser(email: string, options?: { forc
     if (memoryCached) {
       // occupiedSlots depends on all users' tasks — always fetch fresh to avoid stale slot visibility
       const occupiedSlots = await fetchFreshOccupiedSlots(normalizedEmail);
-      return { ...memoryCached, occupiedSlots, cleaningExcluded: false as const };
+      return attachSelfAssignEncouragement(
+        { ...memoryCached, occupiedSlots, cleaningExcluded: false as const },
+        normalizedEmail
+      );
     }
 
     if (fileCached) {
       cleaningOverviewMemoryCache.set(normalizedEmail, fileCached);
       const occupiedSlots = await fetchFreshOccupiedSlots(normalizedEmail);
-      return { ...fileCached, occupiedSlots, cleaningExcluded: false as const };
+      return attachSelfAssignEncouragement(
+        { ...fileCached, occupiedSlots, cleaningExcluded: false as const },
+        normalizedEmail
+      );
     }
   }
 
   try {
     const overview = await buildCleaningOverviewForUser(normalizedEmail);
     await saveCleaningOverviewToCache(normalizedEmail, overview);
-    return { ...overview, cleaningExcluded: false as const };
+    return attachSelfAssignEncouragement({ ...overview, cleaningExcluded: false as const }, normalizedEmail);
   } catch (error) {
     if (memoryCached) {
-      return memoryCached;
+      return attachSelfAssignEncouragement(memoryCached, normalizedEmail);
     }
     if (fileCached) {
       cleaningOverviewMemoryCache.set(normalizedEmail, fileCached);
-      return fileCached;
+      return attachSelfAssignEncouragement(fileCached, normalizedEmail);
     }
     throw error;
   }

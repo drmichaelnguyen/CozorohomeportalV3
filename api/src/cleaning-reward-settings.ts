@@ -108,6 +108,13 @@ export async function getCleaningRewardSettings(): Promise<CleaningRewardSetting
 
 export type SelfAssignRewardTier = "none" | "weekday" | "weekend" | "holiday";
 
+/** Flat coin bonus when self-assigning at least this many calendar days ahead. */
+export const SELF_ASSIGN_EARLY_BIRD_DAYS = 7;
+export const SELF_ASSIGN_EARLY_BIRD_BONUS = 2000;
+/** Flat coin bonus on every Nth self-assign in the same calendar month (3rd, 6th, …). */
+export const SELF_ASSIGN_STREAK_EVERY = 3;
+export const SELF_ASSIGN_STREAK_BONUS = 2000;
+
 export function resolveSelfAssignRewardMultiplier(
   settings: CleaningRewardSettings,
   scheduledDate: Date | string,
@@ -129,14 +136,38 @@ export function computeCleaningRewardCoins(
   settings: CleaningRewardSettings,
   type: CleaningTaskType,
   scheduledDate: Date | string,
-  isSelfAssigned: boolean
-): { rewardCoins: number; multiplier: number; tier: SelfAssignRewardTier } {
+  isSelfAssigned: boolean,
+  options?: {
+    daysAhead?: number;
+    /** 1-based count of self-assigns in the month including this assignment. */
+    monthlySelfAssignIndex?: number;
+  }
+): {
+  rewardCoins: number;
+  multiplier: number;
+  tier: SelfAssignRewardTier;
+  earlyBirdBonus: number;
+  streakBonus: number;
+} {
   const base = settings.baseRewards[type];
   const { multiplier, tier } = resolveSelfAssignRewardMultiplier(settings, scheduledDate, isSelfAssigned);
+  let earlyBirdBonus = 0;
+  let streakBonus = 0;
+  if (isSelfAssigned) {
+    if ((options?.daysAhead ?? 0) >= SELF_ASSIGN_EARLY_BIRD_DAYS) {
+      earlyBirdBonus = SELF_ASSIGN_EARLY_BIRD_BONUS;
+    }
+    const index = options?.monthlySelfAssignIndex ?? 0;
+    if (index > 0 && index % SELF_ASSIGN_STREAK_EVERY === 0) {
+      streakBonus = SELF_ASSIGN_STREAK_BONUS;
+    }
+  }
   return {
-    rewardCoins: Math.round(base * multiplier),
+    rewardCoins: Math.round(base * multiplier) + earlyBirdBonus + streakBonus,
     multiplier,
-    tier
+    tier,
+    earlyBirdBonus,
+    streakBonus
   };
 }
 

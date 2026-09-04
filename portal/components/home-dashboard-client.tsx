@@ -40,6 +40,17 @@ type CleaningTask = {
 type CleaningOverview = {
   tasks: CleaningTask[];
   cleaningExcluded?: boolean;
+  nextOpenSelfAssignSlots?: Array<{
+    date: string;
+    type: CleaningTask["type"];
+    rewardCoinsPreview: number;
+    isTakeOver?: boolean;
+  }>;
+  selfAssignSocial?: {
+    peersClaimedLast7Days: number;
+    yourCount: number;
+    branchSelfAssignCount: number;
+  } | null;
 };
 
 type FineEntry = {
@@ -312,7 +323,18 @@ export function HomeDashboardClient() {
       setCleaningOverview(
         cleaningResponse.ok
           ? {
-              tasks: "tasks" in cleaningData && Array.isArray(cleaningData.tasks) ? cleaningData.tasks : []
+              tasks: "tasks" in cleaningData && Array.isArray(cleaningData.tasks) ? cleaningData.tasks : [],
+              cleaningExcluded:
+                "cleaningExcluded" in cleaningData ? Boolean((cleaningData as CleaningOverview).cleaningExcluded) : false,
+              nextOpenSelfAssignSlots:
+                "nextOpenSelfAssignSlots" in cleaningData &&
+                Array.isArray((cleaningData as CleaningOverview).nextOpenSelfAssignSlots)
+                  ? (cleaningData as CleaningOverview).nextOpenSelfAssignSlots
+                  : [],
+              selfAssignSocial:
+                "selfAssignSocial" in cleaningData
+                  ? ((cleaningData as CleaningOverview).selfAssignSocial ?? null)
+                  : null
             }
           : { tasks: [] }
       );
@@ -702,6 +724,39 @@ export function HomeDashboardClient() {
                   </div>
                 </div>
               )}
+
+              {!isExpired &&
+              !isHostelGuest &&
+              !cleaningOverview?.cleaningExcluded &&
+              (cleaningOverview?.nextOpenSelfAssignSlots?.length ?? 0) > 0 ? (
+                <div className="mt-5 rounded-2xl border border-emerald-200 bg-white/70 p-4">
+                  <p className="text-sm font-semibold text-emerald-900">
+                    {t("claimNextOpenTitle", "Claim next open slot")}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-700">
+                    {prettyTaskType(cleaningOverview!.nextOpenSelfAssignSlots![0].type)} ·{" "}
+                    {formatCozoroDate(`${cleaningOverview!.nextOpenSelfAssignSlots![0].date}T12:00:00`)} · ~
+                    {cleaningOverview!.nextOpenSelfAssignSlots![0].rewardCoinsPreview.toLocaleString()} coins
+                  </p>
+                  {(cleaningOverview?.selfAssignSocial?.peersClaimedLast7Days ?? 0) > 0 ? (
+                    <p className="mt-1 text-xs text-slate-500">
+                      {t(
+                        "selfAssignPeersWeek",
+                        "{count} neighbors self-assigned in the last 7 days."
+                      ).replace(
+                        "{count}",
+                        String(cleaningOverview?.selfAssignSocial?.peersClaimedLast7Days ?? 0)
+                      )}
+                    </p>
+                  ) : null}
+                  <Link
+                    href="/schedule#claim-next-open"
+                    className="mt-3 inline-flex rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800"
+                  >
+                    {t("claimNextOpenCta", "Claim next open")}
+                  </Link>
+                </div>
+              ) : null}
             </div>
           </section>
 

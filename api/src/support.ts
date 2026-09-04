@@ -25,6 +25,7 @@ import { loadOpenAcComfortAlertsForStaff } from "./ac-comfort-votes.js";
 import { loadOpenHostelBookingAlertsForStaff } from "./hostel-booking-notifications.js";
 import { buildFridgeDrainReminderNotifications } from "./fridge-drain-schedule.js";
 import { listCleaningHeroAwardsForEmail } from "./cleaning-hero-awards.js";
+import { listOpenSelfAssignSlotsForUser } from "./cleaning.js";
 import {
   BIRTHDAY_COIN_GRANT,
   BIRTH_MONTH_EXTENSION_COIN_MULTIPLIER,
@@ -554,6 +555,7 @@ type ResidentNotificationItem = {
     | "NEW_FINE"
     | "LAUNDRY_REMINDER"
     | "CLEANING_REMINDER"
+    | "SELF_ASSIGN_OPPORTUNITY"
     | "CLEANING_AUDIT_RESULT"
     | "PREPAID_PACKAGE"
     | "FRIDGE_DRAIN_REMINDER"
@@ -831,22 +833,53 @@ async function buildResidentReminderNotifications(email: string) {
     }
     const minutes = minutesUntil(start, now);
     const startTimeLabel = formatTimeLabelInTimeZone(start);
+    const dayBucket = Math.floor(Date.now() / 86_400_000);
+    const pick = <T,>(variants: T[], seed: string): T => {
+      let h = 0;
+      const key = `${seed}:${dayBucket}`;
+      for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;
+      return variants[Math.abs(h) % variants.length]!;
+    };
     if (minutes > 0 && minutes <= 10) {
+      const title = pick(
+        ["Laundry starts in 10 minutes", "Almost laundry time", "Washer / dryer warming up"],
+        `laundry-soon-title-${booking.id}`
+      );
+      const body = pick(
+        [
+          `${booking.summary} starts at ${startTimeLabel}.`,
+          `Ping: ${booking.summary} at ${startTimeLabel} (~10 min). Don't miss your slot.`,
+          `${booking.summary} is almost here (${startTimeLabel}). Hop over soon.`
+        ],
+        `laundry-soon-body-${booking.id}`
+      );
       notifications.push({
         id: `laundry-10-${booking.id}`,
         type: "LAUNDRY_REMINDER",
-        title: "Laundry starts in 10 minutes",
-        body: `${booking.summary} starts at ${startTimeLabel}.`,
+        title,
+        body,
         createdAt: booking.start,
         unreadCount: 1,
         href: "/bookings"
       });
     } else if (minutes <= 0 && minutes > -15) {
+      const title = pick(
+        ["Laundry starts now", "Your laundry slot is live", "Go claim the machine"],
+        `laundry-now-title-${booking.id}`
+      );
+      const body = pick(
+        [
+          `${booking.summary} is starting now (${startTimeLabel}).`,
+          `Live now: ${booking.summary} (${startTimeLabel}). Go go go.`,
+          `${booking.summary} just hit start time (${startTimeLabel}). Claim the machine.`
+        ],
+        `laundry-now-body-${booking.id}`
+      );
       notifications.push({
         id: `laundry-now-${booking.id}`,
         type: "LAUNDRY_REMINDER",
-        title: "Laundry starts now",
-        body: `${booking.summary} is starting now (${startTimeLabel}).`,
+        title,
+        body,
         createdAt: booking.start,
         unreadCount: 1,
         href: "/bookings"
@@ -868,18 +901,73 @@ async function buildResidentReminderNotifications(email: string) {
 
     const taskDateLabel = task.scheduledDate.toLocaleDateString("en-GB", { timeZone: COZORO_TIMEZONE });
     const taskLabel = getCleaningTaskLabel(task.type, task.floor);
+    const dayBucket = Math.floor(Date.now() / 86_400_000);
+    const pick = <T,>(variants: T[], seed: string): T => {
+      let h = 0;
+      const key = `${seed}:${dayBucket}`;
+      for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;
+      return variants[Math.abs(h) % variants.length]!;
+    };
+    const isToday = reminderKind === "DAY_OF";
+    const title = pick(
+      isToday
+        ? ["Cleaning is today", "Duty day — it's today", "Your cleaning slot is today"]
+        : ["Cleaning is tomorrow", "Tomorrow = your duty day", "Heads up: cleaning tomorrow"],
+      `cleaning-title-${task.id}-${reminderKind}`
+    );
+    const body = pick(
+      isToday
+        ? [
+            `Your ${taskLabel} cleaning is today (${taskDateLabel}). Mark done on the assigned date; late submission stays open for 10 hours after the deadline.`,
+            `${taskLabel} duty today (${taskDateLabel}). Finish on time — late grace is ~10 hours after the deadline.`,
+            `Reminder: ${taskLabel} is on your plate today (${taskDateLabel}). Mark complete when done.`
+          ]
+        : [
+            `Your ${taskLabel} cleaning is tomorrow (${taskDateLabel}). Mark done on the assigned date; late submission stays open for 10 hours after the deadline.`,
+            `Tomorrow alert: ${taskLabel} on ${taskDateLabel}. Prep tonight so you don't scramble.`,
+            `${taskLabel} is lined up for tomorrow (${taskDateLabel}). Do it on the day, mark done, chill.`
+          ],
+      `cleaning-body-${task.id}-${reminderKind}`
+    );
     notifications.push({
       id: `cleaning-${reminderKind.toLowerCase()}-${task.id}-${taskDayKey}`,
       type: "CLEANING_REMINDER",
-      title: reminderKind === "DAY_OF" ? "Cleaning is today" : "Cleaning is tomorrow",
-      body:
-        reminderKind === "DAY_OF"
-          ? `Your ${taskLabel} cleaning is today (${taskDateLabel}). Mark done on the assigned date; late submission stays open for 10 hours after the deadline.`
-          : `Your ${taskLabel} cleaning is tomorrow (${taskDateLabel}). Mark done on the assigned date; late submission stays open for 10 hours after the deadline.`,
+      title,
+      body,
       createdAt: now.toISOString(),
       unreadCount: 1,
       href: "/cleaning-schedule"
     });
+  }
+
+  try {
+    const openSlots = await listOpenSelfAssignSlotsForUser(normalizedEmail, {
+      limit: 15,
+      includeTakeOver: false,
+      skipCalendarSync: true
+    });
+    if (openSlots.length > 0) {
+      const next = openSlots[0];
+      const nextLabel = getCleaningTaskLabel(next.type);
+      const bonusBits: string[] = [];
+      if (next.earlyBirdBonus > 0) bonusBits.push(`+${next.earlyBirdBonus.toLocaleString()} early-bird`);
+      if (next.streakBonus > 0) bonusBits.push(`+${next.streakBonus.toLocaleString()} streak`);
+      const bonusNote = bonusBits.length > 0 ? ` (${bonusBits.join(", ")})` : "";
+      notifications.push({
+        id: `self-assign-open-${normalizedEmail}-${todayKey}`,
+        type: "SELF_ASSIGN_OPPORTUNITY",
+        title: "Open cleaning slots available",
+        body: `${openSlots.length} open slot(s) ready to self-assign for bonus coins. Next: ${next.date} · ${nextLabel} · ~${next.rewardCoinsPreview.toLocaleString()} coins${bonusNote}.`,
+        createdAt: now.toISOString(),
+        unreadCount: Math.min(openSlots.length, 9),
+        href: "/schedule"
+      });
+    }
+  } catch (error) {
+    console.warn(
+      "Open self-assign opportunity notification skipped:",
+      error instanceof Error ? error.message : error
+    );
   }
 
   for (const task of recentlyAuditedTasks) {

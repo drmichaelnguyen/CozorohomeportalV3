@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.9.29] - 2026-09-04
+
+- **Social soft pressure**: Schedule shows a branch self-assign leaderboard (first names + counts) and a weekly peer claim note; system-assigned tasks nudge residents to self-assign next time.
+- **Less friction**: One-tap **Claim next open** from Home and Schedule, open-date chips claim in one confirm step, and `/schedule#claim-next-open` deep-links straight into the confirm flow.
+- **Resident AI tone**: Cozoro Assistant + Cozoro Bee use playful Vietnamese teen code and gendered address (e.g. công chúa / nàng for women; anh trai / quàng thượng / anh iu for men), with lighter humor on serious topics.
+- **Member tier tool**: Shared `getResidentMemberTierSnapshot` powers `get_resident_member_status` / `get_my_member_status` (recorded vs live tier, prev-month maintain math, ranking policy, recent tier changes).
+- **Rotating daily popups**: Referral, self-assign promo, birth-month promo, and cleaning/laundry reminder popups pick day-stable teen-code EN/VI variants via `portal/lib/rotating-promo-copy.ts` (no more single fixed sentence every time).
+
+## [3.9.28] - 2026-09-04
+
+- **Self-assign encouragement**: Open-slot notifications (`SELF_ASSIGN_OPPORTUNITY`) feed the Schedule nav badge; early-bird (+2,000 if ≥7 days ahead) and streak (+2,000 every 3rd self-assign in a month) stack on self-assign rewards.
+- **Take Over fix**: Today after 20:00 Vietnam time, residents can claim an incomplete occupied slot (API + Schedule UI use VN clock).
+- **Cozoro Bee**: Residents can ask Bee to list open cleaning slots, propose a reward preview, and self-assign only after they confirm in chat.
+- **Member tier Q&A**: Resident Bee/Assistant can load `get_my_member_status` (recorded vs live tier, maintain thresholds) to explain ranking drops.
+
 ## [3.9.27] - 2026-09-04
 
 - **Client Statistics → Member**: Per-client Member tab shows live/recorded Cozoro Member tier, current coins, progress to next tier, and inferred tier change history from that client’s coins rows.

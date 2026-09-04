@@ -1081,11 +1081,42 @@ const translations: Record<string, { en: string; vi: string }> = {
   selfAssignPromoWeekendLabel: { en: "Weekend", vi: "Cuối tuần" },
   selfAssignPromoHolidayLabel: { en: "Holiday", vi: "Ngày lễ" },
   selfAssignPromoHint: {
-    en: "Open Schedule, tap a green open date, then Assign Myself. This tip shows only occasionally.",
-    vi: "Mở Lịch, chạm ngày trống (xanh), rồi Tự đăng ký. Gợi ý này chỉ hiện thỉnh thoảng."
+    en: "Open Schedule, tap a green open date, then Assign Myself. Early-bird (+2,000 if ≥7 days ahead) and streak (+2,000 every 3rd self-assign in a month) stack on top. Or ask Cozoro Bee in Messages to find and confirm a slot. This tip shows only occasionally.",
+    vi: "Mở Lịch, chạm ngày trống (xanh), rồi Tự đăng ký. Thưởng đăng ký sớm (+2.000 nếu ≥7 ngày) và chuỗi (+2.000 mỗi lần tự nhận thứ 3 trong tháng) cộng thêm. Hoặc nhờ Cozoro Bee trong Tin nhắn tìm và xác nhận ca. Gợi ý này chỉ hiện thỉnh thoảng."
   },
   selfAssignPromoCta: { en: "Open schedule", vi: "Mở lịch vệ sinh" },
   selfAssignPromoDismiss: { en: "Not now", vi: "Để sau" },
+  claimNextOpenTitle: { en: "Claim next open slot", vi: "Nhận ca trống gần nhất" },
+  claimNextOpenBody: {
+    en: "Skip the calendar — review one open slot and confirm.",
+    vi: "Bỏ qua lịch — xem một ca trống và xác nhận."
+  },
+  claimNextOpenCta: { en: "Claim next open", vi: "Nhận ca trống" },
+  noOpenSlotsToClaim: { en: "No open cleaning slots to claim right now.", vi: "Hiện không còn ca vệ sinh trống để nhận." },
+  claimOpenSlotChip: { en: "Claim this open date", vi: "Nhận ngày trống này" },
+  claimChipShort: { en: "Claim", vi: "Nhận" },
+  upcomingOpenSlotsClaimHint: {
+    en: "Tap Claim to review coins and confirm — no need to hunt on the calendar.",
+    vi: "Chạm Nhận để xem coin và xác nhận — không cần tìm trên lịch."
+  },
+  selfAssignLeaderboardTitle: { en: "Branch self-assign this month", vi: "Bảng tự nhận theo chi nhánh tháng này" },
+  selfAssignLeaderboardYou: { en: "You", vi: "Bạn" },
+  selfAssignPeersWeek: {
+    en: "{count} neighbors self-assigned in the last 7 days.",
+    vi: "{count} bạn cùng nhà đã tự nhận trong 7 ngày qua."
+  },
+  selfAssignBranchTotal: {
+    en: "{count} self-assigns at {branch} this month.",
+    vi: "{count} lượt tự nhận tại {branch} tháng này."
+  },
+  selfAssignLeaderboardHint: {
+    en: "Your count: {yours}. Climb by claiming open green dates.",
+    vi: "Bạn đang có: {yours}. Leo hạng bằng cách nhận ngày xanh."
+  },
+  systemAssignSoftNudge: {
+    en: "This one was auto-assigned. Next time, self-assign open green dates for up to x3 coins.",
+    vi: "Ca này do hệ thống giao. Lần sau hãy tự nhận ngày xanh để nhận tới x3 coin."
+  },
   hostelCleaningExcludedTitle: { en: "Cleaning schedule not required", vi: "Không cần lịch vệ sinh" },
   hostelCleaningExcludedBody: {
     en: "Hostel short-term guests are not included in the resident cleaning schedule. Laundry and payment info remain available on this Schedule page.",
@@ -1103,6 +1134,18 @@ const translations: Record<string, { en: string; vi: string }> = {
   noCleaningProfile: { en: "Your cleaning profile hasn't been set up yet. Contact your manager to be added to the system.", vi: "Hồ sơ vệ sinh của bạn chưa được thiết lập. Liên hệ quản lý để được thêm vào hệ thống." },
   takeOver: { en: "Take Over", vi: "Nhận thay" },
   takeOverDesc: { en: "assigned person hasn't completed it yet", vi: "người được giao chưa hoàn thành" },
+  takeOverConfirmHint: {
+    en: "This slot is incomplete after 20:00 VN. Confirm to take it over.",
+    vi: "Ca này chưa hoàn thành sau 20:00 (giờ VN). Xác nhận để nhận thay."
+  },
+  readyToSubmitSelfAssign: { en: "Ready to submit", vi: "Sẵn sàng gửi" },
+  selfAssignConfirmHint: {
+    en: "Nothing will be changed until you confirm and submit this task.",
+    vi: "Chưa thay đổi gì cho đến khi bạn xác nhận và gửi."
+  },
+  selfAssignRewardPreview: { en: "Estimated reward", vi: "Ước tính thưởng" },
+  selfAssignEarlyBird: { en: "early-bird", vi: "đăng ký sớm" },
+  selfAssignStreakBonus: { en: "streak", vi: "chuỗi" },
   alreadyAssigned: { en: "Already assigned", vi: "Đã có người nhận" },
   assignMyself: { en: "Assign Myself", vi: "Tự đăng ký" },
   selfAssignedLabel: { en: "Self-assigned", vi: "Tự đăng ký" },

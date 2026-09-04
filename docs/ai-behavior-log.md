@@ -12,8 +12,8 @@ All Gemini-powered features in the **API** append to on-disk JSONL logs under `a
 Channels:
 
 - `manager` — Manager Settings inline AI (`/manager/ai-chat`).
-- `resident_portal` — Resident **Cozoro Bee** (`/resident/portal-ai-chat`).
-- `resident_support_thread` — Optional assistant in **Messages → Personal** support thread (same thread as staff; stored as `ASSISTANT` messages).
+- `resident_portal` — Resident **Cozoro Bee** (`/resident/portal-ai-chat`). Tools include `get_my_member_status` (tier / coins / ranking policy). Playful VI teen-code tone + gendered address from roster `Giới tính`.
+- `resident_support_thread` — Optional assistant in **Messages → Personal** support thread (same thread as staff; stored as `ASSISTANT` messages). Tools include `get_resident_member_status`. Same teen-code / gendered address tone.
 
 ## Disable logging
 

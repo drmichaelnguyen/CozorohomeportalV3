@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { usePortalSession } from "./portal-session";
 import { usePortalLanguage } from "./portal-language";
 import { API_BASE_URL } from "../lib/api-base-url";
-import { formatCozoroDate, formatCozoroDateTime, formatCozoroMonth } from "../lib/date-format";
+import { formatCozoroDate, formatCozoroDateTime, formatCozoroMonth, COZORO_TIME_ZONE } from "../lib/date-format";
 import {
   getVietnamHoliday,
   isVietnamNationalHoliday,
@@ -68,6 +68,22 @@ type CleaningOverview = {
   photoRequiredTaskTypes?: CleaningTask["type"][];
   cleaningExcluded?: boolean;
   cleaningExcludedReason?: string;
+  selfAssignSocial?: {
+    month: string;
+    branchId: string;
+    yourCount: number;
+    branchSelfAssignCount: number;
+    peersClaimedLast7Days: number;
+    top: Array<{ displayName: string; count: number; isYou?: boolean }>;
+  } | null;
+  nextOpenSelfAssignSlots?: Array<{
+    date: string;
+    type: CleaningTask["type"];
+    rewardCoinsPreview: number;
+    earlyBirdBonus?: number;
+    streakBonus?: number;
+    isTakeOver?: boolean;
+  }>;
 };
 
 type PendingSelfAssignment = {
@@ -75,6 +91,10 @@ type PendingSelfAssignment = {
   date: string;
   canSubmit: boolean;
   reason?: string;
+  isTakeOver?: boolean;
+  rewardCoinsPreview?: number;
+  earlyBirdBonus?: number;
+  streakBonus?: number;
 };
 
 type CleaningReleasePenalty = {
@@ -331,8 +351,8 @@ function getSelfAssignAvailability(
   }
 
   const occupiedByOther = isSlotOccupiedByOther(overview, dateStr, type);
-  const isDateToday = sameDay(date, new Date());
-  const canTakeOver = isDateToday && isAfter8pm() && occupiedByOther;
+  const isDateToday = toApiCalendarDate(date) === cozoroCalendarDateKey();
+  const canTakeOver = isDateToday && isAfter8pmVn() && occupiedByOther;
 
   if (occupiedByOther && !canTakeOver) {
     return {
@@ -404,8 +424,19 @@ function formatSelfAssignBonusLabel(
   return t("selfAssignBonusWeekday", `x${multipliers.selfAssign}`);
 }
 
-function isAfter8pm() {
-  return new Date().getHours() >= 20;
+function isAfter8pmVn(now = new Date()) {
+  const raw = new Intl.DateTimeFormat("en-US", {
+    timeZone: COZORO_TIME_ZONE,
+    hour: "numeric",
+    hour12: false
+  }).format(now);
+  const hour = Number.parseInt(raw, 10);
+  if (!Number.isFinite(hour)) return false;
+  return (hour === 24 ? 0 : hour) >= 20;
+}
+
+function cozoroCalendarDateKey(now = new Date()) {
+  return now.toLocaleDateString("en-CA", { timeZone: COZORO_TIME_ZONE });
 }
 
 function getResidentAssignerLabel(task: Pick<CleaningTask, "assignmentSource" | "isSelfAssigned">) {
@@ -575,6 +606,23 @@ export function CleaningScheduleClient({
     // overview omitted from deps on purpose: we only auto-fetch when session/email gates change, not when overview updates (avoids loops on failed fetch)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isStaffView, isSessionLoaded, isLoggedIn, activeEmail, overview]);
+
+  useEffect(() => {
+    if (isStaffView || !overview || overview.cleaningExcluded) return;
+    if (typeof window === "undefined") return;
+    if (window.location.hash !== "#claim-next-open") return;
+    if (!(overview.nextOpenSelfAssignSlots?.length)) return;
+    const timer = window.setTimeout(() => {
+      void claimNextOpenSlot();
+      try {
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+      } catch {
+        /* ignore */
+      }
+    }, 300);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overview?.nextOpenSelfAssignSlots?.length, isStaffView]);
 
   async function readJsonSafely<T>(response: Response) {
     const contentType = response.headers.get("content-type") ?? "";
@@ -905,12 +953,16 @@ export function CleaningScheduleClient({
     }
   }
 
-  async function prepareSelfAssignment(type: CleaningTask["type"]) {
+  async function prepareSelfAssignment(
+    type: CleaningTask["type"],
+    options?: { date?: Date; scrollToConfirm?: boolean }
+  ) {
     if (!email.trim()) {
       setMessage("Enter your email first.");
       return;
     }
-    const availability = getSelfAssignAvailability(selectedDate, type, overview);
+    const targetDate = options?.date ? startOfDay(options.date) : selectedDate;
+    const availability = getSelfAssignAvailability(targetDate, type, overview);
     if (!availability.available) {
       setMessage(
         availability.reasonKey
@@ -920,12 +972,18 @@ export function CleaningScheduleClient({
       return;
     }
 
+    if (options?.date) {
+      setSelectedDate(targetDate);
+      setCalendarFocusDate(new Date(targetDate.getFullYear(), targetDate.getMonth(), 1));
+      setActiveMenuDate(targetDate);
+    }
+
     setLoading(true);
     setSelfAssignSuggestions([]);
     setMessage("");
 
     try {
-      const date = toApiCalendarDate(selectedDate);
+      const date = toApiCalendarDate(targetDate);
       const response = await fetch(`${API_BASE_URL}/cleaning/self-assign/check`, {
         method: "POST",
         headers: {
@@ -937,9 +995,16 @@ export function CleaningScheduleClient({
           type
         })
       });
-      const data = await readJsonSafely<{ canSubmit?: boolean; reason?: string; suggestions?: string[]; error?: string }>(
-        response
-      );
+      const data = await readJsonSafely<{
+        canSubmit?: boolean;
+        reason?: string;
+        suggestions?: string[];
+        error?: string;
+        isTakeOver?: boolean;
+        rewardCoinsPreview?: number;
+        earlyBirdBonus?: number;
+        streakBonus?: number;
+      }>(response);
 
       if (!response.ok) {
         setPendingSelfAssignment(null);
@@ -952,19 +1017,48 @@ export function CleaningScheduleClient({
         type,
         date,
         canSubmit: Boolean(data.canSubmit),
-        reason: data.reason
+        reason: data.reason,
+        isTakeOver: Boolean(data.isTakeOver),
+        rewardCoinsPreview: data.rewardCoinsPreview,
+        earlyBirdBonus: data.earlyBirdBonus,
+        streakBonus: data.streakBonus
       });
       setMessage(
         data.canSubmit
-          ? `Review ${prettyTaskType(type)} on ${formatCozoroDate(selectedDate)} and submit when ready.`
+          ? `Review ${prettyTaskType(type)} on ${formatCozoroDate(targetDate)} and submit when ready.`
           : (data.reason ?? "This date cannot be self-assigned.")
       );
+      if (options?.scrollToConfirm && data.canSubmit) {
+        window.setTimeout(() => {
+          document.getElementById("self-assign-confirm")?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 50);
+      }
     } catch {
       setPendingSelfAssignment(null);
       setMessage("Unable to check this self-assignment.");
     } finally {
       setLoading(false);
     }
+  }
+
+  async function claimNextOpenSlot() {
+    const next =
+      overview?.nextOpenSelfAssignSlots?.[0] ??
+      (() => {
+        for (const type of allowedTaskTypes) {
+          const dates = upcomingOpenSlots[type] ?? [];
+          if (dates[0]) return { date: dates[0], type };
+        }
+        return null;
+      })();
+    if (!next) {
+      setMessage(t("noOpenSlotsToClaim", "No open cleaning slots to claim right now."));
+      return;
+    }
+    await prepareSelfAssignment(next.type, {
+      date: startOfDay(new Date(`${next.date}T12:00:00`)),
+      scrollToConfirm: true
+    });
   }
 
   async function submitSelfAssignment() {
@@ -1557,6 +1651,16 @@ export function CleaningScheduleClient({
                 {nextCleaningCardTask.type === "TRASH_D7" && nextCleaningCardTask.floor ? (
                   <p className="mt-1 text-xs text-slate-500">{t("floorLabel", "Floor")} {nextCleaningCardTask.floor}</p>
                 ) : null}
+                {!isStaffView &&
+                (nextCleaningCardTask.assignmentSource === "SYSTEM" ||
+                  (!nextCleaningCardTask.isSelfAssigned && nextCleaningCardTask.assignmentSource !== "SELF")) ? (
+                  <p className="mt-2 text-xs text-amber-800/90">
+                    {t(
+                      "systemAssignSoftNudge",
+                      "This one was auto-assigned. Next time, self-assign open green dates for up to x3 coins."
+                    )}
+                  </p>
+                ) : null}
               </div>
             </div>
             <div className="md:min-w-[220px]">
@@ -1573,6 +1677,100 @@ export function CleaningScheduleClient({
           </div>
         </section>
       )}
+
+      {!isStaffView && overview && !overview.cleaningExcluded && (
+        (overview.nextOpenSelfAssignSlots?.length ?? 0) > 0 ||
+        (overview.selfAssignSocial && overview.selfAssignSocial.branchSelfAssignCount > 0)
+      ) ? (
+        <section className="grid gap-4 lg:grid-cols-2">
+          {(overview.nextOpenSelfAssignSlots?.length ?? 0) > 0 ? (
+            <div
+              id="claim-next-open"
+              className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-5 shadow-sm"
+            >
+              <h2 className="text-sm font-bold uppercase tracking-tight text-emerald-900">
+                {t("claimNextOpenTitle", "Claim next open slot")}
+              </h2>
+              <p className="mt-1 text-sm text-emerald-900/80">
+                {t(
+                  "claimNextOpenBody",
+                  "Skip the calendar — review one open slot and confirm."
+                )}
+              </p>
+              {overview.nextOpenSelfAssignSlots?.[0] ? (
+                <p className="mt-3 text-sm font-medium text-slate-900">
+                  {prettyTaskType(overview.nextOpenSelfAssignSlots[0].type)} ·{" "}
+                  {formatCozoroDate(`${overview.nextOpenSelfAssignSlots[0].date}T12:00:00`)} · ~
+                  {overview.nextOpenSelfAssignSlots[0].rewardCoinsPreview.toLocaleString()} coins
+                  {overview.nextOpenSelfAssignSlots[0].isTakeOver
+                    ? ` · ${t("takeOver", "Take Over")}`
+                    : ""}
+                </p>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void claimNextOpenSlot()}
+                disabled={loading}
+                className="mt-4 w-full rounded-xl bg-emerald-700 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-60"
+              >
+                {t("claimNextOpenCta", "Claim next open")}
+              </button>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="text-sm font-bold uppercase tracking-tight text-slate-700">
+                {t("claimNextOpenTitle", "Claim next open slot")}
+              </h2>
+              <p className="mt-2 text-sm text-slate-600">
+                {t("noOpenSlotsToClaim", "No open cleaning slots to claim right now.")}
+              </p>
+            </div>
+          )}
+
+          {overview.selfAssignSocial && overview.selfAssignSocial.branchSelfAssignCount > 0 ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="text-sm font-bold uppercase tracking-tight text-slate-800">
+                {t("selfAssignLeaderboardTitle", "Branch self-assign this month")}
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                {overview.selfAssignSocial.peersClaimedLast7Days > 0
+                  ? t(
+                      "selfAssignPeersWeek",
+                      "{count} neighbors self-assigned in the last 7 days."
+                    ).replace("{count}", String(overview.selfAssignSocial.peersClaimedLast7Days))
+                  : t(
+                      "selfAssignBranchTotal",
+                      "{count} self-assigns at {branch} this month."
+                    )
+                      .replace("{count}", String(overview.selfAssignSocial.branchSelfAssignCount))
+                      .replace("{branch}", overview.selfAssignSocial.branchId)}
+              </p>
+              <ul className="mt-3 space-y-1.5">
+                {overview.selfAssignSocial.top.map((entry, index) => (
+                  <li
+                    key={`${entry.displayName}-${index}`}
+                    className={`flex items-center justify-between rounded-lg px-2.5 py-1.5 text-sm ${
+                      entry.isYou ? "bg-emerald-50 text-emerald-900" : "text-slate-700"
+                    }`}
+                  >
+                    <span>
+                      <span className="mr-2 text-xs font-semibold text-slate-400">{index + 1}.</span>
+                      {entry.isYou ? t("selfAssignLeaderboardYou", "You") : entry.displayName}
+                    </span>
+                    <span className="font-semibold tabular-nums">{entry.count}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-3 text-xs text-slate-500">
+                {t(
+                  "selfAssignLeaderboardHint",
+                  "Your count: {yours}. Climb by claiming open green dates."
+                ).replace("{yours}", String(overview.selfAssignSocial.yourCount))}
+              </p>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       {optOutModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
@@ -1673,8 +1871,8 @@ export function CleaningScheduleClient({
                         (type !== "TRASH_D7" || slot.floor === (overview.user?.floor ?? null))
                     );
                     const isDateTodayOrFuture = isTodayOrFuture(activeMenuDate);
-                    const isDateToday = sameDay(activeMenuDate, new Date());
-                    const canTakeOver = isDateToday && isAfter8pm();
+                    const isDateToday = toApiCalendarDate(activeMenuDate) === cozoroCalendarDateKey();
+                    const canTakeOver = isDateToday && isAfter8pmVn();
 
                     if (isOccupiedByOther) {
                       if (canTakeOver) {
@@ -2157,7 +2355,26 @@ export function CleaningScheduleClient({
 
           {allowedTaskTypes.length > 0 && Object.values(upcomingOpenSlots).some((dates) => dates.length > 0) && (
             <section className="rounded-2xl bg-emerald-50 p-5 shadow-sm ring-1 ring-emerald-200">
-              <h2 className="text-sm font-semibold text-emerald-900">Upcoming open slots — available to self-assign</h2>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-emerald-900">
+                    {t("upcomingOpenSlots", "Upcoming open slots — available to self-assign")}
+                  </h2>
+                  <p className="mt-1 text-xs text-emerald-800/80">
+                    {t("upcomingOpenSlotsClaimHint", "Tap Claim to review coins and confirm — no need to hunt on the calendar.")}
+                  </p>
+                </div>
+                {!isStaffView ? (
+                  <button
+                    type="button"
+                    onClick={() => void claimNextOpenSlot()}
+                    disabled={loading}
+                    className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-60"
+                  >
+                    {t("claimNextOpenCta", "Claim next open")}
+                  </button>
+                ) : null}
+              </div>
               <div className="mt-3 space-y-3">
                 {(Object.entries(upcomingOpenSlots) as [CleaningTask["type"], string[]][]).map(([type, dates]) => {
                   if (dates.length === 0) return null;
@@ -2186,17 +2403,29 @@ export function CleaningScheduleClient({
                                     <button
                                       key={d}
                                       type="button"
+                                      disabled={loading || isStaffView}
                                       onClick={() => {
-                                        const target = new Date(d + "T00:00:00");
-                                        setCalendarFocusDate(new Date(target.getFullYear(), target.getMonth(), 1));
-                                        setSelectedDate(startOfDay(target));
-                                        setActiveMenuDate(startOfDay(target));
-                                        setPendingSelfAssignment(null);
-                                        setSelfAssignSuggestions([]);
+                                        if (isStaffView) {
+                                          const target = new Date(d + "T00:00:00");
+                                          setCalendarFocusDate(new Date(target.getFullYear(), target.getMonth(), 1));
+                                          setSelectedDate(startOfDay(target));
+                                          setActiveMenuDate(startOfDay(target));
+                                          return;
+                                        }
+                                        void prepareSelfAssignment(type, {
+                                          date: startOfDay(new Date(`${d}T12:00:00`)),
+                                          scrollToConfirm: true
+                                        });
                                       }}
-                                      className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-800 hover:bg-emerald-200 transition-colors"
+                                      className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-800 hover:bg-emerald-200 transition-colors disabled:opacity-60"
+                                      title={isStaffView ? d : t("claimOpenSlotChip", "Claim this open date")}
                                     >
                                       {dayNum}
+                                      {!isStaffView ? (
+                                        <span className="ml-1 text-[10px] font-semibold uppercase text-emerald-700">
+                                          {t("claimChipShort", "Claim")}
+                                        </span>
+                                      ) : null}
                                     </button>
                                   );
                                 })}
@@ -2627,15 +2856,39 @@ export function CleaningScheduleClient({
                   </p>
                 ) : null}
                 {pendingSelfAssignment ? (
-                  <div className="mt-4 rounded-xl border border-slate-300 bg-slate-50 p-4">
-                    <div className="text-sm font-medium text-slate-900">Ready to submit</div>
+                  <div id="self-assign-confirm" className="mt-4 rounded-xl border border-slate-300 bg-slate-50 p-4">
+                    <div className="text-sm font-medium text-slate-900">
+                      {pendingSelfAssignment.isTakeOver
+                        ? t("takeOver", "Take Over")
+                        : t("readyToSubmitSelfAssign", "Ready to submit")}
+                    </div>
                     <div className="mt-2 text-sm text-slate-700">
                       {prettyTaskType(pendingSelfAssignment.type)} on{" "}
                       {formatCozoroDate(`${pendingSelfAssignment.date}T12:00:00`)}
                     </div>
+                    {pendingSelfAssignment.canSubmit && pendingSelfAssignment.rewardCoinsPreview != null ? (
+                      <div className="mt-1 text-xs text-emerald-800">
+                        {t("selfAssignRewardPreview", "Estimated reward")}:{" "}
+                        {pendingSelfAssignment.rewardCoinsPreview.toLocaleString()} coins
+                        {pendingSelfAssignment.earlyBirdBonus
+                          ? ` · +${pendingSelfAssignment.earlyBirdBonus.toLocaleString()} ${t("selfAssignEarlyBird", "early-bird")}`
+                          : ""}
+                        {pendingSelfAssignment.streakBonus
+                          ? ` · +${pendingSelfAssignment.streakBonus.toLocaleString()} ${t("selfAssignStreakBonus", "streak")}`
+                          : ""}
+                      </div>
+                    ) : null}
                     <div className="mt-1 text-xs text-slate-500">
                       {pendingSelfAssignment.canSubmit
-                        ? "Nothing will be changed until you confirm and submit this task."
+                        ? pendingSelfAssignment.isTakeOver
+                          ? t(
+                              "takeOverConfirmHint",
+                              "This slot is incomplete after 20:00 VN. Confirm to take it over."
+                            )
+                          : t(
+                              "selfAssignConfirmHint",
+                              "Nothing will be changed until you confirm and submit this task."
+                            )
                         : pendingSelfAssignment.reason ?? "This date cannot be self-assigned."}
                     </div>
                     <div className="mt-3 flex flex-wrap gap-3">
@@ -2740,6 +2993,17 @@ export function CleaningScheduleClient({
                     <div className="mt-1 text-sm text-slate-600">
                       Assigner: {getResidentAssignerLabel(task)}
                     </div>
+                    {!isStaffView &&
+                    task.status === "ASSIGNED" &&
+                    (task.assignmentSource === "SYSTEM" ||
+                      (!task.isSelfAssigned && task.assignmentSource !== "SELF" && task.assignmentSource !== "MANAGER")) ? (
+                      <p className="mt-1 text-xs text-amber-800">
+                        {t(
+                          "systemAssignSoftNudge",
+                          "This one was auto-assigned. Next time, self-assign open green dates for up to x3 coins."
+                        )}
+                      </p>
+                    ) : null}
                     <div className="mt-1 text-sm text-slate-600">
                       Completion window: {getCompletionWindow(task).label}
                     </div>

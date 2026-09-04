@@ -113,7 +113,7 @@ function useNavBadges(
         setBadges((prev) => ({
           ...prev,
           laundry: sum(["LAUNDRY_REMINDER"]),
-          cleaning: sum(["CLEANING_REMINDER", "CLEANING_AUDIT_RESULT", "FRIDGE_DRAIN_REMINDER"]),
+          cleaning: sum(["CLEANING_REMINDER", "CLEANING_AUDIT_RESULT", "FRIDGE_DRAIN_REMINDER", "SELF_ASSIGN_OPPORTUNITY"]),
           message: sum(["SUPPORT_REPLY"]),
           account: sum(["PAYMENT_DUE", "NEW_FINE", "PREPAID_PACKAGE", "COOKER_LEFT_ON"]),
           managerMessage: 0,

@@ -26,8 +26,12 @@ import { ResidentInstructionsPanel } from "./resident-instructions-panel";
 import type { RentPaidStatusPayload } from "../lib/rent-paid-status";
 import { formatCozoroDate, formatCozoroDateTime, formatCozoroMonth } from "../lib/date-format";
 import { isShortTermContractCode } from "../lib/resident-guides-types";
-
-type ClientRecord = Record<string, string>;
+import {
+  pickRotatingLine,
+  REFERRAL_PROMO_DISMISSES,
+  REFERRAL_PROMO_INTROS,
+  REFERRAL_PROMO_TITLES
+} from "../lib/rotating-promo-copy";
 
 type CheckoutBannerContext = {
   eligible: boolean;
@@ -2027,9 +2031,22 @@ export function AccountOverviewClient() {
             onClick={(e) => e.stopPropagation()}
           >
             <h2 id="referral-weekly-modal-title" className="text-lg font-semibold text-emerald-950 dark:text-emerald-100">
-              {language === "vi" ? "Giới thiệu bạn bè" : "Refer a friend"}
+              {pickRotatingLine(
+                "referral-title",
+                activeEmail,
+                REFERRAL_PROMO_TITLES,
+                language === "vi" ? "vi" : "en"
+              )}
             </h2>
             <p className="mt-2 text-sm text-emerald-900/90 dark:text-emerald-200/90">
+              {pickRotatingLine(
+                "referral-intro",
+                activeEmail,
+                REFERRAL_PROMO_INTROS,
+                language === "vi" ? "vi" : "en"
+              )}
+            </p>
+            <p className="mt-2 text-sm font-medium text-emerald-950/90 dark:text-emerald-100/90">
               {language === "vi" ? referralWeeklySnapshot.headlineVi : referralWeeklySnapshot.headlineEn}
             </p>
             <div className="mt-4 space-y-3 text-sm">
@@ -2044,7 +2061,12 @@ export function AccountOverviewClient() {
               }}
               className="mt-6 w-full rounded-xl bg-emerald-700 py-3 text-sm font-semibold text-white shadow-sm hover:bg-emerald-600"
             >
-              {language === "vi" ? "Đã hiểu" : "Got it"}
+              {pickRotatingLine(
+                "referral-dismiss",
+                activeEmail,
+                REFERRAL_PROMO_DISMISSES,
+                language === "vi" ? "vi" : "en"
+              )}
             </button>
           </div>
         </div>
