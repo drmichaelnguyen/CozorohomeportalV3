@@ -186,6 +186,7 @@ const nextConfig: NextConfig = {
 | `GET /manager/support/conversations?operatorEmail=` | Manager inbox list |
 | `GET /manager/support/conversations/:id?operatorEmail=` | Conversation thread |
 | `POST /manager/support/messages` | Send reply as manager |
+| `POST /manager/support/conversations/:id/ai-draft` | **Manager, owner, app_admin** — generate an editable, unsent reply draft from direct-thread context and CozoroHome app knowledge. |
 | `POST /manager/support/conversations/:id/read` | Mark conversation read |
 | `GET /clients/laundry-bookings?email=` | Resident laundry bookings |
 | `GET /controller/cooker?email=` | Resident kitchen cooker status (on/off, reservations, photos required to toggle) |
@@ -293,6 +294,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.30 | Manager/owner/app-admin direct support chats can generate context-aware AI reply drafts; drafts remain editable and require an explicit send. |
 | 3.9.29 | Self-assign social soft pressure + claim-next friction cuts; resident AI teen-code tone + member-tier tool; rotating teen-code daily popups (referral / self-assign / birth-month / cleaning+laundry). |
 | 3.9.28 | Self-assign open-slot notifications + badge; early-bird/streak bonuses; Take Over after 20:00 VN; Bee chat self-assign with confirm. Resident AI can explain Cozoro Member tier (recorded vs live, maintain thresholds). |
 | 3.9.27 | Client Details → Client Statistics adds Member tab (live/recorded tier + change history). |

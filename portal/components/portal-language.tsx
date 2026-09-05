@@ -2067,6 +2067,20 @@ const translations: Record<string, { en: string; vi: string }> = {
   loadingInboxError: { en: "Unable to load support inbox.", vi: "Không thể tải hộp thư hỗ trợ." },
   supportUnableLoadThread: { en: "Unable to load this conversation.", vi: "Không thể tải cuộc hội thoại này." },
   supportUnableSendReply: { en: "Unable to send reply.", vi: "Không thể gửi phản hồi." },
+  supportAiDraftButton: { en: "Generate AI reply", vi: "Tạo phản hồi bằng AI" },
+  supportAiDraftGenerating: { en: "Generating reply…", vi: "Đang tạo phản hồi…" },
+  supportAiDraftHint: {
+    en: "AI reads this conversation and CozoroHome rules, then fills an editable draft. Nothing is sent automatically.",
+    vi: "AI đọc cuộc hội thoại và quy định CozoroHome, sau đó điền bản nháp có thể chỉnh sửa. Không có gì được tự động gửi."
+  },
+  supportAiDraftError: {
+    en: "AI could not generate a reply right now. Please try again.",
+    vi: "AI chưa thể tạo phản hồi lúc này. Vui lòng thử lại."
+  },
+  supportAiReplaceDraftConfirm: {
+    en: "Replace your current draft with an AI-generated reply?",
+    vi: "Thay bản nháp hiện tại bằng phản hồi do AI tạo?"
+  },
   supportUnableUpdateStatus: { en: "Unable to update conversation status.", vi: "Không thể cập nhật trạng thái hội thoại." },
   supportConversationClosed: { en: "Conversation closed.", vi: "Đã đóng cuộc hội thoại." },
   supportConversationReopened: { en: "Conversation reopened.", vi: "Đã mở lại cuộc hội thoại." },

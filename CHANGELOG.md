@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.9.30] - 2026-09-05
+
+- **AI-assisted staff replies**: Managers, owners, and app admins can generate a resident-facing reply draft from a direct support conversation. The AI reviews recent thread context, resident details, CozoroHome policy/app logic, and read-only financial/member data when relevant.
+- **Human review required**: Generated text fills the existing composer for staff to edit; it is never sent or persisted automatically. Existing draft replacement requires confirmation, and group chats are excluded because they do not map to one resident account.
+
 ## [3.9.29] - 2026-09-04
 
 - **Social soft pressure**: Schedule shows a branch self-assign leaderboard (first names + counts) and a weekly peer claim note; system-assigned tasks nudge residents to self-assign next time.

@@ -12,6 +12,7 @@ export type AiModality = "text" | "vision";
 
 export const AI_FEATURE_LABELS: Record<string, string> = {
   manager_ai_chat: "Manager AI chat",
+  manager_support_reply_draft: "Manager support reply draft",
   resident_portal: "Resident assistant",
   resident_support_thread: "Support assistant",
   cleaning_photo_verification: "Cleaning photo verification"

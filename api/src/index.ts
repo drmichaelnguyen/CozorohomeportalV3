@@ -353,6 +353,7 @@ import {
 } from "./stripe-hostel-payments.js";
 import { handleManagerAiChat, type AiChatMessage } from "./manager-ai-chat.js";
 import { handleResidentPortalAiChat, type ResidentPortalAiMessage } from "./resident-portal-ai-chat.js";
+import { generateManagerSupportReplyDraft } from "./resident-support-ai.js";
 import { getVentHammerRedeemToday, markVentHammerRedeemedToday } from "./vent-hammer-redeem-guard.js";
 import {
   managerGetDepositRefundPreview,
@@ -2001,6 +2002,9 @@ const supportReadSchema = z.object({
   email: z.string().email()
 });
 const supportInboxQuerySchema = z.object({
+  operatorEmail: z.string().email()
+});
+const supportAiDraftSchema = z.object({
   operatorEmail: z.string().email()
 });
 const supportOperatorMessageSchema = z.object({
@@ -4567,6 +4571,42 @@ app.post("/manager/support/messages", async (request, response) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to send manager reply";
     const statusCode = message.includes("Only owner or manager") ? 403 : 400;
+    return response.status(statusCode).json({ error: message });
+  }
+});
+
+app.post("/manager/support/conversations/:id/ai-draft", async (request, response) => {
+  const parsed = supportAiDraftSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "A valid operator email is required." });
+  }
+
+  const conversationId = request.params.id ?? "";
+  if (
+    conversationId.startsWith("BRANCH_") ||
+    conversationId.startsWith("FLOOR_") ||
+    conversationId.startsWith("ROOM_")
+  ) {
+    return response.status(400).json({ error: "AI reply drafts are available for resident conversations only." });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.operatorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only managers, owners, or app admins can generate support reply drafts."
+    );
+    const draft = await generateManagerSupportReplyDraft({
+      conversationId,
+      operatorEmail: parsed.data.operatorEmail
+    });
+    if (!draft) {
+      return response.status(503).json({ error: "AI could not generate a reply right now. Please try again." });
+    }
+    return response.json({ draft });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to generate an AI reply.";
+    const statusCode = message.includes("Only managers") ? 403 : message.toLowerCase().includes("not found") ? 404 : 400;
     return response.status(statusCode).json({ error: message });
   }
 });

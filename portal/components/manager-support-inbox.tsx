@@ -108,10 +108,12 @@ export function ManagerSupportInbox({
   const [draft, setDraft] = useState("");
   const [pendingImages, setPendingImages] = useState<PendingChatImage[]>([]);
   const [compressingImages, setCompressingImages] = useState(false);
+  const [generatingAiDraft, setGeneratingAiDraft] = useState(false);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const selectedConversationIdRef = useRef("");
   const imageInputRef = useRef<HTMLInputElement>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressNextRowClickRef = useRef(false);
@@ -162,6 +164,10 @@ export function ManagerSupportInbox({
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  useEffect(() => {
+    selectedConversationIdRef.current = selectedConversationId;
+  }, [selectedConversationId]);
 
   /** Pass `null` after deleting a thread to select the first remaining conversation (ignores stale selection). */
   async function loadInbox(targetConversationId?: string | null) {
@@ -280,6 +286,50 @@ export function ManagerSupportInbox({
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void sendReply();
+    }
+  }
+
+  async function generateAiReplyDraft() {
+    const conversationId = selectedConversationId;
+    if (!conversationId || conversationId.startsWith("BRANCH_") || conversationId.startsWith("FLOOR_") || conversationId.startsWith("ROOM_")) {
+      return;
+    }
+    if (draft.trim() && !window.confirm(t("supportAiReplaceDraftConfirm"))) {
+      return;
+    }
+
+    setGeneratingAiDraft(true);
+    setStatus("");
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/manager/support/conversations/${encodeURIComponent(conversationId)}/ai-draft`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ operatorEmail })
+        }
+      );
+      const data = (await response.json()) as { draft?: string; error?: string };
+      if (!response.ok || !data.draft?.trim()) {
+        setStatus(data.error ?? t("supportAiDraftError"));
+        return;
+      }
+      if (selectedConversationIdRef.current !== conversationId) {
+        return;
+      }
+
+      setDraft(data.draft.trim());
+      requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        textarea.style.height = "auto";
+        textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
+        textarea.focus();
+      });
+    } catch {
+      setStatus(t("supportAiDraftError"));
+    } finally {
+      setGeneratingAiDraft(false);
     }
   }
 
@@ -712,6 +762,20 @@ export function ManagerSupportInbox({
                     ))}
                   </div>
                 ) : null}
+                {!selectedConversationId.startsWith("BRANCH_") &&
+                !selectedConversationId.startsWith("FLOOR_") &&
+                !selectedConversationId.startsWith("ROOM_") ? (
+                  <button
+                    type="button"
+                    onClick={() => void generateAiReplyDraft()}
+                    disabled={loading || generatingAiDraft || !selectedConversationId || messages.length === 0}
+                    className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700 transition hover:border-violet-300 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    title={t("supportAiDraftHint")}
+                  >
+                    <span aria-hidden="true">{generatingAiDraft ? "…" : "✨"}</span>
+                    {generatingAiDraft ? t("supportAiDraftGenerating") : t("supportAiDraftButton")}
+                  </button>
+                ) : null}
                 <form onSubmit={sendReply} className="flex items-end gap-2">
                   <input
                     ref={imageInputRef}
@@ -754,7 +818,7 @@ export function ManagerSupportInbox({
                   />
                   <button
                     type="submit"
-                    disabled={loading || (!draft.trim() && pendingImages.length === 0) || !selectedConversationId}
+                    disabled={loading || generatingAiDraft || (!draft.trim() && pendingImages.length === 0) || !selectedConversationId}
                     className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-500 text-white shadow transition hover:bg-blue-600 disabled:opacity-40"
                   >
                     <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">

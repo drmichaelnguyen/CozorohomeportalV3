@@ -532,4 +532,162 @@ export async function runResidentSupportAssistantTurn(input: {
   return { replyText: null };
 }
 
+/**
+ * Builds an editable, resident-facing reply for a staff member. This deliberately
+ * does not persist a SupportMessage or expose mutating tools: the operator must
+ * review and send the draft from the support inbox.
+ */
+export async function generateManagerSupportReplyDraft(input: {
+  conversationId: string;
+  operatorEmail: string;
+}): Promise<string | null> {
+  if (!hasPortalLlmConfig("shared")) {
+    return null;
+  }
+
+  const conversation = await prisma.supportConversation.findUnique({
+    where: { id: input.conversationId },
+    include: {
+      messages: {
+        orderBy: { createdAt: "asc" },
+        take: 80
+      }
+    }
+  });
+
+  if (!conversation || conversation.messages.length === 0) {
+    return null;
+  }
+
+  const latestResidentMessage = [...conversation.messages]
+    .reverse()
+    .find((message) => message.senderRole === SupportMessageSenderRole.RESIDENT);
+  if (!latestResidentMessage) {
+    return null;
+  }
+
+  const residentEmail = conversation.residentEmail.trim().toLowerCase();
+  const client = await getActiveClientByEmail(residentEmail);
+  const contactLines: string[] = [];
+  if (conversation.residentContactPhone) contactLines.push(`Phone: ${conversation.residentContactPhone}`);
+  if (conversation.residentContactFacebook) contactLines.push(`Facebook: ${conversation.residentContactFacebook}`);
+  if (conversation.residentContactOther) contactLines.push(`Other: ${conversation.residentContactOther}`);
+
+  const preferVietnamese = looksVietnamese(latestResidentMessage.body);
+  const systemPrompt = `${buildSystemPrompt({
+    email: residentEmail,
+    clientBlock: buildResidentContextBlock(residentEmail, client),
+    contactBlock: contactLines.length ? contactLines.join("\n") : "(none yet)",
+    preferVietnamese
+  })}
+
+## Staff reply drafting mode
+- You are preparing one suggested reply for a CozoroHome manager, owner, or app admin to review and edit.
+- Read the entire supplied conversation before answering. Respond to the latest unresolved resident need and use the CozoroHome rules above.
+- Return only the message that should be sent to the resident. Do not add labels, analysis, quotation marks, or notes to staff.
+- Never claim that staff changed data, approved an exception, issued a refund, fixed equipment, or completed another action unless the conversation explicitly confirms it.
+- An earlier Cozoro Assistant message may already be in the thread. Do not repeat it mechanically; clarify, correct, or add the useful human follow-up.
+- This is a draft only. Do not save contact details or perform any mutation.`;
+
+  const contents = compressThreadForGemini(
+    conversation.messages.map((message) => ({
+      senderRole: message.senderRole,
+      senderName: message.senderName,
+      body: message.body
+    }))
+  );
+  const tools: LlmChatTool[] = [
+    {
+      functionDeclarations: [
+        {
+          name: "get_resident_financial_overview",
+          description:
+            "Get resident-specific payment due status, unpaid fines, coin balances, latest payment row, and laundry coin allowance for the current conversation email.",
+          parameters: { type: "OBJECT", properties: {} }
+        },
+        {
+          name: "get_resident_member_status",
+          description:
+            "Get this resident's recorded and live Cozoro Member tier, balances, maintenance thresholds, and recent tier changes.",
+          parameters: { type: "OBJECT", properties: {} }
+        }
+      ]
+    }
+  ];
+
+  let maxRounds = 4;
+  while (maxRounds-- > 0) {
+    const requestStartedAt = Date.now();
+    const round = await completeToolChatRound({
+      systemPrompt,
+      contents,
+      tools,
+      temperature: 0.3,
+      maxOutputTokens: 768,
+      geminiKind: "shared"
+    });
+
+    void recordGeminiUsage({
+      feature: "manager_support_reply_draft",
+      actorEmail: input.operatorEmail,
+      usage: round.usage,
+      provider: round.provider,
+      model: round.model,
+      status: round.rateLimited
+        ? "RATE_LIMITED"
+        : round.invalidJson
+          ? "INVALID_RESPONSE"
+          : round.errorMessage
+            ? "ERROR"
+            : "SUCCESS",
+      latencyMs: Date.now() - requestStartedAt
+    });
+
+    if (round.invalidJson || round.rateLimited || round.errorMessage) {
+      return null;
+    }
+    if (round.emptyCandidate || (!round.functionCall && !round.text)) {
+      return null;
+    }
+    if (!round.functionCall) {
+      const draftText = round.text?.trim().slice(0, 6000) || null;
+      if (draftText) {
+        void appendAiTrainingExchange({
+          channel: "manager",
+          identifier: input.operatorEmail,
+          userText: latestResidentMessage.body,
+          modelText: draftText,
+          conversationId: input.conversationId,
+          meta: { feature: "manager_support_reply_draft", residentEmail, preferVietnamese }
+        });
+      }
+      return draftText;
+    }
+
+    const { name, args } = round.functionCall;
+    let toolResponse: Record<string, unknown>;
+    if (name === "get_resident_financial_overview") {
+      toolResponse = await executeGetResidentFinancialOverview(residentEmail);
+    } else if (name === "get_resident_member_status") {
+      toolResponse = await getResidentMemberTierSnapshot(residentEmail);
+    } else {
+      toolResponse = { ok: false, note: "Unknown or unavailable read-only tool." };
+    }
+
+    void appendAiToolInvocation({
+      channel: "manager",
+      identifier: input.operatorEmail,
+      toolName: name,
+      args: (args ?? {}) as Record<string, unknown>,
+      result: toolResponse,
+      conversationId: input.conversationId,
+      meta: { feature: "manager_support_reply_draft", residentEmail }
+    });
+    contents.push({ role: "model", parts: [{ functionCall: { name, args } }] });
+    contents.push({ role: "user", parts: [{ functionResponse: { name, response: toolResponse } }] });
+  }
+
+  return null;
+}
+
 export { ASSISTANT_SENDER_EMAIL };
