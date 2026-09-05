@@ -10,7 +10,7 @@ Cozorohome Portal V3 is a portal + management app with a Next.js frontend and an
 
 - version `3.5.11` adds inline `?` help buttons for key resident and manager functions
 - user dashboard and manager workspace now include policy-aligned help popovers for rent, support, laundry, feature lock, contract status, and client actions
-- branch policy is now: `sandboxing` for active dev, `main` for release / production
+- branch policy is now: `main` for both active development and production; do not use `sandboxing`
 - release and production refresh should use `manage-apps.bat` only
 - future agents should not deploy from a dirty local workspace; production should be refreshed from a clean `main` source
 - if a release adds a newly imported file, confirm it is tracked in git before pushing or refreshing production
@@ -123,8 +123,7 @@ Portal production proxy behavior is controlled in:
 
 Release / production guideline:
 
-- commit feature work on `sandboxing`
-- promote approved work to `main`
+- commit feature work on `main`, or merge a short-lived feature branch into `main`
 - refresh production from `main`
 - use `manage-apps.bat` for backup, recreate, restart, and rollback
 - `manage-apps.bat` creates a backup automatically before local-to-production deploys and before resets to `origin/main`

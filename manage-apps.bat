@@ -20,7 +20,7 @@ echo 2. Start dev app
 echo 3. Stop dev app
 echo 4. Restart dev app
 echo 5. Check public website
-echo 6. Roll back to origin/sandboxing
+echo 6. Roll back to origin/main
 echo 0. Exit
 echo.
 set /p "choice=Choose an option: "
@@ -78,12 +78,12 @@ goto :eof
 
 :rollback
 echo.
-echo Rolling back to origin/sandboxing...
+echo Rolling back to origin/main...
 call :stop_dev
 cd /d "%ROOT%"
 git fetch origin
 if errorlevel 1 goto :git_failed
-git reset --hard origin/sandboxing
+git reset --hard origin/main
 if errorlevel 1 goto :git_failed
 git clean -fd
 if errorlevel 1 goto :git_failed

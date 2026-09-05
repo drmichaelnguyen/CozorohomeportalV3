@@ -13,7 +13,7 @@ CozoroHome is a resident management portal for co-living housing (branches D2 an
 
 | Environment | Portal | API | Folder | Branch |
 |-------------|--------|-----|--------|--------|
-| **Dev (this machine)** | :3000 | :4000 | `cozorohome webapp` | `sandboxing` |
+| **Dev (this machine)** | :3000 | :4000 | `cozorohome webapp` | `main` |
 | **Production (public)** | :3000 | :4000 | `cozorohome-prod` (git worktree) | `main` |
 
 ### Start production (public app)
@@ -45,19 +45,16 @@ git worktree add ../cozorohome-prod main
 ```
 Current branch policy:
 
-- `sandboxing` = active development branch
-- `main` = release / production branch
-- production app must follow `main`, not `sandboxing`
+- `main` = active development and production
+- do **not** use `sandboxing` (legacy; ignore it)
+- production app must follow `main`
 
 Release rule for future agents:
 
-1. make and verify changes on `sandboxing`
-2. commit on `sandboxing`
-3. when the release is approved, promote `sandboxing` to `main`
-4. if `main` and `sandboxing` are cleanly mergeable, merge `sandboxing` into `main`
-5. if histories have diverged badly and the user explicitly approves `sandboxing` as the new baseline, reset `main` to the `sandboxing` commit instead of doing a risky manual conflict merge
-6. push the updated `main`
-7. refresh production from `main` only
+1. make and verify changes on `main`, or on a short-lived feature branch based on `main`
+2. commit and merge approved work into `main`
+3. push the updated `main`
+4. refresh production from `main` only
 
 Important release safety rules:
 
@@ -77,7 +74,7 @@ Important release safety rules:
 Production sync rule:
 
 - prefer a clean `main` worktree or clean `main` checkout as the source for production sync
-- do not copy `sandboxing` directly to production unless the user explicitly asks for a non-standard emergency deploy
+- do not deploy from any branch other than `main` unless the user explicitly asks for a non-standard emergency deploy
 
 Operational note:
 
@@ -116,7 +113,7 @@ const nextConfig: NextConfig = {
 };
 ```
 
-**Prevention:** After any Next.js upgrade, verify `allowedDevOrigins` is still present in `next.config.ts`. If it gets lost (e.g. during a config rewrite), re-add it. This must be in both the `sandboxing` and `main`/`cozorohome-prod` worktree configs.
+**Prevention:** After any Next.js upgrade, verify `allowedDevOrigins` is still present in `next.config.ts`. If it gets lost (e.g. during a config rewrite), re-add it. This must be in both the local `main` checkout and the `main`/`cozorohome-prod` worktree configs.
 
 ---
 
@@ -294,7 +291,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
-| 3.9.30 | Manager/owner/app-admin direct support chats can generate context-aware AI reply drafts; drafts remain editable and require an explicit send. |
+| 3.9.30 | Manager/owner/app-admin direct support chats can generate context-aware AI reply drafts; drafts remain editable and require an explicit send. Branch policy: use `main` only (`sandboxing` is retired). |
 | 3.9.29 | Self-assign social soft pressure + claim-next friction cuts; resident AI teen-code tone + member-tier tool; rotating teen-code daily popups (referral / self-assign / birth-month / cleaning+laundry). |
 | 3.9.28 | Self-assign open-slot notifications + badge; early-bird/streak bonuses; Take Over after 20:00 VN; Bee chat self-assign with confirm. Resident AI can explain Cozoro Member tier (recorded vs live, maintain thresholds). |
 | 3.9.27 | Client Details → Client Statistics adds Member tab (live/recorded tier + change history). |
@@ -373,8 +370,8 @@ Every route in `portal/app/**/error.tsx` uses either:
 
 ## Commit / Branch Convention
 
-- Active dev branch: `sandboxing`
-- Main branch: `main`
+- Active branch: `main` (do not use `sandboxing`)
+- Feature work: short-lived branches based on `main`, then merge into `main`
 - Commit messages follow: `type: description` (e.g. `feat:`, `fix:`, `chore:`)
 - Release commits should bump the visible version when user-facing behavior changes
 - **Version scheme** (`portal/lib/app-version.ts`, `portal/package.json`, `api/package.json`): use **semver-style `MAJOR.MINOR.PATCH`** (e.g. `3.7.4`, `3.7.11`, `3.7.23`). The PATCH segment **may exceed 9** — `3.7.11` is normal; do not jump to `3.8.0` just because PATCH is “double digits”. Reserve **`3.8.0`** (MINOR bump) for **larger** product releases the team treats as a minor milestone, not for routine fixes/features.
