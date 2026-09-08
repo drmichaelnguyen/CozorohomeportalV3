@@ -2,7 +2,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 
-import { calendar_v3, google } from "googleapis";
+import { calendar_v3, google, type sheets_v4 } from "googleapis";
+import { syncCleaningCoins, type CleaningCoinInput } from "./cleaning-coin-sync.js";
+import { withCoinWriteLock } from "./coin-write-lock.js";
 import { repairMojibake, repairUnknownText } from "./text-encoding.js";
 import { isBranchAutomationDisabled } from "./branch-closure.js";
 import { compressFineEvidence } from "./fine-evidence-compress.js";
@@ -4810,7 +4812,7 @@ export async function getMemberTierAnalytics(options?: {
       bed: String(client.bed ?? "").trim(),
       recordedMember,
       liveTier,
-      tierMismatch: recordedMember.toLowerCase() !== liveTier.toLowerCase(),
+      tierChanged: recordedMember.toLowerCase() !== liveTier.toLowerCase(),
       currentCoins,
       totalCoins,
       previousMonthEarnings,
@@ -5401,6 +5403,20 @@ export async function createAutomaticFineForEmail(input: {
   });
 }
 
+/** Audit retries may reach the optional fine after SQL/Sheets have already committed. */
+export async function createCleaningAuditFineOnce(
+  input: Parameters<typeof createAutomaticFineForEmail>[0] & { taskId: string }
+) {
+  return withCoinWriteLock(`cleaning-audit-fine:${spreadsheetId}:${input.taskId}`, async () => {
+    const marker = `Task ID: ${input.taskId}.`;
+    const rows = await readFinesSheetRows();
+    if (rows.some((row) => row[FINE_EMAIL_COLUMN]?.trim().toLowerCase() === input.email.trim().toLowerCase() &&
+      (row[FINE_DESCRIPTION_COLUMN] ?? "").includes(marker))) return false;
+    await createAutomaticFineForEmail(input);
+    return true;
+  });
+}
+
 export async function createAutomaticFineForEmailPaidByCoins(input: {
   email: string;
   amount: number;
@@ -5559,118 +5575,119 @@ async function appendCoinsSheetRow(
   await syncCoinsFromSheet();
 }
 
-export async function awardCleaningCoinsToSheet(input: {
-  userEmail: string;
-  userName: string | null;
-  branchId: string;
-  rewardCoins: number;
-  taskId: string;
-  reviewedBy: string;
-}) {
-  const normalizedEmail = input.userEmail.trim().toLowerCase();
-  const transactionCode = `CleaningReward${input.taskId}`;
-  const existingEntries = await getCoinsForEmail(normalizedEmail);
-  const alreadyAwarded = existingEntries.some(
-    (entry) => (entry.row[COINS_TRANSACTION_CODE_COLUMN] ?? "").trim() === transactionCode
-  );
-  if (alreadyAwarded) {
-    console.warn(
-      `[CleaningCoins] Skipping duplicate award for ${normalizedEmail} transaction ${transactionCode}`
-    );
-    return;
-  }
-
-  const client = await getActiveClientByEmail(normalizedEmail);
-  const currentCoins = client
-    ? Number.parseInt(String(client[CLIENT_CURRENT_COINS_COLUMN] ?? "0").replace(/[^0-9-]/g, ""), 10) || 0
-    : 0;
-  const nextCoins = currentCoins + input.rewardCoins;
-  const recordedMember = client ? (client[COINS_MEMBER_COLUMN] ?? "") : "";
-
-  await appendCoinsSheetRow({
-    [COINS_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(new Date()),
-    [CONTRACT_CODE_COLUMN]: client ? (client[CONTRACT_CODE_COLUMN] ?? "") : "",
-    ["Chi nhánh Cozoro dorm"]: input.branchId.replace("D", ""),
-    [EMAIL_COLUMN]: normalizedEmail,
-    [CLIENT_NAME_COLUMN]: input.userName ?? (client ? (client[CLIENT_NAME_COLUMN] ?? "") : ""),
-    [CLIENT_BED_COLUMN]: client ? (client[CLIENT_BED_COLUMN] ?? "") : "",
-    [COINS_BALANCE_COLUMN]: String(input.rewardCoins),
-    [COINS_EVENT_COLUMN]: "Vệ sinh khu vực chung",
-    [COINS_OPERATOR_COLUMN]: "",
-    [COINS_MEMBER_COLUMN]: recordedMember,
-    [COINS_CURRENT_BALANCE_COLUMN]: String(nextCoins),
-    [COINS_TRANSACTION_CODE_COLUMN]: transactionCode
+/** Cleaning history and roster totals commit in one Sheets batch (all or nothing). */
+async function writeCleaningCoinChange(input: CleaningCoinInput, reverse: boolean) {
+  const email = input.userEmail.trim().toLowerCase();
+  const sheets = await getAuthorizedSheetsClient();
+  const now = formatCoinsSheetTimestamp(new Date());
+  const month = now.slice(3, 10);
+  let clientRows: ClientRow[] = [];
+  let coinRows: CoinRow[] = [];
+  let client: ClientRow;
+  let rosterHeaders: string[] = [];
+  let coinHeaders: string[] = [];
+  let rosterSheetId = 0;
+  let historySheetId = 0;
+  let targetRowIndex = 0;
+  await syncCleaningCoins(input, reverse, {
+    withLock: (action) => withCoinWriteLock(`${spreadsheetId}:cleaning`, action),
+    read: async () => {
+      // Never calculate a mutation from the periodically refreshed client cache.
+      const [metadata, snapshot] = await Promise.all([
+        sheets.spreadsheets.get({ spreadsheetId, fields: "sheets.properties" }, { timeout: 15000 }),
+        sheets.spreadsheets.values.batchGet({
+          spreadsheetId,
+          ranges: [`'${sheetName.replace(/'/g, "''")}'!A:AMJ`, `'${coinsSheetName.replace(/'/g, "''")}'!A:AMJ`]
+        }, { timeout: 15000 })
+      ]);
+      const rosterId = metadata.data.sheets?.find((s) => s.properties?.title === sheetName)?.properties?.sheetId;
+      const historyId = metadata.data.sheets?.find((s) => s.properties?.title === coinsSheetName)?.properties?.sheetId;
+      if (rosterId == null || historyId == null) throw new Error("Coin sheets not found");
+      rosterSheetId = rosterId;
+      historySheetId = historyId;
+      const roster = snapshot.data.valueRanges?.[0]?.values ?? [];
+      const history = snapshot.data.valueRanges?.[1]?.values ?? [];
+      rosterHeaders = (roster[0] ?? []).map((v) => normalizeHeader(String(v)));
+      coinHeaders = (history[0] ?? []).map((v) => normalizeHeader(String(v)));
+      for (const key of [CLIENT_CURRENT_COINS_COLUMN, CLIENT_TOTAL_COINS_COLUMN, "Coins được cộng tháng này", EMAIL_COLUMN, CONTRACT_CODE_COLUMN]) {
+        if (!rosterHeaders.includes(key)) throw new Error(`Missing roster column: ${key}`);
+      }
+      for (const key of [COINS_TRANSACTION_CODE_COLUMN, COINS_BALANCE_COLUMN, EMAIL_COLUMN, COINS_TIMESTAMP_COLUMN]) {
+        if (!coinHeaders.includes(key)) throw new Error(`Missing coin history column: ${key}`);
+      }
+      clientRows = roster.slice(1).map((r) => mapRow(rosterHeaders, r.map(String)));
+      coinRows = history.slice(1).map((r) => mapRow(coinHeaders, r.map(String)) as unknown as CoinRow);
+      const matches = clientRows.map((row, index) => ({ row, index }))
+        .filter(({ row }) => row[CONTRACT_CODE_COLUMN] && row[EMAIL_COLUMN]?.trim().toLowerCase() === email && isActiveClient(row));
+      if (!matches.length) throw new Error("No active client found for cleaning reward");
+      const target = matches.reduce((best, next) => {
+        const bestDate = parseSubmissionTimestamp(best.row[COINS_TIMESTAMP_COLUMN] ?? "");
+        const nextDate = parseSubmissionTimestamp(next.row[COINS_TIMESTAMP_COLUMN] ?? "");
+        return !bestDate || (nextDate && nextDate > bestDate) ? next : best;
+      });
+      client = target.row;
+      targetRowIndex = target.index + 1; // zero-based grid row, including header
+      const transactions = coinRows.filter((r) => r[EMAIL_COLUMN]?.trim().toLowerCase() === email)
+        .map((r) => ({ code: (r[COINS_TRANSACTION_CODE_COLUMN] ?? "").trim(), amount: parseLooseInteger(r[COINS_BALANCE_COLUMN]), thisMonth: (r[COINS_TIMESTAMP_COLUMN] ?? "").slice(3, 10) === month }));
+      const earnedThisMonth = transactions.reduce((sum, entry) =>
+        sum + (entry.amount > 0 && entry.thisMonth ? entry.amount : 0), 0);
+      return { current: parseLooseInteger(client[CLIENT_CURRENT_COINS_COLUMN]), lifetime: parseLooseInteger(client[CLIENT_TOTAL_COINS_COLUMN]), earnedThisMonth, transactions };
+    },
+    commit: async (change) => {
+      const updates: Record<string, number> = {
+        [CLIENT_CURRENT_COINS_COLUMN]: change.current,
+        [CLIENT_TOTAL_COINS_COLUMN]: change.lifetime,
+        ["Coins được cộng tháng này"]: change.earnedThisMonth
+      };
+      const entry: CoinRow = {
+        [COINS_TIMESTAMP_COLUMN]: now,
+        [CONTRACT_CODE_COLUMN]: client[CONTRACT_CODE_COLUMN],
+        ["Chi nhánh Cozoro dorm"]: input.branchId.replace("D", ""),
+        [EMAIL_COLUMN]: email,
+        [CLIENT_NAME_COLUMN]: input.userName ?? client[CLIENT_NAME_COLUMN] ?? "",
+        [CLIENT_BED_COLUMN]: client[CLIENT_BED_COLUMN] ?? "",
+        [COINS_BALANCE_COLUMN]: String(change.delta),
+        [COINS_EVENT_COLUMN]: reverse ? "Hoàn coins vệ sinh (từ chối sau duyệt)" : "Vệ sinh khu vực chung",
+        [COINS_OPERATOR_COLUMN]: reverse ? input.reviewedBy.trim() : "",
+        [COINS_MEMBER_COLUMN]: client[COINS_MEMBER_COLUMN] ?? "",
+        [COINS_CURRENT_BALANCE_COLUMN]: String(change.current),
+        [COINS_TRANSACTION_CODE_COLUMN]: change.code
+      } as CoinRow;
+      const requests: sheets_v4.Schema$Request[] = Object.entries(updates).map(([key, value]) => ({
+        updateCells: {
+          start: { sheetId: rosterSheetId, rowIndex: targetRowIndex, columnIndex: rosterHeaders.indexOf(key) },
+          rows: [{ values: [{ userEnteredValue: { numberValue: value } }] }],
+          fields: "userEnteredValue"
+        }
+      }));
+      requests.push({ appendCells: { sheetId: historySheetId, fields: "userEnteredValue", rows: [{ values: coinHeaders.map((key) => ({
+        userEnteredValue: key === COINS_BALANCE_COLUMN || key === COINS_CURRENT_BALANCE_COLUMN
+          ? { numberValue: Number(entry[key]) } : { stringValue: entry[key] ?? "" }
+      })) }] } });
+      // No automatic HTTP retry: a lost response must be retried from the live idempotency check.
+      await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } }, { timeout: 15000, retry: false });
+      for (const [key, value] of Object.entries(updates)) client[key] = String(value);
+      coinRows.push(entry);
+      const syncedAt = new Date().toISOString();
+      const clientsPayload: ClientCache = { syncedAt, rows: clientRows.filter((r) => r[CONTRACT_CODE_COLUMN] && isActiveClient(r)) };
+      const coinsPayload: CoinsCache = { syncedAt, rows: coinRows.filter((r) => r[EMAIL_COLUMN]?.trim()) };
+      clientsMemoryCache = setMemoryCache(clientsPayload);
+      coinsMemoryCache = setMemoryCache(coinsPayload);
+      // Cache failures do not undo the committed transaction or trigger a second award.
+      const results = await Promise.allSettled([
+        writeCachedJsonFile(cacheFilePath, clientsPayload), writeCachedJsonFile(coinsCacheFilePath, coinsPayload)
+      ]);
+      for (const result of results) if (result.status === "rejected") console.error("[CleaningCoins] Cache refresh failed", result.reason);
+    }
   });
-
-  if (client && client[CONTRACT_CODE_COLUMN]) {
-    await updateClientColumns(client[CONTRACT_CODE_COLUMN], {
-      [CLIENT_CURRENT_COINS_COLUMN]: String(nextCoins)
-    });
-  }
 }
 
-/** Claw back cleaning reward coins from the sheet after a post-approve reject. */
-export async function reverseCleaningCoinsOnSheet(input: {
-  userEmail: string;
-  userName: string | null;
-  branchId: string;
-  rewardCoins: number;
-  taskId: string;
-  reviewedBy: string;
-}) {
-  if (!Number.isFinite(input.rewardCoins) || input.rewardCoins <= 0) {
-    return;
-  }
+export async function awardCleaningCoinsToSheet(input: CleaningCoinInput) {
+  await writeCleaningCoinChange(input, false);
+}
 
-  const normalizedEmail = input.userEmail.trim().toLowerCase();
-  const awardCode = `CleaningReward${input.taskId}`;
-  const reversalCode = `CleaningReversal${input.taskId}`;
-  const existingEntries = await getCoinsForEmail(normalizedEmail);
-  const alreadyReversed = existingEntries.some(
-    (entry) => (entry.row[COINS_TRANSACTION_CODE_COLUMN] ?? "").trim() === reversalCode
-  );
-  if (alreadyReversed) {
-    console.warn(
-      `[CleaningCoins] Skipping duplicate reversal for ${normalizedEmail} transaction ${reversalCode}`
-    );
-    return;
-  }
-
-  const wasAwarded = existingEntries.some(
-    (entry) => (entry.row[COINS_TRANSACTION_CODE_COLUMN] ?? "").trim() === awardCode
-  );
-  if (!wasAwarded) {
-    // Never approved on sheet — nothing to reverse.
-    return;
-  }
-
-  const client = await getActiveClientByEmail(normalizedEmail);
-  const currentCoins = client
-    ? Number.parseInt(String(client[CLIENT_CURRENT_COINS_COLUMN] ?? "0").replace(/[^0-9-]/g, ""), 10) || 0
-    : 0;
-  const nextCoins = Math.max(0, currentCoins - input.rewardCoins);
-  const recordedMember = client ? (client[COINS_MEMBER_COLUMN] ?? "") : "";
-
-  await appendCoinsSheetRow({
-    [COINS_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(new Date()),
-    [CONTRACT_CODE_COLUMN]: client ? (client[CONTRACT_CODE_COLUMN] ?? "") : "",
-    ["Chi nhánh Cozoro dorm"]: input.branchId.replace("D", ""),
-    [EMAIL_COLUMN]: normalizedEmail,
-    [CLIENT_NAME_COLUMN]: input.userName ?? (client ? (client[CLIENT_NAME_COLUMN] ?? "") : ""),
-    [CLIENT_BED_COLUMN]: client ? (client[CLIENT_BED_COLUMN] ?? "") : "",
-    [COINS_BALANCE_COLUMN]: String(-input.rewardCoins),
-    [COINS_EVENT_COLUMN]: "Hoàn coins vệ sinh (từ chối sau duyệt)",
-    [COINS_OPERATOR_COLUMN]: input.reviewedBy.trim(),
-    [COINS_MEMBER_COLUMN]: recordedMember,
-    [COINS_CURRENT_BALANCE_COLUMN]: String(nextCoins),
-    [COINS_TRANSACTION_CODE_COLUMN]: reversalCode
-  });
-
-  if (client && client[CONTRACT_CODE_COLUMN]) {
-    await updateClientColumns(client[CONTRACT_CODE_COLUMN], {
-      [CLIENT_CURRENT_COINS_COLUMN]: String(nextCoins)
-    });
-  }
+export async function reverseCleaningCoinsOnSheet(input: CleaningCoinInput) {
+  await writeCleaningCoinChange(input, true);
 }
 
 /**
@@ -7031,7 +7048,7 @@ async function writeExtensionCoinAward(input: {
     [CLIENT_NAME_COLUMN]: nameVal,
     [CLIENT_BED_COLUMN]: bedVal,
     [COINS_BALANCE_COLUMN]: String(coinReward),
-    [COINS_EVENT_COLUMN]: `Gia hạn hợp đồng đến ${formatDate(newEndDate)} (${durationMonthsForSheet} tháng)${birthMonthNote}`,
+    [COINS_EVENT_COLUMN]: `Gia hạn hợp đồng đến ${formatSheetDateDdMmYyyy(newEndDate)} (${durationMonthsForSheet} tháng)${birthMonthNote}`,
     [COINS_OPERATOR_COLUMN]: "system",
     [COINS_MEMBER_COLUMN]: memberVal,
     [COINS_CURRENT_BALANCE_COLUMN]: String(newBalance),

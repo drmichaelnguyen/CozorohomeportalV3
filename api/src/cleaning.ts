@@ -1,3 +1,4 @@
+import { withCoinWriteLock } from "./coin-write-lock.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -3762,12 +3763,31 @@ export async function auditCleaningTask(input: {
   decision: CleaningAuditDecision;
   note?: string;
 }) {
+  return withCoinWriteLock(`cleaning-audit:${input.taskId}`, () => auditCleaningTaskLocked(input));
+}
+
+async function auditCleaningTaskLocked(input: {
+  taskId: string;
+  reviewer: string;
+  decision: CleaningAuditDecision;
+  note?: string;
+}) {
   const task = await findUniqueCleaningTask({
     where: { id: input.taskId }
   });
 
   if (!task) {
     throw new Error("Cleaning task not found");
+  }
+
+  // SQL approval may have committed before a Calendar/Sheets failure. A retry
+  // finishes the idempotent sheet write without duplicating the audit or ledger.
+  const alreadyRecorded =
+    (input.decision === CleaningAuditDecision.APPROVE && task.status === CleaningTaskStatus.APPROVED) ||
+    (input.decision === CleaningAuditDecision.REJECT && task.status === CleaningTaskStatus.REJECTED);
+  if (alreadyRecorded) {
+    await finishCleaningAuditSync(task, input.decision, input.reviewer);
+    return task;
   }
 
   if (input.decision === CleaningAuditDecision.APPROVE) {
@@ -3848,7 +3868,7 @@ export async function auditCleaningTask(input: {
           await tx.coinLedger.create({
             data: {
               userId: updated.userEmail,
-              delta: -updated.rewardCoins,
+              delta: -existingReward.delta,
               reason: CoinReason.CLEANING_REVERSAL,
               refType: "cleaning_task",
               refId: updated.id
@@ -3887,6 +3907,11 @@ export async function auditCleaningTask(input: {
     reviewer: input.reviewer
   });
 
+  await finishCleaningAuditSync(updatedTask, input.decision, input.reviewer);
+  return updatedTask;
+}
+
+async function finishCleaningAuditSync(updatedTask: CleaningTaskRecord, decision: CleaningAuditDecision, reviewer: string) {
   if (updatedTask.calendarId && updatedTask.calendarEventId) {
     const target = getCleaningCalendarTarget(updatedTask.type, { floor: updatedTask.floor });
     if (target) {
@@ -3906,35 +3931,34 @@ export async function auditCleaningTask(input: {
         completionNote: updatedTask.completionNote,
         completionPhoto: updatedTask.completionPhoto,
         auditorNote: updatedTask.auditorNote,
-        reviewedBy: input.reviewer
+        reviewedBy: reviewer
       });
     }
   }
 
-  if (input.decision === CleaningAuditDecision.APPROVE) {
+  if (decision === CleaningAuditDecision.APPROVE) {
     await awardCleaningCoinsToSheet({
       userEmail: updatedTask.userEmail,
       userName: updatedTask.userName,
       branchId: updatedTask.branchId,
       rewardCoins: updatedTask.rewardCoins,
       taskId: updatedTask.id,
-      reviewedBy: input.reviewer
+      reviewedBy: reviewer
     });
   }
 
-  if (input.decision === CleaningAuditDecision.REJECT && task.status === CleaningTaskStatus.APPROVED) {
+  if (decision === CleaningAuditDecision.REJECT) {
     await reverseCleaningCoinsOnSheet({
       userEmail: updatedTask.userEmail,
       userName: updatedTask.userName,
       branchId: updatedTask.branchId,
       rewardCoins: updatedTask.rewardCoins,
       taskId: updatedTask.id,
-      reviewedBy: input.reviewer
+      reviewedBy: reviewer
     });
   }
 
   await invalidateCleaningOverviewCache(updatedTask.userEmail);
-  return updatedTask;
 }
 
 function getMissedCleaningFineThresholdDate(task: CleaningTaskRecord) {

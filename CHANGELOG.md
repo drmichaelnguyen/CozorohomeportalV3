@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.9.31] - 2026-09-08
+
+- **Cleaning coins**: Credits now update spendable balance, lifetime earnings, and current-month earnings together with history in one atomic Sheets batch. Live reads and a database-backed lock prevent competing cleaning rewards from overwriting one another.
+- **Safe retries and reversals**: Audit retries finish interrupted Calendar/Sheets synchronization without duplicating audits or ledger credits. Reversals use the original awarded amount and keep gross lifetime earnings consistent with the portal.
+- **Zero balance display**: Home and Coins respect a stored zero or negative balance instead of replacing it with a positive history total.
+- **Build compatibility**: Retained the existing member-analytics field-name, extension date formatter, and account record type corrections required by the API/portal TypeScript builds.
+- **Operations**: Added regression coverage and a reconciliation runbook in `docs/coin-accounting.md`; historical balance drift requires a verified correction, not another reward entry.
+
 ## [3.9.30] - 2026-09-05
 
 - **AI-assisted staff replies**: Managers, owners, and app admins can generate a resident-facing reply draft from a direct support conversation. The AI reviews recent thread context, resident details, CozoroHome policy/app logic, and read-only financial/member data when relevant.

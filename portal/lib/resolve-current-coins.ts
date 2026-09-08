@@ -4,7 +4,7 @@
  * Source of truth is the client roster column `Cozoro coins hiện có` (same value
  * used for laundry, fines, rent coin credit, and Home). History sum (earned − used)
  * can diverge when duplicate or race ledger rows exist, so it is only a fallback
- * when the profile balance is blank/zero.
+ * when the profile balance is missing or invalid.
  */
 export function parseCoinsNumber(value: string | number | null | undefined): number {
   const normalized = String(value ?? "").replace(/[^0-9.-]/g, "");
@@ -21,7 +21,9 @@ export function resolveCurrentCoinsBalance(options: {
 }): number {
   const profileCurrentBalance = parseCoinsNumber(options.profileBalance);
   const derivedBalanceFromEntries = Math.max(0, Math.trunc(options.historyNet ?? 0));
-  if (profileCurrentBalance > 0 || derivedBalanceFromEntries <= 0) {
+  const raw = String(options.profileBalance ?? "").replace(/[^0-9.-]/g, "");
+  const hasProfileBalance = /[0-9]/.test(raw) && Number.isFinite(Number(raw));
+  if (hasProfileBalance) {
     return profileCurrentBalance;
   }
   return derivedBalanceFromEntries;

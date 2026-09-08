@@ -125,6 +125,7 @@ import {
 } from "./monthly-rent-breakdown-overrides.js";
 import { 
   createAutomaticFineForEmail,
+  createCleaningAuditFineOnce,
   sendGmailReceipt,
   sendPaymentReceiptCustomerEmail,
   sendFineTicketEmail,
@@ -6367,7 +6368,8 @@ app.post("/admin/cleaning/tasks/:id/audit", async (request, response) => {
     if (parsed.data.decision === CleaningAuditDecision.REJECT && parsed.data.createFine && parsed.data.fineAmount) {
       const fineContent = "Công việc vệ sinh không đạt tiêu chuẩn";
       const fineDescription = `Audit rejected by ${parsed.data.reviewer}. Task ID: ${task.id}. Scheduled: ${task.scheduledDate.toISOString().slice(0, 10)}.${parsed.data.note ? ` Note: ${parsed.data.note}` : ""}`;
-      await createAutomaticFineForEmail({
+      const fineCreated = await createCleaningAuditFineOnce({
+        taskId: task.id,
         email: task.userEmail,
         amount: parsed.data.fineAmount,
         content: fineContent,
@@ -6375,7 +6377,7 @@ app.post("/admin/cleaning/tasks/:id/audit", async (request, response) => {
         location: task.branchId,
         operator: parsed.data.reviewer
       });
-      if (parsed.data.sendEmail) {
+      if (fineCreated && parsed.data.sendEmail) {
         try {
           const client = await getActiveClientByEmail(task.userEmail);
           await sendFineTicketEmail({

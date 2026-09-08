@@ -33,6 +33,8 @@ import {
   REFERRAL_PROMO_TITLES
 } from "../lib/rotating-promo-copy";
 
+type ClientRecord = Record<string, string>;
+
 type CheckoutBannerContext = {
   eligible: boolean;
   kind?: "termination" | "contract_due" | "resident";
