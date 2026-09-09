@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.9.32] - 2026-09-09
+
+- **Laundry booking dates**: Portal and Cozoro Bee now check away status using the booking date in Vietnam, independently of the host timezone. Being away the previous day no longer blocks a morning booking on an available day.
+- **Validation and documentation**: Added regression tests for host timezones, adjacent-day restrictions, midnight/year/leap-day boundaries, and invalid dates; documented the stored calendar-day convention in `docs/laundry-booking-dates.md`.
+
 ## [3.9.31] - 2026-09-08
 
 - **Cleaning coins**: Credits now update spendable balance, lifetime earnings, and current-month earnings together with history in one atomic Sheets batch. Live reads and a database-backed lock prevent competing cleaning rewards from overwriting one another.

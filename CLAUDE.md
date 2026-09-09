@@ -291,6 +291,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.32 | Portal and Bee laundry away checks use Vietnam calendar dates; timezone/boundary regression tests and booking-date documentation. |
 | 3.9.31 | Atomic cleaning coin/history writes, serialized live balance reads, lifetime/monthly earnings updates, audit retries, authoritative zero balances; see `docs/coin-accounting.md`. |
 | 3.9.30 | Manager/owner/app-admin direct support chats can generate context-aware AI reply drafts; drafts remain editable and require an explicit send. Branch policy: use `main` only (`sandboxing` is retired). |
 | 3.9.29 | Self-assign social soft pressure + claim-next friction cuts; resident AI teen-code tone + member-tier tool; rotating teen-code daily popups (referral / self-assign / birth-month / cleaning+laundry). |

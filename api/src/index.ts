@@ -322,6 +322,7 @@ import {
 } from "./cleaning-ai-benchmark.js";
 import { logAction } from "./action-log.js";
 import { prisma } from "./prisma.js";
+import { getLaundryAwayDateRange } from "./laundry-away-date.js";
 import { billingPeriodMonthForGateSession, markGateParkingTicketsPaidForBilling } from "./gate-parking-tickets.js";
 import {
   terminateContract,
@@ -6676,17 +6677,11 @@ app.post("/laundry/bookings", async (request, response) => {
     // Block laundry booking if the user marked that date as unavailable (away)
     const bookingStart = new Date(parsed.data.start);
     if (!Number.isNaN(bookingStart.getTime())) {
-      const bookingDate = new Date(Date.UTC(
-        bookingStart.getFullYear(),
-        bookingStart.getMonth(),
-        bookingStart.getDate()
-      ));
-      const nextDate = new Date(bookingDate.getTime() + 24 * 60 * 60 * 1000);
       const unavailable = await prisma.cleaningAvailability.findFirst({
         where: {
           userEmail: parsed.data.email.trim().toLowerCase(),
           type: CleaningAvailabilityType.UNAVAILABLE,
-          date: { gte: bookingDate, lt: nextDate }
+          date: getLaundryAwayDateRange(bookingStart)
         }
       });
       if (unavailable) {

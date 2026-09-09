@@ -43,6 +43,7 @@ import { getConfirmedPrepaidBillingForResident } from "./manager-prepaid-package
 import { applyPrepaidBreakdownOverridesToEstimate } from "./prepaid-breakdown-overrides.js";
 import type { PrepaidBreakdownOverrides } from "./prepaid-breakdown-overrides.js";
 import { prisma } from "./prisma.js";
+import { getLaundryAwayDateRange } from "./laundry-away-date.js";
 import { getPortalUxSettings } from "./portal-ux-settings.js";
 import { resolvePortalLogin } from "./staff-access.js";
 import {
@@ -339,15 +340,11 @@ async function executeResidentTool(
       if (Number.isNaN(bookingStart.getTime())) {
         return { ok: false, message: "Invalid start datetime." };
       }
-      const bookingDate = new Date(
-        Date.UTC(bookingStart.getFullYear(), bookingStart.getMonth(), bookingStart.getDate())
-      );
-      const nextDate = new Date(bookingDate.getTime() + 24 * 60 * 60 * 1000);
       const unavailable = await prisma.cleaningAvailability.findFirst({
         where: {
           userEmail: residentEmail.trim().toLowerCase(),
           type: CleaningAvailabilityType.UNAVAILABLE,
-          date: { gte: bookingDate, lt: nextDate }
+          date: getLaundryAwayDateRange(bookingStart)
         }
       });
       if (unavailable) {
