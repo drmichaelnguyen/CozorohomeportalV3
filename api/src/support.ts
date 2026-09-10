@@ -433,7 +433,7 @@ export function clearResidentNotificationCacheForEmail(email: string) {
   residentNotificationCache.delete(normalizeEmail(email));
 }
 
-function clearNotificationCaches(email: string, residentEmail?: string) {
+export function clearNotificationCaches(email: string, residentEmail?: string) {
   const normalizedEmail = normalizeEmail(email);
   residentNotificationCache.delete(normalizedEmail);
   staffNotificationCache.clear();

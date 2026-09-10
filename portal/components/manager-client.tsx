@@ -1,5 +1,9 @@
 "use client";
 
+import { ClientCleaningStatistics } from "./client-cleaning-statistics";
+
+import { OwnerCleaningExemption } from "./owner-cleaning-exemption";
+
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
@@ -64,7 +68,7 @@ import { CheckoutReviewClient } from "./checkout-review-client";
 
 
 type StaffRole = "manager" | "owner" | "app_admin" | "mechanic";
-type StatsTab = "laundry" | "coins" | "payments" | "fines" | "member";
+type StatsTab = "laundry" | "coins" | "payments" | "fines" | "member" | "cleaning";
 type ClientAction =
   | "call"
   | "sms"
@@ -626,7 +630,7 @@ function makeKey(parts: Array<string | null | undefined>) {
 }
 
 /** Same identity fields as staff delete/update — do not use Object.values(row).slice(0,4); key order is not stable. */
-function makeWorkspaceStatsEntryKey(tab: Exclude<StatsTab, "laundry" | "member">, entry: { row: Record<string, string> }) {
+function makeWorkspaceStatsEntryKey(tab: Exclude<StatsTab, "laundry" | "member" | "cleaning">, entry: { row: Record<string, string> }) {
   const row = entry.row;
   const ts = String(row["DẤU THỜI GIAN"] ?? row["ĐẤU THỜI GIAN"] ?? "").trim();
   if (tab === "fines") {
@@ -1400,6 +1404,7 @@ function getSummaryItems(tab: StatsTab, workspace: WorkspacePayload | null, t: (
     return [];
   }
 
+  if (tab === "cleaning") return [];
   if (tab === "laundry") {
     return summarizeLaundry(workspace.stats.laundry, t);
   }
@@ -5273,6 +5278,11 @@ export function ManagerClient({
     if (!maHd || !isStaffSession) {
       return;
     }
+    if (tab === "cleaning") {
+      setActiveTab(tab);
+      setStatus("");
+      return;
+    }
     setLoading(true);
     setStatus("");
     try {
@@ -8365,6 +8375,10 @@ export function ManagerClient({
                         className="fixed inset-0 z-[210] bg-slate-900/20 sm:hidden"
                       />
                       <div className="fixed inset-x-3 bottom-3 z-[220] max-h-[80vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl sm:absolute sm:inset-auto sm:right-0 sm:bottom-auto sm:z-20 sm:mt-2 sm:w-64 sm:max-h-none sm:overflow-visible sm:rounded-xl sm:shadow-xl">
+                      {(isOwnerSession || isAppAdminSession) && selectedClient?.email && (
+                        <OwnerCleaningExemption key={`${normalizedEmail}|${selectedClient.email}`}
+                          actorEmail={normalizedEmail} targetEmail={selectedClient.email} language={language} />
+                      )}
                       {(() => {
                         const contractEndRaw = selectedClient?.row?.["Ngày hết hạn hợp đồng"];
                         const isManuallyLocked = isManuallyForceLocked(accountLockOverride);
@@ -11371,6 +11385,7 @@ export function ManagerClient({
               <div className="flex flex-wrap gap-2">
                 {([
                   { key: "laundry" as const, label: t("statsLaundryTab") },
+                  { key: "cleaning" as const, label: t("statsCleaningTab") },
                   { key: "coins" as const, label: t("statsCoinsTab") },
                   { key: "member" as const, label: t("statsMemberTab") },
                   { key: "payments" as const, label: t("statsPaymentsTab") },
@@ -11382,7 +11397,7 @@ export function ManagerClient({
                     onClick={() => void loadWorkspace(tab.key)}
                     disabled={loading || !selectedClient}
                     className={`rounded-lg px-3 py-2 text-sm ${
-                      activeTab === tab.key && workspace ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700"
+                      activeTab === tab.key && (workspace || activeTab === "cleaning") ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700"
                     } disabled:opacity-60`}
                   >
                     {tab.label}
@@ -11391,13 +11406,18 @@ export function ManagerClient({
               </div>
             </div>
 
-            {!workspace ? (
+            {activeTab === "cleaning" && selectedClient && (
+              <ClientCleaningStatistics key={`${normalizedEmail}|${selectedClient.maHd}`}
+                actorEmail={normalizedEmail} maHd={selectedClient.maHd} language={language} />
+            )}
+
+            {!workspace && activeTab !== "cleaning" ? (
               <div className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
                 {t("statsSelectPrompt")}
               </div>
             ) : null}
 
-            {workspace ? (
+            {workspace && activeTab !== "cleaning" ? (
               <div className="mt-4 space-y-4">
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   {summaryItems.map((item) => (
@@ -11626,7 +11646,7 @@ export function ManagerClient({
               </div>
             ) : null}
 
-            {workspace && showAllStatsEntries && activeTab !== "laundry" && activeTab !== "member" ? (
+            {workspace && showAllStatsEntries && activeTab !== "laundry" && activeTab !== "member" && activeTab !== "cleaning" ? (
               <div className="mt-4 space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-sm text-slate-600">
                   {t("compactPanelDesc")}
@@ -11657,7 +11677,7 @@ export function ManagerClient({
                     <tbody className="divide-y divide-slate-200 bg-white">
                       {(activeTab === "coins" ? workspace.stats.coins : activeTab === "payments" ? workspace.stats.payments : workspace.stats.fines).map((entry) => {
                         const key = makeWorkspaceStatsEntryKey(
-                          activeTab as Exclude<StatsTab, "laundry" | "member">,
+                          activeTab as Exclude<StatsTab, "laundry" | "member" | "cleaning">,
                           entry
                         );
                         const preview = Object.entries(entry.row).filter(([, value]) => String(value ?? "").trim()).slice(0, 4);
@@ -11811,7 +11831,7 @@ export function ManagerClient({
                 </div>
                 {(activeTab === "coins" ? workspace.stats.coins : activeTab === "payments" ? workspace.stats.payments : workspace.stats.fines).map((entry) => {
                   const key = makeWorkspaceStatsEntryKey(
-                    activeTab as Exclude<StatsTab, "laundry" | "member">,
+                    activeTab as Exclude<StatsTab, "laundry" | "member" | "cleaning">,
                     entry
                   );
                   const isEditing = editingId === `${activeTab}:${key}`;

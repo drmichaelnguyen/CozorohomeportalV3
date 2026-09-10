@@ -241,6 +241,7 @@ model CleaningTask {
   rewardCoins      Int
   isSelfAssigned   Boolean            @default(false)
   assignmentSource CleaningAssignmentSource?
+  assignmentExplanation Json?
   completedAt      DateTime?
   completionNote   String?
   completionPhoto  String?
@@ -258,6 +259,37 @@ model CleaningTask {
   @@index([userEmail, scheduledDate])
   @@index([branchId, scheduledDate])
   @@index([type, scheduledDate])
+}
+
+/// Kept independently of tasks so discussions survive schedule corrections/deletion.
+model CleaningAssignmentReview {
+  id String @id @default(cuid())
+  taskId String
+  userEmail String
+  userName String?
+  branchId String
+  taskType String
+  scheduledDate DateTime
+  explanation Json?
+  status String @default("OPEN")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  messages CleaningAssignmentReviewMessage[]
+
+  @@unique([taskId, userEmail])
+  @@index([status, updatedAt])
+  @@index([userEmail])
+}
+
+model CleaningAssignmentReviewMessage {
+  id String @id @default(cuid())
+  reviewId String
+  review CleaningAssignmentReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  authorRole String
+  body String @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([reviewId, createdAt])
 }
 
 model CleaningAudit {
@@ -477,6 +509,14 @@ model CleaningOptOut {
 
   @@unique([userEmail, month])
   @@index([branchId, month])
+}
+
+/// Owner-agreed exception from future automatic cleaning assignments; no fee.
+model CleaningAssignmentExemption {
+  userEmail String @id
+  exempt Boolean @default(false)
+  updatedBy String
+  updatedAt DateTime @updatedAt
 }
 
 model CleaningContractOptOut {

@@ -1,3 +1,6 @@
+import { getClientCleaningStatistics } from "./client-cleaning-statistics.js";
+import { getAssignmentReviewForTask, getAssignmentReview, listAssignmentReviews, postAssignmentReview } from "./cleaning-assignment-reviews.js";
+import { getOwnerCleaningAssignmentExemption, setOwnerCleaningAssignmentExemption } from "./cleaning-assignment-exemptions.js";
 import "./load-env.js";
 
 import cors from "cors";
@@ -270,7 +273,7 @@ import {
   getCleaningManagerReviewQueue,
   getCleaningOverviewForUser,
   getUserCleaningContext,
-  CleaningLateCancellationConfirmationRequiredError,
+  CleaningReleaseConfirmationRequiredError,
   releaseCleaningTask,
   selfAssignCleaningTask,
   sweepOverdueCleaningTasks,
@@ -1890,7 +1893,7 @@ const cleaningAiBenchmarkSettingsPutSchema = z.object({
 });
 const releaseCleaningSchema = z.object({
   email: z.string().email(),
-  confirmLatePenalty: z.boolean().optional()
+  confirmationKey: z.string().max(2000).optional()
 });
 const selfAssignCleaningSchema = z.object({
   email: z.string().email(),
@@ -3037,6 +3040,62 @@ app.post("/auth/admin-set-password", async (request, response) => {
     const message = error instanceof Error ? error.message : "Unable to set password.";
     const statusCode = message.includes("Only app admins") || message.includes("Managers can only") ? 403 : 400;
     return response.status(statusCode).json({ error: message });
+  }
+});
+
+const assignmentReviewActorSchema = z.object({ actorEmail: z.string().email() });
+app.get("/cleaning/assignment-reviews", async (request, response) => {
+  const parsed = assignmentReviewActorSchema.safeParse(request.query);
+  if (!parsed.success) return response.status(400).json({ error: "Actor email is required." });
+  try {
+    return response.json({ reviews: await listAssignmentReviews(parsed.data.actorEmail, request.query.includeResolved === "true") });
+  } catch (error) {
+    return response.status((error as { statusCode?: number }).statusCode ?? 500).json({ error: (error as Error).message });
+  }
+});
+app.get("/cleaning/assignment-reviews/:id", async (request, response) => {
+  const parsed = assignmentReviewActorSchema.safeParse(request.query);
+  if (!parsed.success) return response.status(400).json({ error: "Actor email is required." });
+  try { return response.json(await getAssignmentReview(parsed.data.actorEmail, request.params.id)); }
+  catch (error) { return response.status((error as { statusCode?: number }).statusCode ?? 500).json({ error: (error as Error).message }); }
+});
+app.get("/cleaning/tasks/:id/assignment-review", async (request, response) => {
+  const parsed = assignmentReviewActorSchema.safeParse(request.query);
+  if (!parsed.success) return response.status(400).json({ error: "Actor email is required." });
+  try { return response.json(await getAssignmentReviewForTask(parsed.data.actorEmail, request.params.id)); }
+  catch (error) { return response.status((error as { statusCode?: number }).statusCode ?? 500).json({ error: (error as Error).message }); }
+});
+app.post("/cleaning/assignment-reviews", async (request, response) => {
+  const parsed = assignmentReviewActorSchema.extend({
+    taskId: z.string().min(1).optional(), reviewId: z.string().min(1).optional(),
+    body: z.string().trim().min(1).max(2000), action: z.enum(["comment", "resolve", "reopen"])
+  }).refine(value => Boolean(value.taskId || value.reviewId)).safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "A task or review, actor email and a reason (1–2,000 characters) are required." });
+  try { return response.json(await postAssignmentReview(parsed.data)); }
+  catch (error) { return response.status((error as { statusCode?: number }).statusCode ?? 500).json({ error: (error as Error).message }); }
+});
+
+const cleaningAssignmentExemptionSchema = z.object({
+  actorEmail: z.string().email(), targetEmail: z.string().email()
+});
+app.get("/manager/cleaning-assignment-exemption", async (request, response) => {
+  const parsed = cleaningAssignmentExemptionSchema.safeParse(request.query);
+  if (!parsed.success) return response.status(400).json({ error: "Valid actor and resident emails are required." });
+  try {
+    return response.json(await getOwnerCleaningAssignmentExemption(parsed.data.actorEmail, parsed.data.targetEmail));
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400)
+      .json({ error: error instanceof Error ? error.message : "Unable to load cleaning exemption." });
+  }
+});
+app.post("/manager/cleaning-assignment-exemption", async (request, response) => {
+  const parsed = cleaningAssignmentExemptionSchema.extend({ exempt: z.boolean() }).safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Valid actor, resident and exemption status are required." });
+  try {
+    return response.json(await setOwnerCleaningAssignmentExemption(parsed.data));
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 400)
+      .json({ error: error instanceof Error ? error.message : "Unable to save cleaning exemption." });
   }
 });
 
@@ -4870,6 +4929,18 @@ app.post("/staff/clients/set-inactive", async (request, response) => {
   }
 });
 
+app.get("/staff/client-cleaning-statistics", async (request, response) => {
+  const parsed = staffClientQuerySchema.extend({
+    details: z.enum(["true", "false"]).optional(), offset: z.coerce.number().int().min(0).max(100000).optional()
+  }).safeParse(request.query);
+  if (!parsed.success) return response.status(400).json({ error: "Valid actor, contract and pagination parameters are required." });
+  try {
+    return response.json(await getClientCleaningStatistics({ ...parsed.data, details: parsed.data.details === "true" }));
+  } catch (error) {
+    return response.status((error as { statusCode?: number }).statusCode ?? 403).json({ error: (error as Error).message });
+  }
+});
+
 app.get("/staff/client-workspace", async (request, response) => {
   const parsed = staffClientQuerySchema.safeParse({
     actorEmail: request.query.actorEmail,
@@ -6177,16 +6248,12 @@ app.post("/cleaning/tasks/:id/release", async (request, response) => {
 
   try {
     const task = await releaseCleaningTask(request.params.id, parsed.data.email, {
-      confirmLatePenalty: parsed.data.confirmLatePenalty
+      confirmationKey: parsed.data.confirmationKey
     });
     return response.json(task);
   } catch (error) {
-    if (error instanceof CleaningLateCancellationConfirmationRequiredError) {
-      return response.status(409).json({
-        error: error.message,
-        code: "LATE_CANCELLATION_CONFIRMATION_REQUIRED",
-        penalty: error.penalty
-      });
+    if (error instanceof CleaningReleaseConfirmationRequiredError) {
+      return response.status(409).json({ error: error.message, code: "RELEASE_CONFIRMATION_REQUIRED", ...error.preview });
     }
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to release cleaning task"

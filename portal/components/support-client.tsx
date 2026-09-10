@@ -1,5 +1,7 @@
 "use client";
 
+import { CleaningReviewChatLink } from "./cleaning-review-chat-link";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { parseSupportAssistantMeta, supportMessageDisplayBody } from "../lib/support-message-meta";
@@ -604,6 +606,7 @@ export function SupportClient() {
                   <p className="whitespace-pre-wrap leading-relaxed">
                     {isAssistant ? supportMessageDisplayBody(message.body) : message.body}
                   </p>
+                  <CleaningReviewChatLink pagePath={message.pagePath} />
                   {message.attachments?.map((attachment) => (
                     <ChatAttachmentView key={attachment.id} attachment={attachment} viewerEmail={sessionEmail.trim().toLowerCase()} />
                   ))}

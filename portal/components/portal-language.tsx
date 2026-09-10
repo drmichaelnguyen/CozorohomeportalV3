@@ -812,10 +812,11 @@ const translations: Record<string, { en: string; vi: string }> = {
   coinsEntryCreated: { en: "Coins entry created.", vi: "Đã tạo mục nhập coin." },
   clientStatistics: { en: "Client Statistics", vi: "Thống kê Khách hàng" },
   clientStatsDesc: {
-    en: "Open laundry, coins, member tier, payments, or fines on demand. Each tab starts with a summary, and raw entries only appear when requested.",
-    vi: "Mở lịch sử giặt ủi, coin, hạng thành viên, thanh toán hoặc tiền phạt. Mỗi tab bắt đầu bằng tóm tắt và chỉ hiện chi tiết khi được yêu cầu."
+    en: "Open laundry, cleaning, coins, member tier, payments, or fines on demand. Each tab starts with a summary, and raw entries only appear when requested.",
+    vi: "Mở lịch sử giặt ủi, vệ sinh, coin, hạng thành viên, thanh toán hoặc tiền phạt. Mỗi tab bắt đầu bằng tóm tắt và chỉ hiện chi tiết khi được yêu cầu."
   },
   statsLaundryTab: { en: "Laundry", vi: "Giặt ủi" },
+  statsCleaningTab: { en: "Cleaning", vi: "Vệ sinh" },
   statsCoinsTab: { en: "Coins", vi: "Coin" },
   statsMemberTab: { en: "Member", vi: "Thành viên" },
   statsPaymentsTab: { en: "Payments", vi: "Thanh toán" },

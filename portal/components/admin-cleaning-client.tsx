@@ -1,5 +1,7 @@
 "use client";
 
+import { CleaningAssignmentReview, CleaningAssignmentReviewInbox } from "./cleaning-assignment-review";
+
 import { useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
@@ -25,6 +27,7 @@ type AdminTask = {
   rewardCoins: number;
   isSelfAssigned: boolean;
   assignmentSource?: "SYSTEM" | "MANAGER" | "SELF";
+  assignmentExplanation?: unknown;
   calendarId?: string | null;
   completedAt?: string | null;
   completionNote?: string | null;
@@ -1382,6 +1385,7 @@ export function AdminCleaningClient() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
+      <CleaningAssignmentReviewInbox actorEmail={activeEmail} language={language} />
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
         <div className="flex items-center gap-2">
           <h1 className="text-2xl font-semibold text-slate-900">{t("adminCleaningHeader")}</h1>
@@ -2406,6 +2410,8 @@ export function AdminCleaningClient() {
                                   </span>
                                 )}
                               </div>
+                              {(task.assignmentSource === "SYSTEM" || Boolean(task.assignmentExplanation)) && <CleaningAssignmentReview
+                                taskId={task.id} actorEmail={activeEmail} language={language} explanation={task.assignmentExplanation} />}
                               {task.completionNote && (
                                 <p className="mt-1 text-xs text-slate-600 italic">"{task.completionNote}"</p>
                               )}

@@ -1,3 +1,5 @@
+import { makeCleaningAssignmentExplanation, cleaningSelectionFactor, type CleaningAssignmentExplanation } from "./cleaning-assignment-explanation.js";
+import { getCleaningAssignmentExemptions, isCleaningAssignmentExempt } from "./cleaning-assignment-exemptions.js";
 import { withCoinWriteLock } from "./coin-write-lock.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -156,13 +158,13 @@ export type CleaningLateCancellationPenalty = {
   multiplier: number;
 };
 
-export class CleaningLateCancellationConfirmationRequiredError extends Error {
-  penalty: CleaningLateCancellationPenalty;
-
-  constructor(penalty: CleaningLateCancellationPenalty) {
-    super("Confirm the late-cancellation fine and immediate coin payment before removing this task.");
-    this.name = "CleaningLateCancellationConfirmationRequiredError";
-    this.penalty = penalty;
+export class CleaningReleaseConfirmationRequiredError extends Error {
+  constructor(public preview: {
+    confirmationKey: string;
+    reassignmentDate: string | null;
+    penalty: CleaningLateCancellationPenalty & { canPay: boolean };
+  }) {
+    super("Confirm the cancellation and proposed replacement date before saving.");
   }
 }
 
@@ -1309,6 +1311,26 @@ function compareCleaningCandidateRank(
   return left.name.localeCompare(right.name);
 }
 
+function explainCleaningSelection(
+  user: ActiveCleaningUser, date: Date, type: CleaningTaskType,
+  availabilityMap: Map<string, { type: CleaningAvailabilityType }>,
+  counts: Map<string, number>, penalties: Map<string, number>,
+  candidateCount: number, reason: CleaningAssignmentExplanation["reason"], next?: ActiveCleaningUser
+) {
+  const metrics = (candidate: ActiveCleaningUser) => ({
+    availability: availabilityMap.get(`${candidate.email}|${normalizeCalendarDate(date).toISOString()}`)?.type ?? "UNMARKED",
+    countedTasks: getRecentTypeTaskCount(counts, candidate.email, type),
+    correctionPenalty: penalties.get(candidate.email.toLowerCase()) ?? 0
+  });
+  return makeCleaningAssignmentExplanation({
+    selectionFactor: cleaningSelectionFactor(metrics(user), next ? metrics(next) : null),
+    reason, availability: availabilityMap.get(`${user.email}|${normalizeCalendarDate(date).toISOString()}`)?.type ?? "UNMARKED",
+    countedTasks: getRecentTypeTaskCount(counts, user.email, type),
+    fairnessFrom: addDays(normalizeCalendarDate(new Date()), -CLEANING_FAIRNESS_LOOKBACK_DAYS).toISOString(),
+    correctionPenalty: penalties.get(user.email.toLowerCase()) ?? 0, candidateCount
+  });
+}
+
 async function getAssignableCandidates(
   activeUsers: ActiveCleaningUser[],
   availabilityMap: Map<string, Prisma.CleaningAvailabilityGetPayload<Record<string, never>>>,
@@ -1319,11 +1341,13 @@ async function getAssignableCandidates(
   recentTaskCounts?: Map<string, number>,
   correctionPenalties?: Map<string, number>
 ) {
+  const exemptions = await getCleaningAssignmentExemptions();
   const normalizedDateKey = normalizeCalendarDate(scheduledDate).toISOString();
   const counts = recentTaskCounts ?? new Map<string, number>();
   const penalties = correctionPenalties ?? new Map<string, number>();
 
   return activeUsers
+    .filter((user) => !exemptions.has(user.email.trim().toLowerCase()))
     .filter((user) => {
       return isUserEligibleForCleaningSlot(user, type, floor);
     })
@@ -1361,7 +1385,11 @@ async function assignTaskToUser(input: {
   assignmentSource?: CleaningAssignmentSource;
   assignedByEmail?: string | null;
   assignedByName?: string | null;
+  assignmentExplanation?: CleaningAssignmentExplanation;
 }) {
+  if (input.assignmentSource === CleaningAssignmentSource.SYSTEM && await isCleaningAssignmentExempt(input.user.email)) {
+    throw new Error("This resident is exempt from automatic cleaning assignments.");
+  }
   const normalizedTaskDate = normalizeCalendarDate(input.date);
   const normalizedEmail = input.user.email.trim().toLowerCase();
   const slotFloor = getSlotFloor(input.type, input.floor ?? input.user.floor);
@@ -1443,6 +1471,7 @@ async function assignTaskToUser(input: {
           rewardCoins,
           isSelfAssigned,
           assignmentSource: input.assignmentSource ?? (isSelfAssigned ? CleaningAssignmentSource.SELF : undefined),
+          assignmentExplanation: input.assignmentExplanation ?? Prisma.DbNull,
           assignedByEmail: input.assignedByEmail ?? undefined,
           assignedByName: input.assignedByName ?? undefined
         }
@@ -1547,6 +1576,7 @@ async function assignTaskToUser(input: {
           rewardCoins: raceRewardCoins,
           isSelfAssigned: raceIsSelfAssigned,
           assignmentSource: input.assignmentSource ?? (raceIsSelfAssigned ? CleaningAssignmentSource.SELF : undefined),
+          assignmentExplanation: input.assignmentExplanation ?? Prisma.DbNull,
           assignedByEmail: input.assignedByEmail ?? undefined,
           assignedByName: input.assignedByName ?? undefined
         }
@@ -1573,6 +1603,7 @@ async function assignTaskToUser(input: {
 
     const created = await createCleaningTaskRecord({
       user: input.user,
+      assignmentExplanation: input.assignmentExplanation,
       type: input.type,
       title: config.title,
       scheduledDate: normalizedTaskDate,
@@ -1761,6 +1792,7 @@ async function createCleaningTaskRecord(input: {
   assignmentSource?: CleaningAssignmentSource;
   assignedByEmail?: string | null;
   assignedByName?: string | null;
+  assignmentExplanation?: CleaningAssignmentExplanation;
 }) {
   const normalizedScheduledDate = normalizeCalendarDate(input.scheduledDate);
   const { rewardCoins } = await resolveAssignmentRewardCoins(
@@ -1778,6 +1810,7 @@ async function createCleaningTaskRecord(input: {
   const created = await createCleaningTask({
     data: {
       userEmail: input.user.email,
+      assignmentExplanation: input.assignmentExplanation ?? Prisma.DbNull,
       userName: input.user.name,
       branchId: input.user.branchId,
       floor: input.floor ?? input.user.floor,
@@ -1891,6 +1924,9 @@ async function syncCalendarTasksIntoDatabase(
         where: { id: existingTask.id },
         data: {
           userEmail: syncEmail,
+          ...((syncEmail.trim().toLowerCase() !== existingTask.userEmail.trim().toLowerCase() ||
+              !sameDay(scheduledDate, existingTask.scheduledDate) || event.taskType !== existingTask.type || floor !== existingTask.floor)
+            ? { assignmentExplanation: Prisma.DbNull } : {}),
           userName: syncName,
           branchId,
           floor,
@@ -2627,7 +2663,7 @@ async function countReleasesThisMonth(email: string): Promise<number> {
 export async function releaseCleaningTask(
   taskId: string,
   email: string,
-  options?: { confirmLatePenalty?: boolean }
+  options?: { confirmationKey?: string }
 ) {
   const normalizedEmail = email.trim().toLowerCase();
   const task = await findUniqueCleaningTask({
@@ -2668,8 +2704,9 @@ export async function releaseCleaningTask(
     floor: task.floor ?? undefined
   });
 
+  const exemptions = await getCleaningAssignmentExemptions();
   const replacement = candidates.find(
-    (candidate) => candidate.email !== normalizedEmail && !candidate.hasSameDayTask
+    (candidate) => candidate.email !== normalizedEmail && !candidate.hasSameDayTask && !exemptions.has(candidate.email.trim().toLowerCase())
   );
 
   if (!replacement) {
@@ -2693,56 +2730,66 @@ export async function releaseCleaningTask(
     ? await getFineCoinPaymentQuoteForEmail(normalizedEmail, releasePenalty.fineAmount)
     : null;
 
-  if (coinQuote && !options?.confirmLatePenalty) {
-    throw new CleaningLateCancellationConfirmationRequiredError({
-      fineRate: releasePenalty.fineRate,
-      fineAmount: releasePenalty.fineAmount,
-      message: releasePenalty.message,
-      ...coinQuote
+  const reassignmentProposal = await findReleasedUserReassignment({
+    email: normalizedEmail, replacementEmail: replacement.email, releasedDate: task.scheduledDate, type: task.type, floor: task.floor
+  });
+  const proposedDate = reassignmentProposal?.date ?? null;
+  const penaltyPreview = {
+    fineRate: releasePenalty.fineRate, fineAmount: releasePenalty.fineAmount,
+    message: releasePenalty.message, coinCost: 0, currentCoins: 0, remainingCoins: 0,
+    recordedMember: "", multiplier: 1, canPay: true, ...coinQuote
+  };
+  const confirmationKey = JSON.stringify([
+    task.id, task.updatedAt.toISOString(), proposedDate?.toISOString() ?? null,
+    replacement.email, penaltyPreview.fineAmount, penaltyPreview.coinCost, penaltyPreview.currentCoins
+  ]);
+  if (options?.confirmationKey !== confirmationKey) {
+    throw new CleaningReleaseConfirmationRequiredError({
+      confirmationKey, reassignmentDate: proposedDate?.toISOString() ?? null, penalty: penaltyPreview
     });
   }
-
   if (coinQuote && !coinQuote.canPay) {
-    throw new Error(
-      `Not enough coins to pay this late-cancellation fine. Required: ${coinQuote.coinCost}; available: ${coinQuote.currentCoins}.`
-    );
+    throw new Error(`Not enough coins to pay this late-cancellation fine. Required: ${coinQuote.coinCost}; available: ${coinQuote.currentCoins}.`);
   }
-
-  // Attempt to update Google Calendar. If this fails, log and continue — the DB is
-  // authoritative for released tasks, and the sync will respect the UNAVAILABLE record
-  // set below to avoid overwriting with stale calendar data.
-  if (task.calendarId && task.calendarEventId) {
-    const target = getCleaningCalendarTarget(task.type, { floor: newFloor });
-    if (target) {
-      try {
-        await updateCleaningCalendarEvent({
-          calendarId: task.calendarId,
-          eventId: task.calendarEventId,
-          title: target.title,
-          scheduledDate: task.scheduledDate,
-          userEmail: replacementUser.email,
-          userName: replacementUser.name,
-          branchId: replacementUser.branchId,
-          floor: newFloor,
-          rewardCoins: replacementRewardCoins,
-          type: task.type,
-          status: task.status,
-          completedAt: task.completedAt,
-          completionNote: task.completionNote,
-          completionPhoto: task.completionPhoto,
-          auditorNote: task.auditorNote
-        });
-      } catch (calendarError) {
-        console.error("[releaseCleaningTask] Google Calendar update failed, proceeding with DB release:", calendarError);
-      }
-    }
-  }
+  const releasingUser = proposedDate ? await getUserCleaningContext(normalizedEmail) : null;
+  if (proposedDate && !releasingUser) throw new Error("Cleaning user context not found");
+  const proposedReward = proposedDate
+    ? await resolveAssignmentRewardCoins(task.type, proposedDate, false, normalizedEmail) : null;
+  let newAssignment: CleaningTaskRecord | null = null;
 
   const releasedAvailabilityNote = task.isSelfAssigned
     ? "Released self-assigned cleaning task"
     : "Released cleaning task";
 
+  if (await isCleaningAssignmentExempt(replacementUser.email) ||
+      (proposedDate && await isCleaningAssignmentExempt(normalizedEmail))) {
+    throw new Error("Cleaning exemption changed. Please refresh and confirm the cancellation again.");
+  }
+
   const reassignedTask = await prisma.$transaction(async (tx) => {
+    // Claim the original task and reserve the confirmed slot in the same transaction.
+    const claimed = await tx.cleaningTask.updateMany({
+      where: { id: task.id, userEmail: task.userEmail, status: CleaningTaskStatus.ASSIGNED, updatedAt: task.updatedAt },
+      data: { userEmail: replacementUser.email }
+    });
+    if (claimed.count !== 1) throw new Error("This task changed. Refresh your schedule and try again.");
+    if (proposedDate && releasingUser && proposedReward) {
+      const conflict = await tx.cleaningTask.findFirst({ where: {
+        userEmail: normalizedEmail,
+        scheduledDate: { gte: calendarRangeStart(proposedDate), lte: calendarRangeEnd(proposedDate) }
+      } });
+      if (conflict) throw new Error("The proposed date is no longer available. Please try again.");
+      const target = getCleaningCalendarTarget(task.type, { floor: task.floor });
+      newAssignment = await tx.cleaningTask.create({ data: {
+        userEmail: normalizedEmail, userName: releasingUser.name, branchId: releasingUser.branchId,
+        floor: task.floor, type: task.type, scheduledDate: proposedDate,
+        slotKey: getSlotCreationKey(task.type, proposedDate, task.type === CleaningTaskType.TRASH_D7 ? task.floor : null),
+        rewardCoins: proposedReward.rewardCoins, isSelfAssigned: false,
+        assignmentExplanation: reassignmentProposal?.explanation ?? Prisma.DbNull,
+        assignmentSource: CleaningAssignmentSource.SYSTEM, assignedByName: "System",
+        calendarId: target?.calendarId ?? null
+      } });
+    }
     const updatedAvailability = await tx.cleaningAvailability.upsert({
       where: {
         userEmail_date: {
@@ -2776,13 +2823,56 @@ export async function releaseCleaningTask(
         // Replacement is auto-picked — do not inherit self-assign multiplier / Hero credit.
         rewardCoins: replacementRewardCoins,
         isSelfAssigned: false,
-        assignmentSource: CleaningAssignmentSource.SYSTEM
+        assignmentSource: CleaningAssignmentSource.SYSTEM,
+        assignmentExplanation: makeCleaningAssignmentExplanation({
+          reason: "replacement", availability: replacement.availabilityType ?? "UNMARKED",
+          countedTasks: replacement.recentTypeTaskCount, correctionPenalty: replacement.correctionPenalty,
+          fairnessFrom: addDays(normalizeCalendarDate(new Date()), -CLEANING_FAIRNESS_LOOKBACK_DAYS).toISOString(),
+          candidateCount: candidates.filter(candidate => !candidate.hasSameDayTask && candidate.email !== normalizedEmail && !exemptions.has(candidate.email.toLowerCase())).length
+        })
       }
     });
 
     void updatedAvailability;
     return updatedTask;
   });
+  // Attempt to update Google Calendar. If this fails, log and continue — the DB is
+  // authoritative for released tasks, and the sync will respect the UNAVAILABLE record
+  // saved above to avoid overwriting with stale calendar data.
+  if (task.calendarId && task.calendarEventId) {
+    const target = getCleaningCalendarTarget(task.type, { floor: newFloor });
+    if (target) {
+      try {
+        await updateCleaningCalendarEvent({
+          calendarId: task.calendarId,
+          eventId: task.calendarEventId,
+          title: target.title,
+          scheduledDate: task.scheduledDate,
+          userEmail: replacementUser.email,
+          userName: replacementUser.name,
+          branchId: replacementUser.branchId,
+          floor: newFloor,
+          rewardCoins: replacementRewardCoins,
+          type: task.type,
+          status: task.status,
+          completedAt: task.completedAt,
+          completionNote: task.completionNote,
+          completionPhoto: task.completionPhoto,
+          auditorNote: task.auditorNote
+        });
+      } catch (calendarError) {
+        console.error("[releaseCleaningTask] Google Calendar update failed, proceeding with DB release:", calendarError);
+      }
+    }
+  }
+
+  if (newAssignment) {
+    const created = newAssignment as CleaningTaskRecord;
+    if (created.calendarId) enqueueDeferredCleaningCalendarCreate(created.id);
+    await logAction({ actorEmail: normalizedEmail, actorRole: "resident",
+      action: "cleaning.task.reassignment_confirmed", entityType: "CleaningTask", entityId: created.id,
+      entityLabel: `${created.type}|${created.scheduledDate.toISOString().slice(0, 10)}` });
+  }
   await logAction({
     actorEmail: normalizedEmail,
     actorName: task.userName ?? normalizedEmail,
@@ -2820,16 +2910,6 @@ export async function releaseCleaningTask(
 
   await invalidateCleaningOverviewCache(normalizedEmail);
   await invalidateCleaningOverviewCache(replacement.email);
-
-  // Auto-reassign the releasing user to the next available date of the same type
-  void autoReassignReleasedUser({
-    email: normalizedEmail,
-    releasedDate: task.scheduledDate,
-    type: task.type,
-    floor: task.floor
-  }).catch((err) => {
-    console.warn("[releaseCleaningTask] auto-reassign failed:", err instanceof Error ? err.message : err);
-  });
 
   return {
     task: reassignedTask,
@@ -3387,6 +3467,7 @@ export async function adminAutoAssignCleaningSlots(input: {
 
     const assignedTask = await assignTaskToUser({
       user: selectedUser,
+      assignmentExplanation: explainCleaningSelection(selectedUser, normalizedDate, input.type, availabilityMap, recentTaskCounts, correctionPenalties, candidates.length, "bulk", candidates[1]),
       date: normalizedDate,
       type: input.type,
       floor:
@@ -4607,6 +4688,7 @@ export async function autoScheduleCleaningTasks(horizonDays = 15) {
       const user = candidates[0];
       const assignedTask = await assignTaskToUser({
         user,
+        assignmentExplanation: explainCleaningSelection(user, date, def.type, availabilityMap, recentTaskCounts, correctionPenalties, candidates.length, "rotation", candidates[1]),
         date,
         type: def.type,
         floor: def.floor,
@@ -4717,6 +4799,7 @@ export async function autoScheduleCleaningTasksByJob(
       const user = candidates[0];
       const assignedTask = await assignTaskToUser({
         user,
+        assignmentExplanation: explainCleaningSelection(user, date, job.type, availabilityMap, recentTaskCounts, correctionPenalties, candidates.length, "rotation", candidates[1]),
         date,
         type: job.type,
         floor: job.floor,
@@ -4742,16 +4825,19 @@ export async function autoScheduleCleaningTasksByJob(
   return results;
 }
 
-// After a user releases a task, try to place them on a later open slot of the
+// Preview a later open slot without changing the schedule. Simulate the release
+// in the fairness counts so the proposal matches the post-release ranking. The
 // same type within 15 days — but only when they are the most underdue eligible
 // candidate for that slot (shared fairness ranking). Avoids dumping releasers
 // onto the next empty day when others are more underdue.
-async function autoReassignReleasedUser(input: {
+async function findReleasedUserReassignment(input: {
   email: string;
+  replacementEmail: string;
   releasedDate: Date;
   type: CleaningTaskType;
   floor: number | null;
 }) {
+  if (await isCleaningAssignmentExempt(input.email)) return null;
   const normalizedReleasedDate = normalizeCalendarDate(input.releasedDate);
   const horizon = addDays(normalizedReleasedDate, 15);
   const normalizedEmail = input.email.toLowerCase();
@@ -4766,6 +4852,10 @@ async function autoReassignReleasedUser(input: {
     getCorrectionPenalties(correctionSince),
     getContractCleaningOptOutLookup(activeUsers.map((entry) => getUserContractCode(entry)))
   ]);
+
+  const releasedCountKey = recentTypeTaskCountKey(normalizedEmail, input.type);
+  recentTaskCounts.set(releasedCountKey, Math.max(0, (recentTaskCounts.get(releasedCountKey) ?? 0) - 1));
+  bumpRecentTypeTaskCount(recentTaskCounts, input.replacementEmail, input.type);
 
   let cursor = addDays(normalizedReleasedDate, 1);
 
@@ -4817,24 +4907,9 @@ async function autoReassignReleasedUser(input: {
       continue;
     }
 
-    await assignTaskToUser({
-      user,
-      date: cursor,
-      type: input.type,
-      floor: input.floor,
-      assignmentSource: CleaningAssignmentSource.SYSTEM,
-      assignedByName: "System"
-    });
-    await invalidateCleaningOverviewCache(normalizedEmail);
-    return;
+    return { date: cursor, explanation: explainCleaningSelection(user, cursor, input.type, availabilityMap, recentTaskCounts, correctionPenalties, candidates.length, "rescheduled", candidates[1]) };
   }
-
-  console.warn("[autoReassignReleasedUser] No underdue open slot found within horizon", {
-    email: normalizedEmail,
-    type: input.type,
-    releasedDate: normalizedReleasedDate.toISOString().slice(0, 10),
-    horizon: horizon.toISOString().slice(0, 10)
-  });
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -5037,6 +5112,7 @@ export async function acceptSwapRequest(requestId: string, targetEmail: string) 
       where: { id: task.id },
       data: {
         userEmail: normalizedTarget,
+        assignmentExplanation: Prisma.DbNull,
         userName: targetUser.name,
         branchId: targetUser.branchId,
         floor: newFloor,

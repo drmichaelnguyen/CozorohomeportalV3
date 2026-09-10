@@ -1,5 +1,7 @@
 "use client";
 
+import { CleaningReviewChatLink } from "./cleaning-review-chat-link";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
@@ -485,6 +487,7 @@ export function ManagerSupportInbox({
               {message.attachments?.map((attachment) => (
                 <ChatAttachmentView key={attachment.id} attachment={attachment} viewerEmail={operatorEmail} />
               ))}
+              <CleaningReviewChatLink pagePath={message.pagePath} />
               {message.pagePath ? (
                 <p
                   className={`mt-1 text-[10px] ${

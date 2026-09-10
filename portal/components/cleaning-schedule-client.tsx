@@ -1,5 +1,7 @@
 "use client";
 
+import { CleaningAssignmentReview, CleaningAssignmentReviewInbox } from "./cleaning-assignment-review";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePortalSession } from "./portal-session";
 import { usePortalLanguage } from "./portal-language";
@@ -23,6 +25,7 @@ type CleaningTask = {
   rewardCoins: number;
   isSelfAssigned: boolean;
   assignmentSource?: "SYSTEM" | "MANAGER" | "SELF";
+  assignmentExplanation?: unknown;
   completionNote?: string | null;
   auditorNote?: string | null;
 };
@@ -111,6 +114,8 @@ type CleaningReleasePenalty = {
 };
 
 type CleaningReleaseResponse = {
+  confirmationKey?: string;
+  reassignmentDate?: string | null;
   error?: string;
   code?: string;
   penalty?: CleaningReleasePenalty;
@@ -770,7 +775,7 @@ export function CleaningScheduleClient({
     }
   }
 
-  async function postTaskRelease(taskId: string, confirmLatePenalty = false) {
+  async function postTaskRelease(taskId: string, confirmationKey?: string) {
     const response = await fetch(`${API_BASE_URL}/cleaning/tasks/${taskId}/release`, {
       method: "POST",
       headers: {
@@ -778,7 +783,7 @@ export function CleaningScheduleClient({
       },
       body: JSON.stringify({
         email: activeEmail,
-        confirmLatePenalty
+        confirmationKey
       })
     });
     const data = await readJsonSafely<CleaningReleaseResponse>(response);
@@ -787,9 +792,9 @@ export function CleaningScheduleClient({
 
   async function requestTaskRelease(task: CleaningTask) {
     let result = await postTaskRelease(task.id);
-    if (
+    while (
       result.response.status === 409 &&
-      result.data.code === "LATE_CANCELLATION_CONFIRMATION_REQUIRED" &&
+      result.data.code === "RELEASE_CONFIRMATION_REQUIRED" &&
       result.data.penalty
     ) {
       const penalty = result.data.penalty;
@@ -803,21 +808,23 @@ export function CleaningScheduleClient({
         return { released: false, cancelled: true, data: result.data };
       }
 
-      const confirmed = window.confirm(
-        t("lateCancelConfirm", undefined, {
-          task: prettyTaskType(task.type),
-          date: formatCozoroDate(new Date(task.scheduledDate)),
-          amount: penalty.fineAmount.toLocaleString(),
-          coins: penalty.coinCost.toLocaleString(),
-          balance: penalty.currentCoins.toLocaleString(),
-          remaining: penalty.remainingCoins?.toLocaleString() ?? "0"
-        })
-      );
+      const replacementDate = result.data.reassignmentDate
+        ? formatCozoroDate(new Date(result.data.reassignmentDate)) : null;
+      const proposal = language === "vi"
+        ? `Hủy lịch ${prettyTaskType(task.type)} ngày ${formatCozoroDate(new Date(task.scheduledDate))}?\n${replacementDate ? `Lịch thay thế của bạn: ${replacementDate}.` : "Hiện chưa có ngày thay thế phù hợp; lần hủy này sẽ không tạo lịch mới."}`
+        : `Cancel ${prettyTaskType(task.type)} on ${formatCozoroDate(new Date(task.scheduledDate))}?\n${replacementDate ? `Your replacement date: ${replacementDate}.` : "No suitable replacement date is available; this cancellation will not create a new assignment."}`;
+      const charge = penalty.fineAmount > 0
+        ? "\n\n" + t("lateCancelConfirm", undefined, {
+          task: prettyTaskType(task.type), date: formatCozoroDate(new Date(task.scheduledDate)),
+          amount: penalty.fineAmount.toLocaleString(), coins: penalty.coinCost.toLocaleString(),
+          balance: penalty.currentCoins.toLocaleString(), remaining: penalty.remainingCoins?.toLocaleString() ?? "0"
+        }) : "";
+      const confirmed = window.confirm(proposal + charge);
       if (!confirmed) {
         return { released: false, cancelled: true, data: result.data };
       }
 
-      result = await postTaskRelease(task.id, true);
+      result = await postTaskRelease(task.id, result.data.confirmationKey);
     }
 
     if (!result.response.ok) {
@@ -1618,6 +1625,7 @@ export function CleaningScheduleClient({
         </section>
       ) : null}
 
+      {!isStaffView && sessionEmail && <CleaningAssignmentReviewInbox actorEmail={sessionEmail} language={language} />}
       {!overview?.cleaningExcluded && nextCleaningCardTask && (
         <section className="rounded-2xl border border-amber-200 bg-amber-50/50 p-6 shadow-sm">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -1648,6 +1656,8 @@ export function CleaningScheduleClient({
                       ? t("nextCleaningCanDone", "You can mark this done during {window}.").replace("{window}", getCompletionWindow(nextCleaningCardTask).label)
                       : t("nextCleaningOpensSoon", "Mark done opens during {window}.").replace("{window}", getCompletionWindow(nextCleaningCardTask).label)}
                 </p>
+                {(nextCleaningCardTask.assignmentSource === "SYSTEM" || Boolean(nextCleaningCardTask.assignmentExplanation)) && <CleaningAssignmentReview
+                  key={`${sessionEmail}|${nextCleaningCardTask.id}`} taskId={nextCleaningCardTask.id} actorEmail={sessionEmail} language={language} explanation={nextCleaningCardTask.assignmentExplanation} />}
                 {nextCleaningCardTask.type === "TRASH_D7" && nextCleaningCardTask.floor ? (
                   <p className="mt-1 text-xs text-slate-500">{t("floorLabel", "Floor")} {nextCleaningCardTask.floor}</p>
                 ) : null}
@@ -1985,6 +1995,8 @@ export function CleaningScheduleClient({
                             <span className="text-xs text-slate-500">+{task.rewardCoins.toLocaleString()} coins</span>
                           )}
                         </div>
+                        {(task.assignmentSource === "SYSTEM" || Boolean(task.assignmentExplanation)) && <CleaningAssignmentReview
+                          key={`${sessionEmail}|${task.id}`} taskId={task.id} actorEmail={sessionEmail} language={language} explanation={task.assignmentExplanation} />}
                         {task.status === "REJECTED" && auditorNote && (
                           <div className={`rounded-lg border px-3 py-2 ${isDismissed ? "bg-slate-50 border-slate-200" : "bg-rose-50 border-rose-100"}`}>
                             <p className={`text-xs font-semibold ${isDismissed ? "text-slate-700" : "text-rose-700"}`}>
@@ -3004,6 +3016,8 @@ export function CleaningScheduleClient({
                         )}
                       </p>
                     ) : null}
+                    {(task.assignmentSource === "SYSTEM" || Boolean(task.assignmentExplanation)) && <CleaningAssignmentReview
+                      key={`${sessionEmail}|${task.id}`} taskId={task.id} actorEmail={sessionEmail} language={language} explanation={task.assignmentExplanation} />}
                     <div className="mt-1 text-sm text-slate-600">
                       Completion window: {getCompletionWindow(task).label}
                     </div>

@@ -1,5 +1,31 @@
 # Changelog
 
+## [3.9.37] - 2026-09-09
+
+- **Cleaning disputes in chat**: New disputes, replies, reopenings and resolutions are also written to the resident–host private chat, with task/date context and a link to the review. Chat and dispute updates commit in the same transaction; unread indicators refresh through the existing chat system.
+- **Direct review links**: Both resident and host chat show an Open cleaning dispute link. The linked page uses the existing resident ownership and staff permissions before displaying the discussion.
+
+## [3.9.36] - 2026-09-09
+
+- **Client cleaning statistics**: Client Statistics includes a Cleaning tab with task counts, upcoming duties, audit status, assignment sources and owner exemption status. Selecting the tab loads aggregate statistics only; task records load in pages of 25 after Show details is requested.
+- **Assignment review**: Cleaning entries expose the saved assignment explanations and dispute controls. Statistics are scoped to the selected resident and the operator’s cleaning/branch permissions.
+
+## [3.9.35] - 2026-09-09
+
+- **Assignment explanations**: Automatic cleaning selections save the availability, workload count, correction penalty and eligible-candidate count used for the decision. Residents and hosts see a short explanation and can expand the ranking rules. Older assignments explicitly indicate missing decision details.
+- **Assignment disputes**: Residents and hosts can open a dispute, exchange replies, and reopen discussions. Hosts can record a resolution; discussions do not cancel tasks. Both schedule views include a review inbox, and discussions survive task deletion.
+- **Access and migration**: Resident ownership and manager cleaning/branch permissions are checked server-side. Apply the assignment-review migration before starting this version.
+
+## [3.9.34] - 2026-09-09
+
+- **Owner cleaning exceptions**: Client Tools includes a checkbox for owner-agreed exemptions from future automatic cleaning schedules and replacement assignments, with no fee. Owners and app admins can enable or revoke the exemption; existing tasks remain unchanged.
+- **Persistence**: Added the `CleaningAssignmentExemption` table and action logging for exemption changes. Apply the accompanying migration before starting this version.
+
+## [3.9.33] - 2026-09-09
+
+- **Cleaning cancellation confirmation**: Residents see the proposed replacement date and any coin charge before confirming cancellation. Declining keeps the assignment; changed proposals require confirmation again.
+- **Confirmed reassignment**: The original reassignment and confirmed new slot are saved in one database transaction, replacing the background reassignment. If no suitable date exists, the confirmation says so explicitly.
+
 ## [3.9.32] - 2026-09-09
 
 - **Laundry booking dates**: Portal and Cozoro Bee now check away status using the booking date in Vietnam, independently of the host timezone. Being away the previous day no longer blocks a morning booking on an available day.
