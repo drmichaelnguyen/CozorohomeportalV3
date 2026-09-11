@@ -539,6 +539,7 @@ export function CleaningScheduleClient({
   const [pastMonthFilter, setPastMonthFilter] = useState("all");
   const [pastYearFilter, setPastYearFilter] = useState("all");
   const [pastTasksExpanded, setPastTasksExpanded] = useState(false);
+  const [selfAssignLeaderboardExpanded, setSelfAssignLeaderboardExpanded] = useState(false);
   const [selfAssignSuggestions, setSelfAssignSuggestions] = useState<string[]>([]);
   const [pendingSelfAssignment, setPendingSelfAssignment] = useState<PendingSelfAssignment | null>(null);
   const [activeMenuDate, setActiveMenuDate] = useState<Date | null>(null);
@@ -1756,7 +1757,10 @@ export function CleaningScheduleClient({
                       .replace("{branch}", overview.selfAssignSocial.branchId)}
               </p>
               <ul className="mt-3 space-y-1.5">
-                {overview.selfAssignSocial.top.map((entry, index) => (
+                {(selfAssignLeaderboardExpanded
+                  ? overview.selfAssignSocial.top
+                  : overview.selfAssignSocial.top.slice(0, 1)
+                ).map((entry, index) => (
                   <li
                     key={`${entry.displayName}-${index}`}
                     className={`flex items-center justify-between rounded-lg px-2.5 py-1.5 text-sm ${
@@ -1765,12 +1769,27 @@ export function CleaningScheduleClient({
                   >
                     <span>
                       <span className="mr-2 text-xs font-semibold text-slate-400">{index + 1}.</span>
-                      {entry.isYou ? t("selfAssignLeaderboardYou", "You") : entry.displayName}
+                      {entry.isYou
+                        ? t("selfAssignLeaderboardYou", "You")
+                        : language === "vi"
+                          ? entry.displayName.trim().split(/\s+/).filter(Boolean)[0] || entry.displayName
+                          : entry.displayName}
                     </span>
                     <span className="font-semibold tabular-nums">{entry.count}</span>
                   </li>
                 ))}
               </ul>
+              {overview.selfAssignSocial.top.length > 1 ? (
+                <button
+                  type="button"
+                  onClick={() => setSelfAssignLeaderboardExpanded((open) => !open)}
+                  className="mt-2 text-xs font-semibold text-slate-600 underline-offset-2 hover:text-slate-900 hover:underline"
+                >
+                  {selfAssignLeaderboardExpanded
+                    ? t("selfAssignLeaderboardShowLess", "Show less")
+                    : t("selfAssignLeaderboardShowMore", "Show full ranking")}
+                </button>
+              ) : null}
               <p className="mt-3 text-xs text-slate-500">
                 {t(
                   "selfAssignLeaderboardHint",

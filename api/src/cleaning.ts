@@ -2529,12 +2529,15 @@ export async function listOpenSelfAssignSlotsForUser(
 
 function softPressureDisplayName(fullName: string, isYou: boolean) {
   if (isYou) return "You";
+  // Vietnamese names are Họ + đệm + Tên: show full name when available,
+  // otherwise the family name (họ / English “last name”, first token).
   const parts = fullName.trim().split(/\s+/).filter(Boolean);
-  const first = parts[0] || "Neighbor";
-  return first.length > 14 ? `${first.slice(0, 13)}…` : first;
+  if (parts.length === 0) return "Neighbor";
+  const label = parts.length === 1 ? parts[0] : parts.join(" ");
+  return label.length > 28 ? `${label.slice(0, 27)}…` : label;
 }
 
-/** Soft social proof for self-assign (first names + counts only; no emails). */
+/** Soft social proof for self-assign (full / family names + counts only; no emails). */
 export async function buildSelfAssignSocialProof(input: {
   email: string;
   branchId: "D2" | "D7";

@@ -32,6 +32,7 @@ import {
   REFERRAL_PROMO_INTROS,
   REFERRAL_PROMO_TITLES
 } from "../lib/rotating-promo-copy";
+import { FineTicketDetails } from "./fine-ticket-details";
 
 type ClientRecord = Record<string, string>;
 
@@ -1755,16 +1756,15 @@ export function AccountOverviewClient() {
               <div className="space-y-3">
                 {fines.slice(0, 3).map((fine, idx) => (
                   <div key={idx} className="rounded-xl border border-red-100 bg-red-50/30 p-3 text-sm">
-                    <div className="flex items-center justify-between font-medium text-slate-900">
-                      <span>{fine.row["NỘI DUNG VI PHẠM"]}</span>
-                      <span className="text-red-600">{fine.row["CHI PHÍ THANH TOÁN CHO VI PHẠM"]}</span>
-                    </div>
-                    <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
-                      <span>{fine.parsedTimestamp ? formatCozoroDate(fine.parsedTimestamp) : ""}</span>
-                      <span className={fine.row["ĐÃ THANH TOÁN?"] === "1" ? "text-green-600 font-medium" : "text-amber-600 font-medium"}>
-                        {fine.row["ĐÃ THANH TOÁN?"] === "1" ? "Paid" : "Unpaid"}
-                      </span>
-                    </div>
+                    <FineTicketDetails
+                      row={fine.row}
+                      parsedTimestamp={fine.parsedTimestamp}
+                      parsedDueDate={fine.parsedDueDate}
+                      language={language}
+                      showIssuer={false}
+                      compact
+                      showEvidence={false}
+                    />
                   </div>
                 ))}
               </div>

@@ -1102,6 +1102,8 @@ const translations: Record<string, { en: string; vi: string }> = {
   },
   selfAssignLeaderboardTitle: { en: "Branch self-assign this month", vi: "Bảng tự nhận theo chi nhánh tháng này" },
   selfAssignLeaderboardYou: { en: "You", vi: "Bạn" },
+  selfAssignLeaderboardShowMore: { en: "Show full ranking", vi: "Xem bảng xếp hạng" },
+  selfAssignLeaderboardShowLess: { en: "Show less", vi: "Thu gọn" },
   selfAssignPeersWeek: {
     en: "{count} neighbors self-assigned in the last 7 days.",
     vi: "{count} bạn cùng nhà đã tự nhận trong 7 ngày qua."

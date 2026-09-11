@@ -65,6 +65,13 @@ import { BedOccupancyAnalytics } from "./bed-occupancy-analytics";
 import { MemberTierAnalytics } from "./member-tier-analytics";
 import { PortalVisitAnalytics } from "./portal-visit-analytics";
 import { CheckoutReviewClient } from "./checkout-review-client";
+import {
+  FineTicketDetails,
+  FINE_DESCRIPTION_COLUMN,
+  FINE_LOCATION_COLUMN,
+  getFineIssuedRaw,
+  getFineViolationRaw
+} from "./fine-ticket-details";
 
 
 type StaffRole = "manager" | "owner" | "app_admin" | "mechanic";
@@ -3712,6 +3719,7 @@ export function ManagerClient({
   const [newStaffRole, setNewStaffRole] = useState<StaffRole>("manager");
   const [newStaffPassword, setNewStaffPassword] = useState("");
   const [editingId, setEditingId] = useState("");
+  const [expandedFineDetailKey, setExpandedFineDetailKey] = useState("");
   const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState("");
   const [activeAction, setActiveAction] = useState<ClientAction>("");
@@ -11684,6 +11692,16 @@ export function ManagerClient({
                         const fineContent = activeTab === "fines" ? findRowValue(entry.row, ["noidungvipham"]) : null;
                         const fineCreator = activeTab === "fines" ? findRowValue(entry.row, ["nguoilapphieu"]) : null;
                         const fineAmount = activeTab === "fines" ? findRowValue(entry.row, ["chiphi"]) : null;
+                        const fineDescription =
+                          activeTab === "fines" ? String(entry.row[FINE_DESCRIPTION_COLUMN] ?? "").trim() : "";
+                        const fineLocation =
+                          activeTab === "fines" ? String(entry.row[FINE_LOCATION_COLUMN] ?? "").trim() : "";
+                        const fineIssuedRaw = activeTab === "fines" ? getFineIssuedRaw(entry.row) : "";
+                        const fineViolationRaw =
+                          activeTab === "fines"
+                            ? getFineViolationRaw(entry.row) || entry.parsedTimestamp || ""
+                            : "";
+                        const fineDetailExpanded = activeTab === "fines" && expandedFineDetailKey === key;
                         return (
                           <tr key={`table:${key}`} className="align-top">
                             {activeTab === "payments" ? (
@@ -11700,7 +11718,26 @@ export function ManagerClient({
                               })
                             ) : (
                               <>
-                                <td className="px-4 py-3 text-slate-700">{formatDateTime(entry.parsedTimestamp)}</td>
+                                <td className="px-4 py-3 text-slate-700">
+                                  {activeTab === "fines" ? (
+                                    <div className="space-y-1 text-xs">
+                                      <div>
+                                        <span className="font-medium text-slate-500">
+                                          {language === "vi" ? "Vi phạm:" : "Violation:"}
+                                        </span>{" "}
+                                        {formatDateTime(entry.parsedTimestamp || fineViolationRaw || null)}
+                                      </div>
+                                      <div>
+                                        <span className="font-medium text-slate-500">
+                                          {language === "vi" ? "Lập phiếu:" : "Issued:"}
+                                        </span>{" "}
+                                        {formatDateTime(fineIssuedRaw || null)}
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    formatDateTime(entry.parsedTimestamp)
+                                  )}
+                                </td>
                                 {activeTab === "coins" ? (
                                   <>
                                     <td className="px-4 py-3 font-medium" style={{ color: Number(entry.row["COINS"] ?? "0") >= 0 ? "#16a34a" : "#dc2626" }}>{entry.row["COINS"] ? `${Number(entry.row["COINS"]) >= 0 ? "+" : ""}${Number(entry.row["COINS"]).toLocaleString()}` : "-"}</td>
@@ -11709,7 +11746,44 @@ export function ManagerClient({
                                   </>
                                 ) : activeTab === "fines" ? (
                                   <>
-                                    <td className="px-4 py-3 text-slate-700">{fineContent || "-"}</td>
+                                    <td className="px-4 py-3 text-slate-700">
+                                      <div className="font-medium">{fineContent || "-"}</div>
+                                      {fineDescription ? (
+                                        <div className="mt-1 text-xs text-slate-500 whitespace-pre-wrap">{fineDescription}</div>
+                                      ) : null}
+                                      {fineLocation ? (
+                                        <div className="mt-1 text-xs text-slate-500">
+                                          {language === "vi" ? "Vị trí:" : "Location:"} {fineLocation}
+                                        </div>
+                                      ) : null}
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setExpandedFineDetailKey((current) => (current === key ? "" : key))
+                                        }
+                                        className="mt-2 text-xs font-semibold text-sky-700 hover:underline"
+                                      >
+                                        {fineDetailExpanded
+                                          ? language === "vi"
+                                            ? "Thu gọn"
+                                            : "Hide details"
+                                          : language === "vi"
+                                            ? "Chi tiết phiếu"
+                                            : "Ticket details"}
+                                      </button>
+                                      {fineDetailExpanded ? (
+                                        <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                          <FineTicketDetails
+                                            row={entry.row}
+                                            parsedTimestamp={entry.parsedTimestamp}
+                                            parsedDueDate={(entry as FineEntry).parsedDueDate}
+                                            language={language}
+                                            showIssuer
+                                            showEvidence
+                                          />
+                                        </div>
+                                      ) : null}
+                                    </td>
                                     <td className="px-4 py-3 text-slate-700">{fineCreator || "-"}</td>
                                     <td className="px-4 py-3 text-slate-700">{fineAmount ? `${Number(fineAmount).toLocaleString()} ₫` : "-"}</td>
                                     <td className="px-4 py-3">

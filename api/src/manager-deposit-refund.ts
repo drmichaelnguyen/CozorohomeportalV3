@@ -23,10 +23,40 @@ import { listUnpaidGateParkingTicketsForEmail } from "./gate-parking-tickets.js"
 import { requirePortalRole } from "./staff-access.js";
 
 const FINE_CONTENT_COLUMN = "NỘI DUNG VI PHẠM";
+const FINE_TIMESTAMP_COLUMN = "DẤU THỜI GIAN";
+const FINE_TIMESTAMP_COLUMN_TYPO = "ĐẤU THỜI GIAN";
 
 function parseMoneyVnd(raw: unknown): number {
   const n = Number.parseInt(String(raw ?? "").replace(/[^\d-]/g, ""), 10);
   return Number.isFinite(n) ? Math.max(0, n) : 0;
+}
+
+function formatViolationDateLabel(raw: string | null | undefined, locale: "vi" | "en") {
+  const value = String(raw ?? "").trim();
+  if (!value) {
+    return "";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleDateString(locale === "vi" ? "vi-VN" : "en-GB", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric"
+  });
+}
+
+function getFineViolationDateRaw(entry: {
+  parsedTimestamp: string | null;
+  row: Record<string, string>;
+}) {
+  return (
+    String(entry.parsedTimestamp ?? "").trim() ||
+    String(entry.row[FINE_TIMESTAMP_COLUMN] ?? "").trim() ||
+    String(entry.row[FINE_TIMESTAMP_COLUMN_TYPO] ?? "").trim()
+  );
 }
 
 function normalizeEmail(email: string) {
@@ -131,9 +161,12 @@ export async function buildDepositRefundBreakdown(
   const unpaidFineLines: DepositRefundDeductionLine[] = unpaidFineEntries.map((entry) => {
     const amountVnd = getFineAmountVndFromEntry(entry);
     const content = String(entry.row[FINE_CONTENT_COLUMN] ?? "").trim() || "Phạt / Fine";
+    const violationRaw = getFineViolationDateRaw(entry);
+    const violationVi = formatViolationDateLabel(violationRaw, "vi");
+    const violationEn = formatViolationDateLabel(violationRaw, "en");
     return {
-      labelVi: content,
-      labelEn: content,
+      labelVi: violationVi ? `${content} (ngày vi phạm: ${violationVi})` : content,
+      labelEn: violationEn ? `${content} (violation date: ${violationEn})` : content,
       amountVnd
     };
   });

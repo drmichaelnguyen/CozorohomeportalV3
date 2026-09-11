@@ -5,57 +5,17 @@ import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 import { usePortalSession } from "./portal-session";
 import { formatCozoroDateTime } from "../lib/date-format";
-const TIMESTAMP_COLUMN = "DẤU THỜI GIAN";
-const TIMESTAMP_COLUMN_TITLE = "Dấu thời gian";
-const TIMESTAMP_COLUMN_TYPO = "ĐẤU THỜI GIAN";
-const CREATED_AT_COLUMN = "THỜI ĐIỂM LẬP PHIẾU";
-const EMAIL_COLUMN = "EMAIL";
-const AMOUNT_COLUMN = "CHI PHÍ THANH TOÁN CHO VI PHẠM";
-const STATUS_COLUMN = "ĐÃ THANH TOÁN?";
-const CONTENT_COLUMN = "NỘI DUNG VI PHẠM";
-const DESCRIPTION_COLUMN = "MÔ TẢ VI PHẠM";
-const DUE_COLUMN = "HẠN THANH TOÁN";
-const DISPUTE_COLUMN = "Khieu nai tu khach hang";
-const IMAGE_COLUMN = "HÌNH ẢNH";
+import {
+  FINE_CONTENT_COLUMN as CONTENT_COLUMN,
+  FINE_DISPUTE_COLUMN as DISPUTE_COLUMN,
+  FINE_EMAIL_COLUMN as EMAIL_COLUMN,
+  FINE_STATUS_COLUMN as STATUS_COLUMN,
+  FineTicketDetails,
+  getFineTimestampKey
+} from "./fine-ticket-details";
 
 function getFineTimestamp(row: Record<string, string>) {
-  return (
-    String(row[TIMESTAMP_COLUMN] ?? "").trim() ||
-    String(row[TIMESTAMP_COLUMN_TYPO] ?? "").trim() ||
-    String(row[TIMESTAMP_COLUMN_TITLE] ?? "").trim() ||
-    String(row[CREATED_AT_COLUMN] ?? "").trim()
-  );
-}
-
-function FineEvidencePreview({ url }: { url: string }) {
-  const trimmed = url.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const driveId = trimmed.match(/\/file\/d\/([^/]+)/)?.[1];
-  if (driveId) {
-    return (
-      <div className="mt-2 aspect-video w-full max-w-lg overflow-hidden rounded-lg border border-slate-200 bg-black">
-        <iframe
-          title="Fine evidence"
-          src={`https://drive.google.com/file/d/${driveId}/preview`}
-          className="h-full w-full"
-          allowFullScreen
-        />
-      </div>
-    );
-  }
-
-  const lower = trimmed.toLowerCase();
-  if (/\.(jpg|jpeg|png|webp|gif)(\?|$)/.test(lower)) {
-    return <img src={trimmed} alt="" className="mt-2 max-h-56 rounded-lg object-contain" />;
-  }
-  if (/\.(mp4|webm|mov)(\?|$)/.test(lower)) {
-    return <video src={trimmed} controls className="mt-2 max-h-56 w-full rounded-lg bg-black" />;
-  }
-
-  return null;
+  return getFineTimestampKey(row);
 }
 
 type FineEntry = {
@@ -533,55 +493,15 @@ export function FinesClient() {
               <div className="space-y-3">
                 {filteredEntries.map((entry, index) => (
                   <div key={`${entry.row[EMAIL_COLUMN]}-${entry.parsedTimestamp ?? index}`} className="rounded-xl border border-slate-200 p-4">
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <div>
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Dấu thời gian</div>
-                        <div className="mt-1 text-sm text-slate-900">
-                          {entry.parsedTimestamp ? formatCozoroDateTime(entry.parsedTimestamp) : getFineTimestamp(entry.row) || "-"}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Hạn thanh toán</div>
-                        <div className="mt-1 text-sm text-slate-900">
-                          {entry.parsedDueDate ? formatCozoroDateTime(entry.parsedDueDate) : entry.row[DUE_COLUMN] ?? "-"}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Nội dung vi phạm</div>
-                        <div className="mt-1 text-sm text-slate-900">{entry.row[CONTENT_COLUMN] || "-"}</div>
-                      </div>
-                      <div>
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Chi phí</div>
-                        <div className="mt-1 text-sm text-slate-900">{entry.row[AMOUNT_COLUMN] || "-"}</div>
-                      </div>
-                      <div>
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Trạng thái</div>
-                        <div className="mt-1 text-sm text-slate-900">{entry.row[STATUS_COLUMN] || "-"}</div>
-                      </div>
-                      <div>
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Mô tả</div>
-                        <div className="mt-1 text-sm text-slate-900">{entry.row[DESCRIPTION_COLUMN] || "-"}</div>
-                      </div>
-                      <div className="md:col-span-2">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          {language === "vi" ? "Ảnh / video minh chứng" : "Photo / video evidence"}
-                        </div>
-                        {entry.row[IMAGE_COLUMN]?.trim() ? (
-                          <div className="mt-1">
-                            <a
-                              href={entry.row[IMAGE_COLUMN].trim()}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-sm font-medium text-sky-700 underline break-all"
-                            >
-                              {entry.row[IMAGE_COLUMN].trim()}
-                            </a>
-                            <FineEvidencePreview url={entry.row[IMAGE_COLUMN].trim()} />
-                          </div>
-                        ) : (
-                          <div className="mt-1 text-sm text-slate-500">—</div>
-                        )}
-                      </div>
+                    <FineTicketDetails
+                      row={entry.row}
+                      parsedTimestamp={entry.parsedTimestamp}
+                      parsedDueDate={entry.parsedDueDate}
+                      language={language}
+                      showIssuer={false}
+                      showEvidence
+                    />
+                    <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4 md:grid-cols-2">
                       <div>
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Dispute</div>
                         <textarea

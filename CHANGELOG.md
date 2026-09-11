@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.9.38] - 2026-09-11
+
+- **Fine ticket details**: Resident account/fines and manager fine views show violation date, ticket issued date, description, location, and evidence. Issuer remains staff-only.
+- **Self-assign leaderboard**: Collapsed to the top person by default with expand-on-demand; Vietnamese UI shows family name (họ), English shows full name.
+- **Deposit refund email**: Unpaid fine lines include the violation date in both Vietnamese and English.
+
 ## [3.9.37] - 2026-09-09
 
 - **Cleaning disputes in chat**: New disputes, replies, reopenings and resolutions are also written to the resident–host private chat, with task/date context and a link to the review. Chat and dispute updates commit in the same transaction; unread indicators refresh through the existing chat system.
