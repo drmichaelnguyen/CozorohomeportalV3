@@ -119,6 +119,29 @@ type CleaningReleaseResponse = {
   error?: string;
   code?: string;
   penalty?: CleaningReleasePenalty;
+  noticeAt?: string;
+};
+
+type CleaningDutyOutcome = {
+  taskId: string;
+  date: string;
+  outcome: string;
+  availabilitySaved: boolean;
+  dutyReleased: boolean;
+  noticeAt: string | null;
+  message: string;
+  confirmationKey?: string;
+  reassignmentDate?: string | null;
+  penalty?: CleaningReleasePenalty;
+};
+
+type CleaningAvailabilityDutiesResponse = {
+  availabilitySaved?: boolean;
+  updated?: number;
+  duties?: CleaningDutyOutcome[];
+  dutiesReleased?: number;
+  dutiesPendingConfirmation?: number;
+  error?: string;
 };
 
 type SwapCandidate = {
@@ -713,7 +736,7 @@ export function CleaningScheduleClient({
     const assignedTasks = (overview?.tasks ?? []).filter(
       (task) => task.status === "ASSIGNED" && sameDay(new Date(task.scheduledDate), selectedDate)
     );
-    const removeAssignedTasks =
+    const releaseAssigned =
       type === "UNAVAILABLE" &&
       assignedTasks.length > 0 &&
       window.confirm(
@@ -724,53 +747,19 @@ export function CleaningScheduleClient({
     setMessage("");
 
     try {
-      const response = await fetch(`${API_BASE_URL}/cleaning/availability`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          email: activeEmail,
-          date: toApiCalendarDate(selectedDate),
-          type,
-          note: dayNote || undefined
-        })
+      const result = await saveAvailabilityWithDuties({
+        dates: [toApiCalendarDate(selectedDate)],
+        type,
+        note: dayNote || undefined,
+        releaseAssigned: type === "UNAVAILABLE" ? releaseAssigned : false,
+        assignedTasks
       });
-      const data = await readJsonSafely<{ error?: string }>(response);
-
-      if (!response.ok) {
-        setMessage(data.error ?? "Unable to save availability.");
-        return;
-      }
-
-      let releasedCount = 0;
-      const releaseErrors: string[] = [];
-      if (removeAssignedTasks) {
-        for (const task of assignedTasks) {
-          try {
-            const release = await requestTaskRelease(task);
-            if (release.released) {
-              releasedCount += 1;
-            }
-          } catch (error) {
-            releaseErrors.push(error instanceof Error ? error.message : t("unableToReleaseTask", "Unable to release this task."));
-          }
-        }
-      }
-
       await loadOverview(activeEmail, { refresh: true });
-      const baseMessage = type === "UNAVAILABLE"
-        ? t("dateMarkedUnavailable", "Date marked unavailable.")
-        : t("datePreferenceSaved", "Date preference saved.");
-      const releaseSummary = releasedCount > 0
-        ? ` ${t("awayAssignedTasksRemoved", undefined, { count: String(releasedCount) })}`
-        : "";
-      const errorSummary = releaseErrors.length > 0 ? ` ${releaseErrors.join(" ")}` : "";
-      setMessage(`${baseMessage}${releaseSummary}${errorSummary}`);
+      setMessage(result.summary);
       setDayNote("");
       setPendingSelfAssignment(null);
-    } catch {
-      setMessage("Unable to save availability.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to save availability.");
     } finally {
       setLoading(false);
     }
@@ -789,6 +778,144 @@ export function CleaningScheduleClient({
     });
     const data = await readJsonSafely<CleaningReleaseResponse>(response);
     return { response, data };
+  }
+
+  async function confirmDutyReleasePrompt(task: CleaningTask, duty: CleaningDutyOutcome) {
+    const penalty = duty.penalty;
+    if (penalty && penalty.canPay === false) {
+      window.alert(
+        t("lateCancelInsufficientCoins", undefined, {
+          required: (penalty.coinCost ?? 0).toLocaleString(),
+          available: (penalty.currentCoins ?? 0).toLocaleString()
+        })
+      );
+      return { confirmed: false as const, insufficientCoins: true as const };
+    }
+
+    const replacementDate = duty.reassignmentDate
+      ? formatCozoroDate(new Date(duty.reassignmentDate))
+      : null;
+    const proposal =
+      language === "vi"
+        ? `Hủy lịch ${prettyTaskType(task.type)} ngày ${formatCozoroDate(new Date(task.scheduledDate))}?\n${replacementDate ? `Lịch thay thế của bạn: ${replacementDate}.` : "Hiện chưa có ngày thay thế phù hợp; lần hủy này sẽ không tạo lịch mới."}`
+        : `Cancel ${prettyTaskType(task.type)} on ${formatCozoroDate(new Date(task.scheduledDate))}?\n${replacementDate ? `Your replacement date: ${replacementDate}.` : "No suitable replacement date is available; this cancellation will not create a new assignment."}`;
+    const charge =
+      penalty && penalty.fineAmount > 0
+        ? "\n\n" +
+          t("lateCancelConfirm", undefined, {
+            task: prettyTaskType(task.type),
+            date: formatCozoroDate(new Date(task.scheduledDate)),
+            amount: penalty.fineAmount.toLocaleString(),
+            coins: (penalty.coinCost ?? 0).toLocaleString(),
+            balance: (penalty.currentCoins ?? 0).toLocaleString(),
+            remaining: (penalty.remainingCoins ?? 0).toLocaleString(),
+            multiplier: String(penalty.multiplier ?? 1),
+            member: penalty.recordedMember || t("membershipTierGeneric", "your membership tier")
+          })
+        : "";
+    const confirmed = window.confirm(proposal + charge);
+    return { confirmed, insufficientCoins: false as const };
+  }
+
+  async function saveAvailabilityWithDuties(input: {
+    dates: string[];
+    type: CleaningAvailability["type"];
+    note?: string;
+    releaseAssigned: boolean;
+    assignedTasks: CleaningTask[];
+  }) {
+    const taskById = new Map(input.assignedTasks.map((task) => [task.id, task]));
+    let confirmations: Record<string, string> = {};
+    let declinedTaskIds: string[] = [];
+    let lastDuties: CleaningDutyOutcome[] = [];
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const endpoint =
+        input.dates.length === 1
+          ? `${API_BASE_URL}/cleaning/availability`
+          : `${API_BASE_URL}/cleaning/availability/bulk`;
+      const body =
+        input.dates.length === 1
+          ? {
+              email: activeEmail,
+              date: input.dates[0],
+              type: input.type,
+              note: input.note,
+              releaseAssigned: input.releaseAssigned,
+              confirmations,
+              declinedTaskIds
+            }
+          : {
+              email: activeEmail,
+              dates: input.dates,
+              type: input.type,
+              note: input.note,
+              releaseAssigned: input.releaseAssigned,
+              confirmations,
+              declinedTaskIds
+            };
+
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const data = await readJsonSafely<CleaningAvailabilityDutiesResponse & CleaningAvailability>(response);
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to save availability.");
+      }
+
+      lastDuties = data.duties ?? [];
+      const pending = lastDuties.filter((duty) => duty.outcome === "confirmation_required" && duty.confirmationKey);
+      if (pending.length === 0) {
+        break;
+      }
+
+      const nextConfirmations: Record<string, string> = { ...confirmations };
+      for (const duty of pending) {
+        const task = taskById.get(duty.taskId);
+        if (!task || !duty.confirmationKey) {
+          declinedTaskIds = [...new Set([...declinedTaskIds, duty.taskId])];
+          continue;
+        }
+        const decision = await confirmDutyReleasePrompt(task, duty);
+        if (!decision.confirmed) {
+          declinedTaskIds = [...new Set([...declinedTaskIds, duty.taskId])];
+          delete nextConfirmations[duty.taskId];
+          continue;
+        }
+        nextConfirmations[duty.taskId] = duty.confirmationKey;
+      }
+      confirmations = nextConfirmations;
+    }
+
+    const releasedCount = lastDuties.filter((duty) => duty.dutyReleased).length;
+    const preferenceOnly = lastDuties.filter((duty) => !duty.dutyReleased && duty.availabilitySaved).length;
+    const failureMessages = lastDuties
+      .filter((duty) =>
+        ["no_replacement", "failed", "cannot_release", "insufficient_coins", "declined"].includes(duty.outcome)
+      )
+      .map((duty) => duty.message);
+
+    const baseMessage =
+      input.type === "UNAVAILABLE"
+        ? input.dates.length > 1
+          ? t("awayDatesSaved", undefined, { count: String(input.dates.length) })
+          : t("dateMarkedUnavailable", "Date marked unavailable.")
+        : t("datePreferenceSaved", "Date preference saved.");
+    const releaseSummary =
+      releasedCount > 0
+        ? ` ${t("awayAssignedTasksRemoved", undefined, { count: String(releasedCount) })}`
+        : preferenceOnly > 0 && input.releaseAssigned
+          ? ` ${t("awayAssignedTasksKept", "Assigned duties were not removed.")}`
+          : "";
+    const errorSummary = failureMessages.length > 0 ? ` ${failureMessages.join(" ")}` : "";
+
+    return {
+      summary: `${baseMessage}${releaseSummary}${errorSummary}`,
+      releasedCount,
+      duties: lastDuties
+    };
   }
 
   async function requestTaskRelease(task: CleaningTask) {
@@ -818,7 +945,9 @@ export function CleaningScheduleClient({
         ? "\n\n" + t("lateCancelConfirm", undefined, {
           task: prettyTaskType(task.type), date: formatCozoroDate(new Date(task.scheduledDate)),
           amount: penalty.fineAmount.toLocaleString(), coins: penalty.coinCost.toLocaleString(),
-          balance: penalty.currentCoins.toLocaleString(), remaining: penalty.remainingCoins?.toLocaleString() ?? "0"
+          balance: penalty.currentCoins.toLocaleString(), remaining: penalty.remainingCoins?.toLocaleString() ?? "0",
+          multiplier: String(penalty.multiplier ?? 1),
+          member: penalty.recordedMember || t("membershipTierGeneric", "your membership tier")
         }) : "";
       const confirmed = window.confirm(proposal + charge);
       if (!confirmed) {
@@ -849,7 +978,7 @@ export function CleaningScheduleClient({
         task.status === "ASSIGNED" &&
         selectedDateSet.has(toApiCalendarDate(new Date(task.scheduledDate)))
     );
-    const removeAssignedTasks =
+    const releaseAssigned =
       conflictingTasks.length > 0 &&
       window.confirm(
         t("assignedTaskAwayDecision", undefined, {
@@ -862,49 +991,19 @@ export function CleaningScheduleClient({
     setAwaySubmitting(true);
     setMessage("");
     try {
-      const response = await fetch(`${API_BASE_URL}/cleaning/availability/bulk`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: activeEmail,
-          dates: sortedDates,
-          type: "UNAVAILABLE",
-          note: "Away"
-        })
+      const result = await saveAvailabilityWithDuties({
+        dates: sortedDates,
+        type: "UNAVAILABLE",
+        note: "Away",
+        releaseAssigned,
+        assignedTasks: conflictingTasks
       });
-      const data = await readJsonSafely<{ updated?: number; error?: string }>(response);
-      if (!response.ok) {
-        setMessage(data.error ?? "Unable to save away dates.");
-        return;
-      }
-      let releasedCount = 0;
-      const releaseErrors: string[] = [];
-      if (removeAssignedTasks) {
-        for (const task of conflictingTasks) {
-          try {
-            const release = await requestTaskRelease(task);
-            if (release.released) {
-              releasedCount += 1;
-            }
-          } catch (error) {
-            releaseErrors.push(error instanceof Error ? error.message : t("unableToReleaseTask", "Unable to release this task."));
-          }
-        }
-      }
-
       await loadOverview(activeEmail, { refresh: true });
-      const awaySummary = t("awayDatesSaved", undefined, {
-        count: String(data.updated ?? awayDates.size)
-      });
-      const releaseSummary = releasedCount > 0
-        ? ` ${t("awayAssignedTasksRemoved", undefined, { count: String(releasedCount) })}`
-        : "";
-      const errorSummary = releaseErrors.length > 0 ? ` ${releaseErrors.join(" ")}` : "";
-      setMessage(`${awaySummary}${releaseSummary}${errorSummary}`);
+      setMessage(result.summary);
       setAwayDates(new Set());
       setAwayMode(false);
-    } catch {
-      setMessage("Unable to save away dates.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to save away dates.");
     } finally {
       setAwaySubmitting(false);
     }
@@ -2659,30 +2758,46 @@ export function CleaningScheduleClient({
                         awayMode ? "hover:bg-orange-50 hover:border-orange-300" :
                         isSelected ? "ring-2 ring-slate-900 border-slate-900" : "hover:border-slate-400",
                         isToday && !awayMode ? "border-slate-400" : "",
-                        !awayMode && holiday && !isSelected ? "bg-rose-50 border-rose-200" :
-                        !awayMode && hasOpenSlot && !isSelected ? "bg-emerald-50 border-emerald-300" :
+                        !awayMode && holiday && availability?.type === "UNAVAILABLE" && !isSelected
+                          ? "bg-gradient-to-br from-rose-50 to-violet-50 border-rose-200"
+                          : !awayMode && holiday && !isSelected
+                            ? "bg-rose-50 border-rose-200"
+                            : !awayMode && availability?.type === "UNAVAILABLE" && !isSelected
+                              ? "bg-violet-50 border-violet-200"
+                        : !awayMode && hasOpenSlot && !isSelected ? "bg-emerald-50 border-emerald-300" :
                         !awayMode && hasOccupiedByOthers && !isSelected ? "bg-sky-50 border-sky-300" :
                         isCurrentMonth ? "border-slate-200 bg-white" : "border-slate-100 bg-slate-50"
                       ].filter(Boolean).join(" ")}
                     >
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-0.5">
                         <div className={`text-[10px] md:text-xs font-semibold ${isToday ? "text-blue-600" : holiday ? "text-rose-700" : "text-slate-900"}`}>{day.getDate()}</div>
-                        {awayMode && isAwaySelected ? (
-                          <div className="h-1.5 w-1.5 rounded-full bg-orange-500" title="Away" />
-                        ) : holiday ? (
-                          <div className="h-1.5 w-1.5 rounded-full bg-rose-500" title={holiday.nameEn} />
-                        ) : availability?.type === "UNAVAILABLE" ? (
-                          <div className="h-1.5 w-1.5 rounded-full bg-rose-400" title="Unavailable" />
-                        ) : hasOpenSlot ? (
-                          <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" title="Open slot" />
-                        ) : hasOccupiedByOthers ? (
-                          <div className="h-1.5 w-1.5 rounded-full bg-sky-400" title="Taken" />
-                        ) : null}
+                        <div className="flex items-center gap-0.5">
+                          {awayMode && isAwaySelected ? (
+                            <div className="h-1.5 w-1.5 rounded-sm bg-violet-600" title={t("awayLegend", "Away")} />
+                          ) : null}
+                          {!awayMode && availability?.type === "UNAVAILABLE" ? (
+                            <div className="h-1.5 w-1.5 rounded-sm bg-violet-600" title={t("awayLegend", "Away / unavailable")} />
+                          ) : null}
+                          {holiday ? (
+                            <div className="h-1.5 w-1.5 rounded-full bg-rose-500" title={holiday.nameEn} />
+                          ) : null}
+                          {!awayMode && !holiday && availability?.type !== "UNAVAILABLE" && hasOpenSlot ? (
+                            <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" title="Open slot" />
+                          ) : null}
+                          {!awayMode && !holiday && availability?.type !== "UNAVAILABLE" && hasOccupiedByOthers ? (
+                            <div className="h-1.5 w-1.5 rounded-full bg-sky-400" title="Taken" />
+                          ) : null}
+                        </div>
                       </div>
                       <div className="mt-1 flex flex-wrap gap-0.5">
                         {!awayMode && holiday ? (
                           <div className="hidden w-full truncate text-[8px] font-bold uppercase text-rose-600 md:block" title={holiday.nameEn}>
                             {holiday.nameEn}
+                          </div>
+                        ) : null}
+                        {!awayMode && availability?.type === "UNAVAILABLE" ? (
+                          <div className="w-full truncate text-[8px] font-bold uppercase text-violet-700 md:block" title={t("awayLegend", "Away / unavailable")}>
+                            {t("awayShortLabel", "Away")}
                           </div>
                         ) : null}
                         {!awayMode && tasks.map((task) => (
@@ -2696,17 +2811,37 @@ export function CleaningScheduleClient({
                         {!awayMode && hasOccupiedByOthers && tasks.length === 0 && (
                           <div className="text-[8px] font-bold text-sky-600 uppercase hidden md:block">Taken</div>
                         )}
-                        {!awayMode && availability?.type === "UNAVAILABLE" && (
-                          <div className="text-[8px] font-medium text-slate-500 uppercase hidden md:block">Off</div>
-                        )}
                         {awayMode && isAwaySelected && (
-                          <div className="text-[8px] font-bold text-orange-600 uppercase hidden md:block">Away</div>
+                          <div className="text-[8px] font-bold text-violet-700 uppercase md:block">Away</div>
                         )}
                       </div>
                     </button>
                   );
                 })}
                 </div>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-600 md:text-[11px]">
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-1.5 w-1.5 rounded-sm bg-violet-600" />
+                  {t("awayLegend", "Away / unavailable")}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+                  {t("holidayLegend", "Vietnam holiday")}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  {t("openSlotLegend", "Open slot")}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
+                  {t("takenSlotLegend", "Taken")}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                  {t("myTaskLegend", "My task")}
+                </span>
               </div>
             </div>
 
@@ -2726,13 +2861,24 @@ export function CleaningScheduleClient({
                   getVietnamHoliday(selectedKey) ??
                   (overview?.holidays ?? []).find((entry) => entry.date === selectedKey) ??
                   null;
-                if (!holiday) return null;
+                const selectedAvailability = (overview?.availability ?? []).find((entry) =>
+                  sameDay(new Date(entry.date), selectedDate)
+                );
                 return (
-                  <p className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-800">
-                    {t("vietnamHolidayLabel", "Vietnam national holiday")}: {holiday.nameEn} / {holiday.nameVi}
-                    {" · "}
-                    {t("selfAssignBonusHoliday", `x${overview?.rewardMultipliers?.holiday ?? 3} holiday`)}
-                  </p>
+                  <>
+                    {holiday ? (
+                      <p className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-800">
+                        {t("vietnamHolidayLabel", "Vietnam national holiday")}: {holiday.nameEn} / {holiday.nameVi}
+                        {" · "}
+                        {t("selfAssignBonusHoliday", `x${overview?.rewardMultipliers?.holiday ?? 3} holiday`)}
+                      </p>
+                    ) : null}
+                    {selectedAvailability?.type === "UNAVAILABLE" ? (
+                      <p className="mt-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-medium text-violet-900">
+                        {t("awaySelectedBanner", "Marked away / unavailable — blocks new auto-assign. Existing duties stay until released.")}
+                      </p>
+                    ) : null}
+                  </>
                 );
               })()}
 

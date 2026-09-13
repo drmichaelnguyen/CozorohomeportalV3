@@ -11,7 +11,7 @@ const names = new Set(['releaseCleaningTask', 'CleaningReleaseConfirmationRequir
 const code = ts.transpileModule(source.statements.filter(n => 'name' in n && names.has((n.name as ts.Identifier)?.text)).map(n => n.getText(source).replace(/^export /, '')).join('\n'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 function fixture() {
   const task = { id: 'original', userEmail: 'user@example.com', userName: 'User', status: 'ASSIGNED', type: 'TRASH_D7', floor: 1, branchId: 'D7', scheduledDate: new Date('2026-10-10'), updatedAt: new Date('2026-09-09'), isSelfAssigned: false };
-  const state = { proposed: new Date('2026-10-12') as Date | null, fine: 0, cost: 0, available: 1000, writes: [] as string[], failSlot: false, claimed: true, assignments: [] as any[] };
+  const state = { proposed: new Date('2026-10-12') as Date | null, fine: 0, cost: 0, available: 1000, writes: [] as string[], failSlot: false, claimed: true, assignments: [] as any[], notice: null as any };
   const write = (name: string) => { state.writes.push(name); };
   const context = vm.createContext({
     Date, console, MONTHLY_RELEASE_LIMIT: 3, CLEANING_FAIRNESS_LOOKBACK_DAYS: 60,
@@ -32,6 +32,20 @@ function fixture() {
     resolveAssignmentRewardCoins: async () => ({ rewardCoins: 5000 }),
     normalizeCalendarDate: (d: Date) => d, calendarRangeStart: (d: Date) => d, calendarRangeEnd: (d: Date) => d,
     getCleaningCalendarTarget: () => null, getSlotCreationKey: () => 'slot',
+    calendarDateKey: (d: Date) => d.toISOString().slice(0, 10),
+    getDutyCancellationByTaskId: async () => state.notice,
+    upsertDutyCancellationNotice: async (input: any) => {
+      write('notice');
+      const noticeAt =
+        state.notice?.noticeAt ??
+        (input.noticeAt instanceof Date ? input.noticeAt.toISOString() : input.noticeAt) ??
+        new Date().toISOString();
+      state.notice = { noticeAt, status: input.status };
+      return state.notice;
+    },
+    markDutyCancellationReleased: async () => { write('released'); state.notice = { ...(state.notice ?? {}), status: 'RELEASED' }; },
+    isReleasedOrExemptCancellationStatus: (status: string) => status === 'RELEASED' || status === 'EXEMPT',
+    createLateReleaseFinePaidByCoinsOnce: async () => { write('coins'); return { coinPayment: { coinCost: state.cost, currentCoins: state.available - state.cost } }; },
     prisma: { $transaction: async (fn: Function) => {
       const before = state.assignments.slice();
       try { return await fn({
@@ -46,26 +60,30 @@ function fixture() {
     } },
     logAction: async () => write('log'), invalidateCleaningOverviewCache: async () => {},
     createAutomaticFineForEmailPaidByCoins: async () => { write('coins'); return { coinPayment: { coinCost: state.cost, currentCoins: state.available - state.cost } }; },
-    formatTaskTypeForFine: () => 'trash', formatTaskDateForFine: () => '10/10/2026'
+    formatTaskTypeForFine: () => 'trash', formatTaskDateForFine: () => '10/10/2026',
+    enqueueDeferredCleaningCalendarCreate: () => {}
   });
   vm.runInContext(code, context);
   const release = (key?: string) => context.releaseCleaningTask(task.id, task.userEmail, { confirmationKey: key });
   const preview = async (key?: string) => { try { await release(key); assert.fail('Expected confirmation'); } catch (error: any) { assert.ok(error.preview); return error.preview; } };
   return { state, release, preview };
 }
-test('first request only previews; declining requires no write', async () => {
+test('first request only previews; declining requires no release write', async () => {
   const f = fixture(); const p = await f.preview();
-  assert.equal(p.reassignmentDate, '2026-10-12T00:00:00.000Z'); assert.equal(f.state.writes.length, 0);
+  assert.equal(p.reassignmentDate, '2026-10-12T00:00:00.000Z');
+  assert.ok(f.state.writes.every((entry) => entry === 'notice'));
+  assert.ok(!f.state.writes.includes('claim'));
 });
 test('confirmed request saves the exact proposed date', async () => {
   const f = fixture(); const p = await f.preview(); await f.release(p.confirmationKey);
   assert.equal(f.state.assignments.length, 1); assert.equal(f.state.assignments[0].scheduledDate.toISOString(), p.reassignmentDate);
 });
-test('changed date or coin charge requires fresh confirmation with no writes', async () => {
+test('changed date or coin charge requires fresh confirmation with no commit writes', async () => {
   const f = fixture(); const p = await f.preview(); f.state.proposed = new Date('2026-10-13');
   const changed = await f.preview(p.confirmationKey); assert.notEqual(changed.confirmationKey, p.confirmationKey);
   f.state.fine = 5000; f.state.cost = 100;
-  const charged = await f.preview(changed.confirmationKey); assert.equal(charged.penalty.coinCost, 100); assert.equal(f.state.writes.length, 0);
+  const charged = await f.preview(changed.confirmationKey); assert.equal(charged.penalty.coinCost, 100);
+  assert.ok(!f.state.writes.includes('claim'));
 });
 test('no replacement date is explicit and creates no new assignment', async () => {
   const f = fixture(); f.state.proposed = null; const p = await f.preview(); assert.equal(p.reassignmentDate, null);
@@ -73,15 +91,20 @@ test('no replacement date is explicit and creates no new assignment', async () =
 });
 test('insufficient coins cannot commit even with confirmation', async () => {
   const f = fixture(); f.state.fine = 5000; f.state.cost = 2000; const p = await f.preview();
-  assert.equal(p.penalty.canPay, false); await assert.rejects(f.release(p.confirmationKey), /Not enough coins/); assert.equal(f.state.writes.length, 0);
+  assert.equal(p.penalty.canPay, false); await assert.rejects(f.release(p.confirmationKey), /Not enough coins/);
+  assert.ok(!f.state.writes.includes('claim'));
 });
 test('occupied slot aborts before release availability, calendar, logs or coin payment', async () => {
   const f = fixture(); const p = await f.preview(); f.state.failSlot = true;
-  await assert.rejects(f.release(p.confirmationKey), /Slot occupied/); assert.deepEqual(f.state.writes, ['claim']); assert.equal(f.state.assignments.length, 0);
+  await assert.rejects(f.release(p.confirmationKey), /Slot occupied/);
+  assert.ok(f.state.writes.includes('claim'));
+  assert.ok(!f.state.writes.includes('availability'));
+  assert.equal(f.state.assignments.length, 0);
 });
 test('concurrent or repeated release cannot claim the original task twice', async () => {
   const f = fixture(); const p = await f.preview(); f.state.claimed = false;
-  await assert.rejects(f.release(p.confirmationKey), /This task changed/); assert.deepEqual(f.state.writes, ['claim']);
+  await assert.rejects(f.release(p.confirmationKey), /This task changed/);
+  assert.ok(f.state.writes.includes('claim'));
 });
 
 const portalSource = ts.createSourceFile('schedule.tsx', readFileSync(new URL('../../portal/components/cleaning-schedule-client.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);

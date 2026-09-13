@@ -1,5 +1,22 @@
 import { makeCleaningAssignmentExplanation, cleaningSelectionFactor, type CleaningAssignmentExplanation } from "./cleaning-assignment-explanation.js";
 import { getCleaningAssignmentExemptions, isCleaningAssignmentExempt } from "./cleaning-assignment-exemptions.js";
+import {
+  getDutyCancellationByTaskId,
+  isReleasedOrExemptCancellationStatus,
+  markDutyCancellationReleased,
+  upsertDutyCancellationNotice
+} from "./cleaning-duty-cancellation.js";
+import {
+  AUTO_CLEANING_FINE_DESCRIPTION_PREFIX as MISSED_FINE_DESCRIPTION_PREFIX,
+  FINE_AMOUNT_COLUMN as MISSED_FINE_AMOUNT_COLUMN,
+  FINE_CONTENT_COLUMN as MISSED_FINE_CONTENT_COLUMN,
+  FINE_DESCRIPTION_COLUMN as MISSED_FINE_DESCRIPTION_COLUMN,
+  computeMissedCleaningFineAmount,
+  isAutomaticCleaningFineForTask as isAutomaticCleaningFineForTaskRow,
+  isAutomaticCleaningFineRow as isAutomaticCleaningFineSheetRow,
+  parseFineAmount as parseMissedFineAmount
+} from "./cleaning-missed-fine-amount.js";
+import { computeCleaningReleasePenalty } from "./cleaning-release-penalty.js";
 import { withCoinWriteLock } from "./coin-write-lock.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -34,6 +51,7 @@ import {
   getManagerFines,
   listCleaningCalendarEvents,
   readCachedClients,
+  readFinesSheetRows,
   syncClientsFromSheet,
   transferSwapCoins,
   updateCleaningCalendarEvent,
@@ -163,10 +181,37 @@ export class CleaningReleaseConfirmationRequiredError extends Error {
     confirmationKey: string;
     reassignmentDate: string | null;
     penalty: CleaningLateCancellationPenalty & { canPay: boolean };
+    noticeAt?: string;
   }) {
     super("Confirm the cancellation and proposed replacement date before saving.");
   }
 }
+
+export type CleaningDutyOutcomeStatus =
+  | "preference_only"
+  | "already_released"
+  | "confirmation_required"
+  | "released"
+  | "declined"
+  | "no_replacement"
+  | "cannot_release"
+  | "failed"
+  | "insufficient_coins";
+
+export type CleaningDutyOutcome = {
+  taskId: string;
+  date: string;
+  outcome: CleaningDutyOutcomeStatus;
+  /** True when availability preference was persisted for the date. */
+  availabilitySaved: boolean;
+  /** True only when the existing duty was actually released/reassigned. */
+  dutyReleased: boolean;
+  noticeAt: string | null;
+  message: string;
+  confirmationKey?: string;
+  reassignmentDate?: string | null;
+  penalty?: CleaningLateCancellationPenalty & { canPay: boolean };
+};
 
 export type SelfAssignCheckResult = {
   canSubmit: boolean;
@@ -200,13 +245,28 @@ const CLEANING_TASK_LEGACY_ASSIGNER_OMIT = {
 let cleaningTaskAssignerColumnsMissing = false;
 let cleaningTaskAssignerFieldsUnsupported = false;
 
-const CLEANING_FULL_FINE_AMOUNT = 10000;
 const AUTO_CLEANING_FINE_OPERATOR = "System";
-const AUTO_CLEANING_FINE_DESCRIPTION_PREFIX = "Auto-generated for missed cleaning task.";
-const FINE_CONTENT_COLUMN = "N\u1ed8I DUNG VI PH\u1ea0M";
-const FINE_DESCRIPTION_COLUMN = "M\u00d4 T\u1ea2 VI PH\u1ea0M";
-const FINE_AMOUNT_COLUMN = "CHI PH\u00cd THANH TO\u00c1N CHO VI PH\u1ea0M";
+const AUTO_CLEANING_FINE_DESCRIPTION_PREFIX = MISSED_FINE_DESCRIPTION_PREFIX;
+const FINE_CONTENT_COLUMN = MISSED_FINE_CONTENT_COLUMN;
+const FINE_DESCRIPTION_COLUMN = MISSED_FINE_DESCRIPTION_COLUMN;
+const FINE_AMOUNT_COLUMN = MISSED_FINE_AMOUNT_COLUMN;
 const FINE_TIMESTAMP_COLUMN = "D\u1ea4U TH\u1edcI GIAN";
+const RELEASED_AVAILABILITY_NOTES = new Set([
+  "Released cleaning task",
+  "Released self-assigned cleaning task"
+]);
+
+function isDutyReleasedAvailabilityNote(note: string | null | undefined) {
+  const normalized = String(note ?? "").trim();
+  if (RELEASED_AVAILABILITY_NOTES.has(normalized)) {
+    return true;
+  }
+  return normalized.startsWith("Released cleaning task");
+}
+
+function calendarDateKey(date: Date) {
+  return normalizeCalendarDate(date).toISOString().slice(0, 10);
+}
 
 /**
  * In-process guard that prevents two concurrent calls from creating a task
@@ -647,42 +707,8 @@ async function resolveAssignmentRewardCoins(
   return resolveSelfAssignRewardPreview(type, scheduledDate, email);
 }
 
-function getCleaningReleasePenalty(date: Date) {
-  const daysUntilTask = getCalendarDayDiff(new Date(), date);
-
-  if (daysUntilTask < 0) {
-    return {
-      canRelease: false,
-      fineRate: 1,
-      fineAmount: CLEANING_FULL_FINE_AMOUNT,
-      message: "The assigned date has passed. No work is charged as a full fine."
-    };
-  }
-
-  if (daysUntilTask === 0) {
-    return {
-      canRelease: true,
-      fineRate: 0.75,
-      fineAmount: Math.round(CLEANING_FULL_FINE_AMOUNT * 0.75),
-      message: "Same-day notice applies a 75% fine."
-    };
-  }
-
-  if (daysUntilTask <= 4) {
-    return {
-      canRelease: true,
-      fineRate: 0.5,
-      fineAmount: Math.round(CLEANING_FULL_FINE_AMOUNT * 0.5),
-      message: "Notice 1 to 4 days ahead applies a 50% fine."
-    };
-  }
-
-  return {
-    canRelease: true,
-    fineRate: 0,
-    fineAmount: 0,
-    message: "No fine is charged when you reschedule at least 5 days ahead."
-  };
+function getCleaningReleasePenalty(date: Date, noticeAt: Date = new Date()) {
+  return computeCleaningReleasePenalty(date, noticeAt);
 }
 
 function formatTaskTypeForFine(type: CleaningTaskType) {
@@ -703,12 +729,7 @@ function formatTaskDateForFine(date: Date) {
 }
 
 function parseFineAmount(value: string | undefined) {
-  const numeric = Number.parseInt(String(value ?? "").replace(/[^0-9-]/g, ""), 10);
-  return Number.isFinite(numeric) ? numeric : 0;
-}
-
-function isSameMonth(left: Date, right: Date) {
-  return left.getUTCFullYear() === right.getUTCFullYear() && left.getUTCMonth() === right.getUTCMonth();
+  return parseMissedFineAmount(value);
 }
 
 function getAutomaticCleaningFineContent(type: CleaningTaskType) {
@@ -737,49 +758,33 @@ function getAutomaticCleaningFineDescription(task: CleaningTaskRecord, now: Date
 }
 
 function isAutomaticCleaningFineForTask(row: Record<string, string>, taskId: string) {
-  const description = row[FINE_DESCRIPTION_COLUMN] ?? "";
-  return description.includes(AUTO_CLEANING_FINE_DESCRIPTION_PREFIX) && description.includes(`Task ID: ${taskId}.`);
+  return isAutomaticCleaningFineForTaskRow(row, taskId);
 }
 
 function isAutomaticCleaningFineRow(row: Record<string, string>) {
-  return (row[FINE_DESCRIPTION_COLUMN] ?? "").includes(AUTO_CLEANING_FINE_DESCRIPTION_PREFIX);
+  return isAutomaticCleaningFineSheetRow(row);
 }
 
 async function getMissedCleaningFineAmount(
   task: CleaningTaskRecord,
-  allFines: Awaited<ReturnType<typeof getManagerFines>>
+  allFines: Awaited<ReturnType<typeof getManagerFines>>,
+  peerPendingDuties: Array<{ taskId: string; dutyDate: Date; content: string }> = []
 ) {
   const normalizedEmail = task.userEmail.trim().toLowerCase();
   const taskContent = getAutomaticCleaningFineContent(task.type);
   const taskDate = normalizeCalendarDate(task.scheduledDate);
 
-  const userAutomaticCleaningFines = allFines.filter(
-    (entry) => (entry.row.EMAIL ?? "").trim().toLowerCase() === normalizedEmail && isAutomaticCleaningFineRow(entry.row)
-  );
-  const sameErrorThisMonth = userAutomaticCleaningFines
-    .filter((entry) => (entry.row[FINE_CONTENT_COLUMN] ?? "").trim() === taskContent)
-    .filter((entry) => {
-      if (!entry.parsedTimestamp) {
-        return false;
-      }
+  const userAutomaticCleaningFines = allFines
+    .filter((entry) => (entry.row.EMAIL ?? "").trim().toLowerCase() === normalizedEmail && isAutomaticCleaningFineRow(entry.row))
+    .map((entry) => entry.row);
 
-      const parsedTimestamp = new Date(entry.parsedTimestamp);
-      return !Number.isNaN(parsedTimestamp.getTime()) && isSameMonth(parsedTimestamp, taskDate);
-    })
-    .sort((left, right) => (left.parsedTimestamp ?? "").localeCompare(right.parsedTimestamp ?? ""));
-
-  const baseAmount = userAutomaticCleaningFines.length === 0 ? 15000 : 30000;
-
-  if (sameErrorThisMonth.length === 0) {
-    return baseAmount;
-  }
-
-  if (sameErrorThisMonth.length === 1) {
-    return Math.round(baseAmount * 1.5);
-  }
-
-  const latestAmount = parseFineAmount(sameErrorThisMonth.at(-1)?.row[FINE_AMOUNT_COLUMN]);
-  return Math.max(baseAmount, latestAmount) * 2;
+  return computeMissedCleaningFineAmount({
+    taskId: task.id,
+    dutyDate: taskDate,
+    content: taskContent,
+    userAutomaticCleaningFines,
+    peerPendingDuties
+  });
 }
 
 function sameDay(left: Date, right: Date) {
@@ -1905,16 +1910,44 @@ async function syncCalendarTasksIntoDatabase(
     const existingTask = canonicalExistingTask;
 
     if (existingTask) {
-      // If the calendar shows a user who is UNAVAILABLE on this date, the DB assignment is
-      // authoritative (they released the task). Keep the existing DB email/name instead of
-      // overwriting with stale calendar data.
+      // If the calendar shows a user who released / is UNAVAILABLE on this date, the DB
+      // assignment is authoritative. Never restore a released resident from stale calendar data.
       let syncEmail = userEmail;
       let syncName = userName;
       if (normalizedEmail && normalizedEmail !== existingTask.userEmail.trim().toLowerCase()) {
         const calendarUserAvailability = await prisma.cleaningAvailability.findUnique({
           where: { userEmail_date: { userEmail: normalizedEmail, date: scheduledDate } }
         });
-        if (calendarUserAvailability?.type === CleaningAvailabilityType.UNAVAILABLE) {
+        const cancellation = await getDutyCancellationByTaskId(existingTask.id);
+        const calendarUserReleased =
+          calendarUserAvailability?.type === CleaningAvailabilityType.UNAVAILABLE &&
+          (isDutyReleasedAvailabilityNote(calendarUserAvailability.note) ||
+            isReleasedOrExemptCancellationStatus(cancellation?.status));
+        if (
+          calendarUserAvailability?.type === CleaningAvailabilityType.UNAVAILABLE ||
+          calendarUserReleased
+        ) {
+          syncEmail = existingTask.userEmail;
+          syncName = existingTask.userName ?? syncName;
+        }
+      }
+
+      // If DB assignee already released this duty, never overwrite them back from calendar.
+      const existingAssigneeAvailability = await prisma.cleaningAvailability.findUnique({
+        where: {
+          userEmail_date: {
+            userEmail: existingTask.userEmail.trim().toLowerCase(),
+            date: scheduledDate
+          }
+        }
+      });
+      const existingCancellation = await getDutyCancellationByTaskId(existingTask.id);
+      if (
+        isDutyReleasedAvailabilityNote(existingAssigneeAvailability?.note) ||
+        isReleasedOrExemptCancellationStatus(existingCancellation?.status)
+      ) {
+        if (normalizedEmail === existingTask.userEmail.trim().toLowerCase()) {
+          // Stale calendar still names the releaser — keep current DB assignee (may already be replacement).
           syncEmail = existingTask.userEmail;
           syncName = existingTask.userName ?? syncName;
         }
@@ -1974,6 +2007,19 @@ async function syncCalendarTasksIntoDatabase(
 
       importedTasks.push(updatedTask);
       continue;
+    }
+
+    // Do not recreate a released resident's assignment from a stale calendar event.
+    if (normalizedEmail) {
+      const availability = await prisma.cleaningAvailability.findUnique({
+        where: { userEmail_date: { userEmail: normalizedEmail, date: scheduledDate } }
+      });
+      if (
+        availability?.type === CleaningAvailabilityType.UNAVAILABLE &&
+        isDutyReleasedAvailabilityNote(availability.note)
+      ) {
+        continue;
+      }
     }
 
     const createdTask = await createCleaningTask({
@@ -2127,6 +2173,214 @@ export async function setCleaningAvailability(input: {
     details: `type=${input.type}${input.note ? `; note=${input.note}` : ""}`
   });
   return availability;
+}
+
+/**
+ * Backend-owned away + optional duty release workflow.
+ * Always distinguishes availability preference saved from duty actually released.
+ * Preserves first noticeAt for late-cancellation penalty across retries.
+ */
+export async function setCleaningAvailabilityWithDuties(input: {
+  email: string;
+  dates: Date[];
+  type: CleaningAvailabilityType;
+  note?: string;
+  releaseAssigned?: boolean;
+  confirmations?: Record<string, string>;
+  declinedTaskIds?: string[];
+}) {
+  const normalizedEmail = input.email.trim().toLowerCase();
+  const userContext = await getUserCleaningContext(normalizedEmail);
+  if (!userContext) {
+    if (await isHostelShortTermGuestEmail(normalizedEmail)) {
+      throw new Error("Hostel short-term guests are not included in the cleaning schedule");
+    }
+    throw new Error("Active user not found for cleaning availability");
+  }
+
+  const uniqueDates = Array.from(
+    new Map(input.dates.map((date) => [calendarDateKey(date), normalizeCalendarDate(date)])).values()
+  );
+
+  if (
+    input.type === CleaningAvailabilityType.UNAVAILABLE &&
+    uniqueDates.some((date) => date.getTime() < normalizeCalendarDate(new Date()).getTime())
+  ) {
+    throw new Error("Past dates cannot be marked unavailable");
+  }
+
+  const availabilityRows = [];
+  for (const date of uniqueDates) {
+    availabilityRows.push(
+      await setCleaningAvailability({
+        email: normalizedEmail,
+        branchId: userContext.branchId,
+        floor: userContext.floor,
+        date,
+        type: input.type,
+        note: input.note
+      })
+    );
+  }
+
+  const dateKeys = new Set(uniqueDates.map((date) => calendarDateKey(date)));
+  const assignedTasks = await findManyCleaningTasks({
+    where: {
+      userEmail: normalizedEmail,
+      status: CleaningTaskStatus.ASSIGNED
+    },
+    orderBy: { scheduledDate: "asc" }
+  });
+  const conflictingTasks = assignedTasks.filter((task) => dateKeys.has(calendarDateKey(task.scheduledDate)));
+  const declined = new Set((input.declinedTaskIds ?? []).map((id) => id.trim()).filter(Boolean));
+  const confirmations = input.confirmations ?? {};
+  const duties: CleaningDutyOutcome[] = [];
+
+  for (const task of conflictingTasks) {
+    const date = calendarDateKey(task.scheduledDate);
+    const existingCancellation = await getDutyCancellationByTaskId(task.id);
+
+    if (isReleasedOrExemptCancellationStatus(existingCancellation?.status)) {
+      duties.push({
+        taskId: task.id,
+        date,
+        outcome: "already_released",
+        availabilitySaved: true,
+        dutyReleased: true,
+        noticeAt: existingCancellation?.noticeAt ?? null,
+        message: "Duty was already released earlier."
+      });
+      continue;
+    }
+
+    if (!input.releaseAssigned) {
+      await upsertDutyCancellationNotice({
+        taskId: task.id,
+        userEmail: normalizedEmail,
+        scheduledDate: date,
+        status: "PREFERENCE_ONLY",
+        lastError: null
+      });
+      duties.push({
+        taskId: task.id,
+        date,
+        outcome: "preference_only",
+        availabilitySaved: true,
+        dutyReleased: false,
+        noticeAt: null,
+        message: "Availability preference saved. Existing duty was kept."
+      });
+      continue;
+    }
+
+    if (declined.has(task.id)) {
+      const notice = await upsertDutyCancellationNotice({
+        taskId: task.id,
+        userEmail: normalizedEmail,
+        scheduledDate: date,
+        status: "DECLINED",
+        lastError: "Resident declined duty release"
+      });
+      duties.push({
+        taskId: task.id,
+        date,
+        outcome: "declined",
+        availabilitySaved: true,
+        dutyReleased: false,
+        noticeAt: notice.noticeAt,
+        message: "Availability saved. Duty release was declined; assigned task kept."
+      });
+      continue;
+    }
+
+    try {
+      const result = await releaseCleaningTask(task.id, normalizedEmail, {
+        confirmationKey: confirmations[task.id]
+      });
+      duties.push({
+        taskId: task.id,
+        date,
+        outcome: result.alreadyReleased ? "already_released" : "released",
+        availabilitySaved: true,
+        dutyReleased: true,
+        noticeAt: (await getDutyCancellationByTaskId(task.id))?.noticeAt ?? null,
+        message: result.alreadyReleased
+          ? "Duty was already released."
+          : "Availability saved and duty released.",
+        penalty: {
+          fineRate: result.penalty.fineRate,
+          fineAmount: result.penalty.fineAmount,
+          message: result.penalty.message,
+          coinCost: result.penalty.coinCost,
+          currentCoins: result.penalty.currentCoins ?? 0,
+          remainingCoins: Math.max(0, (result.penalty.currentCoins ?? 0) - (result.penalty.coinCost ?? 0)),
+          recordedMember: "",
+          multiplier: 1,
+          canPay: true
+        }
+      });
+    } catch (error) {
+      if (error instanceof CleaningReleaseConfirmationRequiredError) {
+        await upsertDutyCancellationNotice({
+          taskId: task.id,
+          userEmail: normalizedEmail,
+          scheduledDate: date,
+          status: "PENDING_CONFIRMATION",
+          lastError: null
+        });
+        duties.push({
+          taskId: task.id,
+          date,
+          outcome: "confirmation_required",
+          availabilitySaved: true,
+          dutyReleased: false,
+          noticeAt: error.preview.noticeAt ?? (await getDutyCancellationByTaskId(task.id))?.noticeAt ?? null,
+          message: "Availability saved. Confirm duty release to remove the assignment.",
+          confirmationKey: error.preview.confirmationKey,
+          reassignmentDate: error.preview.reassignmentDate,
+          penalty: error.preview.penalty
+        });
+        continue;
+      }
+
+      const message = error instanceof Error ? error.message : "Unable to release this task.";
+      let outcome: CleaningDutyOutcomeStatus = "failed";
+      if (/no replacement/i.test(message)) {
+        outcome = "no_replacement";
+      } else if (/not enough coins/i.test(message)) {
+        outcome = "insufficient_coins";
+      } else if (/passed|cannot release|past date/i.test(message)) {
+        outcome = "cannot_release";
+      }
+
+      await upsertDutyCancellationNotice({
+        taskId: task.id,
+        userEmail: normalizedEmail,
+        scheduledDate: date,
+        status: "FAILED",
+        lastError: message
+      });
+
+      duties.push({
+        taskId: task.id,
+        date,
+        outcome,
+        availabilitySaved: true,
+        dutyReleased: false,
+        noticeAt: (await getDutyCancellationByTaskId(task.id))?.noticeAt ?? null,
+        message: `Availability saved. Duty was not released: ${message}`
+      });
+    }
+  }
+
+  return {
+    availabilitySaved: true,
+    updated: availabilityRows.length,
+    availability: availabilityRows,
+    duties,
+    dutiesReleased: duties.filter((duty) => duty.dutyReleased).length,
+    dutiesPendingConfirmation: duties.filter((duty) => duty.outcome === "confirmation_required").length
+  };
 }
 
 export async function selfAssignCleaningTask(input: {
@@ -2666,7 +2920,7 @@ async function countReleasesThisMonth(email: string): Promise<number> {
 export async function releaseCleaningTask(
   taskId: string,
   email: string,
-  options?: { confirmationKey?: string }
+  options?: { confirmationKey?: string; noticeAt?: Date }
 ) {
   const normalizedEmail = email.trim().toLowerCase();
   const task = await findUniqueCleaningTask({
@@ -2682,10 +2936,38 @@ export async function releaseCleaningTask(
   }
 
   if (task.status !== CleaningTaskStatus.ASSIGNED) {
+    const existingCancellation = await getDutyCancellationByTaskId(taskId);
+    if (isReleasedOrExemptCancellationStatus(existingCancellation?.status)) {
+      return {
+        task,
+        penalty: {
+          fineRate: 0,
+          fineAmount: 0,
+          message: "Duty was already released.",
+          coinCost: 0,
+          currentCoins: null,
+          paidWithCoins: false
+        },
+        alreadyReleased: true as const
+      };
+    }
     throw new Error("Only assigned tasks can be released");
   }
 
-  const releasePenalty = getCleaningReleasePenalty(task.scheduledDate);
+  const existingNotice = await getDutyCancellationByTaskId(taskId);
+  const noticeAt = existingNotice?.noticeAt
+    ? new Date(existingNotice.noticeAt)
+    : options?.noticeAt ?? new Date();
+  await upsertDutyCancellationNotice({
+    taskId,
+    userEmail: normalizedEmail,
+    scheduledDate: calendarDateKey(task.scheduledDate),
+    noticeAt,
+    status: "PENDING_CONFIRMATION",
+    lastError: null
+  });
+
+  const releasePenalty = getCleaningReleasePenalty(task.scheduledDate, noticeAt);
 
   // Self-assigned tasks released with 5+ days notice: no penalty and doesn't count against monthly limit
   const isSelfAssignedEarlyRelease = task.isSelfAssigned && releasePenalty.fineRate === 0;
@@ -2698,6 +2980,13 @@ export async function releaseCleaningTask(
   }
 
   if (!releasePenalty.canRelease || !canReleaseCalendarDate(task.scheduledDate)) {
+    await upsertDutyCancellationNotice({
+      taskId,
+      userEmail: normalizedEmail,
+      scheduledDate: calendarDateKey(task.scheduledDate),
+      status: "FAILED",
+      lastError: releasePenalty.message
+    });
     throw new Error(releasePenalty.message);
   }
 
@@ -2713,6 +3002,13 @@ export async function releaseCleaningTask(
   );
 
   if (!replacement) {
+    await upsertDutyCancellationNotice({
+      taskId,
+      userEmail: normalizedEmail,
+      scheduledDate: calendarDateKey(task.scheduledDate),
+      status: "FAILED",
+      lastError: "No replacement user is available for this date"
+    });
     throw new Error("No replacement user is available for this date");
   }
 
@@ -2744,14 +3040,23 @@ export async function releaseCleaningTask(
   };
   const confirmationKey = JSON.stringify([
     task.id, task.updatedAt.toISOString(), proposedDate?.toISOString() ?? null,
-    replacement.email, penaltyPreview.fineAmount, penaltyPreview.coinCost, penaltyPreview.currentCoins
+    replacement.email, penaltyPreview.fineAmount, penaltyPreview.coinCost, penaltyPreview.currentCoins,
+    noticeAt.toISOString()
   ]);
   if (options?.confirmationKey !== confirmationKey) {
     throw new CleaningReleaseConfirmationRequiredError({
-      confirmationKey, reassignmentDate: proposedDate?.toISOString() ?? null, penalty: penaltyPreview
+      confirmationKey, reassignmentDate: proposedDate?.toISOString() ?? null, penalty: penaltyPreview,
+      noticeAt: noticeAt.toISOString()
     });
   }
   if (coinQuote && !coinQuote.canPay) {
+    await upsertDutyCancellationNotice({
+      taskId,
+      userEmail: normalizedEmail,
+      scheduledDate: calendarDateKey(task.scheduledDate),
+      status: "FAILED",
+      lastError: `Not enough coins to pay this late-cancellation fine. Required: ${coinQuote.coinCost}; available: ${coinQuote.currentCoins}.`
+    });
     throw new Error(`Not enough coins to pay this late-cancellation fine. Required: ${coinQuote.coinCost}; available: ${coinQuote.currentCoins}.`);
   }
   const releasingUser = proposedDate ? await getUserCleaningContext(normalizedEmail) : null;
@@ -2839,6 +3144,14 @@ export async function releaseCleaningTask(
     void updatedAvailability;
     return updatedTask;
   });
+
+  await markDutyCancellationReleased({
+    taskId: task.id,
+    userEmail: normalizedEmail,
+    scheduledDate: calendarDateKey(task.scheduledDate),
+    fineAmountVnd: releasePenalty.fineAmount
+  });
+
   // Attempt to update Google Calendar. If this fails, log and continue — the DB is
   // authoritative for released tasks, and the sync will respect the UNAVAILABLE record
   // saved above to avoid overwriting with stale calendar data.
@@ -2884,15 +3197,16 @@ export async function releaseCleaningTask(
     entityType: "CleaningTask",
     entityId: reassignedTask.id,
     entityLabel: `${reassignedTask.type}|${reassignedTask.scheduledDate.toISOString().slice(0, 10)}`,
-    details: `replacement=${replacement.email}; penalty=${releasePenalty.fineAmount}`
+    details: `replacement=${replacement.email}; penalty=${releasePenalty.fineAmount}; noticeAt=${noticeAt.toISOString()}`
   });
 
   const paidFine = releasePenalty.fineAmount > 0
-    ? await createAutomaticFineForEmailPaidByCoins({
+    ? await createLateReleaseFinePaidByCoinsOnce({
+      taskId: task.id,
       email: normalizedEmail,
       amount: releasePenalty.fineAmount,
       content: "Late cleaning cancellation",
-      description: `Late release for ${formatTaskTypeForFine(task.type)} scheduled on ${formatTaskDateForFine(task.scheduledDate)}. ${releasePenalty.message}`,
+      description: `Late release for ${formatTaskTypeForFine(task.type)} scheduled on ${formatTaskDateForFine(task.scheduledDate)}. Task ID: ${task.id}. ${releasePenalty.message}`,
       location: task.branchId,
       operator: "Cleaning schedule system"
     })
@@ -2923,8 +3237,41 @@ export async function releaseCleaningTask(
       coinCost: paidFine?.coinPayment.coinCost ?? 0,
       currentCoins: paidFine?.coinPayment.currentCoins ?? coinQuote?.currentCoins ?? null,
       paidWithCoins: Boolean(paidFine)
-    }
+    },
+    alreadyReleased: false as const
   };
+}
+
+async function createLateReleaseFinePaidByCoinsOnce(input: {
+  taskId: string;
+  email: string;
+  amount: number;
+  content: string;
+  description: string;
+  location?: string;
+  operator?: string;
+}) {
+  return withCoinWriteLock(`cleaning-late-release-fine:${input.taskId}`, async () => {
+    const marker = `Task ID: ${input.taskId}.`;
+    const rows = await readFinesSheetRows();
+    const existing = rows.find(
+      (row) =>
+        row.EMAIL?.trim().toLowerCase() === input.email.trim().toLowerCase() &&
+        (row[FINE_DESCRIPTION_COLUMN] ?? "").includes(marker) &&
+        (row[FINE_CONTENT_COLUMN] ?? "").trim() === input.content
+    );
+    if (existing) {
+      const quote = await getFineCoinPaymentQuoteForEmail(input.email, input.amount);
+      return {
+        coinPayment: {
+          coinCost: quote.coinCost,
+          currentCoins: quote.currentCoins,
+          remainingCoins: quote.remainingCoins
+        }
+      };
+    }
+    return createAutomaticFineForEmailPaidByCoins(input);
+  });
 }
 
 async function buildCleaningOverviewForUser(email: string) {
@@ -4062,14 +4409,29 @@ async function markAssignedTaskMissedWithFine(
   knownFines: Awaited<ReturnType<typeof getManagerFines>>,
   now: Date,
   operatorLabel: string,
-  customAmount?: number
+  customAmount?: number,
+  peerPendingDuties: Array<{ taskId: string; dutyDate: Date; content: string }> = []
 ) {
+  const cancellation = await getDutyCancellationByTaskId(currentTask.id);
+  if (isReleasedOrExemptCancellationStatus(cancellation?.status)) {
+    await logAction({
+      actorEmail: operatorLabel === AUTO_CLEANING_FINE_OPERATOR ? null : operatorLabel,
+      actorRole: operatorLabel === AUTO_CLEANING_FINE_OPERATOR ? "system" : "manager",
+      action: "cleaning.task.missed_fine_skipped",
+      entityType: "CleaningTask",
+      entityId: currentTask.id,
+      entityLabel: `${currentTask.type}|${currentTask.scheduledDate.toISOString().slice(0, 10)}`,
+      details: `reason=duty_${cancellation?.status?.toLowerCase() ?? "exempt"}`
+    });
+    return { missedTask: currentTask, fineAmount: 0, skipped: true as const };
+  }
+
   const existingFine = knownFines.find((entry) => isAutomaticCleaningFineForTask(entry.row, currentTask.id));
   const fineAmount = customAmount != null
     ? customAmount
     : existingFine
       ? parseFineAmount(existingFine.row[FINE_AMOUNT_COLUMN])
-      : await getMissedCleaningFineAmount(currentTask, knownFines);
+      : await getMissedCleaningFineAmount(currentTask, knownFines, peerPendingDuties);
   const fineContent = getAutomaticCleaningFineContent(currentTask.type);
   const fineDescription = getAutomaticCleaningFineDescription(currentTask, now);
 
@@ -4158,7 +4520,7 @@ async function markAssignedTaskMissedWithFine(
   }
 
   await invalidateCleaningOverviewCache(missedTask.userEmail);
-  return { missedTask, fineAmount };
+  return { missedTask, fineAmount, skipped: false as const };
 }
 
 export async function adminMarkMissedCleaningTaskFine(taskId: string, operatorEmail: string, customAmount?: number) {
@@ -4175,8 +4537,33 @@ export async function adminMarkMissedCleaningTaskFine(taskId: string, operatorEm
   }
 
   const knownFines = await getManagerFines();
+  const peerTasks = await findManyCleaningTasks({
+    where: {
+      userEmail: task.userEmail,
+      status: CleaningTaskStatus.ASSIGNED
+    }
+  });
+  const peerPendingDuties = peerTasks
+    .filter((candidate) => candidate.id !== task.id)
+    .filter((candidate) => isAssignedTaskPastMissedFineDeadline(candidate, now))
+    .filter((candidate) => !knownFines.some((entry) => isAutomaticCleaningFineForTask(entry.row, candidate.id)))
+    .map((candidate) => ({
+      taskId: candidate.id,
+      dutyDate: normalizeCalendarDate(candidate.scheduledDate),
+      content: getAutomaticCleaningFineContent(candidate.type)
+    }));
   const operator = operatorEmail.trim() || AUTO_CLEANING_FINE_OPERATOR;
-  const { missedTask, fineAmount } = await markAssignedTaskMissedWithFine(task, knownFines, now, operator, customAmount);
+  const { missedTask, fineAmount, skipped } = await markAssignedTaskMissedWithFine(
+    task,
+    knownFines,
+    now,
+    operator,
+    customAmount,
+    peerPendingDuties
+  );
+  if (skipped) {
+    throw new Error("This duty was already released or exempted; a missed-duty fine was not created.");
+  }
 
   return {
     taskId: missedTask.id,
@@ -4289,9 +4676,19 @@ export async function getCleaningManagerReviewQueue(now = new Date()) {
       continue;
     }
     const existingFine = knownFines.find((entry) => isAutomaticCleaningFineForTask(entry.row, task.id));
+    const peerPendingDuties = assignedTasks
+      .filter((candidate) => candidate.id !== task.id)
+      .filter((candidate) => candidate.userEmail.trim().toLowerCase() === task.userEmail.trim().toLowerCase())
+      .filter((candidate) => isAssignedTaskPastMissedFineDeadline(candidate, now))
+      .filter((candidate) => !knownFines.some((entry) => isAutomaticCleaningFineForTask(entry.row, candidate.id)))
+      .map((candidate) => ({
+        taskId: candidate.id,
+        dutyDate: normalizeCalendarDate(candidate.scheduledDate),
+        content: getAutomaticCleaningFineContent(candidate.type)
+      }));
     const suggestedFineAmount = existingFine
       ? parseFineAmount(existingFine.row[FINE_AMOUNT_COLUMN])
-      : await getMissedCleaningFineAmount(task, knownFines);
+      : await getMissedCleaningFineAmount(task, knownFines, peerPendingDuties);
     overdueAssigned.push({
       id: task.id,
       userEmail: task.userEmail,
@@ -4328,6 +4725,11 @@ export async function sweepOverdueCleaningTasks(now = new Date()) {
     fineAmount: number;
   }> = [];
   const knownFines = await getManagerFines();
+  const overdueEligible = overdueTasks.filter(
+    (task) =>
+      !isCleaningTaskAutomationDisabled(task.type) &&
+      getMissedCleaningFineThresholdDate(task) <= now
+  );
 
   for (const task of overdueTasks) {
     if (isCleaningTaskAutomationDisabled(task.type)) {
@@ -4347,12 +4749,28 @@ export async function sweepOverdueCleaningTasks(now = new Date()) {
       continue;
     }
 
-    const { missedTask, fineAmount } = await markAssignedTaskMissedWithFine(
+    const peerPendingDuties = overdueEligible
+      .filter((candidate) => candidate.id !== currentTask.id)
+      .filter((candidate) => candidate.userEmail.trim().toLowerCase() === currentTask.userEmail.trim().toLowerCase())
+      .filter((candidate) => !knownFines.some((entry) => isAutomaticCleaningFineForTask(entry.row, candidate.id)))
+      .map((candidate) => ({
+        taskId: candidate.id,
+        dutyDate: normalizeCalendarDate(candidate.scheduledDate),
+        content: getAutomaticCleaningFineContent(candidate.type)
+      }));
+
+    const { missedTask, fineAmount, skipped } = await markAssignedTaskMissedWithFine(
       currentTask,
       knownFines,
       now,
-      AUTO_CLEANING_FINE_OPERATOR
+      AUTO_CLEANING_FINE_OPERATOR,
+      undefined,
+      peerPendingDuties
     );
+
+    if (skipped) {
+      continue;
+    }
 
     results.push({
       taskId: missedTask.id,
@@ -4462,38 +4880,23 @@ export async function setBulkCleaningAvailability(input: {
   dates: Date[];
   type: CleaningAvailabilityType;
   note?: string;
+  releaseAssigned?: boolean;
+  confirmations?: Record<string, string>;
+  declinedTaskIds?: string[];
 }) {
-  const normalizedEmail = input.email.trim().toLowerCase();
   if (
-    input.type === CleaningAvailabilityType.UNAVAILABLE &&
-    input.dates.some(
-      (date) => normalizeCalendarDate(date).getTime() < normalizeCalendarDate(new Date()).getTime()
-    )
+    input.releaseAssigned != null ||
+    input.confirmations != null ||
+    input.declinedTaskIds != null
   ) {
-    throw new Error("Past dates cannot be marked unavailable");
-  }
-  const userContext = await getUserCleaningContext(normalizedEmail);
-  if (!userContext) {
-    if (await isHostelShortTermGuestEmail(normalizedEmail)) {
-      throw new Error("Hostel short-term guests are not included in the cleaning schedule");
-    }
-    throw new Error("Active user not found for cleaning availability");
+    return setCleaningAvailabilityWithDuties(input);
   }
 
-  const results = [];
-  for (const date of input.dates) {
-    const result = await setCleaningAvailability({
-      email: normalizedEmail,
-      branchId: userContext.branchId,
-      floor: userContext.floor,
-      date,
-      type: input.type,
-      note: input.note
-    });
-    results.push(result);
-  }
-
-  return results;
+  const result = await setCleaningAvailabilityWithDuties({
+    ...input,
+    releaseAssigned: false
+  });
+  return result.availability;
 }
 
 function currentYearMonth() {

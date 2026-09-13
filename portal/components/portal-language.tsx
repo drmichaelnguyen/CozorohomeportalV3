@@ -1018,8 +1018,8 @@ const translations: Record<string, { en: string; vi: string }> = {
   upcomingOpenSlotsHelp: { en: "These are unclaimed slots that match your branch and floor. Click a date to open it on the calendar and assign yourself.", vi: "Đây là các lịch chưa có người nhận phù hợp với chi nhánh và tầng của bạn. Nhấn vào ngày để mở trên lịch và tự đăng ký." },
   markAwayHelpTitle: { en: "What is Mark Away?", vi: "Mark Away là gì?" },
   markAwayHelp: {
-    en: "Mark Away lets you block multiple current or future days at once as unavailable. It prevents new automatic assignments, but does not remove tasks already assigned to you.",
-    vi: "Mark Away cho phép bạn đánh dấu nhiều ngày hiện tại hoặc tương lai là không rảnh. Tính năng này ngăn phân công tự động mới nhưng không xóa lịch trực đã được giao."
+    en: "Mark Away lets you block multiple current or future days at once as unavailable. It prevents new automatic assignments. Removing an already assigned duty is a separate confirmation: only duties the server reports as released are removed. Saving Away alone never means your duty was cancelled.",
+    vi: "Mark Away cho phép bạn đánh dấu nhiều ngày hiện tại hoặc tương lai là không rảnh và ngăn phân công tự động mới. Hủy lịch trực đã giao là bước xác nhận riêng: chỉ các lịch mà máy chủ báo đã hủy mới được gỡ. Chỉ lưu Away không có nghĩa là lịch trực đã được hủy."
   },
   confirmAwayDates: { en: "Mark these dates as away?\n\n{dates}", vi: "Đánh dấu vắng cho các ngày này?\n\n{dates}" },
   assignedTaskAwayWarning: {
@@ -1027,12 +1027,12 @@ const translations: Record<string, { en: string; vi: string }> = {
     vi: "Bạn đã có lịch trực vào: {dates}. Đánh dấu không rảnh sẽ KHÔNG xóa lịch trực đó. Hãy dùng Hủy lịch hoặc Đổi lịch nếu bạn không thể thực hiện. Tiếp tục?"
   },
   assignedTaskAwayDecision: {
-    en: "You already have an assigned cleaning task on: {dates}.\n\nChoose OK to mark the date(s) unavailable and review removing the assigned task(s). Late cancellations may charge coins.\n\nChoose Cancel to mark the date(s) unavailable but KEEP the assigned task(s).",
-    vi: "Bạn đã có lịch trực được phân công vào: {dates}.\n\nChọn OK để đánh dấu ngày không rảnh và xem xét hủy các lịch trực đã được giao. Hủy sát ngày có thể bị trừ Coin.\n\nChọn Hủy để chỉ đánh dấu ngày không rảnh nhưng VẪN GIỮ các lịch trực đã được giao."
+    en: "You already have an assigned cleaning task on: {dates}.\n\nChoose OK to mark the date(s) unavailable and review removing the assigned task(s). Late cancellations may charge a VND fine paid in coins (membership conversion is separate).\n\nChoose Cancel to mark the date(s) unavailable but KEEP the assigned task(s).",
+    vi: "Bạn đã có lịch trực được phân công vào: {dates}.\n\nChọn OK để đánh dấu ngày không rảnh và xem xét hủy các lịch trực đã được giao. Hủy sát ngày có thể bị phạt VND thanh toán bằng Coin (hệ số hạng thành viên là bước quy đổi riêng).\n\nChọn Hủy để chỉ đánh dấu ngày không rảnh nhưng VẪN GIỮ các lịch trực đã được giao."
   },
   lateCancelConfirm: {
-    en: "Late cancellation warning\n\nTask: {task}\nDate: {date}\nFine: {amount} VND\nCoins charged immediately: {coins}\nCurrent balance: {balance} coins\nBalance after payment: {remaining} coins\n\nChoose OK to confirm the cancellation and coin payment. Choose Cancel to keep the assigned task.",
-    vi: "Cảnh báo hủy lịch sát ngày\n\nLịch trực: {task}\nNgày: {date}\nMức phạt: {amount}đ\nCoin bị trừ ngay: {coins}\nSố dư hiện tại: {balance} Coin\nSố dư sau thanh toán: {remaining} Coin\n\nChọn OK để xác nhận hủy lịch và thanh toán bằng Coin. Chọn Hủy để giữ lịch trực đã được giao."
+    en: "Late cancellation warning\n\nTask: {task}\nDate: {date}\nFine (VND): {amount} VND\nCoin charge (membership conversion ×{multiplier}): {coins} coins\nCurrent balance: {balance} coins\nBalance after payment: {remaining} coins\nTier used for conversion: {member}\n\nChoose OK to confirm the cancellation and coin payment. Choose Cancel to keep the assigned task.",
+    vi: "Cảnh báo hủy lịch sát ngày\n\nLịch trực: {task}\nNgày: {date}\nPhạt (VND): {amount}đ\nCoin trừ (quy đổi hạng ×{multiplier}): {coins} Coin\nSố dư hiện tại: {balance} Coin\nSố dư sau thanh toán: {remaining} Coin\nHạng dùng để quy đổi: {member}\n\nChọn OK để xác nhận hủy lịch và thanh toán bằng Coin. Chọn Hủy để giữ lịch trực đã được giao."
   },
   lateCancelInsufficientCoins: {
     en: "This late cancellation requires {required} coins, but your current balance is {available}. The assigned task was kept. Please request a swap or contact Cozoro.",
@@ -1055,6 +1055,21 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "{count} assigned task(s) removed.",
     vi: "Đã hủy {count} lịch trực được phân công."
   },
+  awayAssignedTasksKept: {
+    en: "Assigned duties were not removed.",
+    vi: "Các lịch trực đã giao vẫn được giữ."
+  },
+  awayLegend: { en: "Away / unavailable", vi: "Vắng / không rảnh" },
+  awayShortLabel: { en: "Away", vi: "Vắng" },
+  holidayLegend: { en: "Vietnam holiday", vi: "Ngày lễ VN" },
+  openSlotLegend: { en: "Open slot", vi: "Lịch trống" },
+  takenSlotLegend: { en: "Taken", vi: "Đã có người" },
+  myTaskLegend: { en: "My task", vi: "Lịch của tôi" },
+  awaySelectedBanner: {
+    en: "Marked away / unavailable — blocks new auto-assign. Existing duties stay until released.",
+    vi: "Đã đánh dấu vắng / không rảnh — chặn phân công tự động mới. Lịch đã giao vẫn giữ cho đến khi được hủy."
+  },
+  membershipTierGeneric: { en: "your membership tier", vi: "hạng thành viên của bạn" },
   pastUnavailableError: { en: "Past dates cannot be marked unavailable.", vi: "Không thể đánh dấu không rảnh cho ngày đã qua." },
   optOutHelp: { en: "Opt Out pays a one-time fee (100,000 VND or 150,000 coins) to skip ALL cleaning assignments for this month entirely.", vi: "Opt Out trả một lần (100.000 VND hoặc 150.000 coin) để bỏ qua toàn bộ lịch trực vệ sinh trong tháng này." },
   cleaningCalendarTitle: { en: "Cleaning Calendar", vi: "Lịch vệ sinh" },
@@ -1172,8 +1187,8 @@ const translations: Record<string, { en: string; vi: string }> = {
     vi: "Đánh dấu không rảnh dùng để làm gì?"
   },
   markUnavailableHelp: {
-    en: "This prevents new automatic assignments on the selected date. It does not remove a task already assigned to you; use Release or Swap for that. Past dates cannot be marked unavailable.",
-    vi: "Tính năng này ngăn phân công tự động mới vào ngày đã chọn. Nó không xóa lịch trực đã được giao; hãy dùng Hủy lịch hoặc Đổi lịch. Không thể đánh dấu ngày đã qua."
+    en: "This prevents new automatic assignments on the selected date. Removing an already assigned duty requires an explicit release confirmation handled by the server; Away alone does not cancel a duty. Past dates cannot be marked unavailable.",
+    vi: "Tính năng này ngăn phân công tự động mới vào ngày đã chọn. Hủy lịch trực đã giao cần xác nhận hủy riêng do máy chủ xử lý; chỉ đánh dấu không rảnh không hủy lịch. Không thể đánh dấu ngày đã qua."
   },
   markAvailableBtn: { en: "Mark available", vi: "Đánh dấu rảnh" },
   assignMyselfOnDate: { en: "Assign myself on this date", vi: "Tự đăng ký ngày này" },

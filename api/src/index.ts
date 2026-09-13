@@ -284,6 +284,7 @@ import {
   autoScheduleCleaningTasksByJob,
   setCleaningAvailability,
   setBulkCleaningAvailability,
+  setCleaningAvailabilityWithDuties,
   getCleaningOptOutForEmail,
   setCleaningOptOut,
   cancelCleaningOptOut,
@@ -1846,7 +1847,19 @@ const cleaningAvailabilitySchema = z.object({
   email: z.string().email(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   type: z.nativeEnum(CleaningAvailabilityType),
-  note: z.string().optional()
+  note: z.string().optional(),
+  releaseAssigned: z.boolean().optional(),
+  confirmations: z.record(z.string(), z.string()).optional(),
+  declinedTaskIds: z.array(z.string()).optional()
+});
+const cleaningBulkAvailabilitySchema = z.object({
+  email: z.string().email(),
+  dates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).min(1).max(60),
+  type: z.enum(["AVAILABLE", "UNAVAILABLE", "PREFERRED"]),
+  note: z.string().optional(),
+  releaseAssigned: z.boolean().optional(),
+  confirmations: z.record(z.string(), z.string()).optional(),
+  declinedTaskIds: z.array(z.string()).optional()
 });
 const generateCleaningSchema = z.object({
   from: z.string().datetime(),
@@ -5784,6 +5797,23 @@ app.post("/cleaning/availability", async (request, response) => {
   }
 
   try {
+    if (
+      parsed.data.releaseAssigned != null ||
+      parsed.data.confirmations != null ||
+      parsed.data.declinedTaskIds != null
+    ) {
+      const result = await setCleaningAvailabilityWithDuties({
+        email: parsed.data.email,
+        dates: [parseCalendarDateInput(parsed.data.date)],
+        type: parsed.data.type,
+        note: parsed.data.note,
+        releaseAssigned: parsed.data.releaseAssigned,
+        confirmations: parsed.data.confirmations,
+        declinedTaskIds: parsed.data.declinedTaskIds
+      });
+      return response.json(result);
+    }
+
     const availability = await setCleaningAvailability({
       email: parsed.data.email,
       branchId: userContext.branchId,
@@ -5802,12 +5832,7 @@ app.post("/cleaning/availability", async (request, response) => {
 });
 
 app.post("/cleaning/availability/bulk", async (request, response) => {
-  const parsed = z.object({
-    email: z.string().email(),
-    dates: z.array(z.string()).min(1).max(60),
-    type: z.enum(["AVAILABLE", "UNAVAILABLE", "PREFERRED"]),
-    note: z.string().optional()
-  }).safeParse(request.body);
+  const parsed = cleaningBulkAvailabilitySchema.safeParse(request.body);
 
   if (!parsed.success) {
     return response.status(400).json({ error: "Invalid bulk availability payload" });
@@ -5815,13 +5840,33 @@ app.post("/cleaning/availability/bulk", async (request, response) => {
 
   try {
     const parsedDates = parsed.data.dates.map((d) => parseCalendarDateInput(d));
+    if (
+      parsed.data.releaseAssigned != null ||
+      parsed.data.confirmations != null ||
+      parsed.data.declinedTaskIds != null
+    ) {
+      const result = await setCleaningAvailabilityWithDuties({
+        email: parsed.data.email,
+        dates: parsedDates,
+        type: parsed.data.type as CleaningAvailabilityType,
+        note: parsed.data.note,
+        releaseAssigned: parsed.data.releaseAssigned,
+        confirmations: parsed.data.confirmations,
+        declinedTaskIds: parsed.data.declinedTaskIds
+      });
+      return response.json(result);
+    }
+
     const results = await setBulkCleaningAvailability({
       email: parsed.data.email,
       dates: parsedDates,
       type: parsed.data.type as CleaningAvailabilityType,
       note: parsed.data.note
     });
-    return response.json({ updated: results.length });
+    return response.json({
+      updated: Array.isArray(results) ? results.length : results.updated,
+      ...(Array.isArray(results) ? {} : results)
+    });
   } catch (error) {
     return response.status(400).json({ error: error instanceof Error ? error.message : "Unable to save availability" });
   }
