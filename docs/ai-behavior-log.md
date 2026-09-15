@@ -13,7 +13,8 @@ Channels:
 
 - `manager` — Manager Settings inline AI (`/manager/ai-chat`).
 - `resident_portal` — Resident **Cozoro Bee** (`/resident/portal-ai-chat`). Tools include `get_my_member_status` (tier / coins / ranking policy). Playful VI teen-code tone + gendered address from roster `Giới tính`.
-- `resident_support_thread` — Optional assistant in **Messages → Personal** support thread (same thread as staff; stored as `ASSISTANT` messages). Tools include `get_resident_member_status`. Same teen-code / gendered address tone.
+- `resident_support_thread` — Optional assistant in **Messages → Personal** support thread (same thread as staff; stored as `ASSISTANT` messages). Tools include `get_resident_member_status`. Same teen-code / gendered address tone. From **v3.9.40**, multimodal: images on the latest resident message are analysed (vision usage tracked); see `docs/support-assistant-vision.md`.
+- Manager AI drafts for the same thread use channel `manager` with meta `feature: "manager_support_reply_draft"` and the same image context when present.
 
 ## Disable logging
 
@@ -44,4 +45,4 @@ Each line is one JSON object.
 
 ## Model
 
-Gemini **2.5 Flash** via Google Generative Language API; resident Bee may use `GEMINI_RESIDENT_PORTAL_AI_API_KEY` with fallback to `GEMINI_API_KEY` (see `resident-portal-ai-chat.ts`).
+Prefers **9router** (`gpt-5`) when `NINE_ROUTER_API_KEY` is set; otherwise Gemini **2.5 Flash**. Resident Bee may use `GEMINI_RESIDENT_PORTAL_AI_API_KEY` with fallback to `GEMINI_API_KEY` (see `resident-portal-ai-chat.ts`). Support-thread image turns use the same multimodal path as cleaning photo verification (`image_url` / `inline_data`).

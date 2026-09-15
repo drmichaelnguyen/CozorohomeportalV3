@@ -179,11 +179,11 @@ const nextConfig: NextConfig = {
 | `POST /cleaning/tasks/:id/release` | Release task (with penalty calculation) |
 | `GET /support/notifications?email=` | Resident notifications by type (SUPPORT_REPLY, PAYMENT_DUE, NEW_FINE, LAUNDRY_REMINDER, CLEANING_REMINDER, SELF_ASSIGN_OPPORTUNITY) |
 | `GET /support/attachments/:id` | Stream a chat image for an authorized viewer (`email` query); files under `api/data/chat-attachments/` |
-| Support / group message POSTs | Optional `attachments[]` (`dataUrl`, `fileName`, `width`, `height`) — max 3 images, JPEG/PNG/WebP, ~2 MB each after client compress |
+| Support / group message POSTs | Optional `attachments[]` (`dataUrl`, `fileName`, `width`, `height`) — max 3 images, JPEG/PNG/WebP, ~2 MB each after client compress. Resident **personal** support messages with text and/or images also trigger Cozoro Assistant (vision on latest message photos); see `docs/support-assistant-vision.md`. |
 | `GET /manager/support/conversations?operatorEmail=` | Manager inbox list |
 | `GET /manager/support/conversations/:id?operatorEmail=` | Conversation thread |
 | `POST /manager/support/messages` | Send reply as manager |
-| `POST /manager/support/conversations/:id/ai-draft` | **Manager, owner, app_admin** — generate an editable, unsent reply draft from direct-thread context and CozoroHome app knowledge. |
+| `POST /manager/support/conversations/:id/ai-draft` | **Manager, owner, app_admin** — generate an editable, unsent reply draft from direct-thread context (including latest resident chat photos) and CozoroHome app knowledge. |
 | `POST /manager/support/conversations/:id/read` | Mark conversation read |
 | `GET /clients/laundry-bookings?email=` | Resident laundry bookings |
 | `GET /controller/cooker?email=` | Resident kitchen cooker status (on/off, reservations, photos required to toggle) |
@@ -291,6 +291,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.40 | Cozoro Assistant (personal support thread) and manager AI drafts analyse resident chat image attachments; image-only messages also trigger a reply; see `docs/support-assistant-vision.md`. |
 | 3.9.39 | Cleaning away+release owned by backend with durable notice timestamps and per-duty outcomes; missed fines escalate by duty date (order-independent, cancelled/exempt excluded); holiday vs away calendar markers distinct; see `docs/cleaning-availability-release.md`. |
 | 3.9.32 | Portal and Bee laundry away checks use Vietnam calendar dates; timezone/boundary regression tests and booking-date documentation. |
 | 3.9.31 | Atomic cleaning coin/history writes, serialized live balance reads, lifetime/monthly earnings updates, audit retries, authoritative zero balances; see `docs/coin-accounting.md`. |

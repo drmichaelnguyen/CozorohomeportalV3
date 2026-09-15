@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "./prisma.js";
 import { resolvePortalLogin } from "./staff-access.js";
@@ -86,4 +86,22 @@ export async function getChatAttachmentForViewer(id: string, viewerEmail: string
     mimeType: attachment.mimeType,
     fileName: attachment.fileName
   };
+}
+
+/** Server-side read for AI vision — caller must already authorize the thread. */
+export async function readChatAttachmentBytes(
+  id: string
+): Promise<{ buffer: Buffer; mimeType: string; fileName: string } | null> {
+  const attachment = await prisma.chatAttachment.findUnique({
+    where: { id },
+    select: { storageName: true, mimeType: true, fileName: true }
+  });
+  if (!attachment || !allowedMimeTypes.has(attachment.mimeType)) return null;
+  try {
+    const buffer = await readFile(path.join(storageDir, attachment.storageName));
+    if (!buffer.byteLength) return null;
+    return { buffer, mimeType: attachment.mimeType, fileName: attachment.fileName };
+  } catch {
+    return null;
+  }
 }

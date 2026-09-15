@@ -34,6 +34,12 @@ import {
   notifyHostelBookingCreated,
   notifyHostelBookingPaid
 } from "./hostel-booking-notifications.js";
+import {
+  businessTodayKey,
+  formatHostelBookingDateKey,
+  hostelStayNights,
+  parseSheetOrIsoDateKey
+} from "./hostel-booking-dates.js";
 import { appendControllerHistoryEntry, listControllerHistory } from "./controller-history.js";
 import { getUserAirFryerContext, startAirFryerUse } from "./airfryer-controller.js";
 import { getUserMicrowaveContext, startMicrowaveUse } from "./microwave-controller.js";
@@ -2617,9 +2623,7 @@ app.post("/internal/guest-bookings/import-paid", async (request, response) => {
   }
 
   try {
-    const checkInMs = new Date(`${parsed.data.checkIn}T12:00:00`).getTime();
-    const checkOutMs = new Date(`${parsed.data.checkOut}T12:00:00`).getTime();
-    const stayNights = Math.max(0, Math.round((checkOutMs - checkInMs) / 86400000));
+    const stayNights = hostelStayNights(parsed.data.checkIn, parsed.data.checkOut);
 
     let mergedNotes = parsed.data.notes;
     let referralRewards: {
@@ -4413,10 +4417,12 @@ app.post("/support/messages", async (request, response) => {
     const result = await postResidentSupportMessage(parsed.data);
     let assistantMessage: Awaited<ReturnType<typeof tryAppendAssistantAfterResidentMessage>> = null;
     try {
-      if (parsed.data.body) assistantMessage = await tryAppendAssistantAfterResidentMessage({
-        conversationId: result.conversation.id,
-        residentEmail: parsed.data.email
-      });
+      if (parsed.data.body || parsed.data.attachments?.length) {
+        assistantMessage = await tryAppendAssistantAfterResidentMessage({
+          conversationId: result.conversation.id,
+          residentEmail: parsed.data.email
+        });
+      }
     } catch (assistantError) {
       console.warn("[support/messages] Assistant reply skipped", assistantError);
     }
@@ -9563,8 +9569,7 @@ async function addImportedId(id: string): Promise<void> {
 }
 
 function formatDbDate(val: unknown): string {
-  if (val instanceof Date) return val.toISOString().slice(0, 10);
-  return String(val ?? "");
+  return formatHostelBookingDateKey(val);
 }
 
 async function readHostelBookings(): Promise<StandaloneBooking[]> {
@@ -10689,26 +10694,19 @@ app.get("/manager/short-term/guests", async (request, response) => {
     await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
     const all = await getManagerClients();
     const shortTerm = all.filter((c) => String(c.maHd ?? "").startsWith("SHORTTERM"));
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    function parseDate(str: string): Date | null {
-      if (!str) return null;
-      if (str.includes("/")) {
-        const [d, m, y] = str.split("/");
-        return new Date(Number(y), Number(m) - 1, Number(d));
-      }
-      const d = new Date(str);
-      return isNaN(d.getTime()) ? null : d;
+    const todayKey = businessTodayKey();
+    function parseDateKey(str: string): string {
+      return parseSheetOrIsoDateKey(str);
     }
     const current = shortTerm.filter((c) => {
-      const checkIn = parseDate(String(c.row?.["Ngày bắt đầu hợp đồng"] ?? ""));
-      const checkOut = parseDate(String(c.row?.["Ngày hết hạn hợp đồng"] ?? ""));
+      const checkIn = parseDateKey(String(c.row?.["Ngày bắt đầu hợp đồng"] ?? ""));
+      const checkOut = parseDateKey(String(c.row?.["Ngày hết hạn hợp đồng"] ?? ""));
       if (!checkIn || !checkOut) return false;
-      return checkIn <= today && checkOut >= today;
+      return checkIn <= todayKey && checkOut >= todayKey;
     });
     const past = shortTerm.filter((c) => {
-      const checkOut = parseDate(String(c.row?.["Ngày hết hạn hợp đồng"] ?? ""));
-      return checkOut && checkOut < today;
+      const checkOut = parseDateKey(String(c.row?.["Ngày hết hạn hợp đồng"] ?? ""));
+      return Boolean(checkOut) && checkOut < todayKey;
     });
     return response.json({ current, past, total: shortTerm.length });
   } catch (error) {

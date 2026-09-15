@@ -9,6 +9,7 @@ import {
 
 export type LlmChatPart =
   | { text: string }
+  | { inlineData: { mimeType: string; data: string } }
   | { functionCall: { name: string; args: Record<string, unknown> } }
   | { functionResponse: { name: string; response: Record<string, unknown> } };
 
@@ -90,7 +91,10 @@ function geminiContentsToOpenAiMessages(systemPrompt: string, contents: LlmChatC
       (part): part is { functionResponse: { name: string; response: Record<string, unknown> } } =>
         "functionResponse" in part
     );
-    const textPart = content.parts.find((part): part is { text: string } => "text" in part);
+    const textParts = content.parts.filter((part): part is { text: string } => "text" in part);
+    const imageParts = content.parts.filter(
+      (part): part is { inlineData: { mimeType: string; data: string } } => "inlineData" in part
+    );
 
     if (functionCall) {
       const id = `call_${callIndex++}`;
@@ -121,13 +125,48 @@ function geminiContentsToOpenAiMessages(systemPrompt: string, contents: LlmChatC
       continue;
     }
 
+    const text = textParts.map((part) => part.text).join("\n\n");
+    if (imageParts.length > 0 && content.role === "user") {
+      messages.push({
+        role: "user",
+        content: [
+          { type: "text", text: text || "[Resident sent image(s). Please analyze them.]" },
+          ...imageParts.map((part) => ({
+            type: "image_url" as const,
+            image_url: {
+              url: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
+            }
+          }))
+        ]
+      });
+      continue;
+    }
+
     messages.push({
       role: content.role === "model" ? "assistant" : "user",
-      content: textPart?.text ?? ""
+      content: text
     });
   }
 
   return messages;
+}
+
+/** Gemini REST accepts camelCase; also emit snake_case inline_data for image parts (proven in cleaning vision). */
+function toGeminiRequestContents(contents: LlmChatContent[]) {
+  return contents.map((content) => ({
+    role: content.role,
+    parts: content.parts.map((part) => {
+      if ("inlineData" in part) {
+        return {
+          inline_data: {
+            mime_type: part.inlineData.mimeType,
+            data: part.inlineData.data
+          }
+        };
+      }
+      return part;
+    })
+  }));
 }
 
 function usageFromNineRouter(usage: {
@@ -174,7 +213,7 @@ async function completeGeminiRound(input: {
 }): Promise<ToolChatRoundResult> {
   const body = {
     system_instruction: { parts: [{ text: input.systemPrompt }] },
-    contents: input.contents,
+    contents: toGeminiRequestContents(input.contents),
     tools: input.tools,
     tool_config: { function_calling_config: { mode: "AUTO" } },
     generation_config: {

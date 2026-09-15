@@ -7,7 +7,8 @@
 import { SupportMessageSenderRole } from "@prisma/client";
 
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
-import { recordGeminiUsage } from "./ai-usage.js";
+import { recordGeminiUsage, recordVisionUsage } from "./ai-usage.js";
+import { readChatAttachmentBytes } from "./chat-attachments.js";
 import {
   stripSupportAssistantMetaSuffix,
   type SupportAssistantStoredMeta
@@ -28,7 +29,13 @@ import {
   getResidentMemberTierSnapshot
 } from "./google-sheets.js";
 import { geminiCapacityReply } from "./gemini-capacity-reply.js";
-import { completeToolChatRound, hasPortalLlmConfig, type LlmChatContent, type LlmChatTool } from "./llm-tool-chat.js";
+import {
+  completeToolChatRound,
+  hasPortalLlmConfig,
+  type LlmChatContent,
+  type LlmChatPart,
+  type LlmChatTool
+} from "./llm-tool-chat.js";
 import { prisma } from "./prisma.js";
 
 const ASSISTANT_SENDER_EMAIL = "cozoro-assistant@system";
@@ -84,6 +91,63 @@ function compressThreadForGemini(
     }
   }
   return chunks.map((c) => ({ role: c.role, parts: [{ text: c.text }] }));
+}
+
+/** Attach image bytes from the latest resident message onto the last user turn for multimodal LLM. */
+async function appendImagesFromSupportMessage(
+  contents: LlmChatContent[],
+  supportMessageId: string
+): Promise<number> {
+  const rows = await prisma.chatAttachment.findMany({
+    where: { supportMessageId },
+    select: { id: true },
+    orderBy: { createdAt: "asc" },
+    take: 3
+  });
+  if (!rows.length) return 0;
+
+  const imageParts: LlmChatPart[] = [];
+  for (const row of rows) {
+    const bytes = await readChatAttachmentBytes(row.id);
+    if (!bytes) continue;
+    imageParts.push({
+      inlineData: {
+        mimeType: bytes.mimeType,
+        data: bytes.buffer.toString("base64")
+      }
+    });
+  }
+  if (!imageParts.length) return 0;
+
+  for (let i = contents.length - 1; i >= 0; i--) {
+    const chunk = contents[i]!;
+    if (chunk.role !== "user") continue;
+    const textParts = chunk.parts.filter((part): part is { text: string } => "text" in part);
+    const combinedText = textParts.map((part) => part.text).join("\n\n").trim();
+    contents[i] = {
+      role: "user",
+      parts: [
+        {
+          text:
+            combinedText ||
+            `[Resident sent ${imageParts.length} image(s) without text. Please look at the photo(s) and help.]`
+        },
+        ...imageParts
+      ]
+    };
+    return imageParts.length;
+  }
+
+  contents.push({
+    role: "user",
+    parts: [
+      {
+        text: `[Resident sent ${imageParts.length} image(s) without text. Please look at the photo(s) and help.]`
+      },
+      ...imageParts
+    ]
+  });
+  return imageParts.length;
 }
 
 function buildResidentContextBlock(email: string, client: Record<string, string> | null) {
@@ -269,6 +333,7 @@ ${input.contactBlock}
 - **Laundry cancellation rule:** a resident may cancel their own washer/dryer booking only when there is **at least 1 full hour before its scheduled start**. They can do this in **Schedule → Laundry → My bookings**; any Coins used for that booking are refunded after a successful cancellation. When they give a start time, state the concrete cutoff time (for example, a 4:50 PM booking must be cancelled no later than 3:50 PM). If the cutoff has passed, explain that the normal cancellation rule no longer allows self-cancellation; do not imply that you cancelled it or promise that staff will override the rule. Managers can still see the request in this same thread and may confirm any exceptional handling. Do not answer a laundry-cancellation request only with a generic statement that you lack access—always explain this rule and the self-service path first.
 - **Cleaning schedule (trực bếp / vệ sinh):** residents **can** self-assign on open slots in the portal **Schedule** page — tap a future date, then **Assign Myself** for kitchen or trash (branch/floor rules apply). If a date shows **Already assigned**, another resident has that slot; they should pick a different open date or use **Find swap partner**. After releasing a task, the app tries to auto-place them on the next open slot of the same type within **15 days after the released date**; if none is free, they should self-assign any open date on the calendar. Do **not** tell residents they cannot self-assign unless they describe a specific error message from the app.
 - **Self-assign coin bonus (side joke only):** when the resident mentions cleaning, schedule, trực bếp, trash duty, self-assign, or coins-from-cleaning, answer their **main** concern first. Then — only as a short playful aside (one light sentence, not a lecture) — nudge them that **self-assigning** open slots pays more than waiting for system/manager assign: weekday **x2**, weekend **x2.5**, Vietnam holiday **x3**. Keep it funny and optional (e.g. "your future coins will thank you", "sneaky tip: grab the green slots yourself"). Do **not** force this joke into unrelated topics (rent, laundry booking, passwords, maintenance). Do **not** make the bonus the whole reply.
+- **Photos / images:** When the resident attaches photo(s), carefully look at them and answer based on what is visible (damage, dirty equipment, laundry issues, room/kitchen problems, receipt screenshots, etc.). Describe only what helps; if the image is unclear, say so and ask for a clearer photo. Do not invent details that are not visible. Managers also see the same images in this thread.
 - Do not promise discounts or contract changes; suggest staff will confirm.
 - Light playful tone is preferred; emojis only sparingly (and only if the resident used them first, or one soft hehe/😄 max).
 
@@ -319,7 +384,12 @@ export async function runResidentSupportAssistantTurn(input: {
   if (conversation.residentContactOther) contactLines.push(`Other: ${conversation.residentContactOther}`);
   const contactBlock = contactLines.length ? contactLines.join("\n") : "(none yet)";
 
-  const preferVietnamese = looksVietnamese(last.body);
+  const preferVietnamese =
+    looksVietnamese(last.body) ||
+    (!last.body.trim() &&
+      conversation.messages.some(
+        (m) => m.senderRole === SupportMessageSenderRole.RESIDENT && looksVietnamese(m.body)
+      ));
   const eggLang = preferVietnamese ? "vi" : "en";
   const normalizedResidentEmail = input.residentEmail.trim().toLowerCase();
   const lastBody = last.body;
@@ -390,6 +460,7 @@ export async function runResidentSupportAssistantTurn(input: {
       body: m.body
     }))
   );
+  const imageCount = await appendImagesFromSupportMessage(contents, last.id);
 
   const tools: LlmChatTool[] = [
     {
@@ -441,21 +512,27 @@ export async function runResidentSupportAssistantTurn(input: {
       geminiKind: "shared"
     });
 
-    void recordGeminiUsage({
-      feature: "resident_support_thread",
+    const usageInput = {
+      feature: "resident_support_thread" as const,
       actorEmail: input.residentEmail,
       usage: round.usage,
       provider: round.provider,
       model: round.model,
       status: round.rateLimited
-        ? "RATE_LIMITED"
+        ? ("RATE_LIMITED" as const)
         : round.invalidJson
-          ? "INVALID_RESPONSE"
+          ? ("INVALID_RESPONSE" as const)
           : round.errorMessage
-            ? "ERROR"
-            : "SUCCESS",
-      latencyMs: Date.now() - requestStartedAt
-    });
+            ? ("ERROR" as const)
+            : ("SUCCESS" as const),
+      latencyMs: Date.now() - requestStartedAt,
+      ...(imageCount > 0 ? { imageCount } : {})
+    };
+    if (imageCount > 0) {
+      void recordVisionUsage(usageInput);
+    } else {
+      void recordGeminiUsage(usageInput);
+    }
 
     if (round.invalidJson) {
       console.warn("[resident-support-ai] non-JSON response");
@@ -491,10 +568,10 @@ export async function runResidentSupportAssistantTurn(input: {
         void appendAiTrainingExchange({
           channel: "resident_support_thread",
           identifier: input.residentEmail,
-          userText: last.body,
+          userText: last.body.trim() || `[${imageCount} image attachment(s)]`,
           modelText: trimmed,
           conversationId: input.conversationId,
-          meta: { preferVietnamese }
+          meta: { preferVietnamese, imageCount }
         });
       }
       return { replyText: trimmed };
@@ -573,7 +650,13 @@ export async function generateManagerSupportReplyDraft(input: {
   if (conversation.residentContactFacebook) contactLines.push(`Facebook: ${conversation.residentContactFacebook}`);
   if (conversation.residentContactOther) contactLines.push(`Other: ${conversation.residentContactOther}`);
 
-  const preferVietnamese = looksVietnamese(latestResidentMessage.body);
+  const preferVietnamese =
+    looksVietnamese(latestResidentMessage.body) ||
+    (!latestResidentMessage.body.trim() &&
+      conversation.messages.some(
+        (message) =>
+          message.senderRole === SupportMessageSenderRole.RESIDENT && looksVietnamese(message.body)
+      ));
   const systemPrompt = `${buildSystemPrompt({
     email: residentEmail,
     clientBlock: buildResidentContextBlock(residentEmail, client),
@@ -584,6 +667,7 @@ export async function generateManagerSupportReplyDraft(input: {
 ## Staff reply drafting mode
 - You are preparing one suggested reply for a CozoroHome manager, owner, or app admin to review and edit.
 - Read the entire supplied conversation before answering. Respond to the latest unresolved resident need and use the CozoroHome rules above.
+- If the latest resident turn includes photo(s), base the draft on what is visible in those images as well as the text.
 - Return only the message that should be sent to the resident. Do not add labels, analysis, quotation marks, or notes to staff.
 - Never claim that staff changed data, approved an exception, issued a refund, fixed equipment, or completed another action unless the conversation explicitly confirms it.
 - An earlier Cozoro Assistant message may already be in the thread. Do not repeat it mechanically; clarify, correct, or add the useful human follow-up.
@@ -596,6 +680,7 @@ export async function generateManagerSupportReplyDraft(input: {
       body: message.body
     }))
   );
+  const imageCount = await appendImagesFromSupportMessage(contents, latestResidentMessage.id);
   const tools: LlmChatTool[] = [
     {
       functionDeclarations: [
@@ -627,21 +712,27 @@ export async function generateManagerSupportReplyDraft(input: {
       geminiKind: "shared"
     });
 
-    void recordGeminiUsage({
-      feature: "manager_support_reply_draft",
+    const usageInput = {
+      feature: "manager_support_reply_draft" as const,
       actorEmail: input.operatorEmail,
       usage: round.usage,
       provider: round.provider,
       model: round.model,
       status: round.rateLimited
-        ? "RATE_LIMITED"
+        ? ("RATE_LIMITED" as const)
         : round.invalidJson
-          ? "INVALID_RESPONSE"
+          ? ("INVALID_RESPONSE" as const)
           : round.errorMessage
-            ? "ERROR"
-            : "SUCCESS",
-      latencyMs: Date.now() - requestStartedAt
-    });
+            ? ("ERROR" as const)
+            : ("SUCCESS" as const),
+      latencyMs: Date.now() - requestStartedAt,
+      ...(imageCount > 0 ? { imageCount } : {})
+    };
+    if (imageCount > 0) {
+      void recordVisionUsage(usageInput);
+    } else {
+      void recordGeminiUsage(usageInput);
+    }
 
     if (round.invalidJson || round.rateLimited || round.errorMessage) {
       return null;
@@ -655,10 +746,10 @@ export async function generateManagerSupportReplyDraft(input: {
         void appendAiTrainingExchange({
           channel: "manager",
           identifier: input.operatorEmail,
-          userText: latestResidentMessage.body,
+          userText: latestResidentMessage.body.trim() || `[${imageCount} image attachment(s)]`,
           modelText: draftText,
           conversationId: input.conversationId,
-          meta: { feature: "manager_support_reply_draft", residentEmail, preferVietnamese }
+          meta: { feature: "manager_support_reply_draft", residentEmail, preferVietnamese, imageCount }
         });
       }
       return draftText;
