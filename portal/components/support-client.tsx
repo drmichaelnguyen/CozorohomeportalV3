@@ -4,6 +4,7 @@ import { CleaningReviewChatLink } from "./cleaning-review-chat-link";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
+import { ChatFormattedText } from "../lib/chat-markdown";
 import { parseSupportAssistantMeta, supportMessageDisplayBody } from "../lib/support-message-meta";
 import { CozoroStarfieldBurst } from "./cozoro-starfield-burst";
 import { usePortalSession } from "./portal-session";
@@ -603,9 +604,11 @@ export function SupportClient() {
                         : "bg-white text-slate-700 border border-slate-200 rounded-tl-none"
                   }`}
                 >
-                  <p className="whitespace-pre-wrap leading-relaxed">
-                    {isAssistant ? supportMessageDisplayBody(message.body) : message.body}
-                  </p>
+                  {isAssistant ? (
+                    <ChatFormattedText text={supportMessageDisplayBody(message.body)} />
+                  ) : (
+                    <p className="whitespace-pre-wrap leading-relaxed">{message.body}</p>
+                  )}
                   <CleaningReviewChatLink pagePath={message.pagePath} />
                   {message.attachments?.map((attachment) => (
                     <ChatAttachmentView key={attachment.id} attachment={attachment} viewerEmail={sessionEmail.trim().toLowerCase()} />

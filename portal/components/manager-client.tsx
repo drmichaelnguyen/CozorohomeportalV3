@@ -14,6 +14,7 @@ import {
   getBunkBedGroupsTopFirst,
   type BranchLayoutRoom
 } from "../lib/branch-bed-layout";
+import { ChatFormattedText } from "../lib/chat-markdown";
 import { buildCozoroMemberProgram } from "../lib/cozoro-member";
 import {
   hasPrepaidBreakdownOverridesPayload,
@@ -10192,7 +10193,11 @@ export function ManagerClient({
                                 >
                                   {chatRoleLabel(message.senderRole)} · {message.senderName?.trim() || message.senderEmail}
                                 </div>
-                                <div className="mt-1 whitespace-pre-wrap">{message.body}</div>
+                                {isAssistant ? (
+                                  <ChatFormattedText className="mt-1" text={message.body} />
+                                ) : (
+                                  <div className="mt-1 whitespace-pre-wrap">{message.body}</div>
+                                )}
                                 <div
                                   className={`mt-2 text-xs ${
                                     isResident ? "text-slate-500" : isAssistant ? "text-violet-200" : "text-slate-300"

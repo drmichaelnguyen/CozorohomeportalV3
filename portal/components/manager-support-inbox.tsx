@@ -5,6 +5,7 @@ import { CleaningReviewChatLink } from "./cleaning-review-chat-link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
+import { ChatFormattedText, stripChatMarkdown } from "../lib/chat-markdown";
 import { supportMessageDisplayBody } from "../lib/support-message-meta";
 import { usePortalLanguage } from "./portal-language";
 import { compressChatImage, type ChatAttachment, type PendingChatImage } from "../lib/chat-images";
@@ -481,9 +482,11 @@ export function ManagerSupportInbox({
                   : `bg-slate-100 text-slate-900 ${isFirstInGroup ? "rounded-tl-sm" : ""}`
               } select-text`}
             >
-              <p className="whitespace-pre-wrap text-sm leading-relaxed">
-                {message.senderRole === "ASSISTANT" ? supportMessageDisplayBody(message.body) : message.body}
-              </p>
+              {message.senderRole === "ASSISTANT" ? (
+                <ChatFormattedText className="text-sm leading-relaxed" text={supportMessageDisplayBody(message.body)} />
+              ) : (
+                <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.body}</p>
+              )}
               {message.attachments?.map((attachment) => (
                 <ChatAttachmentView key={attachment.id} attachment={attachment} viewerEmail={operatorEmail} />
               ))}
@@ -637,7 +640,7 @@ export function ManagerSupportInbox({
                   {conversation.latestMessage ? (
                     <div className={`mt-1.5 flex items-end justify-between gap-2`}>
                       <p className={`line-clamp-1 flex-1 text-xs ${isSelected ? "text-blue-100" : hasUnread ? "font-semibold text-slate-800" : "text-slate-500"}`}>
-                        {supportMessageDisplayBody(conversation.latestMessage.body)}
+                        {stripChatMarkdown(supportMessageDisplayBody(conversation.latestMessage.body))}
                       </p>
                       <span className={`shrink-0 text-[10px] ${isSelected ? "text-blue-200" : "text-slate-400"}`}>
                         {formatConversationTime(conversation.lastMessageAt)}

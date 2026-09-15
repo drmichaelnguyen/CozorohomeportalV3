@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { API_BASE_URL } from "../lib/api-base-url";
+import { ChatFormattedText } from "../lib/chat-markdown";
 import { usePortalLanguage } from "./portal-language";
 import { CozoroStarfieldBurst } from "./cozoro-starfield-burst";
 import { VentHammerGameModal } from "./vent-hammer-game-modal";
@@ -275,7 +276,11 @@ export function ResidentPortalAiBee({ email }: { email: string }) {
                           : "border border-amber-200 bg-white text-slate-800 rounded-tl-sm dark:border-amber-700/60 dark:bg-slate-800 dark:text-slate-100"
                       }`}
                     >
-                      <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
+                      {m.role === "model" ? (
+                        <ChatFormattedText text={m.text} />
+                      ) : (
+                        <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
+                      )}
                     </div>
                   </div>
                 ))}

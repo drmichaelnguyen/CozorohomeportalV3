@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type TouchEvent } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
+import { ChatFormattedText } from "../lib/chat-markdown";
 import { usePortalLanguage } from "./portal-language";
 import { CozoroStarfieldBurst } from "./cozoro-starfield-burst";
 
@@ -336,7 +337,11 @@ function ChatBody({
                     : "bg-slate-100 text-slate-900 rounded-tl-sm"
                 }`}
               >
-                <p className="whitespace-pre-wrap">{msg.text}</p>
+                {msg.role === "model" ? (
+                  <ChatFormattedText text={msg.text} />
+                ) : (
+                  <p className="whitespace-pre-wrap">{msg.text}</p>
+                )}
                 {msg.navigateTo && onNavigate && (
                   <button
                     type="button"
