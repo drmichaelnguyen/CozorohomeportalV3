@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { sendGmailReceipt } from "./google-sheets.js";
 import { sendPushToEmail } from "./push.js";
 import { listStaffNotifyEmails } from "./staff-access.js";
+import { hostelStayNights } from "./hostel-booking-dates.js";
 
 const cacheDirPath = path.join(process.cwd(), "data");
 const alertsFilePath = path.join(cacheDirPath, "hostel-booking-alerts.json");
@@ -75,13 +76,7 @@ function formatMoney(amount: number | undefined, currency = "VND") {
 function formatStaySummary(payload: HostelBookingNotifyPayload) {
   const nights =
     payload.nights ??
-    Math.max(
-      0,
-      Math.round(
-        (new Date(`${payload.checkOut}T12:00:00`).getTime() - new Date(`${payload.checkIn}T12:00:00`).getTime()) /
-          86400000
-      )
-    );
+    hostelStayNights(payload.checkIn, payload.checkOut);
   const roomBit = payload.roomCode ? `Room ${payload.roomCode}, ` : "";
   return [
     `Guest: ${payload.guestName}`,

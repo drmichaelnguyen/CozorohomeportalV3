@@ -84,20 +84,17 @@ const els = {
   branchClosureBanner: document.getElementById("branchClosureBanner")
 };
 
-function formatDateInput(date) {
-  return date.toISOString().slice(0, 10);
-}
-
 function setDefaultDates() {
-  const today = new Date();
-  const checkIn = new Date(today);
-  checkIn.setDate(today.getDate() + 1);
-  const checkOut = new Date(today);
-  checkOut.setDate(today.getDate() + 4);
-  state.checkIn = formatDateInput(checkIn);
-  state.checkOut = formatDateInput(checkOut);
+  const dates = window.CozoroBusinessDates;
+  const today = dates ? dates.businessTodayKey() : new Date().toISOString().slice(0, 10);
+  const checkIn = dates ? dates.addBusinessDays(today, 1) : today;
+  const checkOut = dates ? dates.addBusinessDays(today, 4) : today;
+  state.checkIn = checkIn;
+  state.checkOut = checkOut;
   els.checkIn.value = state.checkIn;
   els.checkOut.value = state.checkOut;
+  els.checkIn.min = today;
+  els.checkOut.min = checkIn;
 }
 
 function setMessage(messageKey, params = {}) {
@@ -119,8 +116,12 @@ function getStayNightsFromInputs() {
     return 0;
   }
 
-  const start = new Date(`${els.checkIn.value}T00:00:00.000Z`);
-  const end = new Date(`${els.checkOut.value}T00:00:00.000Z`);
+  if (window.CozoroBusinessDates) {
+    return window.CozoroBusinessDates.nightsBetween(els.checkIn.value, els.checkOut.value);
+  }
+
+  const start = new Date(`${els.checkIn.value}T12:00:00.000Z`);
+  const end = new Date(`${els.checkOut.value}T12:00:00.000Z`);
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || !(start < end)) {
     return 0;
   }
@@ -782,14 +783,18 @@ function calculateBedPricingPreview(bedDetails) {
     return null;
   }
 
-  const start = new Date(`${els.checkIn.value}T00:00:00.000Z`);
-  const end = new Date(`${els.checkOut.value}T00:00:00.000Z`);
+  const nights = window.CozoroBusinessDates
+    ? window.CozoroBusinessDates.nightsBetween(els.checkIn.value, els.checkOut.value)
+    : Math.round(
+        (new Date(`${els.checkOut.value}T12:00:00.000Z`).getTime() -
+          new Date(`${els.checkIn.value}T12:00:00.000Z`).getTime()) /
+          86400000
+      );
 
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || !(start < end)) {
+  if (!(nights > 0)) {
     return null;
   }
 
-  const nights = Math.round((end.getTime() - start.getTime()) / 86400000);
   const discountRule = getActiveDiscountRule(nights);
   const cancellationPolicy = normalizeCancellationPolicy(els.cancellationPolicy.value || state.cancellationPolicy);
   const nightlyRates = Array.isArray(bedDetails.nightlyPrices) && bedDetails.nightlyPrices.length
@@ -1434,6 +1439,9 @@ els.branchId.addEventListener("change", () => {
 els.checkIn.addEventListener("change", () => {
   clearFieldInvalidState(els.checkIn);
   clearFieldInvalidState(els.checkOut);
+  if (els.checkIn.value) {
+    els.checkOut.min = els.checkIn.value;
+  }
   void loadAvailability();
 });
 els.checkOut.addEventListener("change", () => {

@@ -291,6 +291,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.41 | Hostel guest booking stay dates use Asia/Ho_Chi_Minh (not Vancouver host TZ) for defaults, past-date guards, face-capture/cancellation 48h windows, and manager current/past guests; see `docs/hostel-booking-dates.md`. |
 | 3.9.40 | Cozoro Assistant (personal support thread) and manager AI drafts analyse resident chat image attachments; image-only messages also trigger a reply; see `docs/support-assistant-vision.md`. |
 | 3.9.39 | Cleaning away+release owned by backend with durable notice timestamps and per-duty outcomes; missed fines escalate by duty date (order-independent, cancelled/exempt excluded); holiday vs away calendar markers distinct; see `docs/cleaning-availability-release.md`. |
 | 3.9.32 | Portal and Bee laundry away checks use Vietnam calendar dates; timezone/boundary regression tests and booking-date documentation. |

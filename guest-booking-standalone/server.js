@@ -15,6 +15,17 @@ const {
   D2_NEW_REGISTRATION_CLOSED,
   D2_PERMANENT_CLOSURE_DATE
 } = require("./branch-closure");
+const {
+  BUSINESS_TIME_ZONE,
+  businessTodayKey,
+  formatBookingDateKey,
+  parseBusinessDate,
+  dateOnlyToUtc,
+  businessDayStartMs,
+  nightsBetween,
+  hoursUntilBusinessCheckIn,
+  isFaceCaptureWindowOpen: isFaceCaptureWindowOpenForDate
+} = require("./business-dates");
 
 dotenv.config({ path: path.join(__dirname, ".env") });
 
@@ -672,7 +683,7 @@ function listStayDateKeys(checkIn, checkOut) {
   const { start, end } = ensureValidDateRange(checkIn, checkOut);
   const keys = [];
   for (let cursor = new Date(start.getTime()); cursor < end; cursor = new Date(cursor.getTime() + 86400000)) {
-    keys.push(cursor.toISOString().slice(0, 10));
+    keys.push(formatBookingDateKey(cursor));
   }
   return keys;
 }
@@ -827,8 +838,8 @@ function calculatePricing(nights, nightlyPrice, pricingConfig, options = {}) {
 function buildStoredPricingFromBooking(booking, pricingConfig) {
   const config = normalizeShortTermConfig(pricingConfig || DEFAULT_SHORT_TERM_CONFIG);
   const nights = Number(booking.nights) || nightsBetween(
-    new Date(booking.check_in).toISOString().slice(0, 10),
-    new Date(booking.check_out).toISOString().slice(0, 10)
+    formatBookingDateKey(booking.check_in),
+    formatBookingDateKey(booking.check_out)
   );
   const nightlyRate = Number(booking.nightly_rate);
   const subtotal = Number(booking.subtotal_amount);
@@ -884,7 +895,8 @@ function getBookingCancellationTerms(booking, pricingConfig = null, now = Date.n
   const pricing = buildStoredPricingFromBooking(booking, pricingConfig || DEFAULT_SHORT_TERM_CONFIG);
   const cancellationPolicy = normalizeCancellationPolicy(booking.cancellation_policy || pricing.cancellationPolicy);
   const createdAt = new Date(booking.created_at || Date.now()).getTime();
-  const checkInAt = new Date(booking.check_in).getTime();
+  // Policy windows use Vietnam local midnight of the check-in calendar day.
+  const checkInAt = businessDayStartMs(formatBookingDateKey(booking.check_in));
   const withinGracePeriod = Number.isFinite(createdAt) && currentTime <= createdAt + FULL_REFUND_GRACE_PERIOD_MS;
   const beforeCheckIn = Number.isFinite(checkInAt) && currentTime < checkInAt;
   const cancellableDeadlineAt = Number.isFinite(checkInAt)
@@ -1054,8 +1066,8 @@ async function finalizeStripeCheckoutSession(session) {
       bioSex: latestBooking.bio_sex || "",
       branchId: latestBooking.branch_id,
       bedNumber: latestBooking.bed_number,
-      checkIn: new Date(latestBooking.check_in).toISOString().slice(0, 10),
-      checkOut: new Date(latestBooking.check_out).toISOString().slice(0, 10),
+      checkIn: formatBookingDateKey(latestBooking.check_in),
+      checkOut: formatBookingDateKey(latestBooking.check_out),
       notes: latestBooking.notes || "",
       pricing,
       isVietnamese: Boolean(Number(latestBooking.is_vietnamese)),
@@ -1171,8 +1183,8 @@ async function applyBookingChange(connectionPool, booking, changePayload, option
 
 async function calculateBookingChange(booking, input, pricingConfig = null) {
   const config = pricingConfig || await getShortTermPricingConfig();
-  const currentCheckIn = new Date(booking.check_in).toISOString().slice(0, 10);
-  const currentCheckOut = new Date(booking.check_out).toISOString().slice(0, 10);
+  const currentCheckIn = formatBookingDateKey(booking.check_in);
+  const currentCheckOut = formatBookingDateKey(booking.check_out);
   const requestedCheckIn = String(input.checkIn || currentCheckIn).trim();
   const requestedCheckOut = String(input.checkOut || currentCheckOut).trim();
   const requestedNights = nightsBetween(requestedCheckIn, requestedCheckOut);
@@ -1285,16 +1297,6 @@ function parseBedNumber(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-function dateOnlyToUtc(value) {
-  return new Date(`${value}T00:00:00.000Z`);
-}
-
-function nightsBetween(checkIn, checkOut) {
-  const start = dateOnlyToUtc(checkIn);
-  const end = dateOnlyToUtc(checkOut);
-  return Math.round((end.getTime() - start.getTime()) / 86400000);
-}
-
 function assertHostelStayWithinLimit(nights, options = {}) {
   const stayNights = Number.isFinite(Number(nights)) ? Math.floor(Number(nights)) : 0;
   const previousNights = Number.isFinite(Number(options.previousNights))
@@ -1316,11 +1318,18 @@ function assertHostelStayWithinLimit(nights, options = {}) {
   );
 }
 
-function ensureValidDateRange(checkIn, checkOut) {
-  const start = dateOnlyToUtc(checkIn);
-  const end = dateOnlyToUtc(checkOut);
+function ensureValidDateRange(checkIn, checkOut, options = {}) {
+  const start = parseBusinessDate(checkIn);
+  const end = parseBusinessDate(checkOut);
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || !(start < end)) {
     throw new Error("Invalid check-in/check-out dates.");
+  }
+  if (options.disallowPastCheckIn) {
+    const checkInKey = formatBookingDateKey(checkIn);
+    const todayKey = businessTodayKey();
+    if (checkInKey && checkInKey < todayKey) {
+      throw new Error("Check-in date cannot be before today in Vietnam (Asia/Ho_Chi_Minh).");
+    }
   }
   return { start, end };
 }
@@ -1440,13 +1449,11 @@ async function saveFaceCapture({ bookingId, dataUrl }) {
 }
 
 function hoursUntilCheckIn(checkInValue) {
-  const checkIn = dateOnlyToUtc(checkInValue);
-  return (checkIn.getTime() - Date.now()) / 3600000;
+  return hoursUntilBusinessCheckIn(checkInValue);
 }
 
 function isFaceCaptureWindowOpen(checkInValue) {
-  const remainingHours = hoursUntilCheckIn(checkInValue);
-  return Number.isFinite(remainingHours) && remainingHours <= FACE_CAPTURE_WINDOW_HOURS && remainingHours >= 0;
+  return isFaceCaptureWindowOpenForDate(checkInValue, FACE_CAPTURE_WINDOW_HOURS);
 }
 
 function buildMainAppSyncNotes(input) {
@@ -1502,9 +1509,9 @@ function formatGuestBookingRecord(row) {
     guestPhone: row.guest_phone || "",
     isVietnamese: Boolean(Number(row.is_vietnamese)),
     bioSex: row.bio_sex || "",
-    checkIn: new Date(row.check_in).toISOString().slice(0, 10),
-    checkOut: new Date(row.check_out).toISOString().slice(0, 10),
-    nights: Number(row.nights) || nightsBetween(new Date(row.check_in).toISOString().slice(0, 10), new Date(row.check_out).toISOString().slice(0, 10)),
+    checkIn: formatBookingDateKey(row.check_in),
+    checkOut: formatBookingDateKey(row.check_out),
+    nights: Number(row.nights) || nightsBetween(formatBookingDateKey(row.check_in), formatBookingDateKey(row.check_out)),
     notes: row.notes || "",
     status: row.status,
     paymentStatus: row.payment_status || "",
@@ -1517,7 +1524,7 @@ function formatGuestBookingRecord(row) {
     cancelledAt: row.cancelled_at || null,
     currency: row.currency || pricingCurrency,
     faceCaptureCompleted: Boolean(row.face_capture_completed_at),
-    faceCaptureOpen: isFaceCaptureWindowOpen(new Date(row.check_in).toISOString().slice(0, 10)),
+    faceCaptureOpen: isFaceCaptureWindowOpen(formatBookingDateKey(row.check_in)),
     exactAddress: branchDetails.fullAddress,
     shortAddress: branchDetails.shortAddress,
     cancellationTerms,
@@ -1939,7 +1946,7 @@ function getGuestBookingSubmission(req) {
 
 async function createPendingBooking(input, pricingConfig = null) {
   const connectionPool = await getPool();
-  const { start, end } = ensureValidDateRange(input.checkIn, input.checkOut);
+  const { start, end } = ensureValidDateRange(input.checkIn, input.checkOut, { disallowPastCheckIn: true });
   const config = pricingConfig || await getShortTermPricingConfig();
   const nightlyPrices = getNightlyPricesForStay(config, input.branchId, input.bedNumber, input.checkIn, input.checkOut);
   const bedPricing = nightlyPrices[0]
@@ -2148,6 +2155,8 @@ app.get("/api/config", async (_req, res) => {
     defaultBranch: DEFAULT_BRANCH,
     siteUrl: SITE_URL,
     stripeConfigured: Boolean(stripe),
+    businessTimeZone: BUSINESS_TIME_ZONE,
+    businessToday: businessTodayKey(),
     d2RegistrationClosed: D2_NEW_REGISTRATION_CLOSED,
     d2PermanentClosureDate: D2_PERMANENT_CLOSURE_DATE,
     closedBranches: D2_NEW_REGISTRATION_CLOSED ? ["D2"] : [],
@@ -2319,7 +2328,7 @@ app.post("/api/bookings", async (req, res) => {
   }
 
   try {
-    ensureValidDateRange(submission.checkIn, submission.checkOut);
+    ensureValidDateRange(submission.checkIn, submission.checkOut, { disallowPastCheckIn: true });
     const pricingConfig = await getShortTermPricingConfig();
     await requireVerifiedGuest(submission.guestEmail, submission.guestAuthToken);
     const room = getRoomLayoutForBed(submission.branchId, submission.bedNumber);
@@ -2425,7 +2434,7 @@ app.post("/api/create-checkout-session", async (req, res) => {
   }
 
   try {
-    ensureValidDateRange(submission.checkIn, submission.checkOut);
+    ensureValidDateRange(submission.checkIn, submission.checkOut, { disallowPastCheckIn: true });
     const pricingConfig = await getShortTermPricingConfig();
     await requireVerifiedGuest(submission.guestEmail, submission.guestAuthToken);
     const room = getRoomLayoutForBed(submission.branchId, submission.bedNumber);
@@ -2582,8 +2591,8 @@ app.get("/api/confirm-payment", async (req, res) => {
         roomCode: booking.room_code,
         bedNumber: booking.bed_number,
         bioSex: booking.bio_sex,
-        checkIn: new Date(booking.check_in).toISOString().slice(0, 10),
-        checkOut: new Date(booking.check_out).toISOString().slice(0, 10),
+        checkIn: formatBookingDateKey(booking.check_in),
+        checkOut: formatBookingDateKey(booking.check_out),
         pricing: result.pricing
       }
     });
@@ -2888,8 +2897,8 @@ app.patch("/api/guest-bookings/:id", async (req, res) => {
         bioSex: updatedBooking.bio_sex || "",
         branchId: updatedBooking.branch_id,
         bedNumber: updatedBooking.bed_number,
-        checkIn: new Date(updatedBooking.check_in).toISOString().slice(0, 10),
-        checkOut: new Date(updatedBooking.check_out).toISOString().slice(0, 10),
+        checkIn: formatBookingDateKey(updatedBooking.check_in),
+        checkOut: formatBookingDateKey(updatedBooking.check_out),
         notes: updatedBooking.notes || "",
         pricing: buildStoredPricingFromBooking(updatedBooking, pricingConfig),
         isVietnamese: Boolean(Number(updatedBooking.is_vietnamese)),
@@ -3061,10 +3070,10 @@ app.get("/api/face-capture-status", async (req, res) => {
       roomCode: booking.room_code,
       bedNumber: booking.bed_number,
       guestName: booking.guest_name,
-      checkIn: new Date(booking.check_in).toISOString().slice(0, 10),
+      checkIn: formatBookingDateKey(booking.check_in),
       faceCaptureRequired: true,
-      hoursUntilCheckIn: hoursUntilCheckIn(new Date(booking.check_in).toISOString().slice(0, 10)),
-      faceCaptureOpen: isFaceCaptureWindowOpen(new Date(booking.check_in).toISOString().slice(0, 10)),
+      hoursUntilCheckIn: hoursUntilCheckIn(formatBookingDateKey(booking.check_in)),
+      faceCaptureOpen: isFaceCaptureWindowOpen(formatBookingDateKey(booking.check_in)),
       faceCaptureCompleted: Boolean(booking.face_capture_completed_at),
       faceCaptureFileName: booking.face_capture_file_name || "",
       faceCaptureCompletedAt: booking.face_capture_completed_at || null
@@ -3103,7 +3112,7 @@ app.post("/api/face-capture", async (req, res) => {
       return res.status(404).json({ error: "Booking record does not exist." });
     }
 
-    const checkInValue = new Date(booking.check_in).toISOString().slice(0, 10);
+    const checkInValue = formatBookingDateKey(booking.check_in);
     if (!isFaceCaptureWindowOpen(checkInValue)) {
       return res.status(400).json({ error: "Face capture is only available within 48 hours before check-in." });
     }

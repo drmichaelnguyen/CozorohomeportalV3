@@ -3,6 +3,7 @@ import path from "path";
 import Stripe from "stripe";
 import { managerCreatePaymentReceipt } from "./google-sheets.js";
 import { prisma } from "./prisma.js";
+import { formatHostelBookingDateKey } from "./hostel-booking-dates.js";
 
 const HOSTEL_BOOKING_TABLE = process.env.HOSTEL_BOOKING_TABLE ?? "guest_stay_bookings";
 const RECEIPT_LEDGER_PATH =
@@ -87,8 +88,7 @@ function getStripeClient(): Stripe {
 }
 
 function formatDbDate(val: unknown): string {
-  if (val instanceof Date) return val.toISOString().slice(0, 10);
-  return String(val ?? "");
+  return formatHostelBookingDateKey(val);
 }
 
 function formatDbDateTime(val: unknown): string | null {

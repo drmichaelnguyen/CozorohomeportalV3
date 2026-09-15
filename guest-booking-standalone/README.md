@@ -58,7 +58,17 @@ guest-booking-control.bat restart-all
 
 ## Notes
 
+- Stay check-in/check-out calendar days use **Asia/Ho_Chi_Minh** (Vietnam), not the Vancouver host timezone. See [`docs/hostel-booking-dates.md`](../docs/hostel-booking-dates.md).
+- Optional env: `COZORO_TIMEZONE=Asia/Ho_Chi_Minh` (default).
 - The app auto-creates its booking table if it does not exist.
 - Resident occupancy is based on the same cached client data the current project already uses.
 - Guest reservations are stored separately from the portal code.
 - Stripe checkout redirects to `/booking-success.html` and confirms payment before marking the booking confirmed.
+
+## Tests
+
+```bash
+npm test
+```
+
+Runs `business-dates.test.js` (Vietnam calendar / Vancouver host cases).
