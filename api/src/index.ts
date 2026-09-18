@@ -1226,7 +1226,10 @@ async function runAutoSchedule(trigger: "startup" | "interval" | "manual") {
   }
 }
 
-async function runOverdueCleaningSweep(trigger: "startup" | "interval" | "manual") {
+async function runOverdueCleaningSweep(
+  trigger: "startup" | "interval" | "manual",
+  options?: { createMissedFines?: boolean }
+) {
   if (overdueCleaningSweepRunning) {
     return {
       skipped: true,
@@ -1238,26 +1241,47 @@ async function runOverdueCleaningSweep(trigger: "startup" | "interval" | "manual
 
   try {
     const schedulerConfig = await getCleaningAutoSchedulerConfig();
-    const runMissedTaskSweep = trigger === "manual" || schedulerConfig.autoMissedCleaningFines !== false;
+    const batchId = `overdue-${trigger}-${Date.now().toString(36)}`;
+    // Manual review/refresh never creates missed fines unless explicitly requested.
+    // Timed/startup sweeps honor autoMissedCleaningFines and never silently bypass it.
+    const runMissedTaskSweep =
+      trigger === "manual"
+        ? options?.createMissedFines === true
+        : schedulerConfig.autoMissedCleaningFines !== false;
 
     const missedResult = runMissedTaskSweep
-      ? await sweepOverdueCleaningTasks()
-      : { scanned: 0, markedMissed: 0, tasks: [] as Array<{ taskId: string; userEmail: string; fineAmount: number }> };
+      ? await sweepOverdueCleaningTasks(new Date(), {
+          createFines: true,
+          lookbackDays: schedulerConfig.missedFineLookbackDays,
+          batchId
+        })
+      : await sweepOverdueCleaningTasks(new Date(), {
+          createFines: false,
+          lookbackDays: schedulerConfig.missedFineLookbackDays,
+          batchId
+        });
 
     if (!runMissedTaskSweep) {
       console.log(
-        `[cleaning-overdue-sweep] trigger=${trigger} missed-task sweep skipped (autoMissedCleaningFines disabled in settings)`
+        `[cleaning-overdue-sweep] trigger=${trigger} missed-task fine creation skipped` +
+          (trigger === "manual"
+            ? " (manual review/refresh; pass createMissedFines=true to create tickets)"
+            : " (autoMissedCleaningFines disabled in settings)")
       );
     }
 
     console.log(
-      `[cleaning-overdue-sweep] trigger=${trigger} scanned=${missedResult.scanned} markedMissed=${missedResult.markedMissed}`
+      `[cleaning-overdue-sweep] trigger=${trigger} batchId=${batchId} scanned=${missedResult.scanned}` +
+        ` created=${missedResult.created ?? 0} alreadyExists=${missedResult.alreadyExists ?? 0}` +
+        ` skippedOld=${missedResult.skippedOld ?? 0} reviewRequired=${missedResult.reviewRequired ?? 0}` +
+        ` markedMissed=${missedResult.markedMissed}`
     );
 
     const evasionResult = await sweepMonthlyEvasionPenalties();
-    if (evasionResult.charged > 0) {
+    if (evasionResult.charged > 0 || (evasionResult.alreadyExists ?? 0) > 0) {
       console.log(
-        `[cleaning-evasion-sweep] trigger=${trigger} scanned=${evasionResult.scanned} charged=${evasionResult.charged}`
+        `[cleaning-evasion-sweep] trigger=${trigger} scanned=${evasionResult.scanned}` +
+          ` charged=${evasionResult.charged} alreadyExists=${evasionResult.alreadyExists ?? 0}`
       );
     }
 
@@ -1269,9 +1293,11 @@ async function runOverdueCleaningSweep(trigger: "startup" | "interval" | "manual
     }
 
     return {
-      skipped: false,
-      missedTaskSweepSkipped: !runMissedTaskSweep,
       ...missedResult,
+      skipped: false as const,
+      missedTaskSweepSkipped: !runMissedTaskSweep,
+      createMissedFines: runMissedTaskSweep,
+      batchId,
       evasion: evasionResult,
       leftResidents: leftResidentResult
     };
@@ -1981,6 +2007,7 @@ const cleaningAutoSchedulerConfigUpdateSchema = z.object({
   actorEmail: z.string().email(),
   enabled: z.boolean(),
   autoMissedCleaningFines: z.boolean().optional(),
+  missedFineLookbackDays: z.number().int().min(1).max(90).optional(),
   jobs: z.array(
     z.object({
       key: z.string().min(1),
@@ -2006,7 +2033,9 @@ const adminCleaningDismissBodySchema = z.object({
 });
 
 const adminCleaningOverdueRunBodySchema = z.object({
-  actorEmail: z.string().email()
+  actorEmail: z.string().email(),
+  /** Explicit opt-in. Manual review/refresh must not create tickets by default. */
+  createMissedFines: z.boolean().optional()
 });
 const supportResidentQuerySchema = z.object({
   email: z.string().email()
@@ -6054,6 +6083,7 @@ app.put("/admin/cleaning/auto-scheduler-config", async (request, response) => {
     const config = await updateCleaningAutoSchedulerConfig(parsed.data.actorEmail, {
       enabled: parsed.data.enabled,
       autoMissedCleaningFines: parsed.data.autoMissedCleaningFines,
+      missedFineLookbackDays: parsed.data.missedFineLookbackDays,
       jobs: parsed.data.jobs
     });
     return response.json(config);
@@ -6536,7 +6566,9 @@ app.post("/admin/cleaning/overdue/run", async (request, response) => {
       ["manager", "owner", "app_admin"],
       "Only managers can run the overdue cleaning sweep."
     );
-    const result = await runOverdueCleaningSweep("manual");
+    const result = await runOverdueCleaningSweep("manual", {
+      createMissedFines: parsed.data.createMissedFines === true
+    });
     return response.json(result);
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unable to run overdue cleaning sweep";
@@ -6641,12 +6673,30 @@ app.post("/admin/cleaning/overdue/bulk", async (request, response) => {
       ["manager", "owner", "app_admin"],
       "Only managers can bulk-process overdue cleaning tasks."
     );
-    const results: Array<{ taskId: string; ok: boolean; error?: string }> = [];
+    const requestId = `bulk-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const results: Array<{
+      taskId: string;
+      ok: boolean;
+      outcome?: string;
+      fineAmount?: number;
+      error?: string;
+    }> = [];
+    let created = 0;
+    let alreadyExists = 0;
+    let skipped = 0;
+    let failed = 0;
+
     for (const taskId of parsed.data.taskIds) {
       try {
         if (parsed.data.action === "fine") {
-          const result = await adminMarkMissedCleaningTaskFine(taskId, parsed.data.actorEmail);
-          if (parsed.data.sendEmail && result.fineAmount > 0) {
+          const result = await adminMarkMissedCleaningTaskFine(taskId, parsed.data.actorEmail, undefined, {
+            batchId: requestId
+          });
+          if (result.outcome === "created") created += 1;
+          else if (result.outcome === "alreadyExists") alreadyExists += 1;
+          else skipped += 1;
+
+          if (parsed.data.sendEmail && result.fineAmount > 0 && result.outcome === "created") {
             try {
               const client = await getActiveClientByEmail(result.userEmail);
               await sendFineTicketEmail({
@@ -6659,15 +6709,47 @@ app.post("/admin/cleaning/overdue/bulk", async (request, response) => {
               });
             } catch { /* email failure is non-fatal */ }
           }
+          results.push({
+            taskId,
+            ok: true,
+            outcome: result.outcome,
+            fineAmount: result.fineAmount
+          });
         } else {
-          await adminDismissMissedCleaningTask(taskId, parsed.data.actorEmail);
+          const result = await adminDismissMissedCleaningTask(taskId, parsed.data.actorEmail);
+          results.push({
+            taskId,
+            ok: true,
+            outcome: result.outcome === "alreadyDismissed" ? "alreadyDismissed" : "dismissed"
+          });
         }
-        results.push({ taskId, ok: true });
       } catch (err) {
-        results.push({ taskId, ok: false, error: err instanceof Error ? err.message : "Unknown error" });
+        const message = err instanceof Error ? err.message : "Unknown error";
+        const outcome =
+          message.includes("released or exempted") || message.includes("was not created")
+            ? "skipped"
+            : "failed";
+        if (outcome === "skipped") skipped += 1;
+        else failed += 1;
+        results.push({ taskId, ok: false, outcome, error: message });
       }
     }
-    return response.json({ results, processed: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length });
+
+    console.log(
+      `[cleaning-overdue-bulk] requestId=${requestId} action=${parsed.data.action}` +
+        ` requested=${parsed.data.taskIds.length} created=${created} alreadyExists=${alreadyExists}` +
+        ` skipped=${skipped} failed=${failed}`
+    );
+
+    return response.json({
+      requestId,
+      results,
+      processed: results.filter((r) => r.ok).length,
+      created,
+      alreadyExists,
+      skipped,
+      failed
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to process bulk overdue tasks";
     return response.status(message.includes("Only managers") ? 403 : 400).json({ error: message });

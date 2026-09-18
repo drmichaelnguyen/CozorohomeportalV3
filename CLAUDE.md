@@ -291,6 +291,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.43 | Missed-cleaning fine safety (advisory-lock idempotency, bulk selection+confirm, lookback-limited auto fines, manual sweep review-only) plus overdue dismiss `ASSIGNED→REJECTED` path that no longer fails via photo-audit rejection; report-only duplicate diagnostic. |
 | 3.9.42 | AI chat replies (Cozoro Assistant, Bee, manager AI) render markdown as formatted text instead of raw `**asterisks**`. |
 | 3.9.41 | Hostel guest booking stay dates use Asia/Ho_Chi_Minh (not Vancouver host TZ) for defaults, past-date guards, face-capture/cancellation 48h windows, and manager current/past guests; see `docs/hostel-booking-dates.md`. |
 | 3.9.40 | Cozoro Assistant (personal support thread) and manager AI drafts analyse resident chat image attachments; image-only messages also trigger a reply; see `docs/support-assistant-vision.md`. |

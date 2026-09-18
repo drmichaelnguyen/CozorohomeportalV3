@@ -149,12 +149,16 @@ type CleaningReviewQueuePayload = {
     hasAutomaticFine: boolean;
     suggestedFineAmount: number;
     missedFineDeadlineAt: string;
+    outsideLookback?: boolean;
+    reviewRequired?: boolean;
   }>;
+  missedFineLookbackDays?: number;
 };
 
 type AutoSchedulerConfig = {
   enabled: boolean;
   autoMissedCleaningFines: boolean;
+  missedFineLookbackDays?: number;
   updatedAt: string;
   updatedBy: string;
   jobs: Array<{
@@ -170,6 +174,8 @@ type AutoSchedulerConfig = {
     updatedBy: string;
   }>;
 };
+
+const BULK_FINE_TYPED_CONFIRM_THRESHOLD = 5;
 
 function prettyTaskType(type: AdminTask["type"], t: (key: any, ...args: any[]) => string) {
   if (type === "KITCHEN_D2") return t("kitchenD2");
@@ -440,6 +446,13 @@ export function AdminCleaningClient() {
   const [correctionReasonsLoading, setCorrectionReasonsLoading] = useState(false);
   const [missedFineSendEmail, setMissedFineSendEmail] = useState(false);
   const [bulkOverdueLoading, setBulkOverdueLoading] = useState(false);
+  const [selectedOverdueTaskIds, setSelectedOverdueTaskIds] = useState<string[]>([]);
+  const [bulkConfirmDialog, setBulkConfirmDialog] = useState<null | {
+    action: "fine" | "dismiss";
+    taskIds: string[];
+  }>(null);
+  const [bulkConfirmTypedText, setBulkConfirmTypedText] = useState("");
+  const [manualSweepCreateFines, setManualSweepCreateFines] = useState(false);
   const [autoSchedulerConfig, setAutoSchedulerConfig] = useState<AutoSchedulerConfig | null>(null);
   const [autoSchedulerSaving, setAutoSchedulerSaving] = useState(false);
   const [showAutoScheduler, setShowAutoScheduler] = useState(false);
@@ -488,9 +501,17 @@ export function AdminCleaningClient() {
     );
   }, [reviewQueue]);
 
+  const overdueOutsideLookbackCount = useMemo(
+    () => overdueAssignedSortedNewestFirst.filter((task) => task.outsideLookback || task.reviewRequired).length,
+    [overdueAssignedSortedNewestFirst]
+  );
+
   useEffect(() => {
     setOverdueAssignedVisibleCount(OVERDUE_ASSIGNED_PAGE_SIZE);
-  }, [reviewQueue]);
+    setSelectedOverdueTaskIds((current) =>
+      current.filter((id) => overdueAssignedSortedNewestFirst.some((task) => task.id === id))
+    );
+  }, [reviewQueue, overdueAssignedSortedNewestFirst]);
 
   useEffect(() => {
     void loadReferencePhotos();
@@ -739,6 +760,10 @@ export function AdminCleaningClient() {
   }
 
   async function bulkProcessOverdueTasks(action: "fine" | "dismiss", taskIds: string[], sendEmail?: boolean) {
+    if (taskIds.length === 0) {
+      setMessage(language === "vi" ? "Chưa chọn công việc nào." : "No overdue tasks selected.");
+      return;
+    }
     setBulkOverdueLoading(true);
     setMessage("");
     try {
@@ -747,19 +772,66 @@ export function AdminCleaningClient() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ actorEmail: activeEmail, taskIds, action, sendEmail: sendEmail ?? false })
       });
-      const data = await readJsonSafely<{ processed?: number; failed?: number; error?: string }>(response);
+      const data = await readJsonSafely<{
+        processed?: number;
+        created?: number;
+        alreadyExists?: number;
+        skipped?: number;
+        failed?: number;
+        error?: string;
+      }>(response);
       if (!response.ok) {
         setMessage(data.error ?? t("adminCleaningErrMissedFine"));
         return;
       }
       await Promise.all([reloadAll(), loadReviewQueue()]);
-      const failNote = (data.failed ?? 0) > 0 ? ` (${data.failed} failed)` : "";
-      setMessage(`${action === "fine" ? t("adminCleaningIssueMissedFine") : t("adminCleaningDismissTask")}: ${data.processed ?? 0} done${failNote}`);
+      setSelectedOverdueTaskIds([]);
+      setBulkConfirmDialog(null);
+      setBulkConfirmTypedText("");
+      if (action === "fine") {
+        setMessage(
+          t("adminCleaningBulkFineResult", undefined, {
+            created: String(data.created ?? 0),
+            alreadyExists: String(data.alreadyExists ?? 0),
+            skipped: String(data.skipped ?? 0),
+            failed: String(data.failed ?? 0)
+          })
+        );
+      } else {
+        const failNote = (data.failed ?? 0) > 0 ? ` (${data.failed} failed)` : "";
+        setMessage(`${t("adminCleaningDismissTask")}: ${data.processed ?? 0} done${failNote}`);
+      }
     } catch {
       setMessage(t("adminCleaningErrMissedFine"));
     } finally {
       setBulkOverdueLoading(false);
     }
+  }
+
+  function openBulkConfirm(action: "fine" | "dismiss") {
+    if (selectedOverdueTaskIds.length === 0) {
+      setMessage(language === "vi" ? "Chọn ít nhất một công việc trước." : "Select at least one overdue task first.");
+      return;
+    }
+    setBulkConfirmTypedText("");
+    setBulkConfirmDialog({ action, taskIds: [...selectedOverdueTaskIds] });
+  }
+
+  function toggleOverdueTaskSelection(taskId: string) {
+    setSelectedOverdueTaskIds((current) =>
+      current.includes(taskId) ? current.filter((id) => id !== taskId) : [...current, taskId]
+    );
+  }
+
+  function selectVisibleOverdueTasks() {
+    const visibleIds = overdueAssignedSortedNewestFirst
+      .slice(0, overdueAssignedVisibleCount)
+      .map((task) => task.id);
+    setSelectedOverdueTaskIds((current) => Array.from(new Set([...current, ...visibleIds])));
+  }
+
+  function clearOverdueSelection() {
+    setSelectedOverdueTaskIds([]);
   }
 
   async function runOverdueSweepManual() {
@@ -769,12 +841,20 @@ export function AdminCleaningClient() {
       const response = await fetch(`${API_BASE_URL}/admin/cleaning/overdue/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actorEmail: activeEmail })
+        body: JSON.stringify({
+          actorEmail: activeEmail,
+          createMissedFines: manualSweepCreateFines === true
+        })
       });
       const data = await readJsonSafely<{
         error?: string;
         markedMissed?: number;
+        created?: number;
+        alreadyExists?: number;
+        skippedOld?: number;
+        reviewRequired?: number;
         missedTaskSweepSkipped?: boolean;
+        createMissedFines?: boolean;
         evasion?: { charged?: number };
       }>(response);
       if (!response.ok) {
@@ -788,8 +868,16 @@ export function AdminCleaningClient() {
           evasion: String(data.evasion?.charged ?? 0)
         })
       ];
-      if (data.missedTaskSweepSkipped) {
-        parts.push(t("adminCleaningOverdueRunSkippedMissed"));
+      if (data.missedTaskSweepSkipped || data.createMissedFines === false) {
+        parts.push(t("adminCleaningOverdueRunReviewOnly"));
+      } else {
+        parts.push(
+          t("adminCleaningOverdueRunFineBreakdown", undefined, {
+            created: String(data.created ?? 0),
+            alreadyExists: String(data.alreadyExists ?? 0),
+            skippedOld: String(data.skippedOld ?? data.reviewRequired ?? 0)
+          })
+        );
       }
       setMessage(parts.join(" "));
     } catch {
@@ -807,7 +895,8 @@ export function AdminCleaningClient() {
     }
     setAutoSchedulerConfig({
       ...data,
-      autoMissedCleaningFines: data.autoMissedCleaningFines ?? true
+      autoMissedCleaningFines: data.autoMissedCleaningFines ?? true,
+      missedFineLookbackDays: data.missedFineLookbackDays ?? 14
     });
   }
 
@@ -823,6 +912,7 @@ export function AdminCleaningClient() {
           actorEmail: activeEmail,
           enabled: autoSchedulerConfig.enabled,
           autoMissedCleaningFines: autoSchedulerConfig.autoMissedCleaningFines,
+          missedFineLookbackDays: autoSchedulerConfig.missedFineLookbackDays ?? 14,
           jobs: autoSchedulerConfig.jobs.map((job) => ({
             key: job.key,
             enabled: job.enabled,
@@ -1774,13 +1864,22 @@ export function AdminCleaningClient() {
             >
               {reviewQueueLoading ? t("refreshing") : t("adminCleaningReviewQueueRefresh")}
             </button>
+            <label className="flex items-center gap-1.5 text-xs text-slate-600">
+              <input
+                type="checkbox"
+                checked={manualSweepCreateFines}
+                onChange={(e) => setManualSweepCreateFines(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-amber-600"
+              />
+              {t("adminCleaningManualSweepCreateFines")}
+            </label>
             <button
               type="button"
               onClick={() => void runOverdueSweepManual()}
               disabled={loading || reviewQueueLoading}
               className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-60"
             >
-              {t("adminCleaningRunOverdueSweep")}
+              {manualSweepCreateFines ? t("adminCleaningRunOverdueSweepWithFines") : t("adminCleaningRunOverdueSweep")}
             </button>
           </div>
         </div>
@@ -1896,6 +1995,12 @@ export function AdminCleaningClient() {
                       visible: String(Math.min(overdueAssignedVisibleCount, overdueAssignedSortedNewestFirst.length)),
                       total: String(overdueAssignedSortedNewestFirst.length)
                     })}
+                    {overdueOutsideLookbackCount > 0
+                      ? ` · ${t("adminCleaningOverdueOutsideLookback", undefined, {
+                          count: String(overdueOutsideLookbackCount),
+                          days: String(reviewQueue?.missedFineLookbackDays ?? 14)
+                        })}`
+                      : ""}
                   </p>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
@@ -1910,25 +2015,34 @@ export function AdminCleaningClient() {
                     <button
                       type="button"
                       disabled={loading || bulkOverdueLoading}
-                      onClick={() => void bulkProcessOverdueTasks(
-                        "fine",
-                        overdueAssignedSortedNewestFirst.map((t) => t.id),
-                        missedFineSendEmail
-                      )}
-                      className="rounded-lg bg-rose-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+                      onClick={() => selectVisibleOverdueTasks()}
+                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                     >
-                      {t("adminCleaningIssueMissedFine")} ({overdueAssignedSortedNewestFirst.length})
+                      {t("adminCleaningSelectVisible")}
                     </button>
                     <button
                       type="button"
-                      disabled={loading || bulkOverdueLoading}
-                      onClick={() => void bulkProcessOverdueTasks(
-                        "dismiss",
-                        overdueAssignedSortedNewestFirst.map((t) => t.id)
-                      )}
+                      disabled={loading || bulkOverdueLoading || selectedOverdueTaskIds.length === 0}
+                      onClick={() => clearOverdueSelection()}
                       className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                     >
-                      {t("adminCleaningDismissTask")} ({overdueAssignedSortedNewestFirst.length})
+                      {t("adminCleaningClearSelection")} ({selectedOverdueTaskIds.length})
+                    </button>
+                    <button
+                      type="button"
+                      disabled={loading || bulkOverdueLoading || selectedOverdueTaskIds.length === 0}
+                      onClick={() => openBulkConfirm("fine")}
+                      className="rounded-lg bg-rose-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+                    >
+                      {t("adminCleaningIssueMissedFine")} ({selectedOverdueTaskIds.length})
+                    </button>
+                    <button
+                      type="button"
+                      disabled={loading || bulkOverdueLoading || selectedOverdueTaskIds.length === 0}
+                      onClick={() => openBulkConfirm("dismiss")}
+                      className="rounded-lg border border-slate-400 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                    >
+                      {t("adminCleaningDismissTask")} ({selectedOverdueTaskIds.length})
                     </button>
                   </div>
                 </>
@@ -1941,15 +2055,32 @@ export function AdminCleaningClient() {
                     {overdueAssignedSortedNewestFirst.slice(0, overdueAssignedVisibleCount).map((task) => (
                       <li
                         key={task.id}
-                        className="rounded-xl border border-rose-200 bg-rose-50/40 px-3 py-2 text-sm text-slate-800"
+                        className={`rounded-xl border px-3 py-2 text-sm text-slate-800 ${
+                          task.outsideLookback || task.reviewRequired
+                            ? "border-amber-300 bg-amber-50/50"
+                            : "border-rose-200 bg-rose-50/40"
+                        }`}
                       >
                         <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div>
+                          <div className="flex items-start gap-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedOverdueTaskIds.includes(task.id)}
+                              onChange={() => toggleOverdueTaskSelection(task.id)}
+                              className="mt-1 h-3.5 w-3.5 rounded border-slate-300 text-rose-600"
+                              aria-label={`Select ${task.userName || task.userEmail}`}
+                            />
+                            <div>
                             <div className="font-medium text-slate-900">{task.userName?.trim() || task.userEmail}</div>
                             <div className="text-xs text-slate-500">
                               {prettyTaskType(task.type, t)} · {task.bedDisplay ?? task.branchId} ·{" "}
                               {new Date(task.scheduledDate).toLocaleDateString(dateLocale)}
                             </div>
+                            {(task.outsideLookback || task.reviewRequired) ? (
+                              <div className="mt-1 text-xs font-medium text-amber-800">
+                                {t("adminCleaningReviewRequiredBadge")}
+                              </div>
+                            ) : null}
                             <div className="mt-1 text-xs text-slate-600">{task.userEmail}</div>
                             <div className="mt-1 flex items-center gap-1.5 text-xs text-rose-800">
                               {editingFineTaskId === task.id ? (
@@ -1994,6 +2125,7 @@ export function AdminCleaningClient() {
                               {!editingFineTaskId || editingFineTaskId !== task.id
                                 ? task.hasAutomaticFine ? ` · ${t("adminCleaningFineMayExist")}` : null
                                 : null}
+                            </div>
                             </div>
                           </div>
                           <div className="flex shrink-0 flex-col gap-1.5">
@@ -2153,6 +2285,28 @@ export function AdminCleaningClient() {
                         )
                       }
                       className="mt-3 h-4 w-4 rounded border-slate-300"
+                    />
+                  </label>
+
+                  <label className="mt-4 block rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-800">
+                    <div className="font-medium text-slate-900">{t("missedFineLookbackDaysLabel")}</div>
+                    <div className="mt-1 text-xs text-slate-600">{t("missedFineLookbackDaysDesc")}</div>
+                    <input
+                      type="number"
+                      min={1}
+                      max={90}
+                      value={autoSchedulerConfig.missedFineLookbackDays ?? 14}
+                      onChange={(event) =>
+                        setAutoSchedulerConfig((current) =>
+                          current
+                            ? {
+                                ...current,
+                                missedFineLookbackDays: Math.max(1, Math.min(90, Number(event.target.value) || 14))
+                              }
+                            : current
+                        )
+                      }
+                      className="mt-3 w-24 rounded border border-slate-300 px-2 py-1 text-sm"
                     />
                   </label>
 
@@ -2882,6 +3036,109 @@ export function AdminCleaningClient() {
           </div>
         </div>
       )}
+
+      {bulkConfirmDialog ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl space-y-3">
+            <h3 className="text-base font-semibold text-slate-900">
+              {bulkConfirmDialog.action === "fine"
+                ? t("adminCleaningBulkFineConfirmTitle")
+                : t("adminCleaningBulkDismissConfirmTitle")}
+            </h3>
+            {(() => {
+              const tasks = overdueAssignedSortedNewestFirst.filter((task) =>
+                bulkConfirmDialog.taskIds.includes(task.id)
+              );
+              const totalAmount = tasks.reduce((sum, task) => sum + (task.suggestedFineAmount || 0), 0);
+              const dates = tasks
+                .map((task) => new Date(task.scheduledDate).getTime())
+                .filter((value) => Number.isFinite(value));
+              const oldest = dates.length ? new Date(Math.min(...dates)).toLocaleDateString(dateLocale) : "—";
+              const newest = dates.length ? new Date(Math.max(...dates)).toLocaleDateString(dateLocale) : "—";
+              const olderThanLookback = tasks.filter((task) => task.outsideLookback || task.reviewRequired).length;
+              const typedPhrase = `ISSUE ${tasks.length} FINES`;
+              const needsTypedConfirm =
+                bulkConfirmDialog.action === "fine" && tasks.length >= BULK_FINE_TYPED_CONFIRM_THRESHOLD;
+              const typedOk = !needsTypedConfirm || bulkConfirmTypedText.trim().toUpperCase() === typedPhrase;
+              return (
+                <>
+                  <ul className="space-y-1 text-sm text-slate-700">
+                    <li>{t("adminCleaningBulkConfirmCount", undefined, { count: String(tasks.length) })}</li>
+                    {bulkConfirmDialog.action === "fine" ? (
+                      <li>
+                        {t("adminCleaningBulkConfirmAmount", undefined, {
+                          amount: totalAmount.toLocaleString(dateLocale)
+                        })}
+                      </li>
+                    ) : null}
+                    <li>{t("adminCleaningBulkConfirmDates", undefined, { oldest, newest })}</li>
+                    <li>
+                      {t("adminCleaningBulkConfirmOlder", undefined, {
+                        count: String(olderThanLookback),
+                        days: String(reviewQueue?.missedFineLookbackDays ?? 14)
+                      })}
+                    </li>
+                    {bulkConfirmDialog.action === "fine" ? (
+                      <li>
+                        {missedFineSendEmail
+                          ? t("adminCleaningBulkConfirmEmailYes")
+                          : t("adminCleaningBulkConfirmEmailNo")}
+                      </li>
+                    ) : null}
+                  </ul>
+                  {needsTypedConfirm ? (
+                    <label className="block text-sm text-slate-700">
+                      {t("adminCleaningBulkConfirmTypePrompt", undefined, { phrase: typedPhrase })}
+                      <input
+                        type="text"
+                        value={bulkConfirmTypedText}
+                        onChange={(e) => setBulkConfirmTypedText(e.target.value)}
+                        className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                        autoComplete="off"
+                      />
+                    </label>
+                  ) : null}
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      disabled={bulkOverdueLoading || !typedOk}
+                      onClick={() =>
+                        void bulkProcessOverdueTasks(
+                          bulkConfirmDialog.action,
+                          bulkConfirmDialog.taskIds,
+                          bulkConfirmDialog.action === "fine" ? missedFineSendEmail : false
+                        )
+                      }
+                      className={`flex-1 rounded-xl py-2.5 text-sm font-bold text-white disabled:opacity-50 ${
+                        bulkConfirmDialog.action === "fine"
+                          ? "bg-rose-600 hover:bg-rose-700"
+                          : "bg-slate-700 hover:bg-slate-800"
+                      }`}
+                    >
+                      {bulkOverdueLoading
+                        ? t("refreshing")
+                        : bulkConfirmDialog.action === "fine"
+                          ? t("adminCleaningIssueMissedFine")
+                          : t("adminCleaningDismissTask")}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={bulkOverdueLoading}
+                      onClick={() => {
+                        setBulkConfirmDialog(null);
+                        setBulkConfirmTypedText("");
+                      }}
+                      className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      {t("cancelLabel")}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -2311,6 +2311,72 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "Automatic missed-task fines are off — turn them on in Background auto-scheduler to include them in timed sweeps.",
     vi: "Đã tắt phạt tự động — bật trong “Lịch tự động nền” để lần quét theo giờ áp dụng."
   },
+  adminCleaningOverdueRunReviewOnly: {
+    en: "Review/refresh only — no missed-task fine tickets were created.",
+    vi: "Chỉ làm mới/xem xét — không tạo phiếu phạt bỏ lỡ."
+  },
+  adminCleaningOverdueRunFineBreakdown: {
+    en: "Created {created}; already existed {alreadyExists}; older backlog skipped {skippedOld}.",
+    vi: "Tạo mới {created}; đã có {alreadyExists}; bỏ qua backlog cũ {skippedOld}."
+  },
+  adminCleaningManualSweepCreateFines: {
+    en: "Also create missed fines (lookback-limited)",
+    vi: "Đồng thời tạo phạt bỏ lỡ (theo lookback)"
+  },
+  adminCleaningRunOverdueSweepWithFines: {
+    en: "Run overdue sweep + create fines",
+    vi: "Quét quá hạn + tạo phạt"
+  },
+  adminCleaningBulkFineResult: {
+    en: "Bulk fines — created: {created}, already existed: {alreadyExists}, skipped: {skipped}, failed: {failed}.",
+    vi: "Phạt hàng loạt — tạo: {created}, đã có: {alreadyExists}, bỏ qua: {skipped}, lỗi: {failed}."
+  },
+  adminCleaningSelectVisible: { en: "Select visible", vi: "Chọn đang hiện" },
+  adminCleaningClearSelection: { en: "Clear selection", vi: "Bỏ chọn" },
+  adminCleaningReviewRequiredBadge: {
+    en: "Outside auto lookback — review before fining",
+    vi: "Ngoài lookback tự động — xem xét trước khi phạt"
+  },
+  adminCleaningOverdueOutsideLookback: {
+    en: "{count} older than {days}-day lookback",
+    vi: "{count} cũ hơn lookback {days} ngày"
+  },
+  adminCleaningBulkFineConfirmTitle: {
+    en: "Confirm missed fines",
+    vi: "Xác nhận phạt bỏ lỡ"
+  },
+  adminCleaningBulkDismissConfirmTitle: {
+    en: "Confirm dismiss overdue tasks",
+    vi: "Xác nhận bỏ qua công việc quá hạn"
+  },
+  adminCleaningBulkConfirmCount: {
+    en: "Selected tasks: {count}",
+    vi: "Số công việc đã chọn: {count}"
+  },
+  adminCleaningBulkConfirmAmount: {
+    en: "Total proposed amount: {amount} VND",
+    vi: "Tổng mức phạt đề xuất: {amount} VND"
+  },
+  adminCleaningBulkConfirmDates: {
+    en: "Duty dates: oldest {oldest} → newest {newest}",
+    vi: "Ngày trực: cũ nhất {oldest} → mới nhất {newest}"
+  },
+  adminCleaningBulkConfirmOlder: {
+    en: "Older than {days}-day lookback: {count}",
+    vi: "Cũ hơn lookback {days} ngày: {count}"
+  },
+  adminCleaningBulkConfirmEmailYes: {
+    en: "Email notifications: YES",
+    vi: "Gửi email thông báo: CÓ"
+  },
+  adminCleaningBulkConfirmEmailNo: {
+    en: "Email notifications: no",
+    vi: "Gửi email thông báo: không"
+  },
+  adminCleaningBulkConfirmTypePrompt: {
+    en: "Type {phrase} to confirm this large batch",
+    vi: "Gõ {phrase} để xác nhận lô lớn này"
+  },
   adminCleaningRemovePastBlocked: {
     en: "Remove (future only)",
     vi: "Chỉ xóa lịch tương lai"
@@ -2320,8 +2386,16 @@ const translations: Record<string, { en: string; vi: string }> = {
     vi: "Phạt tự động khi quá hạn (quét nền)"
   },
   autoMissedCleaningFinesDesc: {
-    en: "When enabled, the API’s scheduled overdue sweep creates fine tickets and marks tasks missed after the deadline. Manual “Run full overdue sweep” always applies missed-task rules. Monthly evasion penalties still run separately.",
-    vi: "Khi bật, lần quét quá hạn theo lịch API sẽ tạo phiếu phạt và đánh dấu bỏ lỡ. Nút “Chạy quét quá hạn” luôn áp dụng quy tắc quá hạn. Phạt trốn tháng vẫn chạy riêng."
+    en: "When enabled, timed/startup sweeps create fine tickets only inside the lookback window. Manual review/refresh does not create tickets unless you explicitly opt in.",
+    vi: "Khi bật, quét theo lịch/khởi động chỉ tạo phiếu trong cửa sổ lookback. Làm mới thủ công không tạo phiếu trừ khi bạn chủ động bật."
+  },
+  missedFineLookbackDaysLabel: {
+    en: "Missed-fine auto lookback (days)",
+    vi: "Lookback phạt tự động (ngày)"
+  },
+  missedFineLookbackDaysDesc: {
+    en: "Automatic creation skips duties whose missed-fine deadline is older than this many days (default 14). They stay visible for manual review.",
+    vi: "Tạo tự động bỏ qua công việc có hạn phạt cũ hơn số ngày này (mặc định 14). Vẫn hiện để xem xét thủ công."
   },
   adminCleaningErrPreviewUsersForDate: {
     en: "Unable to preview users for {date}.",

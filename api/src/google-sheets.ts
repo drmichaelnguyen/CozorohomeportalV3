@@ -5,6 +5,7 @@ import { Readable } from "node:stream";
 import { calendar_v3, google, type sheets_v4 } from "googleapis";
 import { syncCleaningCoins, type CleaningCoinInput } from "./cleaning-coin-sync.js";
 import { withCoinWriteLock } from "./coin-write-lock.js";
+import { withDbAdvisoryLock } from "./db-advisory-lock.js";
 import { repairMojibake, repairUnknownText } from "./text-encoding.js";
 import { isBranchAutomationDisabled } from "./branch-closure.js";
 import { compressFineEvidence } from "./fine-evidence-compress.js";
@@ -24,6 +25,10 @@ import {
 } from "./birthday-benefits.js";
 
 const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID ?? "";
+
+export function getGoogleSpreadsheetId() {
+  return spreadsheetId;
+}
 const paymentsSpreadsheetId = process.env.GOOGLE_PAYMENT_SPREADSHEET_ID ?? spreadsheetId;
 const sheetName = process.env.GOOGLE_SHEET_NAME ?? "COZORODATABASE";
 const coinsSheetName = process.env.GOOGLE_COINS_SHEET_NAME ?? "COZORO COINS";
@@ -5407,14 +5412,14 @@ export async function createAutomaticFineForEmail(input: {
 export async function createCleaningAuditFineOnce(
   input: Parameters<typeof createAutomaticFineForEmail>[0] & { taskId: string }
 ) {
-  return withCoinWriteLock(`cleaning-audit-fine:${spreadsheetId}:${input.taskId}`, async () => {
+  return withDbAdvisoryLock(`cleaning-audit-fine:${spreadsheetId}:${input.taskId}`, async () => {
     const marker = `Task ID: ${input.taskId}.`;
     const rows = await readFinesSheetRows();
     if (rows.some((row) => row[FINE_EMAIL_COLUMN]?.trim().toLowerCase() === input.email.trim().toLowerCase() &&
       (row[FINE_DESCRIPTION_COLUMN] ?? "").includes(marker))) return false;
     await createAutomaticFineForEmail(input);
     return true;
-  });
+  }, { busyMessage: "Cleaning audit fine is busy; please retry" });
 }
 
 export async function createAutomaticFineForEmailPaidByCoins(input: {

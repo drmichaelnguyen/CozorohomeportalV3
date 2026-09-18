@@ -48,6 +48,7 @@ import {
   createCleaningCalendarEvent,
   getCleaningCalendarTarget,
   getActiveClientByEmail,
+  getGoogleSpreadsheetId,
   getManagerFines,
   listCleaningCalendarEvents,
   readCachedClients,
@@ -59,6 +60,19 @@ import {
 } from "./google-sheets.js";
 import { isBranchAutomationDisabled, isCleaningTaskAutomationDisabled } from "./branch-closure.js";
 import { logAction } from "./action-log.js";
+import {
+  issueCleaningEvasionFineOnce,
+  issueMissedCleaningFineOnce,
+  isOutsideMissedFineLookback,
+  type MissedFineIssueOutcome
+} from "./cleaning-missed-fine-issue.js";
+import {
+  dismissOverdueAssignedTaskOnce
+} from "./cleaning-overdue-dismiss.js";
+import {
+  DEFAULT_MISSED_FINE_LOOKBACK_DAYS,
+  getCleaningAutoSchedulerConfig
+} from "./cleaning-scheduler-config.js";
 import {
   type CorrectionPayload,
   inferCorrectionAction,
@@ -4404,57 +4418,146 @@ function isAssignedTaskPastMissedFineDeadline(task: CleaningTaskRecord, now: Dat
   return getMissedCleaningFineThresholdDate(task).getTime() <= now.getTime();
 }
 
+function actorFieldsForCleaningFineOperator(operatorLabel: string) {
+  const isSystem = operatorLabel === AUTO_CLEANING_FINE_OPERATOR;
+  return {
+    actorEmail: isSystem ? null : operatorLabel,
+    actorRole: isSystem ? ("system" as const) : ("manager" as const)
+  };
+}
+
+function actionForMissedFineOutcome(outcome: MissedFineIssueOutcome) {
+  switch (outcome) {
+    case "created":
+      return "cleaning.task.missed_fine";
+    case "alreadyExists":
+      return "cleaning.task.missed_fine_already_exists";
+    case "skippedOld":
+      return "cleaning.task.missed_fine_skipped_old";
+    default:
+      return "cleaning.task.missed_fine_skipped";
+  }
+}
+
 async function markAssignedTaskMissedWithFine(
   currentTask: CleaningTaskRecord,
   knownFines: Awaited<ReturnType<typeof getManagerFines>>,
   now: Date,
   operatorLabel: string,
   customAmount?: number,
-  peerPendingDuties: Array<{ taskId: string; dutyDate: Date; content: string }> = []
-) {
-  const cancellation = await getDutyCancellationByTaskId(currentTask.id);
-  if (isReleasedOrExemptCancellationStatus(cancellation?.status)) {
-    await logAction({
-      actorEmail: operatorLabel === AUTO_CLEANING_FINE_OPERATOR ? null : operatorLabel,
-      actorRole: operatorLabel === AUTO_CLEANING_FINE_OPERATOR ? "system" : "manager",
-      action: "cleaning.task.missed_fine_skipped",
-      entityType: "CleaningTask",
-      entityId: currentTask.id,
-      entityLabel: `${currentTask.type}|${currentTask.scheduledDate.toISOString().slice(0, 10)}`,
-      details: `reason=duty_${cancellation?.status?.toLowerCase() ?? "exempt"}`
-    });
-    return { missedTask: currentTask, fineAmount: 0, skipped: true as const };
+  peerPendingDuties: Array<{ taskId: string; dutyDate: Date; content: string }> = [],
+  options?: {
+    lookbackDays?: number | null;
+    batchId?: string;
   }
+) {
+  const lookbackDays = options?.lookbackDays ?? null;
+  const batchSuffix = options?.batchId ? `;batchId=${options.batchId}` : "";
 
-  const existingFine = knownFines.find((entry) => isAutomaticCleaningFineForTask(entry.row, currentTask.id));
-  const fineAmount = customAmount != null
-    ? customAmount
-    : existingFine
-      ? parseFineAmount(existingFine.row[FINE_AMOUNT_COLUMN])
-      : await getMissedCleaningFineAmount(currentTask, knownFines, peerPendingDuties);
-  const fineContent = getAutomaticCleaningFineContent(currentTask.type);
-  const fineDescription = getAutomaticCleaningFineDescription(currentTask, now);
+  const result = await issueMissedCleaningFineOnce({
+    spreadsheetId: getGoogleSpreadsheetId(),
+    taskId: currentTask.id,
+    operatorLabel,
+    now,
+    customAmount,
+    lookbackDays,
+    getMissedFineDeadline: (task) => getMissedCleaningFineThresholdDate(task as CleaningTaskRecord),
+    findTask: async (taskId) => findUniqueCleaningTask({ where: { id: taskId } }),
+    isCancelledOrExempt: async (taskId) => {
+      const cancellation = await getDutyCancellationByTaskId(taskId);
+      return isReleasedOrExemptCancellationStatus(cancellation?.status);
+    },
+    readFinesSheetRows,
+    computeFineAmount: async (task, sheetRows) => {
+      const syntheticKnown = sheetRows.map((row) => ({
+        row: row as Awaited<ReturnType<typeof getManagerFines>>[number]["row"],
+        parsedTimestamp: null as string | null,
+        parsedDueDate: null as string | null,
+        coinPayment: {
+          coinCost: 0,
+          currentCoins: 0,
+          canPay: false,
+          recordedMember: "",
+          multiplier: 1,
+          isPaid: false
+        }
+      })) as Awaited<ReturnType<typeof getManagerFines>>;
+      return getMissedCleaningFineAmount(task as CleaningTaskRecord, syntheticKnown, peerPendingDuties);
+    },
+    buildFineContent: (task) => getAutomaticCleaningFineContent(task.type as CleaningTaskType),
+    buildFineDescription: (task, issuedAt) =>
+      getAutomaticCleaningFineDescription(task as CleaningTaskRecord, issuedAt),
+    buildFineLocation: (task) =>
+      task.type === CleaningTaskType.TRASH_D7 && task.floor
+        ? `${task.branchId} floor ${task.floor}`
+        : task.branchId,
+    createFine: async (input) => createAutomaticFineForEmail(input),
+    markTaskMissed: async ({ taskId, fineAmount, operatorLabel: operator, now: issuedAt }) => {
+      const missedTask = await updateCleaningTask({
+        where: { id: taskId },
+        data: {
+          status: CleaningTaskStatus.MISSED,
+          auditorNote: `${operator === AUTO_CLEANING_FINE_OPERATOR ? "Auto-marked" : "Marked"} as missed on ${issuedAt.toISOString()}. Fine amount: ${fineAmount} VND.`
+        }
+      });
 
-  if (!existingFine) {
-    await createAutomaticFineForEmail({
-      email: currentTask.userEmail,
-      amount: fineAmount,
-      content: fineContent,
-      description: fineDescription,
-      location:
-        currentTask.type === CleaningTaskType.TRASH_D7 && currentTask.floor
-          ? `${currentTask.branchId} floor ${currentTask.floor}`
-          : currentTask.branchId,
-      operator: operatorLabel
-    });
+      await logAction({
+        ...actorFieldsForCleaningFineOperator(operator),
+        action: "cleaning.task.missed",
+        entityType: "CleaningTask",
+        entityId: missedTask.id,
+        entityLabel: `${missedTask.type}|${missedTask.scheduledDate.toISOString().slice(0, 10)}`,
+        details: `fineAmount=${fineAmount}${batchSuffix}`
+      });
 
+      if (missedTask.calendarId && missedTask.calendarEventId) {
+        const target = getCleaningCalendarTarget(missedTask.type, { floor: missedTask.floor });
+        if (target) {
+          await updateCleaningCalendarEvent({
+            calendarId: missedTask.calendarId,
+            eventId: missedTask.calendarEventId,
+            title: target.title,
+            scheduledDate: missedTask.scheduledDate,
+            userEmail: missedTask.userEmail,
+            userName: missedTask.userName,
+            branchId: missedTask.branchId,
+            floor: missedTask.floor,
+            rewardCoins: missedTask.rewardCoins,
+            type: missedTask.type,
+            status: missedTask.status,
+            completedAt: missedTask.completedAt,
+            completionNote: missedTask.completionNote,
+            completionPhoto: missedTask.completionPhoto,
+            auditorNote: missedTask.auditorNote
+          });
+        }
+      }
+
+      await invalidateCleaningOverviewCache(missedTask.userEmail);
+      return missedTask;
+    },
+    logOutcome: async ({ outcome, task, fineAmount, operatorLabel: operator, reason }) => {
+      await logAction({
+        ...actorFieldsForCleaningFineOperator(operator),
+        action: actionForMissedFineOutcome(outcome),
+        entityType: "CleaningTask",
+        entityId: task.id,
+        entityLabel: `${task.type}|${new Date(task.scheduledDate).toISOString().slice(0, 10)}`,
+        details: `fineAmount=${fineAmount};outcome=${outcome}${reason ? `;reason=${reason}` : ""}${batchSuffix}`
+      });
+    }
+  });
+
+  if (result.outcome === "created") {
+    const fineContent = getAutomaticCleaningFineContent(currentTask.type);
+    const fineDescription = getAutomaticCleaningFineDescription(currentTask, now);
     knownFines.push({
       row: {
         EMAIL: currentTask.userEmail,
         [FINE_TIMESTAMP_COLUMN]: now.toISOString(),
         [FINE_CONTENT_COLUMN]: fineContent,
         [FINE_DESCRIPTION_COLUMN]: fineDescription,
-        [FINE_AMOUNT_COLUMN]: String(fineAmount)
+        [FINE_AMOUNT_COLUMN]: String(result.fineAmount)
       },
       parsedTimestamp: now.toISOString(),
       parsedDueDate: null,
@@ -4467,63 +4570,28 @@ async function markAssignedTaskMissedWithFine(
         isPaid: false
       }
     });
-
-    await logAction({
-      actorEmail: operatorLabel === AUTO_CLEANING_FINE_OPERATOR ? null : operatorLabel,
-      actorRole: operatorLabel === AUTO_CLEANING_FINE_OPERATOR ? "system" : "manager",
-      action: "cleaning.task.missed_fine",
-      entityType: "CleaningTask",
-      entityId: currentTask.id,
-      entityLabel: `${currentTask.type}|${currentTask.scheduledDate.toISOString().slice(0, 10)}`,
-      details: `fineAmount=${fineAmount}`
-    });
   }
 
-  const missedTask = await updateCleaningTask({
-    where: { id: currentTask.id },
-    data: {
-      status: CleaningTaskStatus.MISSED,
-      auditorNote: `${operatorLabel === AUTO_CLEANING_FINE_OPERATOR ? "Auto-marked" : "Marked"} as missed on ${now.toISOString()}. Fine amount: ${fineAmount} VND.`
-    }
-  });
-  await logAction({
-    actorEmail: operatorLabel === AUTO_CLEANING_FINE_OPERATOR ? null : operatorLabel,
-    actorRole: operatorLabel === AUTO_CLEANING_FINE_OPERATOR ? "system" : "manager",
-    action: "cleaning.task.missed",
-    entityType: "CleaningTask",
-    entityId: missedTask.id,
-    entityLabel: `${missedTask.type}|${missedTask.scheduledDate.toISOString().slice(0, 10)}`,
-    details: `fineAmount=${fineAmount}`
-  });
+  const missedTask =
+    result.outcome === "created" || result.outcome === "alreadyExists"
+      ? ((await findUniqueCleaningTask({ where: { id: currentTask.id } })) ?? currentTask)
+      : currentTask;
 
-  if (missedTask.calendarId && missedTask.calendarEventId) {
-    const target = getCleaningCalendarTarget(missedTask.type, { floor: missedTask.floor });
-    if (target) {
-      await updateCleaningCalendarEvent({
-        calendarId: missedTask.calendarId,
-        eventId: missedTask.calendarEventId,
-        title: target.title,
-        scheduledDate: missedTask.scheduledDate,
-        userEmail: missedTask.userEmail,
-        userName: missedTask.userName,
-        branchId: missedTask.branchId,
-        floor: missedTask.floor,
-        rewardCoins: missedTask.rewardCoins,
-        type: missedTask.type,
-        status: missedTask.status,
-        completedAt: missedTask.completedAt,
-        completionNote: missedTask.completionNote,
-        completionPhoto: missedTask.completionPhoto,
-        auditorNote: missedTask.auditorNote
-      });
-    }
-  }
-
-  await invalidateCleaningOverviewCache(missedTask.userEmail);
-  return { missedTask, fineAmount, skipped: false as const };
+  return {
+    missedTask,
+    fineAmount: result.fineAmount,
+    outcome: result.outcome,
+    skipped: result.outcome === "skipped" || result.outcome === "skippedOld",
+    reason: result.reason
+  };
 }
 
-export async function adminMarkMissedCleaningTaskFine(taskId: string, operatorEmail: string, customAmount?: number) {
+export async function adminMarkMissedCleaningTaskFine(
+  taskId: string,
+  operatorEmail: string,
+  customAmount?: number,
+  options?: { batchId?: string }
+) {
   const now = new Date();
   const task = await findUniqueCleaningTask({ where: { id: taskId } });
   if (!task) {
@@ -4553,54 +4621,115 @@ export async function adminMarkMissedCleaningTaskFine(taskId: string, operatorEm
       content: getAutomaticCleaningFineContent(candidate.type)
     }));
   const operator = operatorEmail.trim() || AUTO_CLEANING_FINE_OPERATOR;
-  const { missedTask, fineAmount, skipped } = await markAssignedTaskMissedWithFine(
+  const { missedTask, fineAmount, outcome, skipped, reason } = await markAssignedTaskMissedWithFine(
     task,
     knownFines,
     now,
     operator,
     customAmount,
-    peerPendingDuties
+    peerPendingDuties,
+    { lookbackDays: null, batchId: options?.batchId }
   );
-  if (skipped) {
+  if (skipped && outcome === "skipped" && reason === "cancelled_or_exempt") {
     throw new Error("This duty was already released or exempted; a missed-duty fine was not created.");
+  }
+  if (skipped) {
+    throw new Error(reason ? `Missed-duty fine was not created (${reason}).` : "Missed-duty fine was not created.");
   }
 
   return {
     taskId: missedTask.id,
     userEmail: missedTask.userEmail,
     fineAmount,
+    outcome,
     task: missedTask
   };
 }
 
-const DISMISSED_OVERDUE_TASK_NOTE_PREFIX = "[Dismissed overdue task]";
-
 export async function adminDismissMissedCleaningTask(taskId: string, operatorEmail: string) {
   const now = new Date();
-  const task = await findUniqueCleaningTask({ where: { id: taskId } });
-  if (!task) {
-    throw new Error("Cleaning task not found");
-  }
-  if (task.status !== CleaningTaskStatus.ASSIGNED) {
-    throw new Error("Only assigned tasks can be dismissed.");
-  }
-  if (!isAssignedTaskPastMissedFineDeadline(task, now)) {
-    throw new Error("This task is not past the completion deadline yet.");
-  }
-
   const reviewer = operatorEmail.trim() || AUTO_CLEANING_FINE_OPERATOR;
-  const note = `${DISMISSED_OVERDUE_TASK_NOTE_PREFIX} by ${reviewer} on ${now.toISOString()}`;
-  const dismissedTask = await auditCleaningTask({
+
+  const result = await dismissOverdueAssignedTaskOnce({
     taskId,
     reviewer,
-    decision: CleaningAuditDecision.REJECT,
-    note
+    now,
+    findTask: async (id) => findUniqueCleaningTask({ where: { id } }),
+    isPastMissedFineDeadline: (task, at) =>
+      isAssignedTaskPastMissedFineDeadline(task as CleaningTaskRecord, at),
+    claimAssignedAsRejected: async ({ taskId: id, auditorNote }) =>
+      prisma.cleaningTask.updateMany({
+        where: { id, status: CleaningTaskStatus.ASSIGNED },
+        data: {
+          status: CleaningTaskStatus.REJECTED,
+          auditorNote
+        }
+      }),
+    createAudit: async ({ taskId: id, reviewer: auditReviewer, note }) => {
+      await prisma.cleaningAudit.create({
+        data: {
+          taskId: id,
+          reviewer: auditReviewer,
+          decision: CleaningAuditDecision.REJECT,
+          note
+        }
+      });
+    },
+    logDismiss: async ({ task, reviewer: actor, note, outcome }) => {
+      if (outcome !== "dismissed") {
+        return;
+      }
+      await logAction({
+        actorEmail: actor.trim().toLowerCase(),
+        actorName: actor.trim(),
+        actorRole: "manager",
+        action: "cleaning.task.overdue_dismissed",
+        entityType: "CleaningTask",
+        entityId: task.id,
+        entityLabel: `${task.type}|${new Date(task.scheduledDate).toISOString().slice(0, 10)}`,
+        details: `outcome=${outcome}; note=${note}`
+      });
+    },
+    syncCalendar: async (task, reviewedBy) => {
+      if (!task.calendarId || !task.calendarEventId) {
+        return;
+      }
+      const target = getCleaningCalendarTarget(task.type as CleaningTaskType, { floor: task.floor });
+      if (!target) {
+        return;
+      }
+      await updateCleaningCalendarEvent({
+        calendarId: task.calendarId,
+        eventId: task.calendarEventId,
+        title: target.title,
+        scheduledDate: task.scheduledDate,
+        userEmail: task.userEmail,
+        userName: task.userName,
+        branchId: task.branchId,
+        floor: task.floor,
+        rewardCoins: task.rewardCoins ?? 0,
+        type: task.type as CleaningTaskType,
+        status: CleaningTaskStatus.REJECTED,
+        completedAt: task.completedAt ?? null,
+        completionNote: task.completionNote ?? null,
+        completionPhoto: task.completionPhoto ?? null,
+        auditorNote: task.auditorNote ?? null,
+        reviewedBy
+      });
+    },
+    invalidateOverview: async (email) => {
+      await invalidateCleaningOverviewCache(email);
+    }
   });
 
-  await invalidateCleaningOverviewCache(dismissedTask.userEmail);
+  const dismissedTask =
+    (await findUniqueCleaningTask({ where: { id: taskId } })) ??
+    (result.task as CleaningTaskRecord);
+
   return {
     taskId: dismissedTask.id,
     userEmail: dismissedTask.userEmail,
+    outcome: result.outcome,
     task: dismissedTask
   };
 }
@@ -4669,7 +4798,12 @@ export async function getCleaningManagerReviewQueue(now = new Date()) {
     hasAutomaticFine: boolean;
     suggestedFineAmount: number;
     missedFineDeadlineAt: string;
+    outsideLookback: boolean;
+    reviewRequired: boolean;
   }> = [];
+
+  const schedulerConfig = await getCleaningAutoSchedulerConfig();
+  const lookbackDays = schedulerConfig.missedFineLookbackDays ?? DEFAULT_MISSED_FINE_LOOKBACK_DAYS;
 
   for (const task of assignedTasks) {
     if (!isAssignedTaskPastMissedFineDeadline(task, now)) {
@@ -4689,6 +4823,12 @@ export async function getCleaningManagerReviewQueue(now = new Date()) {
     const suggestedFineAmount = existingFine
       ? parseFineAmount(existingFine.row[FINE_AMOUNT_COLUMN])
       : await getMissedCleaningFineAmount(task, knownFines, peerPendingDuties);
+    const missedFineDeadlineAt = getMissedCleaningFineThresholdDate(task);
+    const outsideLookback = isOutsideMissedFineLookback({
+      missedFineDeadlineAt,
+      now,
+      lookbackDays
+    });
     overdueAssigned.push({
       id: task.id,
       userEmail: task.userEmail,
@@ -4702,14 +4842,34 @@ export async function getCleaningManagerReviewQueue(now = new Date()) {
       rewardCoins: task.rewardCoins,
       hasAutomaticFine: Boolean(existingFine),
       suggestedFineAmount,
-      missedFineDeadlineAt: getMissedCleaningFineThresholdDate(task).toISOString()
+      missedFineDeadlineAt: missedFineDeadlineAt.toISOString(),
+      outsideLookback,
+      reviewRequired: outsideLookback
     });
   }
 
-  return { pendingAudit, overdueAssigned };
+  return {
+    pendingAudit,
+    overdueAssigned,
+    missedFineLookbackDays: lookbackDays
+  };
 }
 
-export async function sweepOverdueCleaningTasks(now = new Date()) {
+export async function sweepOverdueCleaningTasks(
+  now = new Date(),
+  options?: {
+    createFines?: boolean;
+    lookbackDays?: number | null;
+    batchId?: string;
+  }
+) {
+  const createFines = options?.createFines !== false;
+  const lookbackDays =
+    options?.lookbackDays === undefined
+      ? (await getCleaningAutoSchedulerConfig()).missedFineLookbackDays ?? DEFAULT_MISSED_FINE_LOOKBACK_DAYS
+      : options.lookbackDays;
+  const batchId = options?.batchId ?? `sweep-${now.toISOString()}`;
+
   const overdueTasks = await findManyCleaningTasks({
     where: {
       status: CleaningTaskStatus.ASSIGNED
@@ -4723,7 +4883,40 @@ export async function sweepOverdueCleaningTasks(now = new Date()) {
     taskId: string;
     userEmail: string;
     fineAmount: number;
+    outcome: MissedFineIssueOutcome;
   }> = [];
+  const reviewRequired: Array<{ taskId: string; userEmail: string; missedFineDeadlineAt: string }> = [];
+  let created = 0;
+  let alreadyExists = 0;
+  let skipped = 0;
+  let skippedOld = 0;
+
+  if (!createFines) {
+    for (const task of overdueTasks) {
+      if (isCleaningTaskAutomationDisabled(task.type)) continue;
+      const fineThreshold = getMissedCleaningFineThresholdDate(task);
+      if (fineThreshold > now) continue;
+      reviewRequired.push({
+        taskId: task.id,
+        userEmail: task.userEmail,
+        missedFineDeadlineAt: fineThreshold.toISOString()
+      });
+    }
+    return {
+      scanned: overdueTasks.length,
+      markedMissed: 0,
+      created: 0,
+      alreadyExists: 0,
+      skipped: 0,
+      skippedOld: 0,
+      reviewRequired: reviewRequired.length,
+      tasks: results,
+      reviewRequiredTasks: reviewRequired,
+      batchId,
+      createFines: false
+    };
+  }
+
   const knownFines = await getManagerFines();
   const overdueEligible = overdueTasks.filter(
     (task) =>
@@ -4759,44 +4952,61 @@ export async function sweepOverdueCleaningTasks(now = new Date()) {
         content: getAutomaticCleaningFineContent(candidate.type)
       }));
 
-    const { missedTask, fineAmount, skipped } = await markAssignedTaskMissedWithFine(
+    const issued = await markAssignedTaskMissedWithFine(
       currentTask,
       knownFines,
       now,
       AUTO_CLEANING_FINE_OPERATOR,
       undefined,
-      peerPendingDuties
+      peerPendingDuties,
+      { lookbackDays, batchId }
     );
 
-    if (skipped) {
+    if (issued.outcome === "skippedOld") {
+      skippedOld += 1;
+      reviewRequired.push({
+        taskId: currentTask.id,
+        userEmail: currentTask.userEmail,
+        missedFineDeadlineAt: fineThreshold.toISOString()
+      });
       continue;
     }
 
+    if (issued.outcome === "skipped") {
+      skipped += 1;
+      continue;
+    }
+
+    if (issued.outcome === "created") created += 1;
+    if (issued.outcome === "alreadyExists") alreadyExists += 1;
+
     results.push({
-      taskId: missedTask.id,
-      userEmail: missedTask.userEmail,
-      fineAmount
+      taskId: issued.missedTask.id,
+      userEmail: issued.missedTask.userEmail,
+      fineAmount: issued.fineAmount,
+      outcome: issued.outcome
     });
   }
 
   return {
     scanned: overdueTasks.length,
     markedMissed: results.length,
-    tasks: results
+    created,
+    alreadyExists,
+    skipped,
+    skippedOld,
+    reviewRequired: reviewRequired.length,
+    tasks: results,
+    reviewRequiredTasks: reviewRequired,
+    batchId,
+    createFines: true,
+    lookbackDays
   };
 }
 
 const MONTHLY_EVASION_FINE_AMOUNT = 100000;
 const MONTHLY_EVASION_FINE_CONTENT = "Cleaning duty evasion";
 const MONTHLY_EVASION_UNAVAILABLE_THRESHOLD = 15;
-
-function isEvasionFineForUserMonth(row: Record<string, string>, email: string, month: string) {
-  return (
-    row["EMAIL"]?.trim().toLowerCase() === email.toLowerCase() &&
-    row[FINE_CONTENT_COLUMN] === MONTHLY_EVASION_FINE_CONTENT &&
-    (row[FINE_DESCRIPTION_COLUMN] ?? "").includes(month)
-  );
-}
 
 // Charges users who evaded cleaning duties for the previous month:
 // - Marked UNAVAILABLE more than 15 days
@@ -4811,7 +5021,8 @@ export async function sweepMonthlyEvasionPenalties(now = new Date()) {
   const activeUsers = await getActiveCleaningUsers();
   const contractOptOutLookup = await getContractCleaningOptOutLookup(activeUsers.map((user) => getUserContractCode(user)));
   const knownFines = await getManagerFines();
-  const results: Array<{ email: string; month: string; unavailableDays: number; releases: number }> = [];
+  const results: Array<{ email: string; month: string; unavailableDays: number; releases: number; outcome: string }> = [];
+  let alreadyExists = 0;
 
   for (const user of activeUsers) {
     const email = user.email;
@@ -4822,7 +5033,12 @@ export async function sweepMonthlyEvasionPenalties(now = new Date()) {
       continue;
     }
 
-    if (knownFines.some((f) => isEvasionFineForUserMonth(f.row, email, month))) {
+    if (knownFines.some((f) =>
+      f.row["EMAIL"]?.trim().toLowerCase() === email.toLowerCase() &&
+      f.row[FINE_CONTENT_COLUMN] === MONTHLY_EVASION_FINE_CONTENT &&
+      (f.row[FINE_DESCRIPTION_COLUMN] ?? "").includes(month)
+    )) {
+      alreadyExists += 1;
       continue;
     }
 
@@ -4854,19 +5070,67 @@ export async function sweepMonthlyEvasionPenalties(now = new Date()) {
     });
     if (taskInMonth) continue;
 
-    await createAutomaticFineForEmail({
+    const issued = await issueCleaningEvasionFineOnce({
+      spreadsheetId: getGoogleSpreadsheetId(),
       email,
+      month,
       amount: MONTHLY_EVASION_FINE_AMOUNT,
       content: MONTHLY_EVASION_FINE_CONTENT,
       description: `Cleaning duty evasion for ${month}: ${unavailableDays} unavailable days, ${releases} task release(s), no completed cleaning task.`,
       location: user.branchId,
-      operator: AUTO_CLEANING_FINE_OPERATOR
+      operator: AUTO_CLEANING_FINE_OPERATOR,
+      readFinesSheetRows,
+      createFine: async (input) => createAutomaticFineForEmail(input),
+      logOutcome: async ({ outcome, email: loggedEmail, month: loggedMonth }) => {
+        await logAction({
+          actorEmail: null,
+          actorRole: "system",
+          action:
+            outcome === "created"
+              ? "cleaning.evasion_fine"
+              : "cleaning.evasion_fine_already_exists",
+          entityType: "CleaningEvasionFine",
+          entityId: `${loggedEmail}|${loggedMonth}`,
+          entityLabel: loggedMonth,
+          details: `outcome=${outcome};unavailableDays=${unavailableDays};releases=${releases}`
+        });
+      }
     });
 
-    results.push({ email, month, unavailableDays, releases });
+    if (issued.outcome === "alreadyExists") {
+      alreadyExists += 1;
+      continue;
+    }
+
+    knownFines.push({
+      row: {
+        EMAIL: email,
+        [FINE_TIMESTAMP_COLUMN]: now.toISOString(),
+        [FINE_CONTENT_COLUMN]: MONTHLY_EVASION_FINE_CONTENT,
+        [FINE_DESCRIPTION_COLUMN]: `Cleaning duty evasion for ${month}`,
+        [FINE_AMOUNT_COLUMN]: String(MONTHLY_EVASION_FINE_AMOUNT)
+      } as Awaited<ReturnType<typeof getManagerFines>>[number]["row"],
+      parsedTimestamp: now.toISOString(),
+      parsedDueDate: null,
+      coinPayment: {
+        coinCost: 0,
+        currentCoins: 0,
+        canPay: false,
+        recordedMember: "",
+        multiplier: 1,
+        isPaid: false
+      }
+    });
+
+    results.push({ email, month, unavailableDays, releases, outcome: issued.outcome });
   }
 
-  return { scanned: activeUsers.length, charged: results.length, entries: results };
+  return {
+    scanned: activeUsers.length,
+    charged: results.length,
+    alreadyExists,
+    entries: results
+  };
 }
 
 export async function getUserCleaningContext(email: string) {

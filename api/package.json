@@ -1,6 +1,6 @@
 {
   "name": "cozorohome-api",
-  "version": "3.9.42",
+  "version": "3.9.43",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "test:coins": "node --import tsx --test tests/cleaning-coin-sync.test.ts tests/resolve-current-coins.test.ts",
     "test:laundry": "node --import tsx --test tests/laundry-away-date.test.ts",
-    "test:cleaning": "node --import tsx --test tests/cleaning-availability-fines.test.ts tests/cleaning-release-confirmation.test.ts",
+    "test:cleaning": "node --import tsx --test tests/cleaning-availability-fines.test.ts tests/cleaning-release-confirmation.test.ts tests/cleaning-missed-fine-idempotency.test.ts tests/cleaning-overdue-dismiss.test.ts",
     "build": "pnpm run prisma:generate && tsc -p tsconfig.json",
     "start": "node dist/src/index.js",
     "prisma:generate": "node ../scripts/verify-package-json.mjs && prisma generate",
