@@ -250,6 +250,8 @@ model CleaningTask {
   aiScore          Int?
   aiNote           String?            @db.Text
   aiVerifiedAt     DateTime?
+  /// Mirrored from the latest human APPROVE audit (1–5). Cleared on REJECT. Used for learned AI references.
+  managerRating    Int?
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
   audits           CleaningAudit[]
@@ -259,6 +261,7 @@ model CleaningTask {
   @@index([userEmail, scheduledDate])
   @@index([branchId, scheduledDate])
   @@index([type, scheduledDate])
+  @@index([type, branchId, status, managerRating])
 }
 
 /// Kept independently of tasks so discussions survive schedule corrections/deletion.
@@ -293,13 +296,15 @@ model CleaningAssignmentReviewMessage {
 }
 
 model CleaningAudit {
-  id         String               @id @default(cuid())
-  taskId      String
-  task        CleaningTask        @relation(fields: [taskId], references: [id])
-  reviewer    String
-  decision    CleaningAuditDecision
-  note        String?
-  createdAt   DateTime            @default(now())
+  id            String               @id @default(cuid())
+  taskId         String
+  task           CleaningTask        @relation(fields: [taskId], references: [id])
+  reviewer       String
+  decision       CleaningAuditDecision
+  note           String?
+  /// Optional 1–5 quality stars on human APPROVE only (never set by AI auto-approve).
+  qualityRating  Int?
+  createdAt      DateTime            @default(now())
 
   @@index([taskId, createdAt])
 }
@@ -324,13 +329,15 @@ model CleaningReferencePhoto {
 
 /// Resident completion photos submitted when marking a cleaning task done.
 model CleaningCompletionPhoto {
-  id          String       @id @default(cuid())
-  taskId      String
-  task        CleaningTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  storageName String       @unique
-  fileName    String
-  sortOrder   Int          @default(0)
-  createdAt   DateTime     @default(now())
+  id                    String       @id @default(cuid())
+  taskId                String
+  task                  CleaningTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  storageName           String       @unique
+  fileName              String
+  sortOrder             Int          @default(0)
+  /// When true, this photo is never used as a learned AI reference even if the task is ★4–5 approved.
+  excludedFromReference Boolean      @default(false)
+  createdAt             DateTime     @default(now())
 
   @@index([taskId, sortOrder])
 }

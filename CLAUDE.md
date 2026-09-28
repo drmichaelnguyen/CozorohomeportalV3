@@ -175,8 +175,11 @@ const nextConfig: NextConfig = {
 | `GET /cleaning/me?email=` | Load resident's cleaning overview (tasks, availability, occupied slots) |
 | `POST /cleaning/self-assign/check` | Validate self-assignment before submitting |
 | `POST /cleaning/self-assign` | Submit self-assignment |
-| `POST /cleaning/tasks/:id/complete` | Mark task done |
+| `POST /cleaning/tasks/:id/complete` | Mark task done (client-compressed photos; server saves files before status; calendar/AI run in background) |
 | `POST /cleaning/tasks/:id/release` | Release task (with penalty calculation) |
+| `POST /admin/cleaning/tasks/:id/audit` | Approve/reject; optional human `qualityRating` 1–5 on APPROVE (mirrored to `managerRating`; never set by AI auto-approve) |
+| `GET /manager/cleaning/reference-photos` | Staff references + learned ★4–5 completion photos for an area |
+| `POST /manager/cleaning/completion-photos/:id/exclude-reference` | Exclude a learned completion photo from AI reference fallback |
 | `GET /support/notifications?email=` | Resident notifications by type (SUPPORT_REPLY, PAYMENT_DUE, NEW_FINE, LAUNDRY_REMINDER, CLEANING_REMINDER, SELF_ASSIGN_OPPORTUNITY) |
 | `GET /support/attachments/:id` | Stream a chat image for an authorized viewer (`email` query); files under `api/data/chat-attachments/` |
 | Support / group message POSTs | Optional `attachments[]` (`dataUrl`, `fileName`, `width`, `height`) — max 3 images, JPEG/PNG/WebP, ~2 MB each after client compress. Resident **personal** support messages with text and/or images also trigger Cozoro Assistant (vision on latest message photos); see `docs/support-assistant-vision.md`. |
@@ -284,6 +287,8 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 - **Calendar colors**: green = open slot, blue = taken by another resident, amber dot = your task, rose = Vietnam national holiday
 - **Auto / manager ranking** (shared): Preferred → Available → unmarked, then fewest **per-type** tasks in 60 days, then soft demotion from recent manager corrections, then name. Background auto, manager available-users list, bulk preview/commit, release replacement, and swap candidates all use this order. Full write-up: [`docs/cleaning-auto-assign.md`](docs/cleaning-auto-assign.md).
 - **Post-release re-place**: releaser is only put on a later same-type open slot within 15 days if they are the top underdue candidate for that slot (not blindly the next empty day).
+- **Completion photos**: client compresses at pick time (≤1920px, JPEG ~0.8, target ≤1.5 MB); server writes files before status change; only `ASSIGNED` or same-resident `DONE_PENDING_AUDIT` retry can complete (never downgrade APPROVED/REJECTED); Calendar + AI verification run after the response. Full reference rules: [`docs/cleaning-photo-references.md`](docs/cleaning-photo-references.md).
+- **AI photo references**: staff-uploaded `CleaningReferencePhoto` rows win when present (photos then **mandatory**). Otherwise fall back to learned completion photos from human ★4–5 approvals (last 180 days, max 5 / max 2 per task); photos stay optional but are AI-checked when provided. Reject clears `managerRating`. Managers can exclude bad learned photos.
 
 ---
 
@@ -291,6 +296,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.44 | Faster/reliable cleaning completion uploads (client compress, save-photos-first, background AI/calendar); manager ★1–5 quality rating on approve; learned ★4–5 photos used as AI references when staff refs are missing; see `docs/cleaning-photo-references.md`. |
 | 3.9.43 | Missed-cleaning fine safety (advisory-lock idempotency, bulk selection+confirm, lookback-limited auto fines, manual sweep review-only) plus overdue dismiss `ASSIGNED→REJECTED` path that no longer fails via photo-audit rejection; report-only duplicate diagnostic. |
 | 3.9.42 | AI chat replies (Cozoro Assistant, Bee, manager AI) render markdown as formatted text instead of raw `**asterisks**`. |
 | 3.9.41 | Hostel guest booking stay dates use Asia/Ho_Chi_Minh (not Vancouver host TZ) for defaults, past-date guards, face-capture/cancellation 48h windows, and manager current/past guests; see `docs/hostel-booking-dates.md`. |

@@ -12,6 +12,7 @@ import {
   isVietnamNationalHoliday,
   isWeekendDateKey
 } from "../lib/vietnam-holidays";
+import { compressPortalImage } from "../lib/compress-image";
 
 type CleaningTask = {
   id: string;
@@ -192,21 +193,19 @@ type CleaningCompletionPhotoDraft = CleaningCompletionPhotoPayload & {
   previewUrl: string;
 };
 
-async function fileToCleaningPhoto(file: File): Promise<CleaningCompletionPhotoPayload> {
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(new Error("Unable to read photo"));
-    reader.readAsDataURL(file);
+async function fileToCleaningPhoto(
+  file: File
+): Promise<CleaningCompletionPhotoPayload & { previewUrl: string }> {
+  const compressed = await compressPortalImage(file, {
+    maxSide: 1920,
+    maxBytes: 1_500_000,
+    quality: 0.8
   });
-  const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
-  if (!match) {
-    throw new Error("Invalid photo");
-  }
   return {
-    fileName: file.name || "photo.jpg",
-    mimeType: match[1] || file.type || "image/jpeg",
-    dataBase64: match[2]!
+    fileName: compressed.fileName,
+    mimeType: compressed.mimeType,
+    dataBase64: compressed.dataBase64,
+    previewUrl: compressed.dataUrl
   };
 }
 
@@ -554,6 +553,7 @@ export function CleaningScheduleClient({
   const [overview, setOverview] = useState<CleaningOverview | null>(null);
   const [completionNotes, setCompletionNotes] = useState<Record<string, string>>({});
   const [completionPhotos, setCompletionPhotos] = useState<Record<string, CleaningCompletionPhotoDraft[]>>({});
+  const [uploadingTaskId, setUploadingTaskId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [calendarFocusDate, setCalendarFocusDate] = useState(() => startOfDay(new Date()));
   const [selectedDate, setSelectedDate] = useState(() => startOfDay(new Date()));
@@ -1227,6 +1227,7 @@ export function CleaningScheduleClient({
 
   async function markDone(taskId: string) {
     setLoading(true);
+    setUploadingTaskId(taskId);
     setMessage("");
 
     const task = overview?.tasks.find((entry) => entry.id === taskId);
@@ -1234,17 +1235,28 @@ export function CleaningScheduleClient({
     const photosRequired = task ? taskRequiresCompletionPhotos(task, overview) : false;
 
     if (photosRequired && photos.length === 0) {
-      setMessage("Take at least one photo of the finished area before submitting.");
+      setMessage(
+        t("cleaningMarkDonePhotosRequired", "Take at least one photo of the finished area before submitting.")
+      );
       setLoading(false);
+      setUploadingTaskId(null);
       return;
     }
 
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 60_000);
+
     try {
+      if (photos.length > 0) {
+        setMessage(t("cleaningMarkDoneUploading", "Uploading…"));
+      }
+
       const response = await fetch(`${API_BASE_URL}/cleaning/tasks/${taskId}/complete`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
+        signal: controller.signal,
         body: JSON.stringify({
           email: activeEmail,
           note: completionNotes[taskId] || undefined,
@@ -1256,36 +1268,58 @@ export function CleaningScheduleClient({
       const data = await readJsonSafely<{ error?: string; aiVerdict?: string; aiNote?: string; status?: string }>(response);
 
       if (!response.ok) {
-        setMessage(data.error ?? "Unable to mark task done.");
+        setMessage(data.error ?? t("cleaningMarkDoneError", "Unable to mark task done."));
+        await loadOverview(activeEmail, { refresh: true });
         return;
       }
 
       setCompletionPhotos((current) => {
         const next = { ...current };
         for (const draft of next[taskId] ?? []) {
-          URL.revokeObjectURL(draft.previewUrl);
+          if (draft.previewUrl.startsWith("blob:")) {
+            URL.revokeObjectURL(draft.previewUrl);
+          }
         }
         delete next[taskId];
         return next;
       });
       await loadOverview(activeEmail, { refresh: true });
-      if (data.status === "APPROVED") {
-        setMessage("Task verified by AI and coins approved automatically.");
-      } else if (data.aiVerdict === "ELIGIBLE") {
-        setMessage("Task submitted. AI verified your photos — staff will confirm coins shortly.");
-      } else if (data.aiVerdict === "NOT_ELIGIBLE") {
+      if (photos.length > 0 && (data.aiVerdict === "PENDING" || data.status === "DONE_PENDING_AUDIT")) {
         setMessage(
-          data.aiNote
-            ? `Task submitted for staff review. AI note: ${data.aiNote}`
-            : "Task submitted for staff review. AI could not verify the photos yet."
+          t(
+            "cleaningMarkDoneAiPending",
+            "Submitted; AI check is running in the background. Staff will confirm coins shortly."
+          )
+        );
+      } else if (data.status === "APPROVED") {
+        setMessage(
+          t("cleaningMarkDoneAiApproved", "Task verified by AI and coins approved automatically.")
         );
       } else {
-        setMessage("Task marked done and sent for audit.");
+        setMessage(t("cleaningMarkDoneSentAudit", "Task marked done and sent for audit."));
       }
-    } catch {
-      setMessage("Unable to mark task done.");
+    } catch (error) {
+      const timedOut = error instanceof DOMException && error.name === "AbortError";
+      setMessage(
+        timedOut
+          ? t(
+              "cleaningMarkDoneTimeout",
+              "Upload timed out. Refreshing status — if the task already submitted, you do not need to retry."
+            )
+          : error instanceof Error && error.message
+            ? error.message
+            : t("cleaningMarkDoneNetworkError", "Network error while uploading. Refreshing status before retry.")
+      );
+      // Server may have finished; reload before allowing another attempt. Keep drafted photos.
+      try {
+        await loadOverview(activeEmail, { refresh: true });
+      } catch {
+        // ignore reload failure; user can still retry with kept photos
+      }
     } finally {
+      window.clearTimeout(timeoutId);
       setLoading(false);
+      setUploadingTaskId(null);
     }
   }
 
@@ -1296,19 +1330,22 @@ export function CleaningScheduleClient({
 
     const current = completionPhotos[taskId] ?? [];
     if (current.length >= 5) {
-      setMessage("You can attach up to 5 photos per completion.");
+      setMessage(t("cleaningPhotosMax", "You can attach up to 5 photos per completion."));
       return;
     }
 
     try {
       const payload = await fileToCleaningPhoto(file);
-      const previewUrl = URL.createObjectURL(file);
       setCompletionPhotos((state) => ({
         ...state,
-        [taskId]: [...(state[taskId] ?? []), { ...payload, previewUrl }]
+        [taskId]: [...(state[taskId] ?? []), payload]
       }));
-    } catch {
-      setMessage("Unable to read the selected photo.");
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : t("cleaningPhotoReadError", "Unable to read the selected photo.")
+      );
     }
   }
 
@@ -1316,7 +1353,7 @@ export function CleaningScheduleClient({
     setCompletionPhotos((state) => {
       const current = state[taskId] ?? [];
       const target = current[index];
-      if (target) {
+      if (target?.previewUrl?.startsWith("blob:")) {
         URL.revokeObjectURL(target.previewUrl);
       }
       const nextPhotos = current.filter((_, photoIndex) => photoIndex !== index);
@@ -1778,10 +1815,18 @@ export function CleaningScheduleClient({
               <button
                 type="button"
                 onClick={() => void markDone(nextCleaningCardTask.id)}
-                disabled={loading || (!canCompleteTaskNow(nextCleaningCardTask) && !canCompleteTaskLate(nextCleaningCardTask))}
+                disabled={
+                  loading ||
+                  uploadingTaskId === nextCleaningCardTask.id ||
+                  (!canCompleteTaskNow(nextCleaningCardTask) && !canCompleteTaskLate(nextCleaningCardTask))
+                }
                 className={`w-full rounded-xl px-4 py-3 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:bg-slate-300 ${canCompleteTaskLate(nextCleaningCardTask) ? "bg-amber-600 hover:bg-amber-700" : "bg-slate-900 hover:bg-slate-800"}`}
               >
-                {canCompleteTaskLate(nextCleaningCardTask) ? t("markDoneLateCardBtn", "Mark done (late - 50% coins)") : t("markDoneCardBtn", "Mark done")}
+                {uploadingTaskId === nextCleaningCardTask.id
+                  ? t("cleaningMarkDoneUploading", "Uploading…")
+                  : canCompleteTaskLate(nextCleaningCardTask)
+                    ? t("markDoneLateCardBtn", "Mark done (late - 50% coins)")
+                    : t("markDoneCardBtn", "Mark done")}
               </button>
             </div>
           </div>
@@ -3203,12 +3248,20 @@ export function CleaningScheduleClient({
                         <button
                           type="button"
                           onClick={() => void markDone(task.id)}
-                          disabled={loading || (!canCompleteTaskNow(task) && !canCompleteTaskLate(task))}
+                          disabled={
+                            loading ||
+                            uploadingTaskId === task.id ||
+                            (!canCompleteTaskNow(task) && !canCompleteTaskLate(task))
+                          }
                           className={`mt-3 rounded-lg px-4 py-2 text-sm text-white disabled:opacity-60 ${
                             canCompleteTaskLate(task) ? "bg-amber-600 hover:bg-amber-700" : "bg-slate-900"
                           }`}
                         >
-                          {canCompleteTaskLate(task) ? "Mark done (late — 50% coins)" : "Mark done"}
+                          {uploadingTaskId === task.id
+                            ? t("cleaningMarkDoneUploading", "Uploading…")
+                            : canCompleteTaskLate(task)
+                              ? t("markDoneLateBtn", "Mark done (late — 50% coins)")
+                              : t("markDoneBtn", "Mark done")}
                         </button>
                         {canCompleteTaskLate(task) ? (
                           <div className="mt-2 text-sm text-amber-700">

@@ -87,8 +87,10 @@ import { hasCompletedCheckout, listCheckedOutEmails } from "./checkout.js";
 import { listVietnamHolidays } from "./vietnam-holidays.js";
 import { prisma } from "./prisma.js";
 import {
-  listCleaningReferencePhotos,
-  saveCleaningCompletionPhotos,
+  deleteCleaningCompletionPhotoFiles,
+  getCleaningCompletionPhotosForTask,
+  persistCleaningCompletionPhotoFiles,
+  resolveCleaningReferencePhotos,
   type CleaningPhotoInput
 } from "./cleaning-photos.js";
 import { runCleaningTaskPhotoVerification } from "./cleaning-photo-verification.js";
@@ -97,6 +99,9 @@ import {
   maybeAutoApproveEligibleCleaningTask,
   recordCleaningAiBenchmark
 } from "./cleaning-ai-benchmark.js";
+import { evaluateCleaningTaskCompletionGate } from "./cleaning-task-complete-gate.js";
+
+export { evaluateCleaningTaskCompletionGate } from "./cleaning-task-complete-gate.js";
 
 type ActiveCleaningUser = {
   email: string;
@@ -3353,12 +3358,13 @@ async function buildCleaningOverviewForUser(email: string) {
   const photoRequiredTaskTypes: CleaningTaskType[] = [];
   if (user) {
     for (const type of getAllowedTaskTypesForUser(user)) {
-      const referencePhotos = await listCleaningReferencePhotos({
+      const resolved = await resolveCleaningReferencePhotos({
         taskType: type,
         branchId: user.branchId,
         floor: user.floor
       });
-      if (referencePhotos.length > 0) {
+      // Photos are mandatory only when staff uploaded dedicated reference photos.
+      if (resolved.source === "staff") {
         photoRequiredTaskTypes.push(type);
       }
     }
@@ -4081,6 +4087,79 @@ export async function sweepLeftResidentCleaningSchedules(now = new Date()) {
   };
 }
 
+async function runCleaningCompletionBackgroundWork(input: {
+  taskId: string;
+  actorEmail: string;
+  runAiVerification: boolean;
+}) {
+  try {
+    const task = await findUniqueCleaningTask({ where: { id: input.taskId } });
+    if (!task) {
+      return;
+    }
+
+    if (task.calendarId && task.calendarEventId) {
+      const target = getCleaningCalendarTarget(task.type, { floor: task.floor });
+      if (target) {
+        try {
+          await updateCleaningCalendarEvent({
+            calendarId: task.calendarId,
+            eventId: task.calendarEventId,
+            title: target.title,
+            scheduledDate: task.scheduledDate,
+            userEmail: task.userEmail,
+            userName: task.userName,
+            branchId: task.branchId,
+            floor: task.floor,
+            rewardCoins: task.rewardCoins,
+            type: task.type,
+            status: task.status,
+            completedAt: task.completedAt,
+            completionNote: task.completionNote,
+            completionPhoto: task.completionPhoto,
+            auditorNote: task.auditorNote
+          });
+        } catch (calendarError) {
+          console.error(
+            "[cleaning-complete-background] calendar update failed",
+            input.taskId,
+            calendarError instanceof Error ? calendarError.message : calendarError
+          );
+        }
+      }
+    }
+
+    if (input.runAiVerification) {
+      try {
+        await runCleaningTaskPhotoVerification(input.taskId, input.actorEmail);
+        const autoGate = await maybeAutoApproveEligibleCleaningTask(input.taskId);
+        if (autoGate.autoApproved) {
+          await auditCleaningTask({
+            taskId: input.taskId,
+            reviewer: CLEANING_AI_AUTO_REVIEWER,
+            decision: CleaningAuditDecision.APPROVE,
+            note: autoGate.note
+          });
+        }
+      } catch (aiError) {
+        console.error(
+          "[cleaning-complete-background] AI verification failed",
+          input.taskId,
+          aiError instanceof Error ? aiError.message : aiError
+        );
+      }
+    }
+
+    await invalidateCleaningOverviewCache(task.userEmail);
+  } catch (error) {
+    console.error(
+      "[cleaning-complete-background]",
+      input.taskId,
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+
 export async function completeCleaningTask(
   taskId: string,
   email: string,
@@ -4096,110 +4175,148 @@ export async function completeCleaningTask(
     throw new Error("Cleaning task not found");
   }
 
-  if (task.userEmail.toLowerCase() !== email.trim().toLowerCase()) {
-    throw new Error("You can only complete your own cleaning task");
+  const normalizedEmail = email.trim().toLowerCase();
+  const gate = evaluateCleaningTaskCompletionGate(task, normalizedEmail);
+  if (!gate.ok) {
+    throw new Error(gate.error);
   }
+  const { isRetry } = gate;
 
-  const referencePhotos = await listCleaningReferencePhotos({
+  const resolvedRefs = await resolveCleaningReferencePhotos({
     taskType: task.type,
     branchId: task.branchId,
-    floor: task.floor
+    floor: task.floor,
+    excludeTaskId: task.id
   });
-  const requiresPhotos = referencePhotos.length > 0;
+  const requiresPhotos = resolvedRefs.source === "staff";
+  const willRunAi = resolvedRefs.source !== "none";
 
-  if (requiresPhotos && (!photos || photos.length === 0)) {
+  const existingPhotos = await getCleaningCompletionPhotosForTask(taskId);
+  const incomingPhotos = photos && photos.length > 0 ? photos : null;
+
+  if (requiresPhotos && !incomingPhotos && existingPhotos.length === 0) {
     throw new Error(
       "Completion photos are required for this cleaning area. Take a few pictures of the finished work before submitting."
     );
   }
 
-  const isLate = !canCompleteTaskNow(task) && canCompleteTaskLate(task);
+  let isLate = false;
+  let lateRewardCoins = task.rewardCoins;
+  let lateNote = note;
 
-  if (!canCompleteTaskNow(task) && !isLate) {
-    const { lateEnd } = getLateCompletionWindow(task);
-    throw new Error(
-      `This task can only be marked done during ${getCompletionWindow(task).label}, or up to ${LATE_COMPLETION_HOURS} hours after the deadline (before ${lateEnd.toISOString()}).`
-    );
-  }
+  if (!isRetry) {
+    isLate = !canCompleteTaskNow(task) && canCompleteTaskLate(task);
 
-  const lateRewardCoins = isLate ? Math.round(task.rewardCoins * LATE_COMPLETION_REWARD_RATE) : task.rewardCoins;
-  const lateNote = isLate
-    ? `[Late submission — ${LATE_COMPLETION_REWARD_RATE * 100}% reward applied]${note ? ` ${note}` : ""}`
-    : note;
-
-  const updated = await updateCleaningTask({
-    where: { id: taskId },
-    data: {
-      status: CleaningTaskStatus.DONE_PENDING_AUDIT,
-      completedAt: new Date(),
-      completionNote: lateNote,
-      completionPhoto: photo ?? null,
-      aiVerdict: requiresPhotos ? CleaningAiVerdict.PENDING : CleaningAiVerdict.SKIPPED,
-      aiScore: null,
-      aiNote: requiresPhotos ? "AI verification pending." : "No reference photos configured for this area.",
-      aiVerifiedAt: null,
-      rewardCoins: lateRewardCoins
+    if (!canCompleteTaskNow(task) && !isLate) {
+      const { lateEnd } = getLateCompletionWindow(task);
+      throw new Error(
+        `This task can only be marked done during ${getCompletionWindow(task).label}, or up to ${LATE_COMPLETION_HOURS} hours after the deadline (before ${lateEnd.toISOString()}).`
+      );
     }
-  });
 
-  if (photos && photos.length > 0) {
-    await saveCleaningCompletionPhotos(taskId, photos);
-    if (referencePhotos.length > 0) {
-      await runCleaningTaskPhotoVerification(taskId, email.trim().toLowerCase());
+    lateRewardCoins = isLate ? Math.round(task.rewardCoins * LATE_COMPLETION_REWARD_RATE) : task.rewardCoins;
+    lateNote = isLate
+      ? `[Late submission — ${LATE_COMPLETION_REWARD_RATE * 100}% reward applied]${note ? ` ${note}` : ""}`
+      : note;
+  } else if (note !== undefined) {
+    lateNote = note;
+  }
+
+  const writtenFiles: Array<{ storageName: string; fileName: string }> = [];
+  const previousStorageNames = existingPhotos.map((entry) => entry.storageName);
+
+  try {
+    if (incomingPhotos) {
+      writtenFiles.push(...(await persistCleaningCompletionPhotoFiles(incomingPhotos)));
     }
-  }
 
-  const finalTask =
-    (await findUniqueCleaningTask({ where: { id: taskId } })) ?? updated;
+    const hasCompletionPhotos = writtenFiles.length > 0 || existingPhotos.length > 0;
+    const runAiVerification = willRunAi && hasCompletionPhotos;
+    const aiVerdict = runAiVerification ? CleaningAiVerdict.PENDING : CleaningAiVerdict.SKIPPED;
+    const aiNote = runAiVerification
+      ? "AI verification pending."
+      : resolvedRefs.source === "none"
+        ? "No reference photos available for this area."
+        : "No completion photos were submitted.";
 
-  const autoGate = await maybeAutoApproveEligibleCleaningTask(taskId);
-  let resolvedTask = finalTask;
-  if (autoGate.autoApproved) {
-    resolvedTask = await auditCleaningTask({
-      taskId,
-      reviewer: CLEANING_AI_AUTO_REVIEWER,
-      decision: CleaningAuditDecision.APPROVE,
-      note: autoGate.note
-    });
-  }
-
-  await logAction({
-    actorEmail: email.trim().toLowerCase(),
-    actorName: task.userName ?? task.userEmail,
-    actorRole: "resident",
-    action: "cleaning.task.complete",
-    entityType: "CleaningTask",
-    entityId: resolvedTask.id,
-    entityLabel: `${resolvedTask.type}|${resolvedTask.scheduledDate.toISOString().slice(0, 10)}`,
-    details: isLate ? "late=true" : autoGate.autoApproved ? "auto_approved=true" : "late=false"
-  });
-
-  if (resolvedTask.calendarId && resolvedTask.calendarEventId) {
-    const target = getCleaningCalendarTarget(resolvedTask.type, { floor: resolvedTask.floor });
-    if (target) {
-      await updateCleaningCalendarEvent({
-        calendarId: resolvedTask.calendarId,
-        eventId: resolvedTask.calendarEventId,
-        title: target.title,
-        scheduledDate: resolvedTask.scheduledDate,
-        userEmail: resolvedTask.userEmail,
-        userName: resolvedTask.userName,
-        branchId: resolvedTask.branchId,
-        floor: resolvedTask.floor,
-        rewardCoins: resolvedTask.rewardCoins,
-        type: resolvedTask.type,
-        status: resolvedTask.status,
-        completedAt: resolvedTask.completedAt,
-        completionNote: resolvedTask.completionNote,
-        completionPhoto: resolvedTask.completionPhoto,
-        auditorNote: resolvedTask.auditorNote,
-        reviewedBy: autoGate.autoApproved ? CLEANING_AI_AUTO_REVIEWER : undefined
+    const updated = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.cleaningTask.updateMany({
+        where: {
+          id: taskId,
+          status: {
+            in: [CleaningTaskStatus.ASSIGNED, CleaningTaskStatus.DONE_PENDING_AUDIT]
+          }
+        },
+        data: {
+          status: CleaningTaskStatus.DONE_PENDING_AUDIT,
+          completedAt: isRetry ? task.completedAt ?? new Date() : new Date(),
+          completionNote: lateNote ?? task.completionNote,
+          completionPhoto: photo ?? task.completionPhoto ?? null,
+          aiVerdict,
+          aiScore: null,
+          aiNote,
+          aiVerifiedAt: null,
+          rewardCoins: isRetry ? task.rewardCoins : lateRewardCoins
+        }
       });
-    }
-  }
 
-  await invalidateCleaningOverviewCache(resolvedTask.userEmail);
-  return resolvedTask;
+      if (claimed.count === 0) {
+        throw new Error("This cleaning task can no longer be completed.");
+      }
+
+      if (writtenFiles.length > 0) {
+        await tx.cleaningCompletionPhoto.deleteMany({ where: { taskId } });
+        for (let index = 0; index < writtenFiles.length; index += 1) {
+          const file = writtenFiles[index]!;
+          await tx.cleaningCompletionPhoto.create({
+            data: {
+              taskId,
+              storageName: file.storageName,
+              fileName: file.fileName,
+              sortOrder: index
+            }
+          });
+        }
+      }
+
+      return tx.cleaningTask.findUniqueOrThrow({ where: { id: taskId } });
+    });
+
+    if (writtenFiles.length > 0 && previousStorageNames.length > 0) {
+      await deleteCleaningCompletionPhotoFiles(previousStorageNames);
+    }
+
+    await logAction({
+      actorEmail: normalizedEmail,
+      actorName: task.userName ?? task.userEmail,
+      actorRole: "resident",
+      action: "cleaning.task.complete",
+      entityType: "CleaningTask",
+      entityId: updated.id,
+      entityLabel: `${updated.type}|${updated.scheduledDate.toISOString().slice(0, 10)}`,
+      details: [
+        isLate ? "late=true" : "late=false",
+        isRetry ? "retry=true" : "retry=false",
+        `refSource=${resolvedRefs.source}`,
+        runAiVerification ? "ai=pending" : "ai=skipped"
+      ].join(";")
+    });
+
+    await invalidateCleaningOverviewCache(updated.userEmail);
+
+    void runCleaningCompletionBackgroundWork({
+      taskId: updated.id,
+      actorEmail: normalizedEmail,
+      runAiVerification
+    });
+
+    return updated;
+  } catch (error) {
+    if (writtenFiles.length > 0) {
+      await deleteCleaningCompletionPhotoFiles(writtenFiles.map((file) => file.storageName));
+    }
+    throw error;
+  }
 }
 
 export async function auditCleaningTask(input: {
@@ -4207,6 +4324,7 @@ export async function auditCleaningTask(input: {
   reviewer: string;
   decision: CleaningAuditDecision;
   note?: string;
+  qualityRating?: number | null;
 }) {
   return withCoinWriteLock(`cleaning-audit:${input.taskId}`, () => auditCleaningTaskLocked(input));
 }
@@ -4216,6 +4334,7 @@ async function auditCleaningTaskLocked(input: {
   reviewer: string;
   decision: CleaningAuditDecision;
   note?: string;
+  qualityRating?: number | null;
 }) {
   const task = await findUniqueCleaningTask({
     where: { id: input.taskId }
@@ -4223,6 +4342,16 @@ async function auditCleaningTaskLocked(input: {
 
   if (!task) {
     throw new Error("Cleaning task not found");
+  }
+
+  const isAiAuto = input.reviewer.trim() === CLEANING_AI_AUTO_REVIEWER;
+  let qualityRating: number | null = null;
+  if (input.decision === CleaningAuditDecision.APPROVE && !isAiAuto && input.qualityRating != null) {
+    const rating = Math.round(Number(input.qualityRating));
+    if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+      throw new Error("qualityRating must be an integer from 1 to 5.");
+    }
+    qualityRating = rating;
   }
 
   // SQL approval may have committed before a Calendar/Sheets failure. A retry
@@ -4258,7 +4387,13 @@ async function auditCleaningTaskLocked(input: {
       where: { id: input.taskId },
       data: {
         status: nextStatus,
-        auditorNote: input.note
+        auditorNote: input.note,
+        managerRating:
+          input.decision === CleaningAuditDecision.REJECT
+            ? null
+            : qualityRating != null
+              ? qualityRating
+              : undefined
       }
     });
 
@@ -4267,7 +4402,8 @@ async function auditCleaningTaskLocked(input: {
         taskId: input.taskId,
         reviewer: input.reviewer,
         decision: input.decision,
-        note: input.note
+        note: input.note,
+        qualityRating
       }
     });
 

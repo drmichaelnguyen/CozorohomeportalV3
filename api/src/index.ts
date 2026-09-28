@@ -322,7 +322,10 @@ import {
   canViewCleaningReferencePhoto,
   deactivateCleaningReferencePhoto,
   listCleaningReferencePhotos,
+  listLearnedCleaningReferencePhotos,
   readCleaningPhotoBytes,
+  resolveCleaningReferencePhotos,
+  setCleaningCompletionPhotoExcludedFromReference,
   uploadCleaningReferencePhotos
 } from "./cleaning-photos.js";
 import {
@@ -1949,9 +1952,18 @@ const auditCleaningSchema = z.object({
   reviewer: z.string().min(1),
   decision: z.nativeEnum(CleaningAuditDecision),
   note: z.string().optional(),
+  qualityRating: z.coerce.number().int().min(1).max(5).optional(),
   createFine: z.boolean().optional(),
   fineAmount: z.coerce.number().int().positive().optional(),
   sendEmail: z.boolean().optional()
+}).superRefine((value, ctx) => {
+  if (value.qualityRating != null && value.decision !== CleaningAuditDecision.APPROVE) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "qualityRating is only allowed when decision is APPROVE",
+      path: ["qualityRating"]
+    });
+  }
 });
 const adminCleaningAvailabilitySchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -6510,7 +6522,8 @@ app.post("/admin/cleaning/tasks/:id/audit", async (request, response) => {
       taskId: request.params.id,
       reviewer: parsed.data.reviewer,
       decision: parsed.data.decision,
-      note: parsed.data.note
+      note: parsed.data.note,
+      qualityRating: parsed.data.qualityRating
     });
 
     let emailSent = false;
@@ -8591,19 +8604,60 @@ app.get("/manager/cleaning/reference-photos", async (req, res) => {
       return res.status(400).json({ error: "Invalid floor" });
     }
 
-    const photos = await listCleaningReferencePhotos({
-      taskType: taskType as "KITCHEN_D2" | "KITCHEN_D7" | "TRASH_D7",
-      branchId,
-      floor
-    });
+    const typedTaskType = taskType as "KITCHEN_D2" | "KITCHEN_D7" | "TRASH_D7";
+    const [photos, learnedPhotos, resolved] = await Promise.all([
+      listCleaningReferencePhotos({
+        taskType: typedTaskType,
+        branchId,
+        floor
+      }),
+      listLearnedCleaningReferencePhotos({
+        taskType: typedTaskType,
+        branchId,
+        floor
+      }),
+      resolveCleaningReferencePhotos({
+        taskType: typedTaskType,
+        branchId,
+        floor
+      })
+    ]);
     return res.json({
+      source: resolved.source,
       photos: photos.map((photo) => ({
         ...photo,
-        url: buildCleaningPhotoUrl(photo.storageName, actorEmail)
+        url: `${buildCleaningPhotoUrl(photo.storageName, actorEmail)}&kind=reference`
+      })),
+      learnedPhotos: learnedPhotos.map((photo) => ({
+        ...photo,
+        url: `${buildCleaningPhotoUrl(photo.storageName, actorEmail)}&kind=completion`,
+        approvedAt: photo.approvedAt instanceof Date ? photo.approvedAt.toISOString() : photo.approvedAt
       }))
     });
   } catch (error) {
     return res.status(403).json({ error: error instanceof Error ? error.message : "Forbidden" });
+  }
+});
+
+app.post("/manager/cleaning/completion-photos/:id/exclude-reference", async (req, res) => {
+  const actorEmail = String(req.body?.actorEmail ?? req.query.actorEmail ?? "").trim();
+  const excluded = req.body?.excluded !== false;
+  if (!actorEmail) {
+    return res.status(400).json({ error: "actorEmail is required" });
+  }
+
+  try {
+    await requirePortalRole(actorEmail, ["manager", "owner", "app_admin"], "Staff only.");
+    const photo = await setCleaningCompletionPhotoExcludedFromReference(
+      req.params.id,
+      excluded,
+      actorEmail
+    );
+    return res.json({ photo });
+  } catch (error) {
+    return res.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to update completion photo"
+    });
   }
 });
 
@@ -8626,7 +8680,7 @@ app.post("/manager/cleaning/reference-photos", async (req, res) => {
     return res.json({
       photos: photos.map((photo) => ({
         ...photo,
-        url: buildCleaningPhotoUrl(photo.storageName, parsed.data.actorEmail)
+        url: `${buildCleaningPhotoUrl(photo.storageName, parsed.data.actorEmail)}&kind=reference`
       }))
     });
   } catch (error) {

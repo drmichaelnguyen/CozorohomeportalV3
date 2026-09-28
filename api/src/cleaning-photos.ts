@@ -1,7 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { CleaningTaskType } from "@prisma/client";
+import { CleaningAuditDecision, CleaningTaskStatus, CleaningTaskType } from "@prisma/client";
+import { CLEANING_AI_AUTO_REVIEWER } from "./cleaning-ai-benchmark.js";
+import {
+  LEARNED_REFERENCE_LOOKBACK_DAYS,
+  LEARNED_REFERENCE_MIN_RATING,
+  resolveCleaningReferencePhotos as resolveCleaningReferencePhotosWithDeps,
+  selectLearnedCleaningReferencePhotos,
+  type LearnedReferenceCandidate,
+  type ResolveCleaningReferenceDeps,
+  type ResolvedCleaningReferences
+} from "./cleaning-photo-references.js";
 import { compressFineEvidence } from "./fine-evidence-compress.js";
 import { prisma } from "./prisma.js";
 import { resolvePortalLogin } from "./staff-access.js";
@@ -11,6 +21,19 @@ export type CleaningPhotoInput = {
   mimeType: string;
   dataBase64: string;
 };
+
+export type {
+  CleaningReferenceSource,
+  LearnedReferenceCandidate,
+  ResolveCleaningReferenceDeps,
+  ResolvedCleaningReferencePhoto,
+  ResolvedCleaningReferences
+} from "./cleaning-photo-references.js";
+
+export {
+  describeCleaningReferenceSource,
+  selectLearnedCleaningReferencePhotos
+} from "./cleaning-photo-references.js";
 
 const referencePhotosDir = path.join(process.cwd(), "data", "cleaning-reference-photos");
 const completionPhotosDir = path.join(process.cwd(), "data", "cleaning-completion-photos");
@@ -95,6 +118,157 @@ export async function listCleaningReferencePhotos(input: {
   });
 }
 
+async function defaultPhotoFileExists(storageName: string, kind: "reference" | "completion") {
+  try {
+    await access(resolvePhotoPath(storageName, kind));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function defaultListLearnedCandidates(input: {
+  taskType: CleaningTaskType;
+  branchId: string;
+  floor?: number | null;
+  excludeTaskId?: string;
+  since: Date;
+}): Promise<LearnedReferenceCandidate[]> {
+  const tasks = await prisma.cleaningTask.findMany({
+    where: {
+      type: input.taskType,
+      branchId: input.branchId,
+      ...(input.taskType === CleaningTaskType.TRASH_D7 ? { floor: input.floor ?? null } : {}),
+      status: CleaningTaskStatus.APPROVED,
+      managerRating: { gte: LEARNED_REFERENCE_MIN_RATING },
+      ...(input.excludeTaskId ? { id: { not: input.excludeTaskId } } : {}),
+      OR: [{ completedAt: { gte: input.since } }, { updatedAt: { gte: input.since } }],
+      audits: {
+        some: {
+          decision: CleaningAuditDecision.APPROVE,
+          qualityRating: { gte: LEARNED_REFERENCE_MIN_RATING },
+          NOT: { reviewer: CLEANING_AI_AUTO_REVIEWER }
+        }
+      }
+    },
+    select: {
+      id: true,
+      managerRating: true,
+      updatedAt: true,
+      completedAt: true,
+      audits: {
+        where: {
+          decision: CleaningAuditDecision.APPROVE,
+          qualityRating: { gte: LEARNED_REFERENCE_MIN_RATING },
+          NOT: { reviewer: CLEANING_AI_AUTO_REVIEWER }
+        },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { createdAt: true, qualityRating: true }
+      },
+      completionPhotos: {
+        where: { excludedFromReference: false },
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+        select: { id: true, storageName: true, fileName: true }
+      }
+    },
+    orderBy: [{ managerRating: "desc" }, { updatedAt: "desc" }],
+    take: 40
+  });
+
+  const candidates: LearnedReferenceCandidate[] = [];
+  for (const task of tasks) {
+    const rating = task.managerRating ?? task.audits[0]?.qualityRating;
+    if (rating == null || rating < LEARNED_REFERENCE_MIN_RATING) continue;
+    const approvedAt = task.audits[0]?.createdAt ?? task.completedAt ?? task.updatedAt;
+    if (approvedAt.getTime() < input.since.getTime()) continue;
+    for (const photo of task.completionPhotos) {
+      candidates.push({
+        photoId: photo.id,
+        storageName: photo.storageName,
+        fileName: photo.fileName,
+        taskId: task.id,
+        managerRating: rating,
+        approvedAt
+      });
+    }
+  }
+  return candidates;
+}
+
+const defaultResolveDeps: ResolveCleaningReferenceDeps = {
+  listStaffPhotos: listCleaningReferencePhotos,
+  listLearnedCandidates: defaultListLearnedCandidates,
+  photoFileExists: defaultPhotoFileExists
+};
+
+export async function resolveCleaningReferencePhotos(
+  input: {
+    taskType: CleaningTaskType;
+    branchId: string;
+    floor?: number | null;
+    excludeTaskId?: string;
+  },
+  deps: ResolveCleaningReferenceDeps = defaultResolveDeps
+): Promise<ResolvedCleaningReferences> {
+  return resolveCleaningReferencePhotosWithDeps(input, deps);
+}
+
+export async function listLearnedCleaningReferencePhotos(input: {
+  taskType: CleaningTaskType;
+  branchId: string;
+  floor?: number | null;
+}) {
+  const resolved = await resolveCleaningReferencePhotos(input);
+  if (resolved.source !== "learned") {
+    // Still show learned candidates for manager UI even when staff refs exist.
+    const since = new Date(Date.now() - LEARNED_REFERENCE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+    const candidates = await defaultListLearnedCandidates({ ...input, since });
+    const withFiles: LearnedReferenceCandidate[] = [];
+    for (const candidate of candidates) {
+      if (!(await defaultPhotoFileExists(candidate.storageName, "completion"))) continue;
+      withFiles.push(candidate);
+    }
+    return selectLearnedCleaningReferencePhotos(withFiles).map((photo) => ({
+      id: photo.photoId,
+      storageName: photo.storageName,
+      fileName: photo.fileName,
+      taskId: photo.taskId,
+      managerRating: photo.managerRating,
+      approvedAt: photo.approvedAt
+    }));
+  }
+  return resolved.photos.map((photo) => ({
+    id: photo.id,
+    storageName: photo.storageName,
+    fileName: photo.fileName,
+    taskId: photo.taskId ?? "",
+    managerRating: photo.managerRating ?? null,
+    approvedAt: photo.approvedAt ?? null
+  }));
+}
+
+export async function setCleaningCompletionPhotoExcludedFromReference(
+  photoId: string,
+  excluded: boolean,
+  actorEmail: string
+) {
+  const photo = await prisma.cleaningCompletionPhoto.findUnique({ where: { id: photoId } });
+  if (!photo) {
+    throw new Error("Completion photo not found.");
+  }
+
+  const viewer = await resolvePortalLogin(actorEmail.trim().toLowerCase());
+  if (!viewer.allowed || !viewer.role || viewer.role === "user") {
+    throw new Error("Staff only.");
+  }
+
+  return prisma.cleaningCompletionPhoto.update({
+    where: { id: photoId },
+    data: { excludedFromReference: excluded }
+  });
+}
+
 export async function uploadCleaningReferencePhotos(input: {
   taskType: CleaningTaskType;
   branchId: string;
@@ -148,13 +322,15 @@ export async function deactivateCleaningReferencePhoto(id: string, actorEmail: s
     throw new Error("Reference photo not found.");
   }
 
+  void actorEmail;
   return prisma.cleaningReferencePhoto.update({
     where: { id },
     data: { isActive: false, updatedAt: new Date() }
   });
 }
 
-export async function saveCleaningCompletionPhotos(taskId: string, photos: CleaningPhotoInput[]) {
+/** Write compressed JPEG files to disk only (no DB rows). Caller must clean up on failure. */
+export async function persistCleaningCompletionPhotoFiles(photos: CleaningPhotoInput[]) {
   if (photos.length === 0) {
     throw new Error("At least one completion photo is required.");
   }
@@ -162,23 +338,53 @@ export async function saveCleaningCompletionPhotos(taskId: string, photos: Clean
     throw new Error(`A maximum of ${MAX_PHOTOS_PER_UPLOAD} photos is allowed per completion.`);
   }
 
-  const saved = [];
-  for (let index = 0; index < photos.length; index += 1) {
-    const photo = photos[index]!;
-    const file = await saveCompressedPhoto(photo, completionPhotosDir, "done");
-    saved.push(
-      await prisma.cleaningCompletionPhoto.create({
-        data: {
-          taskId,
-          storageName: file.storageName,
-          fileName: file.fileName,
-          sortOrder: index
-        }
-      })
-    );
+  const saved: Array<{ storageName: string; fileName: string }> = [];
+  try {
+    for (const photo of photos) {
+      saved.push(await saveCompressedPhoto(photo, completionPhotosDir, "done"));
+    }
+    return saved;
+  } catch (error) {
+    await deleteCleaningCompletionPhotoFiles(saved.map((entry) => entry.storageName));
+    throw error;
   }
+}
 
-  return saved;
+export async function deleteCleaningCompletionPhotoFiles(storageNames: string[]) {
+  await Promise.all(
+    storageNames.map(async (storageName) => {
+      try {
+        await unlink(resolvePhotoPath(storageName, "completion"));
+      } catch {
+        // ignore missing files during cleanup
+      }
+    })
+  );
+}
+
+/** @deprecated Prefer persistCleaningCompletionPhotoFiles + DB transaction. Kept for compatibility. */
+export async function saveCleaningCompletionPhotos(taskId: string, photos: CleaningPhotoInput[]) {
+  const files = await persistCleaningCompletionPhotoFiles(photos);
+  try {
+    const saved = [];
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index]!;
+      saved.push(
+        await prisma.cleaningCompletionPhoto.create({
+          data: {
+            taskId,
+            storageName: file.storageName,
+            fileName: file.fileName,
+            sortOrder: index
+          }
+        })
+      );
+    }
+    return saved;
+  } catch (error) {
+    await deleteCleaningCompletionPhotoFiles(files.map((file) => file.storageName));
+    throw error;
+  }
 }
 
 export async function getCleaningCompletionPhotosForTask(taskId: string) {

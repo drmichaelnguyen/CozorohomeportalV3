@@ -2,19 +2,18 @@ import { CleaningAiVerdict, CleaningTaskType } from "@prisma/client";
 import { recordVisionUsage } from "./ai-usage.js";
 import { hasPortalLlmConfig, resolveGeminiGenerateUrl } from "./llm-tool-chat.js";
 import {
+  describeCleaningReferenceSource,
+  type CleaningReferenceSource,
+  type ResolvedCleaningReferencePhoto
+} from "./cleaning-photo-references.js";
+import {
   getCleaningPhotoRequirements,
   readCleaningPhotoBytes,
+  resolveCleaningReferencePhotos,
   type CleaningPhotoInput
 } from "./cleaning-photos.js";
 import { call9RouterChatCompletion, prefer9Router } from "./nine-router.js";
 import { prisma } from "./prisma.js";
-
-type ReferencePhotoRow = {
-  id: string;
-  storageName: string;
-  fileName: string;
-  caption: string | null;
-};
 
 type VerificationResult = {
   verdict: CleaningAiVerdict;
@@ -23,6 +22,7 @@ type VerificationResult = {
 };
 
 const ELIGIBILITY_SCORE_THRESHOLD = 70;
+const GEMINI_TIMEOUT_MS = 45_000;
 
 function usageFromNineRouter(usage: {
   promptTokens: number | null;
@@ -83,6 +83,7 @@ function buildVerificationPrompt(input: {
   floor?: number | null;
   referenceCount: number;
   completionCount: number;
+  referenceSource: CleaningReferenceSource;
 }) {
   const requirements = getCleaningPhotoRequirements(input.taskType, input.floor);
   const taskLabel =
@@ -92,13 +93,19 @@ function buildVerificationPrompt(input: {
         ? "Kitchen D7"
         : `Trash D7 floor ${input.floor ?? "?"}`;
 
+  const referenceLabel =
+    input.referenceSource === "learned"
+      ? "MANAGER-APPROVED (★4+) REFERENCE photos showing acceptable completed work for this area"
+      : "STAFF REFERENCE photos showing acceptable completed work for this area";
+
   return [
     "You are a strict dorm cleaning quality inspector for CozoroHome.",
     `Task area: ${taskLabel} (${input.branchId}).`,
+    `Reference source: ${input.referenceSource}.`,
     "",
     requirements,
     "",
-    `The first ${input.referenceCount} image(s) are STAFF REFERENCE photos showing acceptable completed work for this area.`,
+    `The first ${input.referenceCount} image(s) are ${referenceLabel}.`,
     `The next ${input.completionCount} image(s) are RESIDENT SUBMISSION photos for the same task.`,
     "",
     "Compare the resident photos against the reference standard and the written requirements.",
@@ -113,7 +120,11 @@ function buildVerificationPrompt(input: {
   ].join("\n");
 }
 
-function resultFromParsedJson(parsed: { eligible: boolean; score: number; note: string } | null): VerificationResult {
+function resultFromParsedJson(
+  parsed: { eligible: boolean; score: number; note: string } | null,
+  referenceSource: CleaningReferenceSource,
+  referenceCount: number
+): VerificationResult {
   if (!parsed) {
     return {
       verdict: CleaningAiVerdict.SKIPPED,
@@ -122,10 +133,15 @@ function resultFromParsedJson(parsed: { eligible: boolean; score: number; note: 
     };
   }
 
+  const sourceNote = describeCleaningReferenceSource(referenceSource, referenceCount);
+  const note = parsed.note
+    ? `${parsed.note} (${sourceNote})`
+    : sourceNote;
+
   return {
     verdict: parsed.eligible ? CleaningAiVerdict.ELIGIBLE : CleaningAiVerdict.NOT_ELIGIBLE,
     score: parsed.score,
-    note: parsed.note || null
+    note
   };
 }
 
@@ -134,6 +150,7 @@ async function verifyViaNineRouter(input: {
   referenceBuffers: Buffer[];
   completionBuffers: Buffer[];
   actorEmail: string;
+  referenceSource: CleaningReferenceSource;
 }): Promise<VerificationResult> {
   const imageCount = input.referenceBuffers.length + input.completionBuffers.length;
   const started = Date.now();
@@ -157,7 +174,11 @@ async function verifyViaNineRouter(input: {
     latencyMs: Date.now() - started
   });
 
-  return resultFromParsedJson(parseVerificationJson(result.text));
+  return resultFromParsedJson(
+    parseVerificationJson(result.text),
+    input.referenceSource,
+    input.referenceBuffers.length
+  );
 }
 
 async function verifyViaGemini(input: {
@@ -165,6 +186,7 @@ async function verifyViaGemini(input: {
   referenceBuffers: Buffer[];
   completionBuffers: Buffer[];
   actorEmail: string;
+  referenceSource: CleaningReferenceSource;
 }): Promise<VerificationResult> {
   const geminiUrl = resolveGeminiGenerateUrl("shared");
   if (!geminiUrl) {
@@ -205,7 +227,8 @@ async function verifyViaGemini(input: {
         temperature: 0.2,
         responseMimeType: "application/json"
       }
-    })
+    }),
+    signal: AbortSignal.timeout(GEMINI_TIMEOUT_MS)
   });
 
   const payload = await response.json();
@@ -233,7 +256,25 @@ async function verifyViaGemini(input: {
     latencyMs
   });
 
-  return resultFromParsedJson(parsed);
+  return resultFromParsedJson(parsed, input.referenceSource, input.referenceBuffers.length);
+}
+
+async function readPhotoBuffersSafely(
+  photos: Array<{ storageName: string; kind: "reference" | "completion" }>
+): Promise<Buffer[]> {
+  const buffers: Buffer[] = [];
+  for (const photo of photos) {
+    try {
+      buffers.push(await readCleaningPhotoBytes(photo.storageName, photo.kind));
+    } catch (error) {
+      console.warn(
+        "[cleaning-photo-verification] skipping missing photo",
+        photo.storageName,
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+  return buffers;
 }
 
 export async function verifyCleaningCompletionPhotos(input: {
@@ -242,7 +283,8 @@ export async function verifyCleaningCompletionPhotos(input: {
   branchId: string;
   floor?: number | null;
   actorEmail: string;
-  referencePhotos: ReferencePhotoRow[];
+  referencePhotos: ResolvedCleaningReferencePhoto[];
+  referenceSource: CleaningReferenceSource;
   completionStorageNames: string[];
 }): Promise<VerificationResult> {
   if (input.referencePhotos.length === 0 || input.completionStorageNames.length === 0) {
@@ -250,7 +292,7 @@ export async function verifyCleaningCompletionPhotos(input: {
       verdict: CleaningAiVerdict.SKIPPED,
       score: null,
       note: input.referencePhotos.length === 0
-        ? "No staff reference photos configured for this area yet."
+        ? "No reference photos available for this area yet."
         : "No completion photos were submitted."
     };
   }
@@ -263,29 +305,48 @@ export async function verifyCleaningCompletionPhotos(input: {
     };
   }
 
-  const referenceBuffers = await Promise.all(
-    input.referencePhotos.slice(0, 5).map((photo) => readCleaningPhotoBytes(photo.storageName, "reference"))
-  );
-  const completionBuffers = await Promise.all(
-    input.completionStorageNames.slice(0, 5).map((storageName) => readCleaningPhotoBytes(storageName, "completion"))
-  );
-
-  const prompt = buildVerificationPrompt({
-    taskType: input.taskType,
-    branchId: input.branchId,
-    floor: input.floor,
-    referenceCount: referenceBuffers.length,
-    completionCount: completionBuffers.length
-  });
-
-  const verifyInput = {
-    prompt,
-    referenceBuffers,
-    completionBuffers,
-    actorEmail: input.actorEmail
-  };
-
   try {
+    const referenceBuffers = await readPhotoBuffersSafely(
+      input.referencePhotos.slice(0, 5).map((photo) => ({
+        storageName: photo.storageName,
+        kind: photo.kind
+      }))
+    );
+    const completionBuffers = await readPhotoBuffersSafely(
+      input.completionStorageNames.slice(0, 5).map((storageName) => ({
+        storageName,
+        kind: "completion" as const
+      }))
+    );
+
+    if (referenceBuffers.length === 0 || completionBuffers.length === 0) {
+      return {
+        verdict: CleaningAiVerdict.SKIPPED,
+        score: null,
+        note:
+          referenceBuffers.length === 0
+            ? "Reference photo files were missing on disk. Staff will review manually."
+            : "Completion photo files were missing on disk. Staff will review manually."
+      };
+    }
+
+    const prompt = buildVerificationPrompt({
+      taskType: input.taskType,
+      branchId: input.branchId,
+      floor: input.floor,
+      referenceCount: referenceBuffers.length,
+      completionCount: completionBuffers.length,
+      referenceSource: input.referenceSource
+    });
+
+    const verifyInput = {
+      prompt,
+      referenceBuffers,
+      completionBuffers,
+      actorEmail: input.actorEmail,
+      referenceSource: input.referenceSource
+    };
+
     if (prefer9Router()) {
       try {
         return await verifyViaNineRouter(verifyInput);
@@ -327,14 +388,11 @@ export async function runCleaningTaskPhotoVerification(taskId: string, actorEmai
     throw new Error("Cleaning task not found.");
   }
 
-  const referencePhotos = await prisma.cleaningReferencePhoto.findMany({
-    where: {
-      taskType: task.type,
-      branchId: task.branchId,
-      floor: task.type === CleaningTaskType.TRASH_D7 ? task.floor : null,
-      isActive: true
-    },
-    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
+  const resolved = await resolveCleaningReferencePhotos({
+    taskType: task.type,
+    branchId: task.branchId,
+    floor: task.floor,
+    excludeTaskId: task.id
   });
 
   const result = await verifyCleaningCompletionPhotos({
@@ -343,7 +401,8 @@ export async function runCleaningTaskPhotoVerification(taskId: string, actorEmai
     branchId: task.branchId,
     floor: task.floor,
     actorEmail,
-    referencePhotos,
+    referencePhotos: resolved.photos,
+    referenceSource: resolved.source,
     completionStorageNames: task.completionPhotos.map((photo) => photo.storageName)
   });
 

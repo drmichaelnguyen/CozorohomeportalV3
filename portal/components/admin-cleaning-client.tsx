@@ -42,6 +42,7 @@ type AdminTask = {
   aiScore?: number | null;
   aiNote?: string | null;
   auditorNote?: string | null;
+  managerRating?: number | null;
 };
 
 type AdminCalendar = {
@@ -191,6 +192,16 @@ type CleaningReferencePhoto = {
   storageName: string;
   fileName: string;
   caption: string | null;
+  url: string;
+};
+
+type CleaningLearnedReferencePhoto = {
+  id: string;
+  storageName: string;
+  fileName: string;
+  taskId: string;
+  managerRating: number | null;
+  approvedAt: string | null;
   url: string;
 };
 
@@ -463,8 +474,11 @@ export function AdminCleaningClient() {
   const [referenceBranchId, setReferenceBranchId] = useState<"D2" | "D7">("D7");
   const [referenceFloor, setReferenceFloor] = useState("1");
   const [referencePhotos, setReferencePhotos] = useState<CleaningReferencePhoto[]>([]);
+  const [learnedReferencePhotos, setLearnedReferencePhotos] = useState<CleaningLearnedReferencePhoto[]>([]);
+  const [referenceSource, setReferenceSource] = useState<"staff" | "learned" | "none">("none");
   const [referencePhotosLoading, setReferencePhotosLoading] = useState(false);
   const [referenceUploadLoading, setReferenceUploadLoading] = useState(false);
+  const [approveQualityRating, setApproveQualityRating] = useState<number | null>(null);
   const [aiBenchmark, setAiBenchmark] = useState<CleaningAiBenchmarkReport | null>(null);
   const [aiBenchmarkLoading, setAiBenchmarkLoading] = useState(false);
   const [aiBenchmarkSaving, setAiBenchmarkSaving] = useState(false);
@@ -642,16 +656,47 @@ export function AdminCleaningClient() {
         params.set("floor", referenceFloor);
       }
       const response = await fetch(`${API_BASE_URL}/manager/cleaning/reference-photos?${params.toString()}`);
-      const data = await readJsonSafely<{ photos?: CleaningReferencePhoto[]; error?: string }>(response);
+      const data = await readJsonSafely<{
+        photos?: CleaningReferencePhoto[];
+        learnedPhotos?: CleaningLearnedReferencePhoto[];
+        source?: "staff" | "learned" | "none";
+        error?: string;
+      }>(response);
       if (!response.ok) {
         setMessage(data.error ?? "Unable to load reference photos.");
         return;
       }
       setReferencePhotos(data.photos ?? []);
+      setLearnedReferencePhotos(data.learnedPhotos ?? []);
+      setReferenceSource(data.source ?? "none");
     } catch {
       setMessage("Unable to load reference photos.");
     } finally {
       setReferencePhotosLoading(false);
+    }
+  }
+
+  async function excludeLearnedReferencePhoto(photoId: string) {
+    setReferenceUploadLoading(true);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/manager/cleaning/completion-photos/${encodeURIComponent(photoId)}/exclude-reference`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ actorEmail: activeEmail, excluded: true })
+        }
+      );
+      const data = await readJsonSafely<{ error?: string }>(response);
+      if (!response.ok) {
+        setMessage(data.error ?? "Unable to exclude learned reference.");
+        return;
+      }
+      await loadReferencePhotos();
+    } catch {
+      setMessage("Unable to exclude learned reference.");
+    } finally {
+      setReferenceUploadLoading(false);
     }
   }
 
@@ -1369,12 +1414,24 @@ export function AdminCleaningClient() {
   async function auditTask(
     taskId: string,
     decision: "APPROVE" | "REJECT",
-    opts?: { createFine?: boolean; fineAmount?: number; useEmptyNote?: boolean; sendEmail?: boolean }
+    opts?: {
+      createFine?: boolean;
+      fineAmount?: number;
+      useEmptyNote?: boolean;
+      sendEmail?: boolean;
+      qualityRating?: number | null;
+    }
   ) {
     setLoading(true);
     setMessage("");
     const notePayload =
       opts?.useEmptyNote === true ? undefined : auditNote.trim() || undefined;
+    const qualityRating =
+      decision === "APPROVE"
+        ? opts?.qualityRating !== undefined
+          ? opts.qualityRating
+          : approveQualityRating
+        : undefined;
     try {
       const response = await fetch(`${API_BASE_URL}/admin/cleaning/tasks/${taskId}/audit`, {
         method: "POST",
@@ -1383,6 +1440,7 @@ export function AdminCleaningClient() {
           reviewer: activeEmail,
           decision,
           note: notePayload,
+          qualityRating: qualityRating ?? undefined,
           createFine: opts?.createFine ?? false,
           fineAmount: opts?.fineAmount,
           sendEmail: opts?.sendEmail ?? false
@@ -1395,6 +1453,7 @@ export function AdminCleaningClient() {
       }
       setAuditingTaskId(null);
       setAuditNote("");
+      setApproveQualityRating(null);
       setRejectFineDialog(null);
       setRejectFineCreate(false);
       await reloadAll();
@@ -1402,6 +1461,7 @@ export function AdminCleaningClient() {
         await loadReviewQueue();
       }
       await loadAiBenchmark();
+      await loadReferencePhotos();
       if (decision === "APPROVE") {
         setMessage(t("adminCleaningTaskApprovedCoins"));
       } else {
@@ -1414,6 +1474,39 @@ export function AdminCleaningClient() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function renderStarPicker(value: number | null, onChange: (next: number | null) => void) {
+    return (
+      <div className="space-y-1">
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="text-[11px] font-medium text-slate-600">{t("cleaningAuditStarLabel")}</span>
+          {[1, 2, 3, 4, 5].map((star) => (
+            <button
+              key={star}
+              type="button"
+              onClick={() => onChange(value === star ? null : star)}
+              className={`rounded px-1.5 py-0.5 text-sm ${
+                value != null && star <= value ? "text-amber-500" : "text-slate-300"
+              }`}
+              aria-label={`${star} star${star === 1 ? "" : "s"}`}
+            >
+              ★
+            </button>
+          ))}
+          {value != null ? (
+            <button
+              type="button"
+              onClick={() => onChange(null)}
+              className="ml-1 text-[10px] text-slate-500 underline"
+            >
+              {t("clearLabel", "Clear")}
+            </button>
+          ) : null}
+        </div>
+        <p className="text-[10px] text-slate-500">{t("cleaningAuditStarHint")}</p>
+      </div>
+    );
   }
 
   async function handleLoad(event: React.FormEvent<HTMLFormElement>) {
@@ -1657,6 +1750,14 @@ export function AdminCleaningClient() {
           </label>
         </div>
 
+        <p className="mt-3 text-xs text-slate-600">
+          {referenceSource === "staff"
+            ? t("cleaningActiveRefSourceStaff")
+            : referenceSource === "learned"
+              ? t("cleaningActiveRefSourceLearned")
+              : t("cleaningActiveRefSourceNone")}
+        </p>
+
         <div className="mt-4 flex flex-wrap gap-3">
           {referencePhotos.length === 0 ? (
             <p className="text-sm text-slate-500">
@@ -1680,6 +1781,44 @@ export function AdminCleaningClient() {
               </div>
             ))
           )}
+        </div>
+
+        <div className="mt-6 border-t border-slate-200 pt-4">
+          <h3 className="text-sm font-semibold text-slate-900">{t("cleaningLearnedRefsTitle")}</h3>
+          <p className="mt-1 text-xs text-slate-500">{t("cleaningLearnedRefsHint")}</p>
+          <div className="mt-3 flex flex-wrap gap-3">
+            {learnedReferencePhotos.length === 0 ? (
+              <p className="text-sm text-slate-500">{t("cleaningNoLearnedRefs")}</p>
+            ) : (
+              learnedReferencePhotos.map((photo) => (
+                <div key={photo.id} className="w-36">
+                  <a
+                    href={photo.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block overflow-hidden rounded-xl ring-1 ring-amber-200"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={photo.url} alt={photo.fileName} className="h-28 w-full object-cover" />
+                  </a>
+                  <div className="mt-1 text-[11px] text-amber-700">
+                    {photo.managerRating != null ? `★${photo.managerRating}` : "★?"}
+                    {photo.approvedAt
+                      ? ` · ${new Date(photo.approvedAt).toLocaleDateString(dateLocale)}`
+                      : ""}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void excludeLearnedReferencePhoto(photo.id)}
+                    disabled={referenceUploadLoading}
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 disabled:opacity-50"
+                  >
+                    {t("cleaningExcludeLearnedRef")}
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       </section>
 
@@ -1954,30 +2093,38 @@ export function AdminCleaningClient() {
                             </div>
                           ) : null}
                         </div>
-                        <div className="flex shrink-0 flex-wrap gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => void auditTask(task.id, "APPROVE", { useEmptyNote: true })}
-                            disabled={loading}
-                            className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-                          >
-                            {t("approveLabel")}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setAuditNote("");
-                              setRejectFineDialog({
-                                taskId: task.id,
-                                userEmail: task.userEmail,
-                                scheduledDate: task.scheduledDate
-                              });
-                            }}
-                            disabled={loading}
-                            className="rounded-lg bg-rose-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
-                          >
-                            {t("rejectLabel")}
-                          </button>
+                        <div className="flex w-full flex-col gap-2 sm:w-auto">
+                          {renderStarPicker(approveQualityRating, setApproveQualityRating)}
+                          <div className="flex shrink-0 flex-wrap gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void auditTask(task.id, "APPROVE", {
+                                  useEmptyNote: true,
+                                  qualityRating: approveQualityRating
+                                })
+                              }
+                              disabled={loading}
+                              className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                            >
+                              {t("approveLabel")}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAuditNote("");
+                                setRejectFineDialog({
+                                  taskId: task.id,
+                                  userEmail: task.userEmail,
+                                  scheduledDate: task.scheduledDate
+                                });
+                              }}
+                              disabled={loading}
+                              className="rounded-lg bg-rose-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+                            >
+                              {t("rejectLabel")}
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </li>
@@ -2656,6 +2803,13 @@ export function AdminCleaningClient() {
                             </div>
                           </div>
 
+                          {task.managerRating != null && task.status === "APPROVED" ? (
+                            <p className="mt-1 text-xs text-amber-700">
+                              {t("cleaningAuditStarLabel")}: {"★".repeat(task.managerRating)}
+                              {"☆".repeat(Math.max(0, 5 - task.managerRating))}
+                            </p>
+                          ) : null}
+
                           {isAuditing && (
                             <div className="border-t border-slate-200 pt-2 space-y-2">
                               <textarea
@@ -2665,6 +2819,7 @@ export function AdminCleaningClient() {
                                 onChange={(e) => setAuditNote(e.target.value)}
                                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-400"
                               />
+                              {renderStarPicker(approveQualityRating, setApproveQualityRating)}
                               <div className="flex gap-2">
                                 <button
                                   type="button"

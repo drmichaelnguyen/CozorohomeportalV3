@@ -1215,6 +1215,80 @@ const translations: Record<string, { en: string; vi: string }> = {
   completionNotePlaceholder: { en: "Optional completion note", vi: "Ghi chú hoàn thành (không bắt buộc)" },
   markDoneBtn: { en: "Mark done", vi: "Đánh dấu xong" },
   markDoneLateBtn: { en: "Mark done (late — 50% coins)", vi: "Đánh dấu xong (muộn — 50% coin)" },
+  cleaningMarkDoneUploading: { en: "Uploading…", vi: "Đang tải lên…" },
+  cleaningMarkDonePhotosRequired: {
+    en: "Take at least one photo of the finished area before submitting.",
+    vi: "Hãy chụp ít nhất một ảnh khu vực đã làm xong trước khi gửi."
+  },
+  cleaningMarkDoneError: { en: "Unable to mark task done.", vi: "Không thể đánh dấu hoàn thành." },
+  cleaningMarkDoneAiPending: {
+    en: "Submitted; AI check is running in the background. Staff will confirm coins shortly.",
+    vi: "Đã gửi; AI đang kiểm tra ảnh ở nền. Nhân viên sẽ xác nhận coin sớm."
+  },
+  cleaningMarkDoneAiApproved: {
+    en: "Task verified by AI and coins approved automatically.",
+    vi: "AI đã xác nhận công việc và tự động duyệt coin."
+  },
+  cleaningMarkDoneSentAudit: {
+    en: "Task marked done and sent for audit.",
+    vi: "Đã đánh dấu xong và gửi kiểm tra."
+  },
+  cleaningMarkDoneTimeout: {
+    en: "Upload timed out. Refreshing status — if the task already submitted, you do not need to retry.",
+    vi: "Hết thời gian tải lên. Đang làm mới trạng thái — nếu đã gửi thành công thì không cần thử lại."
+  },
+  cleaningMarkDoneNetworkError: {
+    en: "Network error while uploading. Refreshing status before retry.",
+    vi: "Lỗi mạng khi tải lên. Đang làm mới trạng thái trước khi thử lại."
+  },
+  cleaningPhotosMax: {
+    en: "You can attach up to 5 photos per completion.",
+    vi: "Bạn chỉ có thể đính kèm tối đa 5 ảnh mỗi lần hoàn thành."
+  },
+  cleaningPhotoReadError: {
+    en: "Unable to read the selected photo.",
+    vi: "Không đọc được ảnh đã chọn."
+  },
+  cleaningCompletionPhotosTitle: { en: "Completion photos", vi: "Ảnh hoàn thành" },
+  cleaningCompletionPhotosRequired: {
+    en: "Take a few live photos of the finished area. AI compares them with staff reference photos before coin verification.",
+    vi: "Chụp vài ảnh khu vực đã làm xong. AI sẽ so sánh với ảnh mẫu của nhân viên trước khi xét coin."
+  },
+  cleaningCompletionPhotosOptional: {
+    en: "Optional: add photos of the finished work (up to 5). If you add photos, AI may check them against recent manager-approved examples.",
+    vi: "Tuỳ chọn: thêm ảnh công việc đã xong (tối đa 5). Nếu có ảnh, AI có thể so sánh với mẫu ★4–5 gần đây."
+  },
+  cleaningAddPhoto: { en: "Add photo", vi: "Thêm ảnh" },
+  cleaningAuditStarHint: {
+    en: "Optional quality stars. ★4–5 lets these photos teach the AI for this area when staff references are missing.",
+    vi: "Sao chất lượng (tuỳ chọn). ★4–5 giúp ảnh này dạy AI cho khu vực này khi chưa có ảnh mẫu staff."
+  },
+  cleaningAuditStarLabel: { en: "Quality", vi: "Chất lượng" },
+  cleaningLearnedRefsTitle: {
+    en: "Learned references (from ★4–5 approvals)",
+    vi: "Ảnh mẫu học được (từ duyệt ★4–5)"
+  },
+  cleaningLearnedRefsHint: {
+    en: "Used only when this area has no active staff reference photos. Uploading staff references overrides these automatically.",
+    vi: "Chỉ dùng khi khu vực chưa có ảnh mẫu staff đang hoạt động. Tải ảnh mẫu staff sẽ ghi đè tự động."
+  },
+  cleaningExcludeLearnedRef: { en: "Exclude", vi: "Loại khỏi mẫu" },
+  cleaningNoLearnedRefs: {
+    en: "No learned references yet for this area.",
+    vi: "Chưa có ảnh mẫu học được cho khu vực này."
+  },
+  cleaningActiveRefSourceStaff: {
+    en: "AI currently uses staff reference photos for this area.",
+    vi: "AI đang dùng ảnh mẫu staff cho khu vực này."
+  },
+  cleaningActiveRefSourceLearned: {
+    en: "AI currently uses learned ★4–5 photos for this area (no staff references).",
+    vi: "AI đang dùng ảnh ★4–5 học được cho khu vực này (chưa có ảnh mẫu staff)."
+  },
+  cleaningActiveRefSourceNone: {
+    en: "No AI references for this area yet — verification stays skipped until staff upload or ★4–5 approvals exist.",
+    vi: "Chưa có ảnh mẫu AI — bỏ qua kiểm tra cho đến khi staff tải mẫu hoặc có duyệt ★4–5."
+  },
   lateSubmissionWarning: { en: "⚠ Late submission. You will earn {earned} coins (50%) instead of {full}. Deadline: {time}.", vi: "⚠ Nộp muộn. Bạn sẽ nhận {earned} coin (50%) thay vì {full}. Hạn cuối: {time}." },
   deadlinePassed: { en: "Deadline passed. You had until {time} to submit late.", vi: "Đã quá hạn. Bạn có thể nộp muộn đến {time}." },
   removeMyselfBtn: { en: "Remove myself ({penalty})", vi: "Hủy đăng ký ({penalty})" },
