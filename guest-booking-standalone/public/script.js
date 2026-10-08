@@ -18,7 +18,8 @@ const state = {
   galleryBranchId: "D7",
   closedBranches: [],
   branchClosureNotice: null,
-  recentGuestProfileLoaded: false
+  recentGuestProfileLoaded: false,
+  donationCouponValid: false
 };
 
 let recentGuestProfileSaveTimer = null;
@@ -79,6 +80,8 @@ const els = {
   notes: document.getElementById("notes"),
   bookBtn: document.getElementById("bookBtn"),
   referralCode: document.getElementById("referralCode"),
+  donationCouponCode: document.getElementById("donationCouponCode"),
+  donationCouponStatus: document.getElementById("donationCouponStatus"),
   referralHostelBanner: document.getElementById("referralHostelBanner"),
   referralHostelBody: document.getElementById("referralHostelBody"),
   branchClosureBanner: document.getElementById("branchClosureBanner")
@@ -810,7 +813,14 @@ function calculateBedPricingPreview(bedDetails) {
   const discountPercent = stayDiscountPercent + cancellationDiscountPercent;
   const discountAmount = stayDiscountAmount + cancellationDiscountAmount;
   const depositAmount = state.pricingConfig.depositAmount || 0;
-  const stayTotal = subtotal - discountAmount;
+  let stayTotal = subtotal - discountAmount;
+  let pricedDiscountAmount = discountAmount;
+  if (state.donationCouponValid) {
+    const waiver = nightlyRates.length ? Math.min(...nightlyRates) : nightlyPrice;
+    const cut = Math.min(Math.max(0, Math.round(waiver)), Math.max(0, stayTotal));
+    stayTotal -= cut;
+    pricedDiscountAmount += cut;
+  }
   const nightlyRateAfterDiscount = nights > 0 ? Math.round(stayTotal / nights) : 0;
 
   return {
@@ -826,7 +836,7 @@ function calculateBedPricingPreview(bedDetails) {
     nightlyPriceSource: bedDetails.nightlyPriceSource || "configured",
     hasVariableNightlyRates,
     subtotal,
-    discountAmount,
+    discountAmount: pricedDiscountAmount,
     depositAmount,
     stayTotal,
     nightlyRateAfterDiscount,
@@ -1342,7 +1352,8 @@ async function bookSelectedBed() {
     guestPhone: els.guestPhone.value,
     notes: els.notes.value,
     guestAuthToken: state.authToken,
-    referralCode: els.referralCode ? String(els.referralCode.value || "").trim() : ""
+    referralCode: els.referralCode ? String(els.referralCode.value || "").trim() : "",
+    donationCouponCode: els.donationCouponCode ? String(els.donationCouponCode.value || "").trim() : ""
   };
 
   if (state.branchId === "D2") {
@@ -1463,6 +1474,44 @@ els.idPhoto.addEventListener("change", () => {
   }
 });
 els.bookBtn.addEventListener("click", () => void bookSelectedBed());
+
+let donationCouponTimer = null;
+async function refreshDonationCoupon() {
+  const code = els.donationCouponCode ? String(els.donationCouponCode.value || "").trim() : "";
+  if (!code) {
+    state.donationCouponValid = false;
+    if (els.donationCouponStatus) els.donationCouponStatus.textContent = "";
+    renderRooms();
+    updatePriceSummary(calculatePricingPreview());
+    return;
+  }
+  try {
+    const response = await fetch("/api/donation-coupon/quote", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code })
+    });
+    const data = await response.json().catch(() => ({}));
+    state.donationCouponValid = response.ok && data.ok === true && data.benefit === "one_night";
+    if (els.donationCouponStatus) {
+      els.donationCouponStatus.textContent = state.donationCouponValid
+        ? window.t("donationCouponValid")
+        : data.error || window.t("donationCouponInvalid");
+    }
+  } catch {
+    state.donationCouponValid = false;
+    if (els.donationCouponStatus) els.donationCouponStatus.textContent = window.t("donationCouponInvalid");
+  }
+  renderRooms();
+  updatePriceSummary(calculatePricingPreview());
+}
+
+if (els.donationCouponCode) {
+  els.donationCouponCode.addEventListener("input", () => {
+    clearTimeout(donationCouponTimer);
+    donationCouponTimer = setTimeout(() => void refreshDonationCoupon(), 350);
+  });
+}
 
 (async function init() {
   await loadConfig();

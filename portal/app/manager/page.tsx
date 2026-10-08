@@ -8,7 +8,9 @@ export default async function ManagerPage({
   const resolvedSearchParams = (await searchParams) ?? {};
   const initialChatId = resolvedSearchParams.chat?.trim() || undefined;
   const view = resolvedSearchParams.view ?? (initialChatId ? "support_chat" : undefined);
+  const openDonations = view === "donations";
   const initialView =
+    openDonations ||
     view === "client_list" ||
     view === "owners_employees" ||
     view === "support_chat" ||
@@ -19,8 +21,16 @@ export default async function ManagerPage({
     view === "overview" ||
     view === "short_term" ||
     view === "settings"
-      ? view
+      ? openDonations
+        ? "support_chat"
+        : view
       : "overview";
 
-  return <ManagerClient initialView={initialView} initialChatId={initialChatId} />;
+  return (
+    <ManagerClient
+      initialView={initialView}
+      initialChatId={initialChatId}
+      initialSupportSubTab={openDonations ? "donations" : undefined}
+    />
+  );
 }

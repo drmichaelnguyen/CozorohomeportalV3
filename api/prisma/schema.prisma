@@ -873,3 +873,108 @@ model PortalVisit {
   @@index([path, createdAt])
   @@index([email, path, createdAt])
 }
+
+/// Marketing-site donation partnership requests (cozorohome.com/donate).
+enum DonationRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum DonationType {
+  CASH
+  IN_KIND
+}
+
+enum DonationStayTerm {
+  SHORT_TERM
+  LONG_TERM
+}
+
+enum DonationCouponStatus {
+  ISSUED
+  REDEEMED
+}
+
+enum DonationFollowUpKind {
+  PRE_EVENT
+  POST_EVENT
+}
+
+enum DonationFollowUpStatus {
+  SCHEDULED
+  SENT
+  SKIPPED
+  FAILED
+}
+
+model DonationRequest {
+  id                String                @id @default(cuid())
+  externalKey       String                @unique @db.VarChar(120)
+  name              String                @db.VarChar(160)
+  phone             String?               @db.VarChar(48)
+  email             String                @db.VarChar(191)
+  donationType      DonationType
+  donationDetail    String                @db.Text
+  eventName         String?               @db.VarChar(200)
+  eventDetails      String?               @db.Text
+  /// Calendar date (Asia/Ho_Chi_Minh). Follow-ups are 09:00 VN on date-3 and date+10.
+  eventDate         DateTime?             @db.Date
+  socialPlatform    String?               @db.VarChar(64)
+  socialHandle      String?               @db.VarChar(120)
+  socialLink        String?               @db.VarChar(500)
+  returnOffer       String                @db.Text
+  status            DonationRequestStatus @default(PENDING)
+  rejectNote        String?               @db.Text
+  decidedByEmail    String?               @db.VarChar(191)
+  decidedAt         DateTime?
+  couponCount       Int?
+  termType          DonationStayTerm?
+  couponEmailSentAt DateTime?
+  couponEmailError  String?               @db.VarChar(500)
+  source            String                @default("marketing") @db.VarChar(32)
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  coupons           DonationStayCoupon[]
+  followUps         DonationFollowUp[]
+
+  @@index([status, createdAt])
+  @@index([email])
+  @@index([eventDate])
+}
+
+model DonationStayCoupon {
+  id              String               @id @default(cuid())
+  requestId       String
+  request         DonationRequest      @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  code            String               @unique @db.VarChar(24)
+  termType        DonationStayTerm
+  /// SHORT_TERM: complimentary nights. LONG_TERM: complimentary rent months.
+  benefitUnits    Int                  @default(1)
+  status          DonationCouponStatus @default(ISSUED)
+  redeemedAt      DateTime?
+  redeemedByEmail String?              @db.VarChar(191)
+  redemptionRef   String?              @db.VarChar(191)
+  discountVnd     Int?
+  createdAt       DateTime             @default(now())
+
+  @@index([requestId])
+  @@index([status])
+}
+
+model DonationFollowUp {
+  id           String                 @id @default(cuid())
+  requestId    String
+  request      DonationRequest        @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  kind         DonationFollowUpKind
+  scheduledFor DateTime
+  status       DonationFollowUpStatus @default(SCHEDULED)
+  sentAt       DateTime?
+  lastError    String?                @db.VarChar(500)
+  attempts     Int                    @default(0)
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+
+  @@unique([requestId, kind])
+  @@index([status, scheduledFor])
+}

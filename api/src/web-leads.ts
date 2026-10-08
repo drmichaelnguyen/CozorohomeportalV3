@@ -123,6 +123,9 @@ export async function syncWebLeadTurn(input: WebLeadSyncPayload) {
 
 export async function listWebLeadConversations(limit = 80) {
   const rows = await prisma.webLeadConversation.findMany({
+    where: {
+      OR: [{ occupationHint: null }, { occupationHint: { not: "donation" } }]
+    },
     orderBy: { lastMessageAt: "desc" },
     take: Math.min(200, Math.max(1, limit)),
     include: {

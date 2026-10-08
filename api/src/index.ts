@@ -237,6 +237,22 @@ import {
   syncWebLeadTurn,
   updateWebLeadStatus
 } from "./web-leads.js";
+import {
+  approveDonationRequest,
+  DonationError,
+  dispatchDonationFollowUps,
+  getDonationRequest,
+  ingestDonationFromWebLead,
+  listDonationRequests,
+  quoteDonationCoupon,
+  redeemDonationCoupon,
+  rejectDonationRequest,
+  releaseDonationCoupon,
+  resendDonationCouponEmail,
+  setDonationEventDate,
+  upsertDonationRequest
+} from "./donation-partnerships.js";
+import { normalizeDonationType, parseEventDate } from "./donation-partnership-logic.js";
 import type {
   ContractExtensionNegotiation,
   ContractExtensionTermsSnapshot
@@ -462,6 +478,11 @@ type PendingContractApproval = {
     newUserCoins: number;
     referrerCoins: number;
     referrerMaHd: string;
+  } | null;
+  /** Partnership stay coupon consumed by this registration. Released if the request is rejected. */
+  donationCoupon?: {
+    code: string;
+    discountVnd: number;
   } | null;
   extension?: {
     email: string;
@@ -1875,6 +1896,8 @@ const publicRegistrationSchema = z.object({
   referralCode: z.string().trim().optional(),
   /** Pre-referral first payment total (rent prepay slice + full deposit); required when referralCode is set. */
   firstPaymentSubtotalBeforeReferral: z.coerce.number().int().nonnegative().optional(),
+  /** Donation partnership code. Waives one month of rent on the first payment. */
+  donationCouponCode: z.string().trim().max(32).optional(),
   clientSignatureDataUrl: z.string().trim().optional(),
   clientSignatureTimestamp: z.string().trim().optional()
 });
@@ -4816,10 +4839,284 @@ app.post("/internal/web-leads/sync", async (request, response) => {
 
   try {
     const result = await syncWebLeadTurn(parsed.data);
-    return response.json({ ok: true, ...result });
+    let donation: { skipped: boolean; reason?: string; id?: string; status?: string } | null = null;
+    if ((parsed.data.occupationHint ?? "").trim().toLowerCase() === "donation") {
+      try {
+        donation = await ingestDonationFromWebLead({
+          conversationKey: parsed.data.conversationKey,
+          guestName: parsed.data.guestName,
+          phone: parsed.data.phone,
+          otherContact: parsed.data.otherContact,
+          summary: parsed.data.summary,
+          guestMessage: parsed.data.guestMessage
+        });
+      } catch (error) {
+        donation = {
+          skipped: true,
+          reason: error instanceof Error ? error.message : "Unable to store donation request"
+        };
+      }
+    }
+    return response.json({ ok: true, ...result, donation });
   } catch (error) {
     return response.status(500).json({
       error: error instanceof Error ? error.message : "Unable to sync web lead chat"
+    });
+  }
+});
+
+const donationIngestSchema = z.object({
+  externalKey: z.string().trim().min(4).max(120),
+  name: z.string().trim().min(1).max(160),
+  email: z.string().trim().email(),
+  phone: z.string().trim().max(48).optional().nullable(),
+  donationType: z.string().trim().min(1).max(40),
+  donationDetail: z.string().trim().min(1).max(4000),
+  eventName: z.string().trim().max(200).optional().nullable(),
+  eventDetails: z.string().trim().max(4000).optional().nullable(),
+  eventDate: z.string().trim().max(40).optional().nullable(),
+  socialPlatform: z.string().trim().max(64).optional().nullable(),
+  socialHandle: z.string().trim().max(120).optional().nullable(),
+  socialLink: z.string().trim().max(500).optional().nullable(),
+  returnOffer: z.string().trim().min(1).max(4000)
+});
+
+app.post("/internal/donations", async (request, response) => {
+  if (!isAuthorizedInternalRequest(request)) {
+    return response.status(403).json({ error: "Unauthorized" });
+  }
+  const parsed = donationIngestSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid donation payload" });
+  }
+  const eventDate =
+    parseEventDate(parsed.data.eventDate) ||
+    parseEventDate(parsed.data.eventDetails) ||
+    null;
+  try {
+    const donationType = normalizeDonationType(parsed.data.donationType);
+    if (!donationType) {
+      return response.status(400).json({ error: "donationType must be cash or in-kind." });
+    }
+    const saved = await upsertDonationRequest({
+      externalKey: parsed.data.externalKey,
+      name: parsed.data.name,
+      email: parsed.data.email,
+      phone: parsed.data.phone ?? null,
+      donationType,
+      donationDetail: parsed.data.donationDetail,
+      eventName: parsed.data.eventName ?? null,
+      eventDetails: parsed.data.eventDetails ?? null,
+      eventDate,
+      socialPlatform: parsed.data.socialPlatform ?? null,
+      socialHandle: parsed.data.socialHandle ?? null,
+      socialLink: parsed.data.socialLink ?? null,
+      returnOffer: parsed.data.returnOffer,
+      source: "marketing"
+    });
+    return response.json({ ok: true, id: saved.id, status: saved.status, eventDate: saved.eventDate, unchanged: saved.unchanged });
+  } catch (error) {
+    return response.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to store donation request"
+    });
+  }
+});
+
+async function requireDonationStaff(email: string) {
+  await requirePortalRole(
+    email,
+    ["manager", "owner", "app_admin"],
+    "Only Cozoro managers and owners can review donation requests."
+  );
+}
+
+app.get("/manager/donations", async (request, response) => {
+  const operatorEmail = String(request.query.operatorEmail ?? "");
+  const statusRaw = String(request.query.status ?? "").trim().toUpperCase();
+  try {
+    await requireDonationStaff(operatorEmail);
+    const status =
+      statusRaw === "PENDING" || statusRaw === "APPROVED" || statusRaw === "REJECTED"
+        ? statusRaw
+        : undefined;
+    const requests = await listDonationRequests(status);
+    return response.json({ requests });
+  } catch (error) {
+    const statusCode = (error as { statusCode?: number }).statusCode ?? 403;
+    return response.status(statusCode).json({
+      error: error instanceof Error ? error.message : "Unable to load donation requests"
+    });
+  }
+});
+
+app.get("/manager/donations/:id", async (request, response) => {
+  const operatorEmail = String(request.query.operatorEmail ?? "");
+  try {
+    await requireDonationStaff(operatorEmail);
+    const donation = await getDonationRequest(request.params.id ?? "");
+    if (!donation) return response.status(404).json({ error: "Donation request not found" });
+    return response.json({ request: donation });
+  } catch (error) {
+    const statusCode = (error as { statusCode?: number }).statusCode ?? 403;
+    return response.status(statusCode).json({
+      error: error instanceof Error ? error.message : "Unable to load donation request"
+    });
+  }
+});
+
+app.post("/manager/donations/:id/approve", async (request, response) => {
+  const parsed = z
+    .object({
+      operatorEmail: z.string().email(),
+      couponCount: z.coerce.number().int().min(1).max(20),
+      termType: z.enum(["SHORT_TERM", "LONG_TERM"]),
+      eventDate: z.string().trim().max(40).optional().nullable()
+    })
+    .safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Invalid donation approval payload" });
+  try {
+    await requireDonationStaff(parsed.data.operatorEmail);
+    const result = await approveDonationRequest({
+      id: request.params.id ?? "",
+      operatorEmail: parsed.data.operatorEmail,
+      couponCount: parsed.data.couponCount,
+      termType: parsed.data.termType,
+      eventDate: parsed.data.eventDate
+    });
+    return response.json({ ok: true, ...result });
+  } catch (error) {
+    const statusCode = error instanceof DonationError ? error.statusCode : 403;
+    return response.status(statusCode).json({
+      error: error instanceof Error ? error.message : "Unable to approve donation request"
+    });
+  }
+});
+
+app.post("/manager/donations/:id/reject", async (request, response) => {
+  const parsed = z
+    .object({
+      operatorEmail: z.string().email(),
+      note: z.string().trim().max(2000).optional().nullable()
+    })
+    .safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Invalid donation rejection payload" });
+  try {
+    await requireDonationStaff(parsed.data.operatorEmail);
+    const donation = await rejectDonationRequest({
+      id: request.params.id ?? "",
+      operatorEmail: parsed.data.operatorEmail,
+      note: parsed.data.note
+    });
+    return response.json({ ok: true, request: donation });
+  } catch (error) {
+    const statusCode = error instanceof DonationError ? error.statusCode : 403;
+    return response.status(statusCode).json({
+      error: error instanceof Error ? error.message : "Unable to reject donation request"
+    });
+  }
+});
+
+app.post("/manager/donations/:id/event-date", async (request, response) => {
+  const parsed = z
+    .object({
+      operatorEmail: z.string().email(),
+      eventDate: z.string().trim().min(8).max(40)
+    })
+    .safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Invalid event date payload" });
+  try {
+    await requireDonationStaff(parsed.data.operatorEmail);
+    const eventDate = parseEventDate(parsed.data.eventDate);
+    if (!eventDate) return response.status(400).json({ error: "Event date must be YYYY-MM-DD." });
+    const donation = await setDonationEventDate(request.params.id ?? "", eventDate);
+    return response.json({ ok: true, request: donation });
+  } catch (error) {
+    const statusCode = error instanceof DonationError ? error.statusCode : 403;
+    return response.status(statusCode).json({
+      error: error instanceof Error ? error.message : "Unable to update event date"
+    });
+  }
+});
+
+app.post("/manager/donations/:id/resend-coupon-email", async (request, response) => {
+  const parsed = z.object({ operatorEmail: z.string().email() }).safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Invalid payload" });
+  try {
+    await requireDonationStaff(parsed.data.operatorEmail);
+    const result = await resendDonationCouponEmail(request.params.id ?? "");
+    return response.json({ ok: true, ...result });
+  } catch (error) {
+    const statusCode = error instanceof DonationError ? error.statusCode : 403;
+    return response.status(statusCode).json({
+      error: error instanceof Error ? error.message : "Unable to resend coupon email"
+    });
+  }
+});
+
+const donationCouponQuoteSchema = z.object({
+  code: z.string().trim().min(4).max(32),
+  termType: z.enum(["SHORT_TERM", "LONG_TERM"]),
+  nightlyRates: z.array(z.coerce.number().nonnegative()).max(60).optional(),
+  monthlyRentVnd: z.coerce.number().int().nonnegative().optional(),
+  firstPaymentSubtotalVnd: z.coerce.number().int().nonnegative().optional().nullable(),
+  depositVnd: z.coerce.number().int().nonnegative().optional().nullable(),
+  otherDiscountVnd: z.coerce.number().int().nonnegative().optional().nullable(),
+  maxDiscountVnd: z.coerce.number().int().nonnegative().optional().nullable()
+});
+
+app.post("/api/public/donation-coupons/quote", async (request, response) => {
+  const parsed = donationCouponQuoteSchema.safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Invalid coupon quote" });
+  try {
+    const quote = await quoteDonationCoupon(parsed.data);
+    return response.json(quote);
+  } catch (error) {
+    const statusCode = error instanceof DonationError ? error.statusCode : 400;
+    return response.status(statusCode).json({
+      error: error instanceof Error ? error.message : "Unable to quote donation coupon"
+    });
+  }
+});
+
+app.post("/internal/donations/coupons/redeem", async (request, response) => {
+  if (!isAuthorizedInternalRequest(request)) {
+    return response.status(403).json({ error: "Unauthorized" });
+  }
+  const parsed = donationCouponQuoteSchema
+    .extend({
+      email: z.string().trim().email(),
+      redemptionRef: z.string().trim().min(1).max(191)
+    })
+    .safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Invalid coupon redemption" });
+  try {
+    const result = await redeemDonationCoupon(parsed.data);
+    return response.json(result);
+  } catch (error) {
+    const statusCode = error instanceof DonationError ? error.statusCode : 400;
+    return response.status(statusCode).json({
+      error: error instanceof Error ? error.message : "Unable to redeem donation coupon"
+    });
+  }
+});
+
+app.post("/internal/donations/coupons/release", async (request, response) => {
+  if (!isAuthorizedInternalRequest(request)) {
+    return response.status(403).json({ error: "Unauthorized" });
+  }
+  const parsed = z
+    .object({
+      code: z.string().trim().min(4).max(32),
+      redemptionRef: z.string().trim().min(1).max(191)
+    })
+    .safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Invalid coupon release" });
+  try {
+    const result = await releaseDonationCoupon(parsed.data);
+    return response.json({ ok: true, ...result });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to release donation coupon"
     });
   }
 });
@@ -10020,6 +10317,7 @@ app.post("/api/public/register", async (request, response) => {
 
     let mergedAdditionalTerms = parsed.data.additionalTerms?.trim() ?? "";
     let referralNoteLine: string | undefined;
+    let referralDiscountVnd = 0;
     let referralRewards: {
       newUserCoins: number;
       referrerCoins: number;
@@ -10054,6 +10352,7 @@ app.post("/api/public/register", async (request, response) => {
       }
 
       const appliedDiscount = Math.min(referralResolution.discountVnd, firstPaymentSubtotal);
+      referralDiscountVnd = appliedDiscount;
       const scaleNote = `contract ${parsed.data.contractMonths} mo; scale ${referralResolution.scale.toFixed(2)} vs ${referralResolution.basisMonths} mo baseline`;
       const refLine = `Referral (one-time first payment): −${appliedDiscount.toLocaleString("vi-VN")} VND (${scaleNote}; referrer contract ${referralResolution.referrer.maHd}; deposit unchanged)`;
       mergedAdditionalTerms = [mergedAdditionalTerms, refLine].filter(Boolean).join(" | ");
@@ -10065,6 +10364,27 @@ app.post("/api/public/register", async (request, response) => {
       };
     }
 
+    const donationCodeRaw = parsed.data.donationCouponCode?.trim() || "";
+    let donationQuote: { code: string; discountVnd: number } | null = null;
+    if (donationCodeRaw) {
+      const priced = await quoteDonationCoupon({
+        code: donationCodeRaw,
+        termType: "LONG_TERM",
+        monthlyRentVnd: parsed.data.monthlyPrice,
+        firstPaymentSubtotalVnd: parsed.data.firstPaymentSubtotalBeforeReferral ?? null,
+        depositVnd: parsed.data.deposit,
+        otherDiscountVnd: referralDiscountVnd
+      });
+      if (priced.discountVnd <= 0) {
+        return response.status(400).json({
+          error: "This partnership code cannot reduce the first payment further. The deposit is not discounted."
+        });
+      }
+      donationQuote = { code: priced.code, discountVnd: priced.discountVnd };
+      const couponLine = `Donation partnership coupon ${priced.code}: −${priced.discountVnd.toLocaleString("vi-VN")} VND one-time first payment (one month of rent; deposit unchanged)`;
+      mergedAdditionalTerms = [mergedAdditionalTerms, couponLine].filter(Boolean).join(" | ");
+    }
+
     const result = await runWithWriteGuard({
       key: createWriteGuardKey("/api/public/register", parsed.data),
       duplicateMessage: "This registration was just submitted. Please wait a few seconds before trying again.",
@@ -10074,20 +10394,50 @@ app.post("/api/public/register", async (request, response) => {
           parkingOptionId: _parkingOptionIdIgnored,
           referralCode: _referralIgnored,
           firstPaymentSubtotalBeforeReferral: _fpSubtotalIgnored,
+          donationCouponCode: _donationCouponIgnored,
           ...registrationFields
         } = parsed.data;
         void _parkingOptionIdIgnored;
         void _referralIgnored;
         void _fpSubtotalIgnored;
+        void _donationCouponIgnored;
+
+        const pendingId = randomUUID();
+        const file = await readContractApprovals();
+        const duplicate = file.approvals.find(
+          (entry) =>
+            entry.status === "pending" &&
+            entry.type === "registration" &&
+            String(entry.registration?.email ?? "").trim().toLowerCase() === parsed.data.email.trim().toLowerCase()
+        );
+        if (duplicate) {
+          return { contractCode: duplicate.id, pendingApproval: true };
+        }
+
+        let donationCoupon: { code: string; discountVnd: number } | null = null;
+        if (donationQuote) {
+          const redeemed = await redeemDonationCoupon({
+            code: donationQuote.code,
+            termType: "LONG_TERM",
+            email: parsed.data.email,
+            redemptionRef: pendingId,
+            monthlyRentVnd: parsed.data.monthlyPrice,
+            firstPaymentSubtotalVnd: parsed.data.firstPaymentSubtotalBeforeReferral ?? null,
+            depositVnd: parsed.data.deposit,
+            otherDiscountVnd: referralDiscountVnd
+          });
+          donationCoupon = { code: redeemed.code, discountVnd: redeemed.discountVnd };
+        }
 
         const pending: PendingContractApproval = {
-          id: randomUUID(),
+          id: pendingId,
           type: "registration",
           status: "pending",
           submittedAt: new Date().toISOString(),
           clientSignatureDataUrl: parsed.data.clientSignatureDataUrl,
           clientSignatureTimestamp: parsed.data.clientSignatureTimestamp,
           referralRewards,
+          donationCoupon,
           registration: {
             ...registrationFields,
             additionalTerms: mergedAdditionalTerms || undefined,
@@ -10101,18 +10451,15 @@ app.post("/api/public/register", async (request, response) => {
             clientSignatureTimestamp: parsed.data.clientSignatureTimestamp
           }
         };
-        const file = await readContractApprovals();
-        const duplicate = file.approvals.find(
-          (entry) =>
-            entry.status === "pending" &&
-            entry.type === "registration" &&
-            String(entry.registration?.email ?? "").trim().toLowerCase() === parsed.data.email.trim().toLowerCase()
-        );
-        if (duplicate) {
-          return { contractCode: duplicate.id, pendingApproval: true };
+        try {
+          file.approvals.unshift(pending);
+          await writeContractApprovals(file);
+        } catch (error) {
+          if (donationCoupon) {
+            await releaseDonationCoupon({ code: donationCoupon.code, redemptionRef: pendingId });
+          }
+          throw error;
         }
-        file.approvals.unshift(pending);
-        await writeContractApprovals(file);
 
         return {
           contractCode: pending.id,
@@ -10380,6 +10727,9 @@ app.post("/manager/contract-approvals/:id/reject", async (request, response) => 
     const item = file.approvals.find((entry) => entry.id === request.params.id);
     if (!item) return response.status(404).json({ error: "Approval request not found" });
     if (item.status !== "pending") return response.status(400).json({ error: "This approval request has already been reviewed" });
+    if (item.donationCoupon?.code) {
+      await releaseDonationCoupon({ code: item.donationCoupon.code, redemptionRef: item.id });
+    }
     item.status = "rejected";
     item.reviewedAt = new Date().toISOString();
     item.reviewedBy = parsed.data.actorEmail.trim().toLowerCase();
@@ -11719,6 +12069,24 @@ app.listen(port, "127.0.0.1", () => {
     });
   }, 2 * 60 * 1000);
   cookerLeftoverTimer.unref();
+
+  void dispatchDonationFollowUps().then((result) => {
+    if (!result.skipped && (result.sent > 0 || result.failed > 0)) {
+      console.log(`[donation-follow-up] startup sent=${result.sent} failed=${result.failed}`);
+    }
+  }).catch((error) => {
+    console.error("[donation-follow-up] startup failed", error);
+  });
+  const donationFollowUpTimer = setInterval(() => {
+    void dispatchDonationFollowUps().then((result) => {
+      if (!result.skipped && (result.sent > 0 || result.failed > 0)) {
+        console.log(`[donation-follow-up] sent=${result.sent} failed=${result.failed}`);
+      }
+    }).catch((error) => {
+      console.error("[donation-follow-up] interval failed", error);
+    });
+  }, 15 * 60 * 1000);
+  donationFollowUpTimer.unref();
 
   startMetaAiKnowledgeSyncScheduler();
 });

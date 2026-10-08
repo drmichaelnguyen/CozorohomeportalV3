@@ -50,6 +50,7 @@ import { AdminCleaningClient } from "./admin-cleaning-client";
 import { CleaningScheduleClient } from "./cleaning-schedule-client";
 import { ManagerAiChat } from "./manager-ai-chat";
 import { ManagerSupportInbox } from "./manager-support-inbox";
+import { ManagerDonationInbox } from "./manager-donation-inbox";
 import { ManagerWebLeadInbox } from "./manager-web-lead-inbox";
 import { LaundryScheduleManager } from "./laundry-schedule-manager";
 import { usePortalLanguage } from "./portal-language";
@@ -3245,10 +3246,12 @@ function buildPrepaidOwnerLinesDiff(
 
 export function ManagerClient({
   initialView = "overview",
-  initialChatId
+  initialChatId,
+  initialSupportSubTab
 }: {
   initialView?: ManagerView;
   initialChatId?: string;
+  initialSupportSubTab?: "messages" | "feedbacks" | "maintenance" | "assistant" | "web_ai" | "donations";
 }) {
 
   const router = useRouter();
@@ -3849,7 +3852,9 @@ export function ManagerClient({
   const [controllerActionPending, setControllerActionPending] = useState<Record<string, string>>({});
   const [controllerActionFeedback, setControllerActionFeedback] = useState<Record<string, { tone: "success" | "error"; message: string }>>({});
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
-  const [supportSubTab, setSupportSubTab] = useState<"messages" | "feedbacks" | "maintenance" | "assistant" | "web_ai">("messages");
+  const [supportSubTab, setSupportSubTab] = useState<"messages" | "feedbacks" | "maintenance" | "assistant" | "web_ai" | "donations">(
+    initialSupportSubTab ?? "messages"
+  );
   const [clientSubTab, setClientSubTab] = useState<ClientSubTab>("list");
   const [clientTermTab, setClientTermTab] = useState<"long_term" | "short_term" | "inactive">(
     initialView === "short_term" ? "short_term" : "long_term"
@@ -13947,6 +13952,17 @@ export function ManagerClient({
               </button>
               <button
                 type="button"
+                onClick={() => setSupportSubTab("donations")}
+                className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold transition-all sm:text-sm ${
+                  supportSubTab === "donations"
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                {language === "vi" ? "Quyên góp" : "Donations"}
+              </button>
+              <button
+                type="button"
                 onClick={() => {
                   setSupportSubTab("maintenance");
                   void loadMaintenanceTickets();
@@ -14005,6 +14021,8 @@ export function ManagerClient({
             </section>
           ) : supportSubTab === "web_ai" ? (
             <ManagerWebLeadInbox operatorEmail={normalizedEmail} enabled={isStaffSession} />
+          ) : supportSubTab === "donations" ? (
+            <ManagerDonationInbox operatorEmail={normalizedEmail} enabled={isStaffSession} />
           ) : supportSubTab === "feedbacks" ? (
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-3">

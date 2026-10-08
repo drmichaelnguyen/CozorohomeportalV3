@@ -1197,7 +1197,7 @@ async function calculateBookingChange(booking, input, pricingConfig = null) {
   const bedPricing = nightlyPrices[0]
     ? { nightlyPrice: nightlyPrices[0].nightlyPrice, source: nightlyPrices[0].source }
     : getBedPricingEntry(config, booking.branch_id, booking.bed_number);
-  const requestedPricing = calculatePricing(
+  let requestedPricing = calculatePricing(
     requestedNights,
     bedPricing.nightlyPrice,
     config,
@@ -1207,6 +1207,12 @@ async function calculateBookingChange(booking, input, pricingConfig = null) {
       previousNights: currentNights
     }
   );
+  if (donationCouponCodeFromNotes(booking.notes)) {
+    requestedPricing = applyDonationNightWaiver(
+      requestedPricing,
+      nightlyPrices.map((entry) => entry.nightlyPrice)
+    );
+  }
   const totalDifference = requestedPricing.total - currentPricing.total;
   const cancellationTerms = getBookingCancellationTerms(booking, config);
 
@@ -1245,7 +1251,7 @@ async function calculateBookingChange(booking, input, pricingConfig = null) {
     cancellationTerms,
     changePayload: createBookingChangePayload({
       guestPhone: String(input.guestPhone || booking.guest_phone || "").trim(),
-      notes: String(input.notes || booking.notes || "").trim(),
+      notes: preserveDonationCouponNote(booking.notes, String(input.notes || booking.notes || "").trim()),
       checkIn: requestedCheckIn,
       checkOut: requestedCheckOut,
       nights: requestedNights,
@@ -1924,6 +1930,7 @@ function getGuestBookingSubmission(req) {
   const guestAuthToken = String(req.body.guestAuthToken || "").trim();
   const cancellationPolicy = normalizeCancellationPolicy(req.body.cancellationPolicy);
   const referralCode = String(req.body.referralCode || "").trim();
+  const donationCouponCode = String(req.body.donationCouponCode || "").trim();
 
   return {
     isVietnamese,
@@ -1940,8 +1947,70 @@ function getGuestBookingSubmission(req) {
     idPhotoFileName,
     guestAuthToken,
     cancellationPolicy,
-    referralCode
+    referralCode,
+    donationCouponCode
   };
+}
+
+function donationCouponCodeFromNotes(notes) {
+  const match = String(notes || "").match(/Donation coupon:\s*(CZD-[A-Z0-9]{4}-[A-Z0-9]{4})/i);
+  return match ? match[1].toUpperCase() : "";
+}
+
+function preserveDonationCouponNote(originalNotes, nextNotes) {
+  const code = donationCouponCodeFromNotes(originalNotes);
+  const next = String(nextNotes || "").trim();
+  if (!code || donationCouponCodeFromNotes(next)) return next;
+  return [next, `Donation coupon: ${code}`].filter(Boolean).join(" | ");
+}
+
+function applyDonationNightWaiver(pricing, nightlyRates) {
+  const rates = (Array.isArray(nightlyRates) ? nightlyRates : [])
+    .map((rate) => Number(rate))
+    .filter((rate) => Number.isFinite(rate) && rate > 0);
+  const waiver = rates.length ? Math.round(Math.min(...rates)) : 0;
+  const cut = Math.min(waiver, Math.max(0, Math.round(Number(pricing.stayTotal) || 0)));
+  const stayTotal = Math.max(0, Math.round(Number(pricing.stayTotal) || 0) - cut);
+  const depositAmount = Number(pricing.depositAmount) || 0;
+  return {
+    ...pricing,
+    donationDiscountAmount: cut,
+    stayTotal,
+    total: stayTotal + depositAmount,
+    discountAmount: (Number(pricing.discountAmount) || 0) + cut
+  };
+}
+
+async function redeemDonationCouponOnMainApp(input) {
+  const response = await fetch(`${MAIN_APP_API_URL}/internal/donations/coupons/redeem`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(MAIN_APP_API_KEY ? { "x-internal-api-key": MAIN_APP_API_KEY } : {})
+    },
+    body: JSON.stringify(input)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || "Donation coupon could not be redeemed.");
+  }
+  return data;
+}
+
+async function releaseDonationCouponOnMainApp(code, redemptionRef) {
+  if (!code || !redemptionRef) return;
+  try {
+    await fetch(`${MAIN_APP_API_URL}/internal/donations/coupons/release`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(MAIN_APP_API_KEY ? { "x-internal-api-key": MAIN_APP_API_KEY } : {})
+      },
+      body: JSON.stringify({ code, redemptionRef })
+    });
+  } catch (error) {
+    console.error("[donation-coupon] release failed", error);
+  }
 }
 
 async function createPendingBooking(input, pricingConfig = null) {
@@ -1974,18 +2043,50 @@ async function createPendingBooking(input, pricingConfig = null) {
     referralCodeStored = referralRaw;
   }
   const id = createId();
-  const idPhoto = input.isVietnamese
-    ? await saveIdentityPhoto({
-        bookingId: id,
-        fileName: input.idPhotoFileName,
-        dataUrl: input.idPhotoDataUrl
-      })
-    : null;
+  let donationCodeStored = "";
+  const donationRaw = typeof input.donationCouponCode === "string" ? input.donationCouponCode.trim() : "";
+  if (donationRaw) {
+    const redeemed = await redeemDonationCouponOnMainApp({
+      code: donationRaw,
+      termType: "SHORT_TERM",
+      email: input.guestEmail,
+      redemptionRef: id,
+      nightlyRates: nightlyPrices.map((entry) => entry.nightlyPrice),
+      maxDiscountVnd: Math.max(0, Math.round(pricing.stayTotal))
+    });
+    const cut = Math.min(Math.max(0, Number(redeemed.discountVnd) || 0), Math.max(0, pricing.stayTotal));
+    const nextStay = Math.max(0, pricing.stayTotal - cut);
+    pricing = {
+      ...pricing,
+      donationDiscountAmount: cut,
+      stayTotal: nextStay,
+      total: nextStay + pricing.depositAmount,
+      discountAmount: pricing.discountAmount + cut
+    };
+    donationCodeStored = String(redeemed.code || donationRaw).toUpperCase();
+    if (cut <= 0) {
+      await releaseDonationCouponOnMainApp(donationCodeStored, id);
+      throw new Error("This stay has no amount the partnership coupon can waive.");
+    }
+  }
+  let idPhoto = null;
 
-  const mergedNotes = [referralCodeStored ? `Referral code: ${referralCodeStored}` : "", input.notes || ""]
+  const mergedNotes = [
+    referralCodeStored ? `Referral code: ${referralCodeStored}` : "",
+    donationCodeStored ? `Donation coupon: ${donationCodeStored}` : "",
+    input.notes || ""
+  ]
     .filter(Boolean)
     .join(" | ");
 
+  try {
+  if (input.isVietnamese) {
+    idPhoto = await saveIdentityPhoto({
+      bookingId: id,
+      fileName: input.idPhotoFileName,
+      dataUrl: input.idPhotoDataUrl
+    });
+  }
   await connectionPool.query(
     `
       INSERT INTO \`${BOOKING_TABLE_NAME}\`
@@ -2025,6 +2126,12 @@ async function createPendingBooking(input, pricingConfig = null) {
       pricing.currency.toLowerCase()
     ]
   );
+  } catch (error) {
+    if (donationCodeStored) {
+      await releaseDonationCouponOnMainApp(donationCodeStored, id);
+    }
+    throw error;
+  }
 
   return {
     id,
@@ -2034,7 +2141,8 @@ async function createPendingBooking(input, pricingConfig = null) {
     idPhoto,
     nightlyPriceSource: bedPricing.source,
     nightlyPrices: nightlyPrices.map((entry) => ({ date: entry.date, nightlyPrice: entry.nightlyPrice, source: entry.source })),
-    referralCode: referralCodeStored
+    referralCode: referralCodeStored,
+    donationCouponCode: donationCodeStored
   };
 }
 
@@ -2117,6 +2225,33 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
 
 app.use(express.json({ limit: "15mb" }));
 app.use(express.static(path.join(__dirname, "public")));
+
+app.post("/api/donation-coupon/quote", async (req, res) => {
+  const code = String(req.body?.code || "").trim();
+  if (!code) {
+    return res.status(400).json({ error: "code is required." });
+  }
+  try {
+    const response = await fetch(`${MAIN_APP_API_URL}/api/public/donation-coupons/quote`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code,
+        termType: "SHORT_TERM",
+        nightlyRates: Array.isArray(req.body?.nightlyRates) ? req.body.nightlyRates : []
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return res.status(response.status).json({ error: data.error || "Invalid coupon code." });
+    }
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to check the coupon."
+    });
+  }
+});
 
 app.get("/api/referral-program", async (_req, res) => {
   try {
@@ -2370,7 +2505,8 @@ app.post("/api/bookings", async (req, res) => {
       cancellationPolicy: submission.cancellationPolicy,
       status: "CONFIRMED",
       paymentStatus: null,
-      referralCode: submission.referralCode
+      referralCode: submission.referralCode,
+      donationCouponCode: submission.donationCouponCode
     }, pricingConfig);
 
     await syncPaidGuestBookingToMainApp({
@@ -2475,7 +2611,8 @@ app.post("/api/create-checkout-session", async (req, res) => {
       checkOut: submission.checkOut,
       notes: submission.notes,
       cancellationPolicy: submission.cancellationPolicy,
-      referralCode: submission.referralCode
+      referralCode: submission.referralCode,
+      donationCouponCode: submission.donationCouponCode
     }, pricingConfig);
 
     await notifyCreatedPendingBooking(
@@ -3014,6 +3151,11 @@ app.post("/api/guest-bookings/:id/cancel", async (req, res) => {
         guestEmail
       ]
     );
+
+    const donationCode = donationCouponCodeFromNotes(booking.notes);
+    if (donationCode) {
+      await releaseDonationCouponOnMainApp(donationCode, bookingId);
+    }
 
     const [updatedRows] = await connectionPool.query(
       `

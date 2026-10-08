@@ -91,6 +91,8 @@ type FormState = {
   agreed: boolean;
   /** Friend's referral code (CZ… or MÃ HD). */
   referralCode: string;
+  /** Donation partnership stay code (CZD-…). */
+  donationCouponCode: string;
 };
 
 const branchOptions: Array<{ id: BranchId; label: string; address: string }> = [
@@ -222,6 +224,11 @@ const T = {
     referralChecking: "Checking code…",
     referralValid: "Code accepted",
     referralInvalid: "Invalid code or program inactive",
+    donationCouponLabel: "Partnership coupon (optional)",
+    donationCouponPlaceholder: "CZD-…",
+    donationCouponChecking: "Checking partnership code…",
+    donationCouponValid: (n: string) => `One month of rent off the first payment: −${n}. Deposit unchanged.`,
+    donationCouponInvalid: "This code is not available for a long-term stay.",
     referralFirstPaymentOff: (n: string) => `Referral (one-time): −${n} from first payment estimate`,
     // Validation errors
     chooseSexBranchBed: "Please choose sex, branch, and an available bed first.",
@@ -344,6 +351,11 @@ const T = {
     referralChecking: "Đang kiểm tra mã…",
     referralValid: "Mã hợp lệ",
     referralInvalid: "Mã không hợp lệ hoặc chương trình tắt",
+    donationCouponLabel: "Mã hợp tác (không bắt buộc)",
+    donationCouponPlaceholder: "CZD-…",
+    donationCouponChecking: "Đang kiểm tra mã hợp tác…",
+    donationCouponValid: (n: string) => `Miễn một tháng tiền phòng trên thanh toán đầu: −${n}. Tiền cọc giữ nguyên.`,
+    donationCouponInvalid: "Mã này không dùng được cho lưu trú dài hạn.",
     referralFirstPaymentOff: (n: string) => `Giới thiệu (một lần): −${n} trên thanh toán lần đầu (ước tính)`,
     // Validation errors
     chooseSexBranchBed: "Vui lòng chọn giới tính, chi nhánh và giường trống trước.",
@@ -379,7 +391,8 @@ const initialFormState: FormState = {
   parkingOptionId: "",
   idScanFile: null,
   agreed: false,
-  referralCode: ""
+  referralCode: "",
+  donationCouponCode: ""
 };
 
 function formatCurrency(value: number) {
@@ -543,6 +556,8 @@ export function RegisterFormClient() {
     detailsVi: string;
   } | null>(null);
   const [referralLookup, setReferralLookup] = useState<"idle" | "checking" | "ok" | "bad">("idle");
+  const [donationCouponLookup, setDonationCouponLookup] = useState<"idle" | "checking" | "ok" | "bad">("idle");
+  const [donationCouponDiscount, setDonationCouponDiscount] = useState(0);
 
   useEffect(() => {
     const email = form.email.trim();
@@ -758,6 +773,49 @@ export function RegisterFormClient() {
   }, [availability, form.bedNumber]);
 
   useEffect(() => {
+    const code = form.donationCouponCode.trim();
+    if (!code) {
+      setDonationCouponLookup("idle");
+      setDonationCouponDiscount(0);
+      return;
+    }
+    if (!selectedBed) {
+      setDonationCouponLookup("idle");
+      return;
+    }
+    setDonationCouponLookup("checking");
+    const monthlyRentVnd = selectedBed.pricing.monthlyPrice;
+    const depositVnd = selectedBed.pricing.deposit;
+    const tmr = window.setTimeout(() => {
+      void fetch(`${API_BASE_URL}/api/public/donation-coupons/quote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code,
+          termType: "LONG_TERM",
+          monthlyRentVnd,
+          depositVnd
+        })
+      })
+        .then(async (response) => {
+          const data = (await response.json()) as { ok?: boolean; discountVnd?: number; benefit?: string };
+          if (!response.ok || !data.ok || data.benefit !== "one_month_rent") {
+            setDonationCouponLookup("bad");
+            setDonationCouponDiscount(0);
+            return;
+          }
+          setDonationCouponLookup("ok");
+          setDonationCouponDiscount(Math.max(0, Number(data.discountVnd) || 0));
+        })
+        .catch(() => {
+          setDonationCouponLookup("bad");
+          setDonationCouponDiscount(0);
+        });
+    }, 450);
+    return () => window.clearTimeout(tmr);
+  }, [form.donationCouponCode, selectedBed]);
+
+  useEffect(() => {
     if (!availability || !form.bedNumber) {
       return;
     }
@@ -878,11 +936,19 @@ export function RegisterFormClient() {
           referralLookup === "ok" && referralMarketing?.enabled
             ? Math.min(scaledReferralDiscount, firstPaymentBeforeReferral)
             : 0;
+        const donationCut =
+          donationCouponLookup === "ok"
+            ? Math.min(
+                donationCouponDiscount,
+                Math.max(0, firstPaymentBeforeReferral - selectedBed.pricing.deposit - referralFirstPaymentCut)
+              )
+            : 0;
         return {
           monthlyPrice: selectedBed.pricing.monthlyPrice,
           deposit: selectedBed.pricing.deposit,
           firstPaymentBeforeReferral,
           referralFirstPaymentCut,
+          donationCut,
           discountedMonthlyPrice,
           cleaningFee,
           parkingFee,
@@ -892,7 +958,7 @@ export function RegisterFormClient() {
           oneTimeDiscounts,
           // Average monthly cost = recurring total minus the freq discount spread
           monthlyTotal: monthlyRecurringTotal - paymentFreqMonthlyDiscount,
-          firstPayment: Math.max(0, firstPaymentBeforeReferral - referralFirstPaymentCut),
+          firstPayment: Math.max(0, firstPaymentBeforeReferral - referralFirstPaymentCut - donationCut),
         };
       })()
     : null;
@@ -967,6 +1033,16 @@ export function RegisterFormClient() {
       return;
     }
 
+    const donationTrimmed = form.donationCouponCode.trim();
+    if (donationTrimmed && (donationCouponLookup !== "ok" || !pricingSummary || pricingSummary.donationCut <= 0)) {
+      setSubmitError(
+        lang === "vi"
+          ? "Nhập mã hợp tác hợp lệ hoặc để trống ô mã."
+          : "Enter a valid partnership code or clear the field."
+      );
+      return;
+    }
+
     setSubmitting(true);
 
     try {
@@ -996,9 +1072,9 @@ export function RegisterFormClient() {
           contractEndDate,
           monthlyPrice: pricingSummary.monthlyPrice,
           deposit: pricingSummary.deposit,
-          firstPaymentSubtotalBeforeReferral: referralTrimmed
-            ? pricingSummary.firstPaymentBeforeReferral
-            : undefined,
+          firstPaymentSubtotalBeforeReferral:
+            referralTrimmed || donationTrimmed ? pricingSummary.firstPaymentBeforeReferral : undefined,
+          donationCouponCode: donationTrimmed || undefined,
           paymentFrequency: form.paymentFrequency || undefined,
           currentStatus: form.currentStatus || undefined,
           schoolOrWorkplace: form.schoolOrWorkplace || undefined,
@@ -1293,6 +1369,27 @@ export function RegisterFormClient() {
                 </p>
               </div>
             ) : null}
+            <div className="md:col-span-2 rounded-[1.5rem] border border-teal-200 bg-teal-50/40 p-4 space-y-2">
+              <label className="space-y-2 block">
+                <span className="text-sm font-medium text-slate-700">{t.donationCouponLabel}</span>
+                <input
+                  value={form.donationCouponCode}
+                  onChange={(event) => updateForm("donationCouponCode", event.target.value.toUpperCase())}
+                  placeholder={t.donationCouponPlaceholder}
+                  className="w-full rounded-2xl border border-teal-200 bg-white px-4 py-3 font-mono text-sm outline-none focus:border-teal-500"
+                  autoComplete="off"
+                />
+              </label>
+              <p className="min-h-[1.25rem] text-xs text-slate-600">
+                {donationCouponLookup === "checking" ? t.donationCouponChecking : null}
+                {donationCouponLookup === "ok" && pricingSummary ? (
+                  <span className="font-medium text-teal-800">{t.donationCouponValid(formatCurrency(pricingSummary.donationCut))}</span>
+                ) : null}
+                {donationCouponLookup === "bad" && form.donationCouponCode.trim() ? (
+                  <span className="text-rose-600">{t.donationCouponInvalid}</span>
+                ) : null}
+              </p>
+            </div>
             <label className="space-y-2"><span className="text-sm font-medium text-slate-700">{t.phone}</span><input value={form.phone} onChange={(event) => updateForm("phone", event.target.value)} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-teal-500 focus:bg-white" required /></label>
             <label className="space-y-2"><span className="text-sm font-medium text-slate-700">{t.dateOfBirth}</span><input type="date" value={form.dateOfBirth} onChange={(event) => updateForm("dateOfBirth", event.target.value)} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-teal-500 focus:bg-white" /></label>
             <label className="space-y-2 md:col-span-2"><span className="text-sm font-medium text-slate-700">{t.permanentAddress}</span><input value={form.permanentAddress} onChange={(event) => updateForm("permanentAddress", event.target.value)} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-teal-500 focus:bg-white" /></label>
