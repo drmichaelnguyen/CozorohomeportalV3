@@ -5709,9 +5709,19 @@ async function appendCoinsSheetRow(
   await syncCoinsFromSheet();
 }
 
+type WriteCleaningCoinOptions = {
+  /** Backfill only: credit the latest contract row even when Hiện còn ở = -1. */
+  allowInactiveClient?: boolean;
+};
+
 /** Cleaning history and roster totals commit in one Sheets batch (all or nothing). */
-async function writeCleaningCoinChange(input: CleaningCoinInput, reverse: boolean) {
+async function writeCleaningCoinChange(
+  input: CleaningCoinInput,
+  reverse: boolean,
+  options?: WriteCleaningCoinOptions
+) {
   const email = input.userEmail.trim().toLowerCase();
+  const allowInactive = Boolean(options?.allowInactiveClient);
   const sheets = await getAuthorizedSheetsClient();
   const now = formatCoinsSheetTimestamp(new Date());
   const month = now.slice(3, 10);
@@ -5751,10 +5761,26 @@ async function writeCleaningCoinChange(input: CleaningCoinInput, reverse: boolea
       }
       clientRows = roster.slice(1).map((r) => mapRow(rosterHeaders, r.map(String)));
       coinRows = history.slice(1).map((r) => mapRow(coinHeaders, r.map(String)) as unknown as CoinRow);
-      const matches = clientRows.map((row, index) => ({ row, index }))
-        .filter(({ row }) => row[CONTRACT_CODE_COLUMN] && row[EMAIL_COLUMN]?.trim().toLowerCase() === email && isActiveClient(row));
-      if (!matches.length) throw new Error("No active client found for cleaning reward");
+      const emailMatches = clientRows
+        .map((row, index) => ({ row, index }))
+        .filter(({ row }) => row[CONTRACT_CODE_COLUMN] && row[EMAIL_COLUMN]?.trim().toLowerCase() === email);
+      const matches = allowInactive
+        ? emailMatches
+        : emailMatches.filter(({ row }) => isActiveClient(row));
+      if (!matches.length) {
+        throw new Error(
+          allowInactive
+            ? "No client row found for cleaning reward"
+            : "No active client found for cleaning reward"
+        );
+      }
       const target = matches.reduce((best, next) => {
+        // Prefer any still-active row when inactive is allowed.
+        if (allowInactive) {
+          const bestActive = isActiveClient(best.row);
+          const nextActive = isActiveClient(next.row);
+          if (bestActive !== nextActive) return nextActive ? next : best;
+        }
         const bestDate = parseSubmissionTimestamp(best.row[COINS_TIMESTAMP_COLUMN] ?? "");
         const nextDate = parseSubmissionTimestamp(next.row[COINS_TIMESTAMP_COLUMN] ?? "");
         return !bestDate || (nextDate && nextDate > bestDate) ? next : best;
@@ -5816,12 +5842,18 @@ async function writeCleaningCoinChange(input: CleaningCoinInput, reverse: boolea
   });
 }
 
-export async function awardCleaningCoinsToSheet(input: CleaningCoinInput) {
-  await writeCleaningCoinChange(input, false);
+export async function awardCleaningCoinsToSheet(
+  input: CleaningCoinInput,
+  options?: WriteCleaningCoinOptions
+) {
+  await writeCleaningCoinChange(input, false, options);
 }
 
-export async function reverseCleaningCoinsOnSheet(input: CleaningCoinInput) {
-  await writeCleaningCoinChange(input, true);
+export async function reverseCleaningCoinsOnSheet(
+  input: CleaningCoinInput,
+  options?: WriteCleaningCoinOptions
+) {
+  await writeCleaningCoinChange(input, true, options);
 }
 
 /**
