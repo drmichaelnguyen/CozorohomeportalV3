@@ -1164,8 +1164,17 @@ const translations: Record<string, { en: string; vi: string }> = {
   selfAssignRewardPreview: { en: "Estimated reward", vi: "Ước tính thưởng" },
   selfAssignEarlyBird: { en: "early-bird", vi: "đăng ký sớm" },
   selfAssignStreakBonus: { en: "streak", vi: "chuỗi" },
-  alreadyAssigned: { en: "Already assigned", vi: "Đã có người nhận" },
+  alreadyAssigned: { en: "Taken by someone else", vi: "Đã có người khác nhận" },
+  alreadyAssignedHint: {
+    en: "This is not your duty — another resident already has this slot.",
+    vi: "Đây không phải lịch của bạn — đã có cư dân khác nhận ca này."
+  },
+  yourDutyLabel: { en: "Your duty", vi: "Lịch của bạn" },
   assignMyself: { en: "Assign Myself", vi: "Tự đăng ký" },
+  assignMyselfBlockedSameDay: {
+    en: "You already have a duty this day, so you cannot claim another type.",
+    vi: "Bạn đã có lịch trực ngày này nên không thể nhận thêm loại khác."
+  },
   selfAssignedLabel: { en: "Self-assigned", vi: "Tự đăng ký" },
   freeReleaseLabel: { en: "Free release", vi: "Hủy miễn phí" },
   autoScheduledLabel: { en: "Auto-scheduled", vi: "Hệ thống phân công" },

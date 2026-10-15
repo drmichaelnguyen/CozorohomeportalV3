@@ -2692,7 +2692,13 @@ export async function listOpenSelfAssignSlotsForUser(
           gte: calendarRangeStart(today),
           lte: calendarRangeEnd(horizonEnd)
         },
-        status: { in: [CleaningTaskStatus.ASSIGNED, CleaningTaskStatus.DONE_PENDING_AUDIT] },
+        status: {
+          in: [
+            CleaningTaskStatus.ASSIGNED,
+            CleaningTaskStatus.DONE_PENDING_AUDIT,
+            CleaningTaskStatus.APPROVED
+          ]
+        },
         userEmail: { not: normalizedEmail }
       },
       select: {
@@ -2711,6 +2717,8 @@ export async function listOpenSelfAssignSlotsForUser(
   const myTaskKeys = new Set(
     myTasks.map((task) => `${formatCalendarDate(task.scheduledDate)}|${task.type}`)
   );
+  // Same-day conflict: any duty that day blocks claiming a second type.
+  const myTaskDates = new Set(myTasks.map((task) => formatCalendarDate(task.scheduledDate)));
 
   const priorByMonth = new Map<string, number>();
   await Promise.all(
@@ -2738,6 +2746,10 @@ export async function listOpenSelfAssignSlotsForUser(
 
     const daysAhead = getCalendarDayDiff(new Date(), cursor);
     let addedSlotForDay = false;
+    // Backend rejects a second duty on the same calendar day — don't advertise it as open.
+    if (myTaskDates.has(dateKey)) {
+      continue;
+    }
     for (const type of allowedTypes) {
       if (slots.length >= limit) {
         break;
@@ -3321,7 +3333,8 @@ async function buildCleaningOverviewForUser(email: string) {
 
   const user = await getUserCleaningContext(normalizedEmail);
 
-  // Fetch upcoming slots taken by OTHER users so the frontend can color the calendar
+  // Fetch upcoming slots taken by OTHER users so the frontend can color the calendar.
+  // APPROVED still occupies the day — otherwise completed duties look "open" for self-assign.
   const upcomingOccupiedTasks = await prisma.cleaningTask.findMany({
     where: {
       scheduledDate: {
@@ -3329,7 +3342,13 @@ async function buildCleaningOverviewForUser(email: string) {
         lte: addMonths(today, 3)
       },
       userEmail: { not: normalizedEmail },
-      status: { in: [CleaningTaskStatus.ASSIGNED, CleaningTaskStatus.DONE_PENDING_AUDIT] }
+      status: {
+        in: [
+          CleaningTaskStatus.ASSIGNED,
+          CleaningTaskStatus.DONE_PENDING_AUDIT,
+          CleaningTaskStatus.APPROVED
+        ]
+      }
     },
     select: {
       type: true,
@@ -3401,7 +3420,13 @@ async function fetchFreshOccupiedSlots(normalizedEmail: string) {
         lte: addMonths(today, 3)
       },
       userEmail: { not: normalizedEmail },
-      status: { in: [CleaningTaskStatus.ASSIGNED, CleaningTaskStatus.DONE_PENDING_AUDIT] }
+      status: {
+        in: [
+          CleaningTaskStatus.ASSIGNED,
+          CleaningTaskStatus.DONE_PENDING_AUDIT,
+          CleaningTaskStatus.APPROVED
+        ]
+      }
     },
     select: {
       type: true,

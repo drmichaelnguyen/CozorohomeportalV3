@@ -2030,89 +2030,128 @@ export function CleaningScheduleClient({
                     </div>
                   )}
 
-                  {allowedTaskTypes.map((type) => {
-                    const isMyTask = (overview.tasks ?? []).some(
-                      (t) => sameDay(new Date(t.scheduledDate), activeMenuDate) && t.type === type
+                  {(() => {
+                    const myTasksForDay = (overview.tasks ?? []).filter((task) =>
+                      sameDay(new Date(task.scheduledDate), activeMenuDate)
                     );
-                    if (isMyTask) return null;
-
+                    const hasMyDutyToday = myTasksForDay.length > 0;
                     const activeDateStr = toApiCalendarDate(activeMenuDate);
-                    const isOccupiedByOther = (overview.occupiedSlots ?? []).some(
-                      (slot) =>
-                        slot.date === activeDateStr &&
-                        slot.type === type &&
-                        (type !== "TRASH_D7" || slot.floor === (overview.user?.floor ?? null))
-                    );
                     const isDateTodayOrFuture = isTodayOrFuture(activeMenuDate);
-                    const isDateToday = toApiCalendarDate(activeMenuDate) === cozoroCalendarDateKey();
+                    const isDateToday = activeDateStr === cozoroCalendarDateKey();
                     const canTakeOver = isDateToday && isAfter8pmVn();
 
-                    if (isOccupiedByOther) {
-                      if (canTakeOver) {
-                        return (
-                          <button
-                            key={type}
-                            onClick={() => {
-                              void prepareSelfAssignment(type);
-                              setActiveMenuDate(null);
-                            }}
-                            className="flex w-full items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-left transition-all hover:bg-amber-100 active:scale-[0.98]"
-                          >
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700">
-                              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                              </svg>
-                            </div>
-                            <div>
-                              <p className="text-sm font-bold text-amber-900">{t("takeOver", "Take Over")}</p>
-                              <p className="text-xs text-amber-700">{prettyTaskType(type)} — {t("takeOverDesc", "assigned person hasn't completed it yet")}</p>
-                            </div>
-                            <div className="ml-auto text-[10px] font-bold text-amber-600">{formatSelfAssignBonusLabel(activeMenuDate, overview, t)}</div>
-                          </button>
-                        );
-                      }
-                      return (
-                        <div
-                          key={type}
-                          className="flex w-full items-center gap-3 rounded-xl border border-sky-100 bg-sky-50 p-4"
-                        >
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sky-600">
-                            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                            </svg>
-                          </div>
-                          <div>
-                            <p className="text-sm font-bold text-sky-900">Already assigned</p>
-                            <p className="text-xs text-sky-700">{prettyTaskType(type)}</p>
-                          </div>
-                        </div>
-                      );
-                    }
-
-                    if (!isDateTodayOrFuture) return null;
-
                     return (
-                      <button
-                        key={type}
-                        onClick={() => {
-                          void prepareSelfAssignment(type);
-                          setActiveMenuDate(null);
-                        }}
-                        className="flex w-full items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-left transition-all hover:bg-emerald-100 active:scale-[0.98]"
-                      >
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
-                          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
-                          </svg>
-                        </div>
-                        <div>
-                          <p className="text-sm font-bold text-emerald-900">Assign Myself</p>
-                          <p className="text-xs text-emerald-700">{prettyTaskType(type)}</p>
-                        </div>
-                        <div className="ml-auto text-[10px] font-bold text-amber-600">{formatSelfAssignBonusLabel(activeMenuDate, overview, t)}</div>
-                      </button>
+                      <>
+                        {myTasksForDay.map((task) => (
+                          <div
+                            key={`your-duty-${task.id}`}
+                            className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3"
+                          >
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-amber-700">
+                              {t("yourDutyLabel", "Your duty")}
+                            </p>
+                            <p className="text-sm font-bold text-amber-950">{prettyTaskType(task.type)}</p>
+                            {task.floor != null && task.type === "TRASH_D7" ? (
+                              <p className="text-xs text-amber-800">
+                                {t("trashFollowsFloor", undefined, { floor: String(task.floor) })}
+                              </p>
+                            ) : null}
+                          </div>
+                        ))}
+
+                        {allowedTaskTypes.map((type) => {
+                          const isMyTask = myTasksForDay.some((task) => task.type === type);
+                          if (isMyTask) return null;
+
+                          const isOccupiedByOther = (overview.occupiedSlots ?? []).some(
+                            (slot) =>
+                              slot.date === activeDateStr &&
+                              slot.type === type &&
+                              (type !== "TRASH_D7" || slot.floor === (overview.user?.floor ?? null))
+                          );
+
+                          if (isOccupiedByOther) {
+                            if (canTakeOver && !hasMyDutyToday) {
+                              return (
+                                <button
+                                  key={type}
+                                  onClick={() => {
+                                    void prepareSelfAssignment(type);
+                                    setActiveMenuDate(null);
+                                  }}
+                                  className="flex w-full items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-left transition-all hover:bg-amber-100 active:scale-[0.98]"
+                                >
+                                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+                                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                    </svg>
+                                  </div>
+                                  <div>
+                                    <p className="text-sm font-bold text-amber-900">{t("takeOver", "Take Over")}</p>
+                                    <p className="text-xs text-amber-700">{prettyTaskType(type)} — {t("takeOverDesc", "assigned person hasn't completed it yet")}</p>
+                                  </div>
+                                  <div className="ml-auto text-[10px] font-bold text-amber-600">{formatSelfAssignBonusLabel(activeMenuDate, overview, t)}</div>
+                                </button>
+                              );
+                            }
+                            return (
+                              <div
+                                key={type}
+                                className="flex w-full items-center gap-3 rounded-xl border border-sky-100 bg-sky-50 p-4"
+                              >
+                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sky-600">
+                                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                  </svg>
+                                </div>
+                                <div>
+                                  <p className="text-sm font-bold text-sky-900">{t("alreadyAssigned", "Taken by someone else")}</p>
+                                  <p className="text-xs text-sky-700">{prettyTaskType(type)}</p>
+                                  <p className="mt-0.5 text-[11px] text-sky-600">{t("alreadyAssignedHint")}</p>
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          // Same-day rule: already have a duty → don't offer claiming another type.
+                          if (hasMyDutyToday) {
+                            return (
+                              <div
+                                key={type}
+                                className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-xs text-slate-600"
+                              >
+                                {prettyTaskType(type)}: {t("assignMyselfBlockedSameDay")}
+                              </div>
+                            );
+                          }
+
+                          if (!isDateTodayOrFuture) return null;
+
+                          return (
+                            <button
+                              key={type}
+                              onClick={() => {
+                                void prepareSelfAssignment(type);
+                                setActiveMenuDate(null);
+                              }}
+                              className="flex w-full items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-left transition-all hover:bg-emerald-100 active:scale-[0.98]"
+                            >
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+                                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                                </svg>
+                              </div>
+                              <div>
+                                <p className="text-sm font-bold text-emerald-900">{t("assignMyself", "Assign Myself")}</p>
+                                <p className="text-xs text-emerald-700">{prettyTaskType(type)}</p>
+                              </div>
+                              <div className="ml-auto text-[10px] font-bold text-amber-600">{formatSelfAssignBonusLabel(activeMenuDate, overview, t)}</div>
+                            </button>
+                          );
+                        })}
+                      </>
                     );
-                  })}
+                  })()}
 
                   {(overview.tasks ?? []).filter(t => sameDay(new Date(t.scheduledDate), activeMenuDate)).map(task => {
                     const releasePenalty = getReleasePenalty(task);
@@ -2746,26 +2785,29 @@ export function CleaningScheduleClient({
 
                   // Determine open vs occupied slots for this day (within 30-day self-assign window)
                   const isAssignable = withinSelfAssignHorizon;
-                  const hasOpenSlot = isAssignable && allowedTaskTypes.some((type) => {
-                    const isMyTask = tasks.some((t) => t.type === type);
-                    const isOccupied = (overview.occupiedSlots ?? []).some(
-                      (slot) =>
-                        slot.date === dayDateStr &&
-                        slot.type === type &&
-                        (type !== "TRASH_D7" || slot.floor === (overview.user?.floor ?? null))
-                    );
-                    return !isMyTask && !isOccupied;
-                  });
+                  // Same-day rule: if you already have any duty that day, don't paint the day green/open.
+                  const hasMyDutyThatDay = tasks.length > 0;
+                  const hasOpenSlot =
+                    isAssignable &&
+                    !hasMyDutyThatDay &&
+                    allowedTaskTypes.some((type) => {
+                      const isOccupied = (overview.occupiedSlots ?? []).some(
+                        (slot) =>
+                          slot.date === dayDateStr &&
+                          slot.type === type &&
+                          (type !== "TRASH_D7" || slot.floor === (overview.user?.floor ?? null))
+                      );
+                      return !isOccupied;
+                    });
 
-                  const hasOccupiedByOthers = isAssignable && !hasOpenSlot && allowedTaskTypes.some((type) => {
-                    const isMyTask = tasks.some((t) => t.type === type);
+                  const hasOccupiedByOthers = isAssignable && !hasOpenSlot && !hasMyDutyThatDay && allowedTaskTypes.some((type) => {
                     const isOccupied = (overview.occupiedSlots ?? []).some(
                       (slot) =>
                         slot.date === dayDateStr &&
                         slot.type === type &&
                         (type !== "TRASH_D7" || slot.floor === (overview.user?.floor ?? null))
                     );
-                    return !isMyTask && isOccupied;
+                    return isOccupied;
                   });
 
                   const isAwaySelected = awayDates.has(dayDateStr);

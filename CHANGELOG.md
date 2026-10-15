@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.9.46] - 2026-10-15
+
+- **Cleaning schedule day menu**: Residents no longer see another task type (e.g. Kitchen) presented as if it were their duty. The menu shows **Your duty** first; other slots say **Taken by someone else**.
+- **Occupied slots**: APPROVED duties still count as occupied so completed slots do not look open for self-assign.
+- **Same-day rule**: Claiming a second cleaning type on a day you already have a duty is blocked in the UI and open-slot suggestions.
+
 ## [3.9.38] - 2026-09-11
 
 - **Fine ticket details**: Resident account/fines and manager fine views show violation date, ticket issued date, description, location, and evidence. Issuer remains staff-only.

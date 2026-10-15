@@ -296,6 +296,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.46 | Fix cleaning day-menu confusion: count APPROVED slots as occupied, show “Your duty” first, label other residents’ slots as taken (not “Already assigned”), and block same-day self-assign of a second task type. |
 | 3.9.45 | Donation partnership inbox for owners and managers: approve with coupon count and short-term or long-term stay codes, email the codes, and send reminders 3 days before and 10 days after the event. Marketing site should post `eventDate` to `POST /internal/donations`; see `docs/donation-partnerships.md`. |
 | 3.9.44 | Faster/reliable cleaning completion uploads (client compress, save-photos-first, background AI/calendar); manager ★1–5 quality rating on approve; learned ★4–5 photos used as AI references when staff refs are missing; see `docs/cleaning-photo-references.md`. |
 | 3.9.43 | Missed-cleaning fine safety (advisory-lock idempotency, bulk selection+confirm, lookback-limited auto fines, manual sweep review-only) plus overdue dismiss `ASSIGNED→REJECTED` path that no longer fails via photo-audit rejection; report-only duplicate diagnostic. |
