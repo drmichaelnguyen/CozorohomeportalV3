@@ -87,6 +87,7 @@ function assignUserPickerLabel(user: AdminAvailableUser, t: (key: string, fallba
 type AutoAssignPreview = {
   date: string;
   user: AdminAvailableUser | null;
+  restGap?: boolean;
 };
 
 type CorrectionReason = {
@@ -171,10 +172,36 @@ type AutoSchedulerConfig = {
     enabled: boolean;
     fillUnassignedDates: boolean;
     horizonDays: number;
+    rotationGapDays?: number;
+    autoGap?: {
+      enabled: boolean;
+      targetMaxDutiesPerResidentPer30Days: number;
+    };
+    eligibleResidentCount?: number | null;
+    effectiveGapDays?: number;
+    estimatedDutiesPerResidentPer30Days?: number | null;
+    autoGapSkipsJob?: boolean;
     updatedAt: string;
     updatedBy: string;
   }>;
 };
+
+function describeJobRotation(job: AutoSchedulerConfig["jobs"][number]) {
+  const manual = Math.max(1, Math.min(7, Math.trunc(Number(job.rotationGapDays) || 1)));
+  const eligible = job.eligibleResidentCount;
+  if (eligible == null) {
+    return { eligible: null as number | null, effective: manual, estimated: "—", skip: false };
+  }
+  const autoEnabled = job.autoGap?.enabled === true;
+  const target = Math.max(1, Math.min(30, Math.trunc(Number(job.autoGap?.targetMaxDutiesPerResidentPer30Days) || 6)));
+  if (autoEnabled && eligible <= 0) {
+    return { eligible, effective: manual, estimated: "—", skip: true };
+  }
+  const raw = autoEnabled ? Math.ceil(30 / (eligible * target)) : manual;
+  const effective = autoEnabled ? Math.min(7, Math.max(manual, raw)) : manual;
+  const estimated = eligible > 0 ? (30 / effective / eligible).toFixed(1) : "—";
+  return { eligible, effective, estimated, skip: false };
+}
 
 const BULK_FINE_TYPED_CONFIRM_THRESHOLD = 5;
 
@@ -962,7 +989,15 @@ export function AdminCleaningClient() {
             key: job.key,
             enabled: job.enabled,
             fillUnassignedDates: job.fillUnassignedDates,
-            horizonDays: job.horizonDays
+            horizonDays: job.horizonDays,
+            rotationGapDays: Math.max(1, Math.min(7, Math.trunc(Number(job.rotationGapDays) || 1))),
+            autoGap: {
+              enabled: job.autoGap?.enabled === true,
+              targetMaxDutiesPerResidentPer30Days: Math.max(
+                1,
+                Math.min(30, Math.trunc(Number(job.autoGap?.targetMaxDutiesPerResidentPer30Days) || 6))
+              )
+            }
           }))
         })
       });
@@ -1313,10 +1348,42 @@ export function AdminCleaningClient() {
     setMessage("");
 
     try {
+      if (dates.length === 0) {
+        setAutoAssignPreview([]);
+        setSelectedAutoAssignDates([]);
+        setMessage(t("adminCleaningNoOpenFutureDates"));
+        return;
+      }
       const previews: AutoAssignPreview[] = [];
       const reservedEmails = new Set<string>();
+      const gapParams = new URLSearchParams({
+        actorEmail: activeEmail,
+        type: selectedCalendar.type,
+        through: dates[dates.length - 1] ?? ""
+      });
+      if (selectedCalendar.type === "TRASH_D7" && selectedCalendar.floor != null) {
+        gapParams.set("floor", String(selectedCalendar.floor));
+      }
+      const gapResponse = await fetch(`${API_BASE_URL}/admin/cleaning/rotation-gap-dates?${gapParams.toString()}`);
+      const gapData = await readJsonSafely<{
+        restDates?: string[];
+        autoGapSkipsJob?: boolean;
+        error?: string;
+      }>(gapResponse);
+      if (!gapResponse.ok) {
+        throw new Error(gapData.error ?? t("adminCleaningErrAutoPreview"));
+      }
+      const restDates = new Set(gapData.restDates ?? []);
 
       for (const date of dates) {
+        if (gapData.autoGapSkipsJob || restDates.has(date)) {
+          previews.push({
+            date,
+            user: null,
+            restGap: !gapData.autoGapSkipsJob && restDates.has(date)
+          });
+          continue;
+        }
         const params = new URLSearchParams({
           date,
           type: selectedCalendar.type
@@ -2531,6 +2598,147 @@ export function AdminCleaningClient() {
                         className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2"
                       />
                     </label>
+
+                    <label className="mt-4 block">
+                      <div className="font-medium text-slate-900">{t("rotationGapDaysLabel", "Rotation gap (days)")}</div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        {t("rotationGapDaysHelp", "1 = every day, 2 = every other day, 3 = every 3 days. Raising the gap does not remove tasks already on the calendar — it only changes which empty dates the auto-scheduler fills from now on.")}
+                      </div>
+                      <input
+                        type="number"
+                        min={1}
+                        max={7}
+                        value={selectedSchedulerJob.rotationGapDays ?? 1}
+                        onChange={(event) =>
+                          setAutoSchedulerConfig((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  jobs: current.jobs.map((entry) =>
+                                    entry.key === selectedSchedulerJob.key
+                                      ? {
+                                          ...entry,
+                                          rotationGapDays: Math.max(1, Math.min(7, Number(event.target.value) || 1))
+                                        }
+                                      : entry
+                                  )
+                                }
+                              : current
+                          )
+                        }
+                        className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2"
+                      />
+                    </label>
+
+                    <label className="mt-4 block">
+                      <div className="font-medium text-slate-900">{t("autoGapByHeadcountLabel", "Auto gap by headcount")}</div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        {t(
+                          "autoGapByHeadcountHelp",
+                          "When on, the gap widens from the number of eligible residents so each person stays near the max duties below. It never schedules tighter than the rotation gap, and never looser than 7 days."
+                        )}
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={selectedSchedulerJob.autoGap?.enabled === true}
+                        onChange={(event) =>
+                          setAutoSchedulerConfig((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  jobs: current.jobs.map((entry) =>
+                                    entry.key === selectedSchedulerJob.key
+                                      ? {
+                                          ...entry,
+                                          autoGap: {
+                                            enabled: event.target.checked,
+                                            targetMaxDutiesPerResidentPer30Days:
+                                              entry.autoGap?.targetMaxDutiesPerResidentPer30Days ?? 6
+                                          }
+                                        }
+                                      : entry
+                                  )
+                                }
+                              : current
+                          )
+                        }
+                        className="mt-3 h-4 w-4"
+                      />
+                    </label>
+
+                    <label className="mt-4 block">
+                      <div className="font-medium text-slate-900">{t("maxDutiesPer30DaysLabel", "Max duties per resident per 30 days")}</div>
+                      <input
+                        type="number"
+                        min={1}
+                        max={30}
+                        value={selectedSchedulerJob.autoGap?.targetMaxDutiesPerResidentPer30Days ?? 6}
+                        onChange={(event) =>
+                          setAutoSchedulerConfig((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  jobs: current.jobs.map((entry) =>
+                                    entry.key === selectedSchedulerJob.key
+                                      ? {
+                                          ...entry,
+                                          autoGap: {
+                                            enabled: entry.autoGap?.enabled === true,
+                                            targetMaxDutiesPerResidentPer30Days: Math.max(
+                                              1,
+                                              Math.min(30, Number(event.target.value) || 6)
+                                            )
+                                          }
+                                        }
+                                      : entry
+                                  )
+                                }
+                              : current
+                          )
+                        }
+                        className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2"
+                      />
+                    </label>
+
+                    {(() => {
+                      const preview = describeJobRotation(selectedSchedulerJob);
+                      if (preview.eligible == null) {
+                        return (
+                          <p className="mt-4 text-xs text-slate-500">
+                            {t("rotationGapPreviewUnavailable", "Eligible resident count is unavailable right now. The saved gap still applies.")}
+                          </p>
+                        );
+                      }
+                      if (preview.skip) {
+                        return (
+                          <p className="mt-4 text-xs text-slate-600">
+                            {t(
+                              "rotationGapPreviewSkipped",
+                              "0 eligible residents — auto-scheduler will skip this job until someone is eligible."
+                            )}
+                          </p>
+                        );
+                      }
+                      return (
+                        <p className="mt-4 text-xs text-slate-600">
+                          {t(
+                            "rotationGapPreviewLine",
+                            "{eligible} eligible residents · every {gap} days · about {duties} duties per resident per 30 days",
+                            {
+                              eligible: String(preview.eligible),
+                              gap: String(preview.effective),
+                              duties: preview.estimated
+                            }
+                          )}
+                        </p>
+                      );
+                    })()}
+                    <p className="mt-2 text-xs text-slate-500">
+                      {t(
+                        "rotationGapSelfAssignNote",
+                        "Rest days stay open for residents to self-assign (coin bonus still applies) but are not sent as open-slot alerts."
+                      )}
+                    </p>
                   </div>
 
                   <p className="mt-3 text-xs text-slate-500">
@@ -2972,10 +3180,11 @@ export function AdminCleaningClient() {
                 ) : (
                   <div className="mt-2 space-y-3">
                     {autoAssignPreview.map((entry) => (
-                      <label key={entry.date} className="flex items-start gap-3 rounded-lg border border-slate-200 p-3">
+                      <label key={entry.date} className={`flex items-start gap-3 rounded-lg border p-3 ${entry.restGap ? "border-slate-200 bg-slate-50" : "border-slate-200"}`}>
                         <input
                           type="checkbox"
-                          checked={selectedAutoAssignDates.includes(entry.date)}
+                          checked={!entry.restGap && selectedAutoAssignDates.includes(entry.date)}
+                          disabled={entry.restGap}
                           onChange={(event) =>
                             setSelectedAutoAssignDates((current) =>
                               event.target.checked
@@ -2989,7 +3198,9 @@ export function AdminCleaningClient() {
                           <div className="font-medium text-slate-900">
                             {new Date(`${entry.date}T12:00:00`).toLocaleDateString(dateLocale)}
                           </div>
-                          {entry.user ? (
+                          {entry.restGap ? (
+                            <div className="text-slate-500">{t("cleaningRestGapPreview", "Rest (gap)")}</div>
+                          ) : entry.user ? (
                             <>
                               <div>
                                 {t("suggestedLabel")}: {entry.user.name} — {entry.user.bedDisplay?.trim() || entry.user.branchId}

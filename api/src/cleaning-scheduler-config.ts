@@ -4,6 +4,13 @@ import path from "node:path";
 import { getConfiguredCleaningCalendars } from "./google-sheets.js";
 import { isBranchAutomationDisabled } from "./branch-closure.js";
 import { requirePortalRole } from "./staff-access.js";
+import {
+  clampRotationGapDays,
+  DEFAULT_CLEANING_AUTO_GAP,
+  DEFAULT_CLEANING_ROTATION_GAP_DAYS,
+  normalizeCleaningAutoGap,
+  type CleaningAutoGapConfig
+} from "./cleaning-rotation-gap.js";
 
 const dataDir = path.join(process.cwd(), "data");
 const configFilePath = path.join(dataDir, "cleaning-auto-scheduler-config.json");
@@ -17,6 +24,10 @@ export type CleaningAutoSchedulerJobConfig = {
   enabled: boolean;
   fillUnassignedDates: boolean;
   horizonDays: number;
+  /** 1 = a duty every day. 2 = every other day. Clamped to 1–7. */
+  rotationGapDays: number;
+  /** When enabled, widen the gap from eligible headcount without going under rotationGapDays. */
+  autoGap: CleaningAutoGapConfig;
   updatedAt: string;
   updatedBy: string;
 };
@@ -89,6 +100,8 @@ function buildDefaultJobs() {
     enabled: DEFAULT_ENABLED,
     fillUnassignedDates: DEFAULT_ENABLED,
     horizonDays: clampHorizonDays(DEFAULT_HORIZON_DAYS),
+    rotationGapDays: DEFAULT_CLEANING_ROTATION_GAP_DAYS,
+    autoGap: { ...DEFAULT_CLEANING_AUTO_GAP },
     updatedAt: new Date(0).toISOString(),
     updatedBy: "system"
   })) satisfies CleaningAutoSchedulerJobConfig[];
@@ -134,6 +147,8 @@ async function readConfig(): Promise<CleaningAutoSchedulerConfig> {
               ? parsedJob.fillUnassignedDates
               : (legacyFillUnassigned ?? job.fillUnassignedDates),
           horizonDays: clampHorizonDays(parsedJob?.horizonDays ?? legacyHorizonDays ?? job.horizonDays),
+          rotationGapDays: clampRotationGapDays(parsedJob?.rotationGapDays, job.rotationGapDays),
+          autoGap: normalizeCleaningAutoGap(parsedJob?.autoGap, job.autoGap),
           updatedAt: parsedJob?.updatedAt ?? parsed.updatedAt ?? job.updatedAt,
           updatedBy: parsedJob?.updatedBy ?? parsed.updatedBy ?? job.updatedBy
         };
@@ -166,7 +181,12 @@ export async function updateCleaningAutoSchedulerConfig(
     enabled: boolean;
     autoMissedCleaningFines?: boolean;
     missedFineLookbackDays?: number;
-    jobs: Array<Pick<CleaningAutoSchedulerJobConfig, "key" | "enabled" | "fillUnassignedDates" | "horizonDays">>;
+    jobs: Array<
+      Pick<CleaningAutoSchedulerJobConfig, "key" | "enabled" | "fillUnassignedDates" | "horizonDays"> & {
+        rotationGapDays?: number;
+        autoGap?: Partial<CleaningAutoGapConfig>;
+      }
+    >;
   }
 ) {
   await requirePortalRole(
@@ -202,6 +222,13 @@ export async function updateCleaningAutoSchedulerConfig(
         enabled: jobPatch.enabled,
         fillUnassignedDates: jobPatch.fillUnassignedDates,
         horizonDays: clampHorizonDays(jobPatch.horizonDays),
+        rotationGapDays:
+          typeof jobPatch.rotationGapDays === "number"
+            ? clampRotationGapDays(jobPatch.rotationGapDays, job.rotationGapDays)
+            : job.rotationGapDays,
+        autoGap: jobPatch.autoGap
+          ? normalizeCleaningAutoGap({ ...job.autoGap, ...jobPatch.autoGap }, job.autoGap)
+          : job.autoGap,
         updatedAt: now,
         updatedBy: normalizedActorEmail
       };
