@@ -72,6 +72,7 @@ type CleaningOverview = {
   photoRequiredTaskTypes?: CleaningTask["type"][];
   cleaningExcluded?: boolean;
   cleaningExcludedReason?: string;
+  restDatesByType?: Array<{ type: CleaningTask["type"]; dates: string[] }>;
   selfAssignSocial?: {
     month: string;
     branchId: string;
@@ -1669,7 +1670,10 @@ export function CleaningScheduleClient({
             slot.type === type &&
             (type !== "TRASH_D7" || slot.floor === (overview.user?.floor ?? null))
         );
-        if (!isMyTask && !isOccupied) {
+        const isRestDay = (overview.restDatesByType ?? []).some(
+          (entry) => entry.type === type && entry.dates.includes(dayStr)
+        );
+        if (!isMyTask && !isOccupied && !isRestDay) {
           result[type].push(dayStr);
         }
       }
@@ -2746,7 +2750,7 @@ export function CleaningScheduleClient({
 
                   // Determine open vs occupied slots for this day (within 30-day self-assign window)
                   const isAssignable = withinSelfAssignHorizon;
-                  const hasOpenSlot = isAssignable && allowedTaskTypes.some((type) => {
+                  const slotState = (type: CleaningTask["type"]) => {
                     const isMyTask = tasks.some((t) => t.type === type);
                     const isOccupied = (overview.occupiedSlots ?? []).some(
                       (slot) =>
@@ -2754,7 +2758,18 @@ export function CleaningScheduleClient({
                         slot.type === type &&
                         (type !== "TRASH_D7" || slot.floor === (overview.user?.floor ?? null))
                     );
-                    return !isMyTask && !isOccupied;
+                    const isRestDay = (overview.restDatesByType ?? []).some(
+                      (entry) => entry.type === type && entry.dates.includes(dayDateStr)
+                    );
+                    return { isMyTask, isOccupied, isRestDay };
+                  };
+                  const hasOpenSlot = isAssignable && allowedTaskTypes.some((type) => {
+                    const state = slotState(type);
+                    return !state.isMyTask && !state.isOccupied && !state.isRestDay;
+                  });
+                  const hasRestDay = isAssignable && allowedTaskTypes.some((type) => {
+                    const state = slotState(type);
+                    return !state.isMyTask && !state.isOccupied && state.isRestDay;
                   });
 
                   const hasOccupiedByOthers = isAssignable && !hasOpenSlot && allowedTaskTypes.some((type) => {
@@ -2853,6 +2868,11 @@ export function CleaningScheduleClient({
                         {!awayMode && hasOpenSlot && tasks.length === 0 && (
                           <div className="text-[8px] font-bold text-emerald-600 uppercase hidden md:block">Open</div>
                         )}
+                        {!awayMode && !hasOpenSlot && !hasOccupiedByOthers && hasRestDay && tasks.length === 0 && (
+                          <div className="hidden text-[8px] font-bold uppercase text-slate-400 md:block">
+                            {t("cleaningRestDayLabel", "Rest day")}
+                          </div>
+                        )}
                         {!awayMode && hasOccupiedByOthers && tasks.length === 0 && (
                           <div className="text-[8px] font-bold text-sky-600 uppercase hidden md:block">Taken</div>
                         )}
@@ -2878,6 +2898,10 @@ export function CleaningScheduleClient({
                 <span className="inline-flex items-center gap-1">
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                   {t("openSlotLegend", "Open slot")}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-1.5 w-1.5 rounded-full bg-slate-300" />
+                  {t("cleaningRestDayLabel", "Rest day")}
                 </span>
                 <span className="inline-flex items-center gap-1">
                   <span className="h-1.5 w-1.5 rounded-full bg-sky-400" />

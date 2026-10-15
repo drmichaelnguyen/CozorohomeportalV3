@@ -9,6 +9,7 @@ import {
   BookingStatus,
   CleaningAuditDecision,
   CleaningAvailabilityType,
+  CleaningTaskType,
   CoinReason,
   Prisma,
   ResourceType
@@ -304,6 +305,8 @@ import {
   purgeResidentCleaningSchedule,
   purgeResidentCleaningScheduleIfIneligible,
   autoScheduleCleaningTasksByJob,
+  getCleaningRotationGapDates,
+  withCleaningRotationGapPreview,
   setCleaningAvailability,
   setBulkCleaningAvailability,
   setCleaningAvailabilityWithDuties,
@@ -2048,9 +2051,22 @@ const cleaningAutoSchedulerConfigUpdateSchema = z.object({
       key: z.string().min(1),
       enabled: z.boolean(),
       fillUnassignedDates: z.boolean(),
-      horizonDays: z.number().int().min(1).max(60)
+      horizonDays: z.number().int().min(1).max(60),
+      rotationGapDays: z.number().int().min(1).max(7).optional(),
+      autoGap: z
+        .object({
+          enabled: z.boolean(),
+          targetMaxDutiesPerResidentPer30Days: z.number().int().min(1).max(30)
+        })
+        .optional()
     })
   )
+});
+const cleaningRotationGapDatesQuerySchema = z.object({
+  actorEmail: z.string().email(),
+  type: z.enum(["KITCHEN_D2", "KITCHEN_D7", "TRASH_D7"]),
+  floor: z.coerce.number().int().positive().optional(),
+  through: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
 });
 
 const adminCleaningReviewQueueQuerySchema = z.object({
@@ -6357,6 +6373,24 @@ app.get("/admin/cleaning/calendars", async (request, response) => {
   return response.json({ calendars });
 });
 
+async function cleaningSchedulerConfigResponse(config: Awaited<ReturnType<typeof getCleaningAutoSchedulerConfig>>) {
+  try {
+    return await withCleaningRotationGapPreview(config);
+  } catch (error) {
+    console.warn("[cleaning-rotation-gap] preview counts unavailable", error);
+    return {
+      ...config,
+      jobs: config.jobs.map((job) => ({
+        ...job,
+        eligibleResidentCount: null as number | null,
+        effectiveGapDays: job.rotationGapDays,
+        estimatedDutiesPerResidentPer30Days: null as number | null,
+        autoGapSkipsJob: false
+      }))
+    };
+  }
+}
+
 app.get("/admin/cleaning/auto-scheduler-config", async (request, response) => {
   const parsed = cleaningAutoSchedulerConfigQuerySchema.safeParse({
     actorEmail: request.query.actorEmail
@@ -6373,7 +6407,7 @@ app.get("/admin/cleaning/auto-scheduler-config", async (request, response) => {
       "Only managers can view cleaning auto-scheduler settings."
     );
     const config = await getCleaningAutoSchedulerConfig();
-    return response.json(config);
+    return response.json(await cleaningSchedulerConfigResponse(config));
   } catch (error) {
     return response.status(403).json({
       error: error instanceof Error ? error.message : "Unable to load cleaning auto-scheduler settings"
@@ -6395,10 +6429,42 @@ app.put("/admin/cleaning/auto-scheduler-config", async (request, response) => {
       missedFineLookbackDays: parsed.data.missedFineLookbackDays,
       jobs: parsed.data.jobs
     });
-    return response.json(config);
+    return response.json(await cleaningSchedulerConfigResponse(config));
   } catch (error) {
     return response.status(403).json({
       error: error instanceof Error ? error.message : "Unable to save cleaning auto-scheduler settings"
+    });
+  }
+});
+
+app.get("/admin/cleaning/rotation-gap-dates", async (request, response) => {
+  const parsed = cleaningRotationGapDatesQuerySchema.safeParse({
+    actorEmail: request.query.actorEmail,
+    type: request.query.type,
+    floor: request.query.floor,
+    through: request.query.through
+  });
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid cleaning rotation gap query" });
+  }
+  if (parsed.data.type === "TRASH_D7" && typeof parsed.data.floor !== "number") {
+    return response.status(400).json({ error: "Trash duty rotation gap requires a floor" });
+  }
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["manager", "owner", "app_admin"],
+      "Only managers can view cleaning rotation gaps."
+    );
+    const dates = await getCleaningRotationGapDates({
+      type: parsed.data.type as CleaningTaskType,
+      floor: parsed.data.floor,
+      through: parsed.data.through ? parseCalendarDateInput(parsed.data.through) : undefined
+    });
+    return response.json(dates);
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to load cleaning rotation gap dates"
     });
   }
 });

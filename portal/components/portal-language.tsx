@@ -1334,8 +1334,8 @@ const translations: Record<string, { en: string; vi: string }> = {
   // Auto-scheduling help (EN + VI)
   autoScheduleHelpTitle: { en: "How does auto-scheduling work?", vi: "Lịch tự động hoạt động như thế nào?" },
   autoScheduleHelp: {
-    en: "The system automatically fills empty cleaning slots every day. Here is how it picks who gets assigned:\n\n1. Eligibility — only active long-term residents of the correct branch and floor are considered. Residents who opted out for the month or have a contract cleaning exemption are skipped.\n2. Availability — residents marked Unavailable on that date are excluded. Preferred ranks first, then Available, then unmarked (marking Available improves priority vs staying silent).\n3. Fairness — among eligible residents, the one with the fewest tasks of *this slot type* (kitchen vs trash counted separately) in the past 60 days is picked first. Manager correction feedback can softly demote someone who was repeatedly reassigned away.\n4. No double-booking — a resident who already has a task on the same day will not receive a second one.\n\nManager assign / bulk preview use the same ranking as the background auto-scheduler. If you are assigned automatically (shown as ⚙ System), you were the most \"underdue\" eligible resident for that slot type. You can still self-assign earlier to claim a date of your choice before the system fills it.",
-    vi: "Hệ thống tự động lấp đầy các lịch trực vệ sinh còn trống mỗi ngày. Cách chọn người được phân công:\n\n1. Đủ điều kiện — chỉ xét cư dân dài hạn đang hoạt động đúng chi nhánh và tầng. Cư dân đã opt-out tháng này hoặc có hợp đồng miễn vệ sinh sẽ bị bỏ qua.\n2. Lịch rảnh — cư dân đã đánh dấu Không rảnh vào ngày đó sẽ bị loại. Ưu tiên xếp trước, rồi Rảnh, rồi chưa đánh dấu (đánh dấu Rảnh giúp ưu tiên hơn so với để trống).\n3. Công bằng — trong số cư dân đủ điều kiện, người có ít lịch *cùng loại* nhất (bếp và rác tính riêng) trong 60 ngày qua sẽ được chọn. Phản hồi sửa lịch của quản lý có thể hạ nhẹ ưu tiên người bị đổi đi nhiều lần.\n4. Không trùng lịch — cư dân đã có lịch trực vào cùng ngày sẽ không bị phân công thêm.\n\nQuản lý giao tay / xem trước giao hàng loạt dùng cùng thứ tự xếp hạng với bộ lập lịch tự động. Nếu bạn được phân công tự động (hiển thị ⚙ System), nghĩa là bạn là cư dân \"nợ nhiều nhất\" đủ điều kiện cho loại lịch đó. Bạn vẫn có thể tự đăng ký trước để chọn ngày mình muốn."
+    en: "The system automatically fills empty cleaning slots. Lightly occupied floors may have rest days so the same few residents are not on duty every day — those dates are not filled automatically and are not shown as open slots. You can still self-assign a rest day for the self-assign coin bonus. Here is how it picks who gets assigned:\n\n1. Eligibility — only active long-term residents of the correct branch and floor are considered. Residents who opted out for the month or have a contract cleaning exemption are skipped.\n2. Availability — residents marked Unavailable on that date are excluded. Preferred ranks first, then Available, then unmarked (marking Available improves priority vs staying silent).\n3. Fairness — among eligible residents, the one with the fewest tasks of *this slot type* (kitchen vs trash counted separately) in the past 60 days is picked first. Manager correction feedback can softly demote someone who was repeatedly reassigned away.\n4. No double-booking — a resident who already has a task on the same day will not receive a second one.\n\nManager assign / bulk preview use the same ranking as the background auto-scheduler. If you are assigned automatically (shown as ⚙ System), you were the most \"underdue\" eligible resident for that slot type. You can still self-assign earlier to claim a date of your choice before the system fills it.",
+    vi: "Hệ thống tự động lấp đầy các lịch trực vệ sinh còn trống. Tầng ít người có thể có ngày nghỉ để cùng vài cư dân không phải trực quá dày — những ngày đó không được tự động điền và không hiện là ca trống. Bạn vẫn có thể tự đăng ký ngày nghỉ để nhận thưởng coin tự nhận. Cách chọn người được phân công:\n\n1. Đủ điều kiện — chỉ xét cư dân dài hạn đang hoạt động đúng chi nhánh và tầng. Cư dân đã opt-out tháng này hoặc có hợp đồng miễn vệ sinh sẽ bị bỏ qua.\n2. Lịch rảnh — cư dân đã đánh dấu Không rảnh vào ngày đó sẽ bị loại. Ưu tiên xếp trước, rồi Rảnh, rồi chưa đánh dấu (đánh dấu Rảnh giúp ưu tiên hơn so với để trống).\n3. Công bằng — trong số cư dân đủ điều kiện, người có ít lịch *cùng loại* nhất (bếp và rác tính riêng) trong 60 ngày qua sẽ được chọn. Phản hồi sửa lịch của quản lý có thể hạ nhẹ ưu tiên người bị đổi đi nhiều lần.\n4. Không trùng lịch — cư dân đã có lịch trực vào cùng ngày sẽ không bị phân công thêm.\n\nQuản lý giao tay / xem trước giao hàng loạt dùng cùng thứ tự xếp hạng với bộ lập lịch tự động. Nếu bạn được phân công tự động (hiển thị ⚙ System), nghĩa là bạn là cư dân \"nợ nhiều nhất\" đủ điều kiện cho loại lịch đó. Bạn vẫn có thể tự đăng ký trước để chọn ngày mình muốn."
   },
   // Release/removal help (EN + VI — updated to mention swap)
   removalHelpTitle: { en: "Removal and reassignment rules", vi: "Quy tắc hủy và phân công lại" },
@@ -1744,6 +1744,35 @@ const translations: Record<string, { en: string; vi: string }> = {
   enableThisJob: { en: "Enable this job", vi: "Bật công việc này" },
   fillUnassignedDates: { en: "Fill unassigned dates", vi: "Điền các ngày chưa giao" },
   daysInAdvance: { en: "Days in advance", vi: "Số ngày trước" },
+  rotationGapDaysLabel: { en: "Rotation gap (days)", vi: "Khoảng cách luân phiên (ngày)" },
+  rotationGapDaysHelp: {
+    en: "1 = every day, 2 = every other day, 3 = every 3 days. Raising the gap does not remove tasks already on the calendar — it only changes which empty dates the auto-scheduler fills from now on.",
+    vi: "1 = mỗi ngày, 2 = cách một ngày, 3 = mỗi 3 ngày. Tăng khoảng cách không xóa các lịch đã có trên lịch — chỉ đổi những ngày trống mà hệ thống tự động điền từ giờ trở đi."
+  },
+  autoGapByHeadcountLabel: { en: "Auto gap by headcount", vi: "Tự chỉnh khoảng cách theo số người" },
+  autoGapByHeadcountHelp: {
+    en: "When on, the gap widens from the number of eligible residents so each person stays near the max duties below. It never schedules tighter than the rotation gap, and never looser than 7 days.",
+    vi: "Khi bật, khoảng cách giãn theo số cư dân đủ điều kiện để mỗi người gần mức ca tối đa bên dưới. Không bao giờ dày hơn khoảng cách luân phiên, và không thưa hơn 7 ngày."
+  },
+  maxDutiesPer30DaysLabel: { en: "Max duties per resident per 30 days", vi: "Số ca tối đa mỗi cư dân trong 30 ngày" },
+  rotationGapPreviewLine: {
+    en: "{eligible} eligible residents · every {gap} days · about {duties} duties per resident per 30 days",
+    vi: "{eligible} cư dân đủ điều kiện · mỗi {gap} ngày · khoảng {duties} ca mỗi cư dân trong 30 ngày"
+  },
+  rotationGapPreviewSkipped: {
+    en: "0 eligible residents — auto-scheduler will skip this job until someone is eligible.",
+    vi: "0 cư dân đủ điều kiện — bộ lập lịch sẽ bỏ qua công việc này cho đến khi có người đủ điều kiện."
+  },
+  rotationGapPreviewUnavailable: {
+    en: "Eligible resident count is unavailable right now. The saved gap still applies.",
+    vi: "Chưa lấy được số cư dân đủ điều kiện. Khoảng cách đã lưu vẫn được áp dụng."
+  },
+  rotationGapSelfAssignNote: {
+    en: "Rest days stay open for residents to self-assign (coin bonus still applies) but are not sent as open-slot alerts.",
+    vi: "Ngày nghỉ vẫn có thể tự đăng ký (vẫn có thưởng coin) nhưng không gửi thông báo ca trống."
+  },
+  cleaningRestDayLabel: { en: "Rest day", vi: "Ngày nghỉ" },
+  cleaningRestGapPreview: { en: "Rest (gap)", vi: "Nghỉ (khoảng cách)" },
   laundryTimelines: { en: "Laundry Machine Timelines", vi: "Tiến độ máy giặt" },
   machineSetup: { en: "Machine setup", vi: "Cài đặt máy" },
   currentCooldown: { en: "Current cooldown", vi: "Thời gian nghỉ hiện tại" },

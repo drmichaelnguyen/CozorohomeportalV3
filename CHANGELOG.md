@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.9.46] - 2026-10-15
+
+- **Cleaning rotation gap**: Managers can set a per-job rotation gap of 1–7 days (default 1, every day) and optionally let auto gap widen it from eligible headcount (`ceil(30 / (eligible × target))`, never tighter than the manual gap, never looser than 7). Zero eligible residents skips that job.
+- **Duty days**: The auto-scheduler, bulk preview/commit, and post-release re-place only fill duty days. Rest days stay self-assignable but are not open-slot alerts, Schedule badges, Claim next, or Bee listings. The resident calendar shows them as neutral rest days. Existing future tasks are not deleted when the gap increases.
+
 ## [3.9.38] - 2026-09-11
 
 - **Fine ticket details**: Resident account/fines and manager fine views show violation date, ticket issued date, description, location, and evidence. Issuer remains staff-only.

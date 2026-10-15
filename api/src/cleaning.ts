@@ -71,8 +71,15 @@ import {
 } from "./cleaning-overdue-dismiss.js";
 import {
   DEFAULT_MISSED_FINE_LOOKBACK_DAYS,
-  getCleaningAutoSchedulerConfig
+  getCleaningAutoSchedulerConfig,
+  type CleaningAutoSchedulerConfig,
+  type CleaningAutoSchedulerJobConfig
 } from "./cleaning-scheduler-config.js";
+import {
+  computeEffectiveRotationGap,
+  getCleaningCadencePlan,
+  type CleaningRotationTask
+} from "./cleaning-rotation-gap.js";
 import {
   type CorrectionPayload,
   inferCorrectionAction,
@@ -1036,7 +1043,7 @@ function getTaskSlotKey(type: CleaningTaskType, scheduledDate: Date, floor?: num
   return `${type}|${normalizeCalendarDate(scheduledDate).toISOString()}|${floor ?? "none"}`;
 }
 
-function getAllowedTaskTypesForUser(user: ActiveCleaningUser): CleaningTaskType[] {
+function getAllowedTaskTypesForUser(user: { branchId: string; floor?: number | null }): CleaningTaskType[] {
   if (user.branchId === "D2") {
     return [CleaningTaskType.KITCHEN_D2];
   }
@@ -2632,7 +2639,12 @@ export async function checkSelfAssignCleaningTask(input: {
 /** Open (or take-over-eligible) self-assign slots for a resident within the self-assign horizon. */
 export async function listOpenSelfAssignSlotsForUser(
   email: string,
-  options?: { limit?: number; includeTakeOver?: boolean; skipCalendarSync?: boolean }
+  options?: {
+    limit?: number;
+    includeTakeOver?: boolean;
+    skipCalendarSync?: boolean;
+    restDatesByType?: Array<{ type: CleaningTaskType; dates: string[] }>;
+  }
 ): Promise<OpenSelfAssignSlot[]> {
   const limit = Math.min(Math.max(options?.limit ?? 12, 1), 40);
   const includeTakeOver = options?.includeTakeOver !== false;
@@ -2658,6 +2670,17 @@ export async function listOpenSelfAssignSlotsForUser(
   if (allowedTypes.length === 0) {
     return [];
   }
+
+  let restDatesByType = options?.restDatesByType;
+  if (!restDatesByType) {
+    try {
+      restDatesByType = await listCleaningRestDatesForUser(user);
+    } catch (error) {
+      console.warn("[cleaning-rotation-gap] open-slot rest filter unavailable", error);
+      restDatesByType = [];
+    }
+  }
+  const restDatesByKey = new Map(restDatesByType.map((entry) => [entry.type, new Set(entry.dates)]));
 
   const monthKeys = new Set<string>();
   for (let cursor = today; cursor.getTime() <= horizonEnd.getTime(); cursor = addDays(cursor, 1)) {
@@ -2743,6 +2766,9 @@ export async function listOpenSelfAssignSlotsForUser(
         break;
       }
       if (myTaskKeys.has(`${dateKey}|${type}`)) {
+        continue;
+      }
+      if (restDatesByKey.get(type)?.has(dateKey)) {
         continue;
       }
 
@@ -2897,10 +2923,17 @@ async function attachSelfAssignEncouragement<T extends {
     return {
       ...overview,
       selfAssignSocial: null,
-      nextOpenSelfAssignSlots: [] as OpenSelfAssignSlot[]
+      nextOpenSelfAssignSlots: [] as OpenSelfAssignSlot[],
+      restDatesByType: [] as Array<{ type: CleaningTaskType; dates: string[] }>
     };
   }
   const branchId = overview.user.branchId === "D2" ? "D2" : "D7";
+  let restDatesByType: Array<{ type: CleaningTaskType; dates: string[] }> = [];
+  try {
+    restDatesByType = await listCleaningRestDatesForUser(overview.user);
+  } catch (error) {
+    console.warn("[cleaning-rotation-gap] overview rest dates unavailable", error);
+  }
   const [selfAssignSocial, nextOpenSelfAssignSlots] = await Promise.all([
     buildSelfAssignSocialProof({
       email,
@@ -2910,13 +2943,15 @@ async function attachSelfAssignEncouragement<T extends {
     listOpenSelfAssignSlotsForUser(email, {
       limit: 3,
       includeTakeOver: true,
-      skipCalendarSync: true
+      skipCalendarSync: true,
+      restDatesByType
     })
   ]);
   return {
     ...overview,
     selfAssignSocial,
-    nextOpenSelfAssignSlots
+    nextOpenSelfAssignSlots,
+    restDatesByType
   };
 }
 
@@ -3444,7 +3479,8 @@ export async function getCleaningOverviewForUser(email: string, options?: { forc
       cleaningExcluded: true as const,
       cleaningExcludedReason: "hostel_short_term" as const,
       selfAssignSocial: null,
-      nextOpenSelfAssignSlots: []
+      nextOpenSelfAssignSlots: [],
+      restDatesByType: [] as Array<{ type: CleaningTaskType; dates: string[] }>
     };
   }
 
@@ -3783,6 +3819,39 @@ export async function adminAutoAssignCleaningSlots(input: {
   ]);
   const results: CleaningTaskRecord[] = [];
   const reservedEmails = new Set<string>();
+  const slotFloor = input.type === CleaningTaskType.TRASH_D7 ? (input.floor ?? null) : null;
+  const horizonStart = addDays(today, 1);
+  const futureDates = input.dates
+    .map((date) => normalizeCalendarDate(date))
+    .filter((date) => isFutureCalendarDate(date));
+  const latestFuture = futureDates.reduce<Date | null>(
+    (latest, date) => (latest == null || date.getTime() > latest.getTime() ? date : latest),
+    null
+  );
+  const schedulerConfig = await getCleaningAutoSchedulerConfig();
+  const storedJob = findSchedulerJobForSlot(schedulerConfig.jobs, input.type, slotFloor);
+  const gapAudience: CleaningRotationAudience = {
+    users: eligibleActiveUsers,
+    optedOut: new Set(
+      [...(await getOptedOutEmailsForMonth(cleaningMonthKeyFromDate(horizonStart)))].map((email) => email.trim().toLowerCase())
+    ),
+    contractOptOutCodes: new Set(contractOptOutLookup.keys()),
+    exemptions: new Set([...(await getCleaningAssignmentExemptions())].map((email) => email.trim().toLowerCase()))
+  };
+  const horizonDays = latestFuture ? Math.max(1, Math.min(120, getCalendarDayDiff(horizonStart, latestFuture) + 1)) : 1;
+  const cadence = await planCleaningJobCadence({
+    type: input.type,
+    floor: slotFloor,
+    horizonStart,
+    horizonDays,
+    rotationGapDays: storedJob?.rotationGapDays,
+    autoGap: storedJob?.autoGap,
+    audience: gapAudience
+  });
+  if (cadence.decision.skip) {
+    return results;
+  }
+  const dutyDates = new Set(cadence.dutyDates);
 
   for (const date of input.dates) {
     const normalizedDate = normalizeCalendarDate(date);
@@ -3817,6 +3886,9 @@ export async function adminAutoAssignCleaningSlots(input: {
     });
 
     if (existingSlot) {
+      continue;
+    }
+    if (!dutyDates.has(formatCalendarDate(normalizedDate))) {
       continue;
     }
 
@@ -5420,8 +5492,228 @@ export async function getOptedOutEmailsForMonth(month: string): Promise<Set<stri
   return new Set(optOuts.map((o) => o.userEmail));
 }
 
+type CleaningRotationAudience = {
+  users: ActiveCleaningUser[];
+  optedOut: Set<string>;
+  contractOptOutCodes: Set<string>;
+  exemptions: Set<string>;
+};
+
+function countEligibleResidentsForCleaningJob(
+  job: { type: CleaningTaskType; floor: number | null },
+  audience: CleaningRotationAudience
+) {
+  let count = 0;
+  for (const user of audience.users) {
+    if (isHostelShortTermCleaningUser(user)) continue;
+    if (audience.optedOut.has(user.email.trim().toLowerCase())) continue;
+    if (audience.contractOptOutCodes.has(getUserContractCode(user))) continue;
+    if (audience.exemptions.has(user.email.trim().toLowerCase())) continue;
+    if (!isUserEligibleForCleaningSlot(user, job.type, job.floor)) continue;
+    count += 1;
+  }
+  return count;
+}
+
+function decideCleaningJobRotation(
+  job: {
+    type: CleaningTaskType;
+    floor: number | null;
+    rotationGapDays?: number;
+    autoGap?: { enabled?: boolean; targetMaxDutiesPerResidentPer30Days?: number };
+  },
+  audience: CleaningRotationAudience
+) {
+  const eligibleResidentCount = countEligibleResidentsForCleaningJob(job, audience);
+  const decision = computeEffectiveRotationGap({
+    rotationGapDays: job.rotationGapDays ?? 1,
+    autoGapEnabled: job.autoGap?.enabled === true,
+    targetMaxDutiesPerResidentPer30Days: job.autoGap?.targetMaxDutiesPerResidentPer30Days ?? 6,
+    eligibleCount: eligibleResidentCount
+  });
+  return { eligibleResidentCount, ...decision };
+}
+
+function findSchedulerJobForSlot(
+  jobs: CleaningAutoSchedulerJobConfig[],
+  type: CleaningTaskType,
+  floor: number | null
+) {
+  return (
+    jobs.find((job) => {
+      if (job.type !== type) return false;
+      if (type !== CleaningTaskType.TRASH_D7) return true;
+      return job.floor === floor;
+    }) ?? null
+  );
+}
+
+function toCleaningRotationTasks(
+  tasks: Array<{ type: CleaningTaskType; floor: number | null; scheduledDate: Date }>
+): CleaningRotationTask[] {
+  return tasks.map((task) => ({
+    date: formatCalendarDate(task.scheduledDate),
+    type: task.type,
+    floor: task.floor
+  }));
+}
+
+async function loadCleaningRotationTasks(from: Date, to: Date) {
+  const tasks = await findManyCleaningTasks({
+    where: {
+      scheduledDate: {
+        gte: calendarRangeStart(from),
+        lte: calendarRangeEnd(to)
+      }
+    }
+  });
+  return toCleaningRotationTasks(tasks);
+}
+
+async function loadCleaningRotationAudience(month: string): Promise<CleaningRotationAudience> {
+  const users = (await getActiveCleaningUsers()).filter((user) => !isHostelShortTermCleaningUser(user));
+  const [optedOut, contractOptOutLookup, exemptions] = await Promise.all([
+    getOptedOutEmailsForMonth(month),
+    getContractCleaningOptOutLookup(users.map((user) => getUserContractCode(user))),
+    getCleaningAssignmentExemptions()
+  ]);
+  return {
+    users,
+    optedOut: new Set([...optedOut].map((email) => email.trim().toLowerCase())),
+    contractOptOutCodes: new Set(contractOptOutLookup.keys()),
+    exemptions: new Set([...exemptions].map((email) => email.trim().toLowerCase()))
+  };
+}
+
+function cleaningHorizonStart(now = new Date()) {
+  return addDays(normalizeCalendarDate(now), 1);
+}
+
+async function planCleaningJobCadence(input: {
+  type: CleaningTaskType;
+  floor: number | null;
+  horizonStart: Date;
+  horizonDays: number;
+  rotationGapDays?: number;
+  autoGap?: { enabled?: boolean; targetMaxDutiesPerResidentPer30Days?: number };
+  audience: CleaningRotationAudience;
+  existingTasks?: CleaningRotationTask[];
+}) {
+  const decision = decideCleaningJobRotation(
+    {
+      type: input.type,
+      floor: input.floor,
+      rotationGapDays: input.rotationGapDays,
+      autoGap: input.autoGap
+    },
+    input.audience
+  );
+  const horizonDays = Math.max(0, Math.trunc(input.horizonDays) || 0);
+  if (decision.skip || horizonDays === 0) {
+    return { decision, dutyDates: [] as string[], restDates: [] as string[] };
+  }
+  const radius = Math.max(0, decision.effectiveGap - 1);
+  const horizonEnd = addDays(input.horizonStart, Math.max(0, horizonDays - 1));
+  const existingTasks =
+    input.existingTasks ??
+    (await loadCleaningRotationTasks(addDays(input.horizonStart, -radius), addDays(horizonEnd, radius)));
+  const plan = getCleaningCadencePlan({
+    job: { type: input.type, floor: input.floor },
+    horizonStart: formatCalendarDate(input.horizonStart),
+    horizonDays,
+    effectiveGap: decision.effectiveGap,
+    existingTasks
+  });
+  return { decision, ...plan };
+}
+
+export async function withCleaningRotationGapPreview(config: CleaningAutoSchedulerConfig) {
+  const horizonStart = cleaningHorizonStart();
+  const audience = await loadCleaningRotationAudience(cleaningMonthKeyFromDate(horizonStart));
+  return {
+    ...config,
+    jobs: config.jobs.map((job) => {
+      const decision = decideCleaningJobRotation(job, audience);
+      return {
+        ...job,
+        eligibleResidentCount: decision.eligibleResidentCount,
+        effectiveGapDays: decision.effectiveGap,
+        estimatedDutiesPerResidentPer30Days: decision.estimatedDutiesPerResidentPer30Days,
+        autoGapSkipsJob: decision.skip
+      };
+    })
+  };
+}
+
+export async function getCleaningRotationGapDates(input: {
+  type: CleaningTaskType;
+  floor?: number | null;
+  through?: Date;
+}) {
+  const floor = input.type === CleaningTaskType.TRASH_D7 ? (input.floor ?? null) : null;
+  const config = await getCleaningAutoSchedulerConfig();
+  const stored = findSchedulerJobForSlot(config.jobs, input.type, floor);
+  const horizonStart = cleaningHorizonStart();
+  const through = input.through ? normalizeCalendarDate(input.through) : addDays(horizonStart, 14);
+  const span = getCalendarDayDiff(horizonStart, through);
+  const horizonDays = Math.max(1, Math.min(120, span + 1));
+  const audience = await loadCleaningRotationAudience(cleaningMonthKeyFromDate(horizonStart));
+  const planned = await planCleaningJobCadence({
+    type: input.type,
+    floor,
+    horizonStart,
+    horizonDays,
+    rotationGapDays: stored?.rotationGapDays,
+    autoGap: stored?.autoGap,
+    audience
+  });
+  return {
+    type: input.type,
+    floor,
+    horizonStart: formatCalendarDate(horizonStart),
+    effectiveGapDays: planned.decision.effectiveGap,
+    eligibleResidentCount: planned.decision.eligibleResidentCount,
+    autoGapSkipsJob: planned.decision.skip,
+    estimatedDutiesPerResidentPer30Days: planned.decision.estimatedDutiesPerResidentPer30Days,
+    dutyDates: planned.dutyDates,
+    restDates: planned.restDates
+  };
+}
+
+const MAX_CLEANING_ROTATION_LOOKBACK_DAYS = 6;
+
+export async function listCleaningRestDatesForUser(user: { branchId: string; floor?: number | null }) {
+  const config = await getCleaningAutoSchedulerConfig();
+  const horizonStart = cleaningHorizonStart();
+  const horizonDays = SELF_ASSIGN_MAX_DAYS_AHEAD;
+  const audience = await loadCleaningRotationAudience(cleaningMonthKeyFromDate(horizonStart));
+  const radius = MAX_CLEANING_ROTATION_LOOKBACK_DAYS;
+  const existingTasks = await loadCleaningRotationTasks(
+    addDays(horizonStart, -radius),
+    addDays(horizonStart, horizonDays - 1 + radius)
+  );
+  const rows: Array<{ type: CleaningTaskType; dates: string[] }> = [];
+  for (const type of getAllowedTaskTypesForUser(user)) {
+    const floor = type === CleaningTaskType.TRASH_D7 ? (user.floor ?? null) : null;
+    const stored = findSchedulerJobForSlot(config.jobs, type, floor);
+    const planned = await planCleaningJobCadence({
+      type,
+      floor,
+      horizonStart,
+      horizonDays,
+      rotationGapDays: stored?.rotationGapDays,
+      autoGap: stored?.autoGap,
+      audience,
+      existingTasks
+    });
+    rows.push({ type, dates: planned.restDates });
+  }
+  return rows;
+}
+
 // Auto-schedule all cleaning slots for the next `horizonDays` days.
 // Uses the shared candidate ranking (see docs/cleaning-auto-assign.md).
+// This legacy entry fills every empty day (rotation gap 1). Per-job runs use autoScheduleCleaningTasksByJob.
 export async function autoScheduleCleaningTasks(horizonDays = 15) {
   const today = normalizeCalendarDate(new Date());
   const fairnessSince = addDays(today, -CLEANING_FAIRNESS_LOOKBACK_DAYS);
@@ -5529,13 +5821,17 @@ export async function autoScheduleCleaningTasksByJob(
     enabled: boolean;
     fillUnassignedDates: boolean;
     horizonDays: number;
+    rotationGapDays?: number;
+    autoGap?: { enabled?: boolean; targetMaxDutiesPerResidentPer30Days?: number };
   }>
 ) {
   const activeJobs = jobs
     .filter((job) => job.enabled && job.fillUnassignedDates && !isCleaningTaskAutomationDisabled(job.type))
     .map((job) => ({
       ...job,
-      horizonDays: Math.max(1, Math.min(60, Number(job.horizonDays) || 1))
+      horizonDays: Math.max(1, Math.min(60, Number(job.horizonDays) || 1)),
+      rotationGapDays: job.rotationGapDays,
+      autoGap: job.autoGap
     }));
 
   if (activeJobs.length === 0) {
@@ -5543,12 +5839,14 @@ export async function autoScheduleCleaningTasksByJob(
   }
 
   const today = normalizeCalendarDate(new Date());
+  const horizonStart = addDays(today, 1);
   const maxHorizonDays = Math.max(...activeJobs.map((job) => job.horizonDays));
   const fairnessSince = addDays(today, -CLEANING_FAIRNESS_LOOKBACK_DAYS);
   const correctionSince = addDays(today, -CLEANING_CORRECTION_PENALTY_LOOKBACK_DAYS);
-  const [recentTaskCounts, correctionPenalties] = await Promise.all([
+  const [recentTaskCounts, correctionPenalties, exemptions] = await Promise.all([
     getRecentTaskCountsByType(fairnessSince),
-    getCorrectionPenalties(correctionSince)
+    getCorrectionPenalties(correctionSince),
+    getCleaningAssignmentExemptions()
   ]);
   const activeUsers = (await getActiveCleaningUsers()).filter((user) => !isHostelShortTermCleaningUser(user));
   const contractOptOutLookup = await getContractCleaningOptOutLookup(activeUsers.map((user) => getUserContractCode(user)));
@@ -5560,6 +5858,44 @@ export async function autoScheduleCleaningTasksByJob(
     }
     return optOutCache.get(month)!;
   };
+
+  const gapAudience: CleaningRotationAudience = {
+    users: activeUsers,
+    optedOut: new Set([...(await getOptedOut(cleaningMonthKeyFromDate(horizonStart)))].map((email) => email.trim().toLowerCase())),
+    contractOptOutCodes: new Set(contractOptOutLookup.keys()),
+    exemptions: new Set([...exemptions].map((email) => email.trim().toLowerCase()))
+  };
+  const scheduledJobs = [];
+  for (const job of activeJobs) {
+    const decision = decideCleaningJobRotation(job, gapAudience);
+    if (decision.skip) {
+      continue;
+    }
+    scheduledJobs.push({ ...job, effectiveGap: decision.effectiveGap });
+  }
+  if (scheduledJobs.length === 0) {
+    return { created: 0, skipped: 0 };
+  }
+
+  const maxGap = Math.max(...scheduledJobs.map((job) => job.effectiveGap));
+  const cadenceTasks = await loadCleaningRotationTasks(
+    addDays(horizonStart, -(maxGap - 1)),
+    addDays(horizonStart, maxHorizonDays - 1 + (maxGap - 1))
+  );
+  const dutyDatesByJob = new Map(
+    scheduledJobs.map((job) => [
+      job.key,
+      new Set(
+        getCleaningCadencePlan({
+          job: { type: job.type, floor: job.floor },
+          horizonStart: formatCalendarDate(horizonStart),
+          horizonDays: job.horizonDays,
+          effectiveGap: job.effectiveGap,
+          existingTasks: cadenceTasks
+        }).dutyDates
+      )
+    ])
+  );
 
   const results = { created: 0, skipped: 0 };
 
@@ -5578,11 +5914,15 @@ export async function autoScheduleCleaningTasksByJob(
     });
     const availabilityMap = await getAvailabilityMap(date, date);
 
-    for (const job of activeJobs.filter((entry) => d <= entry.horizonDays)) {
+    for (const job of scheduledJobs.filter((entry) => d <= entry.horizonDays)) {
       const existingSlot = dayTasks.find(
         (t) => t.type === job.type && (job.type !== CleaningTaskType.TRASH_D7 || t.floor === job.floor)
       );
       if (existingSlot) {
+        results.skipped++;
+        continue;
+      }
+      if (!dutyDatesByJob.get(job.key)?.has(formatCalendarDate(date))) {
         results.skipped++;
         continue;
       }
@@ -5663,12 +6003,40 @@ async function findReleasedUserReassignment(input: {
   recentTaskCounts.set(releasedCountKey, Math.max(0, (recentTaskCounts.get(releasedCountKey) ?? 0) - 1));
   bumpRecentTypeTaskCount(recentTaskCounts, input.replacementEmail, input.type);
 
-  let cursor = addDays(normalizedReleasedDate, 1);
+  const searchStart = addDays(normalizedReleasedDate, 1);
+  const slotFloor = input.type === CleaningTaskType.TRASH_D7 ? input.floor : null;
+  const schedulerConfig = await getCleaningAutoSchedulerConfig();
+  const storedJob = findSchedulerJobForSlot(schedulerConfig.jobs, input.type, slotFloor);
+  const gapAudience: CleaningRotationAudience = {
+    users: activeUsers,
+    optedOut: new Set(
+      [...(await getOptedOutEmailsForMonth(cleaningMonthKeyFromDate(searchStart)))].map((email) => email.trim().toLowerCase())
+    ),
+    contractOptOutCodes: new Set(contractOptOutLookup.keys()),
+    exemptions: new Set([...(await getCleaningAssignmentExemptions())].map((email) => email.trim().toLowerCase()))
+  };
+  const cadence = await planCleaningJobCadence({
+    type: input.type,
+    floor: slotFloor,
+    horizonStart: searchStart,
+    horizonDays: 15,
+    rotationGapDays: storedJob?.rotationGapDays,
+    autoGap: storedJob?.autoGap,
+    audience: gapAudience
+  });
+  if (cadence.decision.skip) return null;
+  const dutyDates = new Set(cadence.dutyDates);
+
+  let cursor = searchStart;
 
   while (cursor.getTime() <= horizon.getTime()) {
     const month = cleaningMonthKeyFromDate(cursor);
     const optedOut = await getOptedOutEmailsForMonth(month);
     if (optedOut.has(normalizedEmail)) {
+      cursor = addDays(cursor, 1);
+      continue;
+    }
+    if (!dutyDates.has(formatCalendarDate(cursor))) {
       cursor = addDays(cursor, 1);
       continue;
     }
