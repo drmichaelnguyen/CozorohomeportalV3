@@ -4724,6 +4724,135 @@ export async function upgradeCozoroMemberByCoins(input: {
   };
 }
 
+/**
+ * Owner/staff complimentary upgrade: waive the upgrade fee and, if needed,
+ * grant previous-month maintenance top-up coins so scheduled sync does not
+ * immediately drop the member back to a lower live tier.
+ */
+export async function grantComplimentaryCozoroMemberUpgrade(input: {
+  email: string;
+  targetMember: string;
+  operator: string;
+  reason?: string;
+}) {
+  const normalizedEmail = input.email.trim().toLowerCase();
+  const operator = input.operator.trim() || "Cozoro Owner";
+  const targetTier = getCozoroMemberTier(input.targetMember);
+
+  if (!targetTier) {
+    throw new Error("The requested Cozoro Member is not available for upgrade.");
+  }
+
+  const managerClients = await getManagerClients();
+  const client = managerClients.find((entry) => entry.email.trim().toLowerCase() === normalizedEmail);
+
+  if (!client) {
+    throw new Error("Client could not be found for this Cozoro Member upgrade.");
+  }
+
+  const coinsHistory = (await readCoinsSheetRows()) || [];
+  const previousMonthEarnings = calculatePreviousMonthEarnings(coinsHistory, client.email);
+  const recordedIndex = getCozoroMemberTierIndex(client.recordedMember);
+  const targetTierIndex = getCozoroMemberTierIndex(targetTier.name);
+
+  if (targetTierIndex < 0) {
+    throw new Error("The requested Cozoro Member is not available for upgrade.");
+  }
+
+  if (targetTierIndex <= recordedIndex) {
+    throw new Error(
+      `Client is already recorded as ${client.recordedMember || "Silver"}; complimentary upgrade target must be higher.`
+    );
+  }
+
+  const totalAccumulatedCoins = parseLooseInteger(client.totalCoins);
+  if (totalAccumulatedCoins < targetTier.threshold) {
+    throw new Error(
+      `Not eligible for complimentary ${targetTier.name}: requires ${targetTier.threshold.toLocaleString("vi-VN")} accumulated coins.`
+    );
+  }
+
+  const maintenanceShortfall = Math.max(0, targetTier.maintainCoins - previousMonthEarnings);
+  const currentCoins = parseLooseInteger(client.currentCoins);
+  const branchNum = normalizeClientBranch(client.branch).replace("D", "");
+  const now = new Date();
+  let nextCoins = currentCoins;
+  let nextTotalCoins = totalAccumulatedCoins;
+  let nextPreviousMonthEarnings = previousMonthEarnings;
+
+  if (maintenanceShortfall > 0) {
+    // Date into previous calendar month so sync/live ranking keeps the new tier.
+    const prevMonthAnchor = new Date(now.getFullYear(), now.getMonth() - 1, 28, 12, 0, 0);
+    nextCoins = currentCoins + maintenanceShortfall;
+    nextTotalCoins = totalAccumulatedCoins + maintenanceShortfall;
+    nextPreviousMonthEarnings = previousMonthEarnings + maintenanceShortfall;
+
+    await appendCoinsSheetRow({
+      [COINS_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(prevMonthAnchor),
+      [CONTRACT_CODE_COLUMN]: client.maHd,
+      ["Chi nhánh Cozoro dorm"]: branchNum,
+      [EMAIL_COLUMN]: client.email,
+      [CLIENT_NAME_COLUMN]: client.name,
+      [CLIENT_BED_COLUMN]: client.bed,
+      [COINS_BALANCE_COLUMN]: String(maintenanceShortfall),
+      [COINS_EVENT_COLUMN]:
+        `Bù duy trì hạng ${targetTier.name} (nâng hạng miễn phí) / ${targetTier.name} maintenance top-up for complimentary upgrade`,
+      [COINS_OPERATOR_COLUMN]: operator,
+      [COINS_MEMBER_COLUMN]: targetTier.name,
+      [COINS_CURRENT_BALANCE_COLUMN]: String(nextCoins),
+      [COINS_TRANSACTION_CODE_COLUMN]: `CompMemberMaintain${Date.now()}${normalizedEmail}`
+    });
+  }
+
+  const reason =
+    input.reason?.trim() ||
+    `Nâng hạng ${targetTier.name} miễn phí / Complimentary upgrade to ${targetTier.name} (fee waived)`;
+
+  await appendCoinsSheetRow({
+    [COINS_TIMESTAMP_COLUMN]: formatCoinsSheetTimestamp(now),
+    [CONTRACT_CODE_COLUMN]: client.maHd,
+    ["Chi nhánh Cozoro dorm"]: branchNum,
+    [EMAIL_COLUMN]: client.email,
+    [CLIENT_NAME_COLUMN]: client.name,
+    [CLIENT_BED_COLUMN]: client.bed,
+    [COINS_BALANCE_COLUMN]: "0",
+    [COINS_EVENT_COLUMN]: reason,
+    [COINS_OPERATOR_COLUMN]: operator,
+    [COINS_MEMBER_COLUMN]: targetTier.name,
+    [COINS_CURRENT_BALANCE_COLUMN]: String(nextCoins),
+    [COINS_TRANSACTION_CODE_COLUMN]: `CompMemberUpgrade${Date.now()}${normalizedEmail}`
+  });
+
+  // Do not change "Coins được cộng tháng này" — maintenance top-up is prior-month dated.
+  await updateClientColumns(client.maHd, {
+    [CLIENT_CURRENT_COINS_COLUMN]: String(nextCoins),
+    ["Tổng Coins tích luỹ"]: String(nextTotalCoins),
+    [COINS_MEMBER_COLUMN]: targetTier.name
+  });
+
+  const liveTier = calculateLiveCozoroMember({
+    branchId: client.branch,
+    totalAccumulatedCoins: String(nextTotalCoins),
+    recordedMember: targetTier.name,
+    previousMonthEarnings: nextPreviousMonthEarnings
+  });
+
+  return {
+    ok: true as const,
+    email: normalizedEmail,
+    maHd: client.maHd,
+    upgradedTo: targetTier.name,
+    liveTier,
+    upgradeCost: 0,
+    maintenanceTopUp: maintenanceShortfall,
+    previousMonthEarningsBefore: previousMonthEarnings,
+    previousMonthEarningsAfter: nextPreviousMonthEarnings,
+    currentCoins: nextCoins,
+    totalCoins: nextTotalCoins,
+    recordedMemberBefore: client.recordedMember
+  };
+}
+
 export type MemberTierRankingEntry = {
   rank: number;
   maHd: string;
