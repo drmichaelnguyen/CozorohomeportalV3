@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { API_BASE_URL } from "../lib/api-base-url";
+import { ManagerAiManagerOwnerChat } from "./manager-ai-manager-chat";
 import { usePortalLanguage } from "./portal-language";
 
 type AiManagerCapabilities = {
@@ -394,6 +395,14 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
 
       {error ? <p className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-800">{error}</p> : null}
       {message ? <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{message}</p> : null}
+
+      <ManagerAiManagerOwnerChat
+        actorEmail={actorEmail}
+        onActionComplete={() => {
+          void load();
+          void loadUsage();
+        }}
+      />
 
       <div className="grid gap-4 md:grid-cols-2">
         <label className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm">

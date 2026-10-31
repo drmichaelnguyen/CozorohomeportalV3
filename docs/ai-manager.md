@@ -26,6 +26,22 @@ It reuses the same LLM stack as other portal AI (9router `gpt-5` when configured
 
 Every capability action writes `ai_manager.*` rows to **ActionLog**.
 
+## Owner chat (tell it what to do)
+
+In **Settings → AI Manager**, owners and app admins can **chat with the agent** (separate from the human Manager AI chat):
+
+| Ask it to… | What happens |
+|------------|--------------|
+| Check what’s outstanding | `get_ops_status` — live snapshot + settings |
+| Send a report now | Runs a force tick / owner digest |
+| Answer waiting support chats | One-shot `runAnswerChatActions` (even if the scheduled toggle is off) |
+| Sweep fines / disputes | One-shot fine actions |
+| Assign cleaning slots | One-shot schedule auto-assign |
+| “From now on, always…” | `set_capability` / `set_mode` / `set_interval_hours` / `set_agent_enabled` |
+| Save a standing rule | `add_standing_instruction` → learning guide for later ticks |
+
+Chat history is stored in the browser (per owner email + language). Token usage is attributed to `ai_manager_owner_chat`. API: `POST /manager/ai-manager/chat`.
+
 ## Owner feedback & learning
 
 In **Settings → AI Manager → Action log**, owners can:
@@ -97,6 +113,7 @@ UI settings in `api/data/ai-manager-config.json` override / complement these aft
 | `PUT` | `/manager/ai-manager/action-logs/:id/feedback` | owner / app_admin (like/dislike + guide) |
 | `GET` | `/manager/ai-manager/feedback` | staff |
 | `GET` | `/manager/ai-manager/usage?actorEmail=&days=` | owner / app_admin (token/cost by task + category) |
+| `POST` | `/manager/ai-manager/chat` | owner / app_admin (instruct the agent) |
 
 ## Token usage by task / category
 
@@ -108,6 +125,7 @@ Every AI Manager LLM call is recorded in `AiUsageEvent` under a dedicated featur
 | `ai_manager_chat_reply` | Answer support chat | Auto-sent replies and assist-mode unsent drafts |
 | `ai_manager_fines` | Create / correct fines | Reserved (dispute/sweep paths are rule-based today → usually 0 tokens) |
 | `ai_manager_schedule` | Cleaning schedule assignment | Reserved (uses shared fairness algo → usually 0 tokens) |
+| `ai_manager_owner_chat` | Owner chat | Owner ↔ agent instruction chat (tool rounds) |
 
 View totals, **by task**, **by category**, and recent calls in **Settings → AI Manager → Token usage**, or `GET /manager/ai-manager/usage`. Global AI analytics (`Settings → AI usage`) still includes these features alongside other portal AI.
 
