@@ -459,8 +459,9 @@ async function runDeploy() {
     );
   }
 
-  console.log("Deploy: syncing database schema (prisma db push)...");
-  await runCorepack(["pnpm", "--filter", "cozorohome-api", "exec", "prisma", "db", "push"]);
+  // `db push` would drop tables owned by guest-booking-standalone (e.g. guest_stay_bookings).
+  console.log("Deploy: applying database migrations (prisma migrate deploy)...");
+  await runCorepack(["pnpm", "--filter", "cozorohome-api", "prisma:deploy"]);
 
   console.log("Deploy: starting services...");
   await runStart();
