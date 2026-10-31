@@ -96,6 +96,20 @@ UI settings in `api/data/ai-manager-config.json` override / complement these aft
 | `GET` | `/manager/ai-manager/action-logs` | staff |
 | `PUT` | `/manager/ai-manager/action-logs/:id/feedback` | owner / app_admin (like/dislike + guide) |
 | `GET` | `/manager/ai-manager/feedback` | staff |
+| `GET` | `/manager/ai-manager/usage?actorEmail=&days=` | owner / app_admin (token/cost by task + category) |
+
+## Token usage by task / category
+
+Every AI Manager LLM call is recorded in `AiUsageEvent` under a dedicated feature key so owners can see spend separately from human Manager AI chat:
+
+| Feature key | Category (capability) | When |
+|-------------|----------------------|------|
+| `ai_manager_report` | Owner reports | Digest LLM summary |
+| `ai_manager_chat_reply` | Answer support chat | Auto-sent replies and assist-mode unsent drafts |
+| `ai_manager_fines` | Create / correct fines | Reserved (dispute/sweep paths are rule-based today → usually 0 tokens) |
+| `ai_manager_schedule` | Cleaning schedule assignment | Reserved (uses shared fairness algo → usually 0 tokens) |
+
+View totals, **by task**, **by category**, and recent calls in **Settings → AI Manager → Token usage**, or `GET /manager/ai-manager/usage`. Global AI analytics (`Settings → AI usage`) still includes these features alongside other portal AI.
 
 ## Action logs
 
@@ -123,4 +137,4 @@ View recent rows in **Settings → AI Manager → Action log**, or `GET /manager
 
 - Human manager assist chat: `api/src/manager-ai-chat.ts`
 - Support reply drafts: `generateManagerSupportReplyDraft` in `resident-support-ai.ts`
-- Behavior / usage logs: `docs/ai-behavior-log.md` (channel `manager`, feature `ai_manager_report`)
+- Behavior / usage logs: `docs/ai-behavior-log.md` (channel `manager`, features `ai_manager_*`)

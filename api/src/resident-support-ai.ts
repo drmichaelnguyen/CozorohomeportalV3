@@ -619,6 +619,8 @@ export async function generateManagerSupportReplyDraft(input: {
   operatorEmail: string;
   /** Optional owner learning guides / extra instructions for this draft. */
   extraGuidance?: string;
+  /** Override AI usage feature key (e.g. ai_manager_chat_reply). */
+  usageFeature?: string;
 }): Promise<string | null> {
   if (!hasPortalLlmConfig("shared")) {
     return null;
@@ -718,8 +720,9 @@ export async function generateManagerSupportReplyDraft(input: {
       geminiKind: "shared"
     });
 
+    const usageFeature = input.usageFeature?.trim() || "manager_support_reply_draft";
     const usageInput = {
-      feature: "manager_support_reply_draft" as const,
+      feature: usageFeature,
       actorEmail: input.operatorEmail,
       usage: round.usage,
       provider: round.provider,
@@ -755,7 +758,7 @@ export async function generateManagerSupportReplyDraft(input: {
           userText: latestResidentMessage.body.trim() || `[${imageCount} image attachment(s)]`,
           modelText: draftText,
           conversationId: input.conversationId,
-          meta: { feature: "manager_support_reply_draft", residentEmail, preferVietnamese, imageCount }
+          meta: { feature: usageFeature, residentEmail, preferVietnamese, imageCount }
         });
       }
       return draftText;

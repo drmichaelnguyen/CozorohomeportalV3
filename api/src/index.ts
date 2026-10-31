@@ -95,7 +95,7 @@ import {
 } from "./db-backup-sheets.js";
 import { getPortalUxSettings, updatePortalUxSettings } from "./portal-ux-settings.js";
 import { purgePortalCloudflareCache } from "./cloudflare-cache.js";
-import { getAiUsageAnalytics } from "./ai-usage.js";
+import { getAiManagerUsageAnalytics, getAiUsageAnalytics } from "./ai-usage.js";
 import { captureMonthlyBedOccupancy, getBedOccupancyHistory } from "./bed-occupancy.js";
 import { getChatAttachmentForViewer } from "./chat-attachments.js";
 import {
@@ -6211,6 +6211,23 @@ app.get("/manager/ai-manager/reports/:id", async (request, response) => {
   } catch (error) {
     return response.status(403).json({
       error: error instanceof Error ? error.message : "Unable to load AI Manager report"
+    });
+  }
+});
+
+app.get("/manager/ai-manager/usage", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "").trim().toLowerCase();
+  const days = Math.min(365, Math.max(1, Number.parseInt(String(request.query.days ?? "30"), 10) || 30));
+  try {
+    await requirePortalRole(
+      actorEmail,
+      ["owner", "app_admin"],
+      "Only owners or app admins can view AI Manager token usage."
+    );
+    return response.json(await getAiManagerUsageAnalytics(days));
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 403).json({
+      error: error instanceof Error ? error.message : "Unable to load AI Manager usage."
     });
   }
 });

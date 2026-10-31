@@ -99,7 +99,8 @@ export async function runAnswerChatActions(input: {
       const draft = await generateManagerSupportReplyDraft({
         conversationId: thread.conversationId,
         operatorEmail: input.operatorEmail,
-        extraGuidance: learningBlock || undefined
+        extraGuidance: learningBlock || undefined,
+        usageFeature: "ai_manager_chat_reply"
       });
       if (!draft?.trim()) {
         errors.push(`${thread.residentEmail}: empty draft`);

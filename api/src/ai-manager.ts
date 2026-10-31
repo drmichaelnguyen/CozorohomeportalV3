@@ -593,7 +593,9 @@ async function buildAssistDrafts(
     try {
       const draft = await generateManagerSupportReplyDraft({
         conversationId: thread.conversationId,
-        operatorEmail
+        operatorEmail,
+        // Assist drafts are chat-category LLM work even when auto-send is off.
+        usageFeature: "ai_manager_chat_reply"
       });
       if (draft?.trim()) {
         drafts.push({

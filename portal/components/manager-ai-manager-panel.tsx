@@ -93,6 +93,43 @@ type FullReport = {
   emailErrors: string[];
 };
 
+type UsageBucket = {
+  key: string;
+  label?: string;
+  categoryLabel?: string;
+  capability?: string;
+  requests: number;
+  totalTokens: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  estimatedCostUsd: number;
+};
+
+type UsageAnalytics = {
+  days: number;
+  totals: UsageBucket;
+  byTask: UsageBucket[];
+  byCategory: UsageBucket[];
+  recent: Array<{
+    id: string;
+    featureLabel: string;
+    categoryLabel: string;
+    provider: string;
+    model: string;
+    totalTokens: number;
+    estimatedCostUsd: number;
+    createdAt: string;
+  }>;
+};
+
+const usageInteger = new Intl.NumberFormat("en-US");
+const usageUsd = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 4,
+  maximumFractionDigits: 6
+});
+
 function formatWhen(value: string | null) {
   if (!value) return "—";
   const date = new Date(value);
@@ -135,6 +172,10 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
   const [feedbackRating, setFeedbackRating] = useState<"like" | "dislike">("like");
   const [feedbackGuide, setFeedbackGuide] = useState("");
   const [feedbackSaving, setFeedbackSaving] = useState(false);
+  const [usageDays, setUsageDays] = useState(30);
+  const [usage, setUsage] = useState<UsageAnalytics | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageError, setUsageError] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -164,6 +205,27 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const loadUsage = useCallback(async () => {
+    setUsageLoading(true);
+    setUsageError("");
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/manager/ai-manager/usage?actorEmail=${encodeURIComponent(actorEmail)}&days=${usageDays}`
+      );
+      const body = (await response.json()) as UsageAnalytics & { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Unable to load AI Manager usage.");
+      setUsage(body);
+    } catch (err) {
+      setUsageError(err instanceof Error ? err.message : "Unable to load AI Manager usage.");
+    } finally {
+      setUsageLoading(false);
+    }
+  }, [actorEmail, usageDays]);
+
+  useEffect(() => {
+    void loadUsage();
+  }, [loadUsage]);
 
   async function saveSettings() {
     if (!config) return;
@@ -575,6 +637,150 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
             ))}
           </ul>
         )}
+      </div>
+
+      <div>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h4 className="text-sm font-semibold text-slate-900">{t("aiManagerTokenUsage")}</h4>
+            <p className="mt-0.5 text-xs text-slate-500">{t("aiManagerTokenUsageHint")}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <select
+              value={usageDays}
+              onChange={(event) => setUsageDays(Number(event.target.value))}
+              className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+            >
+              <option value={7}>7d</option>
+              <option value={30}>30d</option>
+              <option value={90}>90d</option>
+              <option value={365}>1y</option>
+            </select>
+            <button
+              type="button"
+              disabled={usageLoading}
+              onClick={() => void loadUsage()}
+              className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm disabled:opacity-60"
+            >
+              {usageLoading ? t("aiManagerTokenUsageLoading") : t("aiManagerTokenUsageRefresh")}
+            </button>
+          </div>
+        </div>
+        {usageError ? <p className="mb-2 text-sm text-rose-700">{usageError}</p> : null}
+        {usage ? (
+          <>
+            <div className="mb-3 grid gap-2 sm:grid-cols-3">
+              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+                <p className="text-xs uppercase tracking-wide text-slate-500">{t("aiManagerTokenRequests")}</p>
+                <p className="mt-1 text-lg font-semibold text-slate-900">
+                  {usageInteger.format(usage.totals.requests)}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+                <p className="text-xs uppercase tracking-wide text-slate-500">{t("aiManagerTokenTotal")}</p>
+                <p className="mt-1 text-lg font-semibold text-slate-900">
+                  {usageInteger.format(usage.totals.totalTokens)}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+                <p className="text-xs uppercase tracking-wide text-slate-500">{t("aiManagerTokenCost")}</p>
+                <p className="mt-1 text-lg font-semibold text-slate-900">
+                  {usageUsd.format(usage.totals.estimatedCostUsd)}
+                </p>
+              </div>
+            </div>
+            {usage.totals.requests === 0 ? (
+              <p className="text-sm text-slate-500">{t("aiManagerTokenUsageEmpty")}</p>
+            ) : null}
+            <div className="grid gap-3 xl:grid-cols-2">
+              <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                <h5 className="border-b border-slate-100 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  {t("aiManagerTokenByTask")}
+                </h5>
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-left text-xs text-slate-500">
+                    <tr>
+                      <th className="px-3 py-1.5">Task</th>
+                      <th className="px-3 py-1.5">Req</th>
+                      <th className="px-3 py-1.5">Tokens</th>
+                      <th className="px-3 py-1.5">Cost</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usage.byTask.map((row) => (
+                      <tr key={row.key} className="border-t border-slate-100">
+                        <td className="px-3 py-1.5 font-medium text-slate-800">
+                          {row.categoryLabel ?? row.label ?? row.key}
+                        </td>
+                        <td className="px-3 py-1.5">{usageInteger.format(row.requests)}</td>
+                        <td className="px-3 py-1.5">{usageInteger.format(row.totalTokens)}</td>
+                        <td className="px-3 py-1.5">{usageUsd.format(row.estimatedCostUsd)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                <h5 className="border-b border-slate-100 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  {t("aiManagerTokenByCategory")}
+                </h5>
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-left text-xs text-slate-500">
+                    <tr>
+                      <th className="px-3 py-1.5">Category</th>
+                      <th className="px-3 py-1.5">Req</th>
+                      <th className="px-3 py-1.5">Tokens</th>
+                      <th className="px-3 py-1.5">Cost</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usage.byCategory.map((row) => (
+                      <tr key={row.key} className="border-t border-slate-100">
+                        <td className="px-3 py-1.5 font-medium text-slate-800">{row.label ?? row.key}</td>
+                        <td className="px-3 py-1.5">{usageInteger.format(row.requests)}</td>
+                        <td className="px-3 py-1.5">{usageInteger.format(row.totalTokens)}</td>
+                        <td className="px-3 py-1.5">{usageUsd.format(row.estimatedCostUsd)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            {usage.recent.length > 0 ? (
+              <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                <h5 className="border-b border-slate-100 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  {t("aiManagerTokenRecent")}
+                </h5>
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead className="bg-slate-50 text-left text-xs text-slate-500">
+                    <tr>
+                      <th className="px-3 py-1.5">Time</th>
+                      <th className="px-3 py-1.5">Task</th>
+                      <th className="px-3 py-1.5">Model</th>
+                      <th className="px-3 py-1.5">Tokens</th>
+                      <th className="px-3 py-1.5">Cost</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usage.recent.slice(0, 15).map((row) => (
+                      <tr key={row.id} className="border-t border-slate-100">
+                        <td className="px-3 py-1.5 text-slate-600">{formatWhen(row.createdAt)}</td>
+                        <td className="px-3 py-1.5">{row.categoryLabel || row.featureLabel}</td>
+                        <td className="px-3 py-1.5">
+                          {row.provider}/{row.model}
+                        </td>
+                        <td className="px-3 py-1.5">{usageInteger.format(row.totalTokens)}</td>
+                        <td className="px-3 py-1.5">{usageUsd.format(row.estimatedCostUsd)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </>
+        ) : usageLoading ? (
+          <p className="text-sm text-slate-500">{t("aiManagerTokenUsageLoading")}</p>
+        ) : null}
       </div>
 
       <div>

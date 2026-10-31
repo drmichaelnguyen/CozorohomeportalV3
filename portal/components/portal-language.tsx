@@ -1485,6 +1485,23 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "No learning guides yet. Rate an action and add a short instruction.",
     vi: "Chưa có hướng dẫn học. Hãy đánh giá một thao tác và thêm chỉ dẫn ngắn."
   },
+  aiManagerTokenUsage: { en: "Token usage", vi: "Lượng token sử dụng" },
+  aiManagerTokenUsageHint: {
+    en: "LLM tokens and estimated cost for each AI Manager task and category (reports, chat, fines, schedule).",
+    vi: "Token LLM và chi phí ước tính theo từng tác vụ và nhóm chức năng Quản lý AI (báo cáo, chat, phạt, lịch)."
+  },
+  aiManagerTokenUsageRefresh: { en: "Refresh usage", vi: "Làm mới usage" },
+  aiManagerTokenUsageLoading: { en: "Loading usage…", vi: "Đang tải usage…" },
+  aiManagerTokenUsageEmpty: {
+    en: "No AI Manager LLM usage in this period. Fines and schedule currently use little or no LLM.",
+    vi: "Chưa có usage LLM của Quản lý AI trong kỳ này. Phạt và lịch hiện ít hoặc không dùng LLM."
+  },
+  aiManagerTokenRequests: { en: "Requests", vi: "Lượt gọi" },
+  aiManagerTokenTotal: { en: "Total tokens", vi: "Tổng token" },
+  aiManagerTokenCost: { en: "Estimated cost", vi: "Chi phí ước tính" },
+  aiManagerTokenByTask: { en: "By task", vi: "Theo tác vụ" },
+  aiManagerTokenByCategory: { en: "By category", vi: "Theo nhóm" },
+  aiManagerTokenRecent: { en: "Recent AI Manager calls", vi: "Lượt gọi Quản lý AI gần đây" },
   aiManagerRecentReports: { en: "Recent reports", vi: "Báo cáo gần đây" },
   aiManagerNoReports: { en: "No reports yet. Enable the agent or run a report now.", vi: "Chưa có báo cáo. Hãy bật agent hoặc chạy báo cáo ngay." },
   aiManagerOpenReport: { en: "Open", vi: "Mở" },

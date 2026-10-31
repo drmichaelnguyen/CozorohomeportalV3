@@ -16,6 +16,12 @@ import {
   type AiManagerLearningGuideLike,
   type AiManagerOpsSnapshot
 } from "../src/ai-manager-logic.js";
+import {
+  AI_MANAGER_USAGE_CATEGORIES,
+  AI_MANAGER_USAGE_FEATURE_LABELS,
+  AI_MANAGER_USAGE_FEATURES,
+  isAiManagerUsageFeature
+} from "../src/ai-manager-usage-meta.js";
 
 function sampleSnapshot(overrides?: Partial<AiManagerOpsSnapshot>): AiManagerOpsSnapshot {
   return {
@@ -135,6 +141,27 @@ test("infer capability from action names", () => {
   assert.equal(inferAiManagerCapabilityFromAction("ai_manager.fines.dispute_keep"), "manageFines");
   assert.equal(inferAiManagerCapabilityFromAction("ai_manager.schedule.assign"), "scheduleAssignment");
   assert.equal(inferAiManagerCapabilityFromAction("ai_manager.tick.report"), "ownerReports");
+});
+
+test("AI Manager usage features map 1:1 to capability categories", () => {
+  assert.deepEqual([...AI_MANAGER_USAGE_FEATURES], [
+    "ai_manager_report",
+    "ai_manager_chat_reply",
+    "ai_manager_fines",
+    "ai_manager_schedule"
+  ]);
+  assert.equal(isAiManagerUsageFeature("ai_manager_chat_reply"), true);
+  assert.equal(isAiManagerUsageFeature("manager_support_reply_draft"), false);
+  for (const feature of AI_MANAGER_USAGE_FEATURES) {
+    assert.ok(AI_MANAGER_USAGE_FEATURE_LABELS[feature].includes("AI Manager"));
+    const category = AI_MANAGER_USAGE_CATEGORIES[feature];
+    assert.ok(category.capability);
+    assert.ok(category.label);
+  }
+  assert.equal(AI_MANAGER_USAGE_CATEGORIES.ai_manager_report.capability, "ownerReports");
+  assert.equal(AI_MANAGER_USAGE_CATEGORIES.ai_manager_chat_reply.capability, "answerChat");
+  assert.equal(AI_MANAGER_USAGE_CATEGORIES.ai_manager_fines.capability, "manageFines");
+  assert.equal(AI_MANAGER_USAGE_CATEGORIES.ai_manager_schedule.capability, "scheduleAssignment");
 });
 
 test("learning guides format and dispute decisions", () => {

@@ -1,4 +1,10 @@
 import { prisma } from "./prisma.js";
+import {
+  AI_MANAGER_USAGE_CATEGORIES,
+  AI_MANAGER_USAGE_FEATURE_LABELS,
+  AI_MANAGER_USAGE_FEATURES,
+  type AiManagerUsageFeature
+} from "./ai-manager-usage-meta.js";
 
 export type GeminiUsageMetadata = {
   promptTokenCount?: number;
@@ -10,13 +16,20 @@ export type GeminiUsageMetadata = {
 
 export type AiModality = "text" | "vision";
 
+export {
+  AI_MANAGER_USAGE_CATEGORIES,
+  AI_MANAGER_USAGE_FEATURE_LABELS,
+  AI_MANAGER_USAGE_FEATURES,
+  type AiManagerUsageFeature
+};
+
 export const AI_FEATURE_LABELS: Record<string, string> = {
   manager_ai_chat: "Manager AI chat",
   manager_support_reply_draft: "Manager support reply draft",
   resident_portal: "Resident assistant",
   resident_support_thread: "Support assistant",
   cleaning_photo_verification: "Cleaning photo verification",
-  ai_manager_report: "AI Manager owner report"
+  ...AI_MANAGER_USAGE_FEATURE_LABELS
 };
 
 export const AI_MODALITY_LABELS: Record<AiModality, string> = {
@@ -278,5 +291,118 @@ export async function getAiUsageAnalytics(days: number) {
     },
     pricingNote:
       "Estimated paid-tier cost in USD; actual billing may differ due to free-tier usage, taxes, credits, or provider pricing changes. Computer vision is tracked separately from text chat."
+  };
+}
+
+/** Token/cost analytics scoped to Cozoro AI Manager features only, grouped by task category. */
+export async function getAiManagerUsageAnalytics(days: number) {
+  const safeDays = Math.min(365, Math.max(1, Math.trunc(days)));
+  const since = new Date();
+  since.setUTCDate(since.getUTCDate() - safeDays + 1);
+  since.setUTCHours(0, 0, 0, 0);
+
+  const featureList = [...AI_MANAGER_USAGE_FEATURES];
+  const rows = await prisma.aiUsageEvent.findMany({
+    where: {
+      createdAt: { gte: since },
+      feature: { in: featureList }
+    },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      provider: true,
+      model: true,
+      feature: true,
+      modality: true,
+      actorEmail: true,
+      promptTokens: true,
+      outputTokens: true,
+      thinkingTokens: true,
+      cachedTokens: true,
+      totalTokens: true,
+      imageCount: true,
+      estimatedCostMicros: true,
+      status: true,
+      latencyMs: true,
+      createdAt: true
+    }
+  });
+
+  const totals = emptyBucket("mixed");
+  const byFeature = new Map<string, Bucket>();
+  const byCategory = new Map<string, Bucket>();
+  const byDay = new Map<string, Bucket>();
+
+  for (const feature of featureList) {
+    byFeature.set(feature, emptyBucket("text"));
+    const category = AI_MANAGER_USAGE_CATEGORIES[feature].capability;
+    if (!byCategory.has(category)) byCategory.set(category, emptyBucket("text"));
+  }
+
+  for (const row of rows) {
+    addToBucket(totals, row);
+    if (!byFeature.has(row.feature)) byFeature.set(row.feature, emptyBucket());
+    addToBucket(byFeature.get(row.feature)!, row);
+
+    const categoryMeta = AI_MANAGER_USAGE_CATEGORIES[row.feature as AiManagerUsageFeature];
+    const categoryKey = categoryMeta?.capability ?? "other";
+    if (!byCategory.has(categoryKey)) byCategory.set(categoryKey, emptyBucket());
+    addToBucket(byCategory.get(categoryKey)!, row);
+
+    const day = row.createdAt.toISOString().slice(0, 10);
+    if (!byDay.has(day)) byDay.set(day, emptyBucket());
+    addToBucket(byDay.get(day)!, row);
+  }
+
+  const categoryLabels: Record<string, string> = {
+    ownerReports: "Owner reports",
+    answerChat: "Answer support chat",
+    manageFines: "Create / correct fines",
+    scheduleAssignment: "Cleaning schedule assignment",
+    other: "Other"
+  };
+
+  return {
+    days: safeDays,
+    since: since.toISOString(),
+    totals: serializeBucket("ai_manager_all", totals),
+    byTask: featureList.map((feature) => ({
+      ...serializeBucket(feature, byFeature.get(feature) ?? emptyBucket("text")),
+      capability: AI_MANAGER_USAGE_CATEGORIES[feature].capability,
+      categoryLabel: AI_MANAGER_USAGE_CATEGORIES[feature].label
+    })),
+    byCategory: Array.from(byCategory, ([key, values]) => ({
+      ...serializeBucket(key, values),
+      label: categoryLabels[key] ?? key
+    })).sort((a, b) => b.estimatedCostMicros - a.estimatedCostMicros),
+    daily: Array.from(byDay, ([key, values]) => serializeBucket(key, values)).sort((a, b) =>
+      a.key.localeCompare(b.key)
+    ),
+    recent: rows.slice(0, 40).map((row) => ({
+      id: row.id,
+      feature: row.feature,
+      featureLabel: AI_FEATURE_LABELS[row.feature] ?? row.feature,
+      category: AI_MANAGER_USAGE_CATEGORIES[row.feature as AiManagerUsageFeature]?.capability ?? "other",
+      categoryLabel:
+        AI_MANAGER_USAGE_CATEGORIES[row.feature as AiManagerUsageFeature]?.label ??
+        categoryLabels.other,
+      modality: normalizeModality(row.modality),
+      provider: row.provider,
+      model: row.model,
+      actorEmail: row.actorEmail,
+      promptTokens: row.promptTokens,
+      outputTokens: row.outputTokens,
+      thinkingTokens: row.thinkingTokens,
+      totalTokens: row.totalTokens,
+      imageCount: row.imageCount,
+      estimatedCostUsd: row.estimatedCostMicros / 1_000_000,
+      status: row.status,
+      latencyMs: row.latencyMs,
+      createdAt: row.createdAt.toISOString()
+    })),
+    pricing: {
+      gemini25FlashInputUsdPerMillion: GEMINI_25_FLASH_PRICING.inputPerMillionUsd,
+      gemini25FlashOutputUsdPerMillion: GEMINI_25_FLASH_PRICING.outputPerMillionUsd
+    }
   };
 }
