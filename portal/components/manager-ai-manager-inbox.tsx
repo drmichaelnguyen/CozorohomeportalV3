@@ -12,27 +12,38 @@ type InboxChoice = {
   action?: string;
 };
 
-type InboxItem = {
+type InboxMessage = {
   id: string;
-  kind: "report" | "escalation" | "owner_note";
-  category: string;
-  status: "open" | "resolved" | "acknowledged";
-  createdAt: string;
+  role: "ai_manager" | "owner" | "system";
+  kind: "opening" | "reply" | "choice" | "close" | "reopen" | "follow_up";
   fromEmail: string;
   fromName: string;
-  title: string;
   body: string;
+  createdAt: string;
+  choiceId: string | null;
+};
+
+type InboxTopic = {
+  id: string;
+  kind: "report" | "escalation";
+  category: string;
+  status: "open" | "closed";
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  closedAt: string | null;
+  closedByEmail: string | null;
+  fromEmail: string;
+  fromName: string;
   choices: InboxChoice[];
   selectedChoiceId: string | null;
-  ownerReply: string | null;
-  resolvedAt: string | null;
-  resolvedByEmail: string | null;
   relatedReportId: string | null;
   relatedConversationId: string | null;
   relatedEntityType: string | null;
   relatedEntityId: string | null;
   residentEmail: string | null;
   readBy: string[];
+  messages: InboxMessage[];
 };
 
 function formatWhen(value: string) {
@@ -63,6 +74,11 @@ function categoryLabel(category: string, language: string) {
   return language === "vi" ? entry.vi : entry.en;
 }
 
+function previewText(topic: InboxTopic) {
+  const last = topic.messages[topic.messages.length - 1];
+  return (last?.body || topic.title).replace(/\s+/g, " ").trim().slice(0, 90);
+}
+
 export function ManagerAiManagerInbox({
   operatorEmail,
   enabled
@@ -71,14 +87,15 @@ export function ManagerAiManagerInbox({
   enabled: boolean;
 }) {
   const { t, language } = usePortalLanguage();
-  const [items, setItems] = useState<InboxItem[]>([]);
+  const [topics, setTopics] = useState<InboxTopic[]>([]);
   const [openCount, setOpenCount] = useState(0);
-  const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState<"open" | "all">("open");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [replyDraft, setReplyDraft] = useState("");
+  const [closeAfterReply, setCloseAfterReply] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const markedReadRef = useRef(false);
 
@@ -91,15 +108,20 @@ export function ManagerAiManagerInbox({
         `${API_BASE_URL}/manager/ai-manager/inbox?actorEmail=${encodeURIComponent(operatorEmail)}`
       );
       const data = (await res.json()) as {
-        items?: InboxItem[];
+        topics?: InboxTopic[];
+        items?: InboxTopic[];
         openCount?: number;
-        unreadCount?: number;
         error?: string;
       };
       if (!res.ok) throw new Error(data.error || "Failed to load");
-      setItems(data.items ?? []);
-      setOpenCount(data.openCount ?? 0);
-      setUnreadCount(data.unreadCount ?? 0);
+      const next = data.topics ?? data.items ?? [];
+      setTopics(next);
+      setOpenCount(data.openCount ?? next.filter((topic) => topic.status === "open").length);
+      setSelectedId((prev) => {
+        if (prev && next.some((topic) => topic.id === prev)) return prev;
+        const firstOpen = next.find((topic) => topic.status === "open");
+        return firstOpen?.id ?? next[0]?.id ?? null;
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
@@ -112,114 +134,51 @@ export function ManagerAiManagerInbox({
   }, [load]);
 
   useEffect(() => {
-    if (!enabled || !operatorEmail || markedReadRef.current || items.length === 0) return;
+    if (!enabled || !operatorEmail || markedReadRef.current || topics.length === 0) return;
     markedReadRef.current = true;
     void fetch(`${API_BASE_URL}/manager/ai-manager/inbox/mark-read`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ actorEmail: operatorEmail })
-    })
-      .then(async (res) => {
-        if (!res.ok) return;
-        const data = (await res.json()) as { unreadCount?: number };
-        if (typeof data.unreadCount === "number") setUnreadCount(data.unreadCount);
-      })
-      .catch(() => {
-        // ignore
-      });
-  }, [enabled, operatorEmail, items.length]);
+    }).catch(() => {
+      // ignore
+    });
+  }, [enabled, operatorEmail, topics.length]);
 
-  const visibleItems = useMemo(() => {
-    const filtered = filter === "open" ? items.filter((item) => item.status === "open") : items;
-    // Chat order: oldest first
+  const visibleTopics = useMemo(() => {
+    const filtered = filter === "open" ? topics.filter((topic) => topic.status === "open") : topics;
     return [...filtered].sort(
-      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
     );
-  }, [items, filter]);
+  }, [topics, filter]);
+
+  const selected = useMemo(
+    () => topics.find((topic) => topic.id === selectedId) ?? null,
+    [topics, selectedId]
+  );
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [visibleItems.length, filter]);
+  }, [selected?.id, selected?.messages.length]);
 
-  async function choose(itemId: string, choiceId: string) {
-    setBusyId(itemId);
+  async function postJson(path: string, body: Record<string, unknown>) {
+    setBusy(true);
     setError(null);
     try {
-      const res = await fetch(
-        `${API_BASE_URL}/manager/ai-manager/inbox/${encodeURIComponent(itemId)}/choose`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            actorEmail: operatorEmail,
-            choiceId,
-            ownerReply: replyDrafts[itemId]?.trim() || undefined
-          })
-        }
-      );
-      const data = (await res.json()) as { error?: string };
-      if (!res.ok) throw new Error(data.error || "Failed to save choice");
-      setReplyDrafts((prev) => {
-        const next = { ...prev };
-        delete next[itemId];
-        return next;
+      const res = await fetch(`${API_BASE_URL}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
       });
-      await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save choice");
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function sendReply(itemId: string) {
-    const ownerReply = replyDrafts[itemId]?.trim() ?? "";
-    if (!ownerReply) return;
-    setBusyId(itemId);
-    setError(null);
-    try {
-      const res = await fetch(
-        `${API_BASE_URL}/manager/ai-manager/inbox/${encodeURIComponent(itemId)}/reply`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ actorEmail: operatorEmail, ownerReply })
-        }
-      );
       const data = (await res.json()) as { error?: string };
-      if (!res.ok) throw new Error(data.error || "Failed to reply");
-      setReplyDrafts((prev) => {
-        const next = { ...prev };
-        delete next[itemId];
-        return next;
-      });
+      if (!res.ok) throw new Error(data.error || "Request failed");
+      setReplyDraft("");
+      setCloseAfterReply(false);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to reply");
+      setError(e instanceof Error ? e.message : "Request failed");
     } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function ack(itemId: string) {
-    setBusyId(itemId);
-    setError(null);
-    try {
-      const res = await fetch(
-        `${API_BASE_URL}/manager/ai-manager/inbox/${encodeURIComponent(itemId)}/ack`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ actorEmail: operatorEmail })
-        }
-      );
-      const data = (await res.json()) as { error?: string };
-      if (!res.ok) throw new Error(data.error || "Failed to acknowledge");
-      await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to acknowledge");
-    } finally {
-      setBusyId(null);
+      setBusy(false);
     }
   }
 
@@ -233,6 +192,8 @@ export function ManagerAiManagerInbox({
     );
   }
 
+  const showThreadOnly = Boolean(selected);
+
   return (
     <section className="flex h-full min-h-[420px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-4 py-3">
@@ -242,8 +203,8 @@ export function ManagerAiManagerInbox({
           </h2>
           <p className="mt-1 text-sm text-slate-600">
             {language === "vi"
-              ? "Báo cáo định kỳ và các câu hỏi khi AI Manager không chắc — chọn một phương án hoặc viết hướng dẫn."
-              : "Scheduled reports and asks when the AI Manager is unsure — pick a choice or write guidance."}
+              ? "Mỗi chủ đề mở/đóng riêng. Trả lời trong chủ đề để AI Manager biết phải làm gì."
+              : "Each topic opens and closes on its own. Reply inside a topic so the AI Manager knows what to do."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -285,166 +246,268 @@ export function ManagerAiManagerInbox({
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-gradient-to-b from-slate-50 to-teal-50/40 px-3 py-4 sm:px-4">
-        {loading && items.length === 0 ? (
-          <div className="rounded-2xl bg-white/80 p-4 text-sm text-slate-600">
-            {language === "vi" ? "Đang tải…" : "Loading…"}
-          </div>
-        ) : null}
-
-        {!loading && visibleItems.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-200 bg-white/80 p-6 text-center text-sm text-slate-600">
-            {language === "vi"
-              ? "Chưa có báo cáo hoặc yêu cầu quyết định từ Quản lý AI."
-              : "No AI Manager reports or decision asks yet."}
-            {unreadCount > 0 ? (
-              <span className="mt-1 block text-xs text-slate-500">
-                {language === "vi" ? `${unreadCount} chưa đọc` : `${unreadCount} unread`}
-              </span>
-            ) : null}
-          </div>
-        ) : null}
-
-        {visibleItems.map((item) => {
-          const isAi = item.kind !== "owner_note";
-          const isOpenEscalation = item.kind === "escalation" && item.status === "open";
-          const selected = item.choices.find((c) => c.id === item.selectedChoiceId);
-          return (
-            <article
-              key={item.id}
-              className={`max-w-[95%] rounded-2xl px-3.5 py-3 shadow-sm sm:max-w-[85%] ${
-                isAi
-                  ? "mr-auto border border-teal-100 bg-white"
-                  : "ml-auto border border-slate-200 bg-slate-900 text-white"
-              }`}
-            >
-              <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-teal-700">
-                <span className="rounded-full bg-teal-50 px-2 py-0.5">
-                  {item.fromName || "AI Manager"}
-                </span>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600 normal-case tracking-normal">
-                  {categoryLabel(item.category, language)}
-                </span>
-                {item.kind === "escalation" ? (
-                  <span
-                    className={`rounded-full px-2 py-0.5 ${
-                      item.status === "open"
-                        ? "bg-amber-100 text-amber-800"
-                        : "bg-emerald-100 text-emerald-800"
-                    }`}
-                  >
-                    {item.status === "open"
-                      ? language === "vi"
-                        ? "Cần quyết định"
-                        : "Needs decision"
-                      : language === "vi"
-                        ? "Đã xử lý"
-                        : "Resolved"}
-                  </span>
-                ) : null}
-                <span className="ml-auto font-normal normal-case tracking-normal text-slate-400">
-                  {formatWhen(item.createdAt)}
-                </span>
-              </div>
-
-              <h3 className="mt-2 text-sm font-semibold text-slate-900">{item.title}</h3>
-              <div className="mt-2 text-sm leading-relaxed text-slate-700">
-                <ChatFormattedText text={item.body} />
-              </div>
-
-              {item.residentEmail ? (
-                <div className="mt-2 text-xs text-slate-500">{item.residentEmail}</div>
-              ) : null}
-
-              {item.kind === "report" && item.status === "open" ? (
-                <div className="mt-3">
+      <div className="grid min-h-0 flex-1 md:grid-cols-[minmax(220px,320px)_1fr]">
+        <aside
+          className={`min-h-0 overflow-y-auto border-slate-100 md:border-r ${
+            showThreadOnly ? "hidden md:block" : "block"
+          }`}
+        >
+          {loading && topics.length === 0 ? (
+            <div className="p-4 text-sm text-slate-500">
+              {language === "vi" ? "Đang tải…" : "Loading…"}
+            </div>
+          ) : null}
+          {!loading && visibleTopics.length === 0 ? (
+            <div className="p-4 text-sm text-slate-500">
+              {language === "vi" ? "Chưa có chủ đề." : "No topics yet."}
+            </div>
+          ) : null}
+          <ul className="divide-y divide-slate-100">
+            {visibleTopics.map((topic) => {
+              const active = topic.id === selectedId;
+              return (
+                <li key={topic.id}>
                   <button
                     type="button"
-                    disabled={busyId === item.id}
-                    onClick={() => void ack(item.id)}
-                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                    onClick={() => setSelectedId(topic.id)}
+                    className={`w-full px-3 py-3 text-left transition ${
+                      active ? "bg-teal-50" : "hover:bg-slate-50"
+                    }`}
                   >
-                    {language === "vi" ? "Đã xem" : "Acknowledge"}
-                  </button>
-                </div>
-              ) : null}
-
-              {isOpenEscalation ? (
-                <div className="mt-3 space-y-2">
-                  <p className="text-xs font-medium text-slate-600">
-                    {language === "vi"
-                      ? "Chọn một phương án, hoặc viết hướng dẫn bên dưới:"
-                      : "Pick one option, or write your own guidance below:"}
-                  </p>
-                  <div className="flex flex-col gap-2">
-                    {item.choices.map((choice) => (
-                      <button
-                        key={choice.id}
-                        type="button"
-                        disabled={busyId === item.id}
-                        onClick={() => void choose(item.id, choice.id)}
-                        className="rounded-xl border border-teal-200 bg-teal-50/70 px-3 py-2 text-left text-sm font-medium text-teal-900 transition hover:bg-teal-100 disabled:opacity-50"
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                          topic.status === "open"
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-slate-100 text-slate-500"
+                        }`}
                       >
-                        {choice.label}
-                      </button>
-                    ))}
+                        {topic.status === "open"
+                          ? language === "vi"
+                            ? "Mở"
+                            : "Open"
+                          : language === "vi"
+                            ? "Đóng"
+                            : "Closed"}
+                      </span>
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                        {categoryLabel(topic.category, language)}
+                      </span>
+                      <span className="ml-auto text-[10px] text-slate-400">
+                        {formatWhen(topic.updatedAt)}
+                      </span>
+                    </div>
+                    <div className="mt-1 line-clamp-2 text-sm font-semibold text-slate-900">
+                      {topic.title}
+                    </div>
+                    <div className="mt-0.5 line-clamp-2 text-xs text-slate-500">
+                      {previewText(topic)}
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </aside>
+
+        <div
+          className={`flex min-h-0 flex-col bg-gradient-to-b from-slate-50 to-teal-50/30 ${
+            showThreadOnly ? "flex" : "hidden md:flex"
+          }`}
+        >
+          {!selected ? (
+            <div className="flex flex-1 items-center justify-center p-6 text-sm text-slate-500">
+              {language === "vi" ? "Chọn một chủ đề để xem." : "Select a topic to view."}
+            </div>
+          ) : (
+            <>
+              <div className="flex items-start gap-2 border-b border-slate-100 bg-white/90 px-3 py-3">
+                <button
+                  type="button"
+                  className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 md:hidden"
+                  onClick={() => setSelectedId(null)}
+                >
+                  {language === "vi" ? "Quay lại" : "Back"}
+                </button>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="truncate text-sm font-semibold text-slate-900">{selected.title}</h3>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                        selected.status === "open"
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-slate-100 text-slate-500"
+                      }`}
+                    >
+                      {selected.status === "open"
+                        ? language === "vi"
+                          ? "Đang mở"
+                          : "Open"
+                        : language === "vi"
+                          ? "Đã đóng"
+                          : "Closed"}
+                    </span>
                   </div>
-                  <div className="flex gap-2 pt-1">
+                  <div className="mt-0.5 text-xs text-slate-500">
+                    {categoryLabel(selected.category, language)}
+                    {selected.residentEmail ? ` · ${selected.residentEmail}` : ""}
+                  </div>
+                </div>
+                {selected.status === "open" ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void postJson(
+                        `/manager/ai-manager/inbox/${encodeURIComponent(selected.id)}/close`,
+                        { actorEmail: operatorEmail }
+                      )
+                    }
+                    className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                  >
+                    {language === "vi" ? "Đóng chủ đề" : "Close topic"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void postJson(
+                        `/manager/ai-manager/inbox/${encodeURIComponent(selected.id)}/reopen`,
+                        { actorEmail: operatorEmail }
+                      )
+                    }
+                    className="rounded-lg border border-teal-300 bg-teal-50 px-2.5 py-1.5 text-xs font-semibold text-teal-800 disabled:opacity-50"
+                  >
+                    {language === "vi" ? "Mở lại" : "Reopen"}
+                  </button>
+                )}
+              </div>
+
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-4 sm:px-4">
+                {selected.messages.map((message) => {
+                  const isOwner = message.role === "owner";
+                  const isSystem = message.role === "system";
+                  return (
+                    <article
+                      key={message.id}
+                      className={`max-w-[95%] rounded-2xl px-3.5 py-2.5 text-sm shadow-sm sm:max-w-[85%] ${
+                        isSystem
+                          ? "mx-auto border border-dashed border-slate-200 bg-white/70 text-center text-xs text-slate-500"
+                          : isOwner
+                            ? "ml-auto border border-slate-200 bg-slate-900 text-white"
+                            : "mr-auto border border-teal-100 bg-white text-slate-800"
+                      }`}
+                    >
+                      {!isSystem ? (
+                        <div
+                          className={`mb-1 text-[10px] font-semibold uppercase tracking-wide ${
+                            isOwner ? "text-slate-300" : "text-teal-700"
+                          }`}
+                        >
+                          {message.fromName}
+                          <span className={`ml-2 font-normal normal-case tracking-normal ${isOwner ? "text-slate-400" : "text-slate-400"}`}>
+                            {formatWhen(message.createdAt)}
+                          </span>
+                        </div>
+                      ) : null}
+                      {isSystem ? (
+                        <span>{message.body}</span>
+                      ) : (
+                        <ChatFormattedText text={message.body} />
+                      )}
+                    </article>
+                  );
+                })}
+                <div ref={bottomRef} />
+              </div>
+
+              {selected.status === "open" ? (
+                <div className="border-t border-slate-100 bg-white px-3 py-3 sm:px-4">
+                  {selected.kind === "escalation" && selected.choices.length > 0 ? (
+                    <div className="mb-3 space-y-2">
+                      <p className="text-xs font-medium text-slate-600">
+                        {language === "vi"
+                          ? "Chọn một phương án (có thể kèm ghi chú bên dưới):"
+                          : "Pick one option (optional note below):"}
+                      </p>
+                      <div className="flex flex-col gap-2">
+                        {selected.choices.map((choice) => (
+                          <button
+                            key={choice.id}
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              void postJson(
+                                `/manager/ai-manager/inbox/${encodeURIComponent(selected.id)}/choose`,
+                                {
+                                  actorEmail: operatorEmail,
+                                  choiceId: choice.id,
+                                  ownerReply: replyDraft.trim() || undefined
+                                }
+                              )
+                            }
+                            className="rounded-xl border border-teal-200 bg-teal-50/70 px-3 py-2 text-left text-sm font-medium text-teal-900 transition hover:bg-teal-100 disabled:opacity-50"
+                          >
+                            {choice.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="flex flex-col gap-2">
                     <textarea
-                      value={replyDrafts[item.id] ?? ""}
-                      onChange={(e) =>
-                        setReplyDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))
-                      }
+                      value={replyDraft}
+                      onChange={(e) => setReplyDraft(e.target.value)}
                       rows={2}
                       placeholder={
                         language === "vi"
-                          ? "Hướng dẫn tự viết (tuỳ chọn nếu đã chọn phương án)…"
-                          : "Custom guidance (optional if you pick a choice)…"
+                          ? "Trả lời trong chủ đề này — AI Manager sẽ đọc để biết phải làm gì…"
+                          : "Reply inside this topic — the AI Manager reads it to know what to do…"
                       }
-                      className="min-h-[64px] flex-1 resize-y rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:border-teal-400"
+                      className="min-h-[64px] w-full resize-y rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:border-teal-400"
                     />
-                    <button
-                      type="button"
-                      disabled={busyId === item.id || !(replyDrafts[item.id] ?? "").trim()}
-                      onClick={() => void sendReply(item.id)}
-                      className="self-end rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
-                    >
-                      {language === "vi" ? "Gửi" : "Send"}
-                    </button>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <label className="inline-flex items-center gap-2 text-xs text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={closeAfterReply}
+                          onChange={(e) => setCloseAfterReply(e.target.checked)}
+                          className="rounded border-slate-300"
+                        />
+                        {language === "vi" ? "Đóng chủ đề sau khi gửi" : "Close topic after send"}
+                      </label>
+                      <button
+                        type="button"
+                        disabled={busy || !replyDraft.trim()}
+                        onClick={() =>
+                          void postJson(
+                            `/manager/ai-manager/inbox/${encodeURIComponent(selected.id)}/reply`,
+                            {
+                              actorEmail: operatorEmail,
+                              ownerReply: replyDraft.trim(),
+                              closeTopic: closeAfterReply
+                            }
+                          )
+                        }
+                        className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                      >
+                        {language === "vi" ? "Gửi trả lời" : "Send reply"}
+                      </button>
+                    </div>
                   </div>
                 </div>
-              ) : null}
-
-              {!isOpenEscalation && (selected || item.ownerReply) ? (
-                <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                  {selected ? (
-                    <div>
-                      <span className="font-semibold text-slate-800">
-                        {language === "vi" ? "Đã chọn: " : "Chose: "}
-                      </span>
-                      {selected.label}
-                    </div>
-                  ) : null}
-                  {item.ownerReply ? (
-                    <div className={selected ? "mt-1" : undefined}>
-                      <span className="font-semibold text-slate-800">
-                        {language === "vi" ? "Ghi chú: " : "Note: "}
-                      </span>
-                      {item.ownerReply}
-                    </div>
-                  ) : null}
-                  {item.resolvedByEmail ? (
-                    <div className="mt-1 text-slate-400">
-                      {item.resolvedByEmail}
-                      {item.resolvedAt ? ` · ${formatWhen(item.resolvedAt)}` : ""}
-                    </div>
-                  ) : null}
+              ) : (
+                <div className="border-t border-slate-100 bg-white px-4 py-3 text-center text-xs text-slate-500">
+                  {language === "vi"
+                    ? "Chủ đề đã đóng. Mở lại nếu cần tiếp tục."
+                    : "Topic is closed. Reopen if you need to continue."}
                 </div>
-              ) : null}
-            </article>
-          );
-        })}
-        <div ref={bottomRef} />
+              )}
+            </>
+          )}
+        </div>
       </div>
     </section>
   );

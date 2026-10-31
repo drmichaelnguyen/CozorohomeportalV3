@@ -167,6 +167,15 @@ export async function listLearningGuidesForCapability(
 export async function getLearningPromptBlock(
   capability: AiManagerFeedbackCapability
 ): Promise<string> {
+  // Open owner topics (with replies inside each topic) are appended so the
+  // AI Manager stays aligned with in-progress human guidance.
   const guides = await listLearningGuidesForCapability(capability, 12);
-  return formatLearningGuidesForPromptPure(guides);
+  const guideBlock = formatLearningGuidesForPromptPure(guides);
+  try {
+    const { getOpenTopicsPromptBlock } = await import("./ai-manager-inbox.js");
+    const topicsBlock = await getOpenTopicsPromptBlock();
+    return [guideBlock, topicsBlock].filter((part) => part.trim().length > 0).join("\n\n");
+  } catch {
+    return guideBlock;
+  }
 }

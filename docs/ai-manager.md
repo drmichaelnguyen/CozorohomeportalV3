@@ -99,23 +99,31 @@ UI settings in `api/data/ai-manager-config.json` override / complement these aft
 | `GET` | `/manager/ai-manager/feedback` | staff |
 | `GET` | `/manager/ai-manager/usage?actorEmail=&days=` | owner / app_admin (token/cost by task + category) |
 | `GET` | `/manager/ai-manager/inbox?actorEmail=` | owner / app_admin — chat-tab reports + open escalations |
-| `POST` | `/manager/ai-manager/inbox/:id/choose` | owner / app_admin — pick a multiple-choice option |
-| `POST` | `/manager/ai-manager/inbox/:id/reply` | owner / app_admin — free-text guidance (resolves item) |
-| `POST` | `/manager/ai-manager/inbox/:id/ack` | owner / app_admin — acknowledge a report |
+| `POST` | `/manager/ai-manager/inbox/:id/choose` | owner / app_admin — pick a multiple-choice option (may close topic) |
+| `POST` | `/manager/ai-manager/inbox/:id/reply` | owner / app_admin — reply inside topic (`closeTopic` optional) |
+| `POST` | `/manager/ai-manager/inbox/:id/close` | owner / app_admin — close topic |
+| `POST` | `/manager/ai-manager/inbox/:id/reopen` | owner / app_admin — reopen topic |
+| `POST` | `/manager/ai-manager/inbox/:id/ack` | owner / app_admin — alias for close (reports) |
 | `POST` | `/manager/ai-manager/inbox/mark-read` | owner / app_admin |
 
 Inbox state is stored in `api/data/ai-manager-inbox.json` (preserve across production refreshes).
 
 ## Owner chat tab (Messages → AI Manager)
 
-Visible only to **owner** and **app_admin**. On each tick the agent can:
+Visible only to **owner** and **app_admin**. Conversation is organized as **topics** (open/closed) with **threaded replies inside each topic**, so the agent is not confused by a flat feed.
 
-1. Post the digest as a **report** bubble
-2. **Escalate** when unsure, with buttons the human can tap:
+On each tick the agent can:
+
+1. Open a **report** topic with the digest as the opening message
+2. **Escalate** into a dedicated topic when unsure, with multiple-choice buttons:
    - Sensitive support chat (instead of auto-reply)
-   - Ambiguous fine disputes (Keep / Cancel / Need more info)
-   - Pending contract approvals (review queue / remind later)
-3. Learn from the chosen option (ActionLog + learning guide)
+   - Ambiguous fine disputes (Keep / Cancel / Need more info — keeps topic open)
+   - Pending contract approvals (review queue / remind later — keeps topic open)
+3. If the same case is still open, append a **follow-up** inside that topic instead of creating a duplicate
+4. Read open-topic owner replies on later ticks (injected into learning prompts) so it knows what to do
+5. Learn from closed decisions (ActionLog + learning guide)
+
+Owners can **reply inside a topic** (leave open or close after send), **pick a choice**, **close**, or **reopen**.
 
 Deep link: `/manager?view=support_chat&tab=ai_manager`
 

@@ -400,8 +400,10 @@ import {
 } from "./ai-manager-feedback.js";
 import {
   acknowledgeAiManagerInboxItem,
+  closeAiManagerInboxTopic,
   getAiManagerInboxSummary,
   markAiManagerInboxRead,
+  reopenAiManagerInboxTopic,
   replyAiManagerInboxItem,
   resolveAiManagerInboxChoice
 } from "./ai-manager-inbox.js";
@@ -6256,24 +6258,26 @@ app.post("/manager/ai-manager/inbox/:id/choose", async (request, response) => {
     .object({
       actorEmail: z.string().email(),
       choiceId: z.string().trim().min(1).max(64),
-      ownerReply: z.string().max(2000).optional()
+      ownerReply: z.string().max(2000).optional(),
+      actorName: z.string().trim().max(80).optional()
     })
     .safeParse(request.body);
   if (!parsed.success) {
     return response.status(400).json({ error: "Invalid AI Manager inbox choice payload." });
   }
   try {
-    const item = await resolveAiManagerInboxChoice({
+    const topic = await resolveAiManagerInboxChoice({
       actorEmail: parsed.data.actorEmail,
       itemId: String(request.params.id ?? ""),
       choiceId: parsed.data.choiceId,
-      ownerReply: parsed.data.ownerReply
+      ownerReply: parsed.data.ownerReply,
+      actorName: parsed.data.actorName
     });
-    return response.json({ ok: true, item });
+    return response.json({ ok: true, topic, item: topic });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to resolve escalation";
     const status = (error as Error & { statusCode?: number }).statusCode
-      ?? (message.includes("Only") ? 403 : message.includes("not found") ? 404 : 400);
+      ?? (message.includes("Only") ? 403 : message.includes("not found") || message.includes("Topic not found") ? 404 : 400);
     return response.status(status).json({ error: message });
   }
 });
@@ -6282,23 +6286,77 @@ app.post("/manager/ai-manager/inbox/:id/reply", async (request, response) => {
   const parsed = z
     .object({
       actorEmail: z.string().email(),
-      ownerReply: z.string().trim().min(1).max(2000)
+      ownerReply: z.string().trim().min(1).max(2000),
+      closeTopic: z.boolean().optional(),
+      actorName: z.string().trim().max(80).optional()
     })
     .safeParse(request.body);
   if (!parsed.success) {
     return response.status(400).json({ error: "Invalid AI Manager inbox reply payload." });
   }
   try {
-    const item = await replyAiManagerInboxItem({
+    const topic = await replyAiManagerInboxItem({
       actorEmail: parsed.data.actorEmail,
       itemId: String(request.params.id ?? ""),
-      ownerReply: parsed.data.ownerReply
+      ownerReply: parsed.data.ownerReply,
+      closeTopic: parsed.data.closeTopic,
+      actorName: parsed.data.actorName
     });
-    return response.json({ ok: true, item });
+    return response.json({ ok: true, topic, item: topic });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to reply";
     const status = (error as Error & { statusCode?: number }).statusCode
-      ?? (message.includes("Only") ? 403 : message.includes("not found") ? 404 : 400);
+      ?? (message.includes("Only") ? 403 : message.includes("not found") || message.includes("Topic not found") ? 404 : 400);
+    return response.status(status).json({ error: message });
+  }
+});
+
+app.post("/manager/ai-manager/inbox/:id/close", async (request, response) => {
+  const parsed = z
+    .object({
+      actorEmail: z.string().email(),
+      note: z.string().max(2000).optional()
+    })
+    .safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid AI Manager inbox close payload." });
+  }
+  try {
+    const topic = await closeAiManagerInboxTopic({
+      actorEmail: parsed.data.actorEmail,
+      itemId: String(request.params.id ?? ""),
+      note: parsed.data.note
+    });
+    return response.json({ ok: true, topic, item: topic });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to close topic";
+    const status = (error as Error & { statusCode?: number }).statusCode
+      ?? (message.includes("Only") ? 403 : message.includes("not found") || message.includes("Topic not found") ? 404 : 400);
+    return response.status(status).json({ error: message });
+  }
+});
+
+app.post("/manager/ai-manager/inbox/:id/reopen", async (request, response) => {
+  const parsed = z
+    .object({
+      actorEmail: z.string().email(),
+      note: z.string().max(2000).optional()
+    })
+    .safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid AI Manager inbox reopen payload." });
+  }
+  try {
+    const topic = await reopenAiManagerInboxTopic({
+      actorEmail: parsed.data.actorEmail,
+      itemId: String(request.params.id ?? ""),
+      note: parsed.data.note
+    });
+    return response.json({ ok: true, topic, item: topic });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to reopen topic";
+    const status = (error as Error & { statusCode?: number }).statusCode
+      ?? (message.includes("Only") ? 403 : message.includes("not found") || message.includes("Topic not found") ? 404 : 400);
     return response.status(status).json({ error: message });
   }
 });
@@ -6313,15 +6371,15 @@ app.post("/manager/ai-manager/inbox/:id/ack", async (request, response) => {
     return response.status(400).json({ error: "Invalid AI Manager inbox ack payload." });
   }
   try {
-    const item = await acknowledgeAiManagerInboxItem({
+    const topic = await acknowledgeAiManagerInboxItem({
       actorEmail: parsed.data.actorEmail,
       itemId: String(request.params.id ?? "")
     });
-    return response.json({ ok: true, item });
+    return response.json({ ok: true, topic, item: topic });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to acknowledge";
     const status = (error as Error & { statusCode?: number }).statusCode
-      ?? (message.includes("Only") ? 403 : message.includes("not found") ? 404 : 400);
+      ?? (message.includes("Only") ? 403 : message.includes("not found") || message.includes("Topic not found") ? 404 : 400);
     return response.status(status).json({ error: message });
   }
 });

@@ -1850,8 +1850,8 @@ const translations: Record<string, { en: string; vi: string }> = {
   webAiChatTab: { en: "Web AI chat", vi: "Chat AI web" },
   aiManagerChatTab: { en: "AI Manager", vi: "Quản lý AI" },
   aiManagerChatDesc: {
-    en: "Reports and decision asks from the AI Manager. Pick a choice or write guidance when it escalates.",
-    vi: "Báo cáo và câu hỏi quyết định từ Quản lý AI. Chọn phương án hoặc viết hướng dẫn khi nó hỏi."
+    en: "Open/closed topics with threaded replies. Reply inside a topic so the AI Manager knows what to do.",
+    vi: "Chủ đề mở/đóng với trả lời theo chuỗi. Trả lời trong chủ đề để Quản lý AI biết phải làm gì."
   },
   maintenanceTickets: { en: "Maintenance Tickets", vi: "Yêu cầu sửa chữa" },
   maintenanceTicketsDesc: { en: "Manage active malfunction and maintenance reports.", vi: "Quản lý các báo cáo sự cố và bảo trì đang hoạt động." },

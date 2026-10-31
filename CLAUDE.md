@@ -298,6 +298,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 4.0.3 | AI Manager chat uses **open/closed topics** with threaded replies so the agent follows owner guidance inside each topic instead of a flat message list. |
 | 4.0.2 | Messages → **AI Manager** tab for owners/app admins: agent posts digests here and escalates when unsure with multiple-choice (or free-text) decisions; ambiguous fine disputes and sensitive support topics ask humans instead of guessing. |
 | 4.0.1 | AI fallback upgraded to Gemini 3.8 Flash (`GEMINI_MODEL`, low thinking, tool-call thought signatures) for API agents and the Facebook bot when 9router fails; per-model AI usage cost estimates. |
 | 4.0.0 | Major release: Cozoro AI Manager (dedicated manager agent with owner digests, capability toggles, ActionLog audit trail, owner feedback/learning guides, per-task token monitoring) goes live in production. |
