@@ -42,6 +42,15 @@ type RecentReport = {
   summaryPreview: string;
 };
 
+type ActionFeedback = {
+  id: string;
+  rating: "like" | "dislike";
+  guide: string;
+  capability: string;
+  actorEmail: string;
+  updatedAt: string;
+};
+
 type ActionLogRow = {
   id: string;
   action: string;
@@ -52,6 +61,18 @@ type ActionLogRow = {
   entityLabel: string | null;
   details: string | null;
   createdAt: string;
+  feedback?: ActionFeedback | null;
+};
+
+type LearningGuide = {
+  id: string;
+  actionLogId: string;
+  action: string;
+  capability: string;
+  rating: "like" | "dislike";
+  guide: string;
+  updatedAt: string;
+  entityLabel: string | null;
 };
 
 type StatusResponse = {
@@ -59,6 +80,7 @@ type StatusResponse = {
   effectiveReportEmails: string[];
   recentReports: RecentReport[];
   recentActionLogs?: ActionLogRow[];
+  learningGuides?: LearningGuide[];
   error?: string;
 };
 
@@ -105,9 +127,14 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
   const [effectiveReportEmails, setEffectiveReportEmails] = useState<string[]>([]);
   const [recentReports, setRecentReports] = useState<RecentReport[]>([]);
   const [recentActionLogs, setRecentActionLogs] = useState<ActionLogRow[]>([]);
+  const [learningGuides, setLearningGuides] = useState<LearningGuide[]>([]);
   const [reportEmailsText, setReportEmailsText] = useState("");
   const [password, setPassword] = useState("");
   const [selectedReport, setSelectedReport] = useState<FullReport | null>(null);
+  const [feedbackTarget, setFeedbackTarget] = useState<ActionLogRow | null>(null);
+  const [feedbackRating, setFeedbackRating] = useState<"like" | "dislike">("like");
+  const [feedbackGuide, setFeedbackGuide] = useState("");
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -125,6 +152,7 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
       setEffectiveReportEmails(body.effectiveReportEmails ?? []);
       setRecentReports(body.recentReports ?? []);
       setRecentActionLogs(body.recentActionLogs ?? []);
+      setLearningGuides(body.learningGuides ?? []);
       setReportEmailsText((body.config.reportEmails ?? []).join(", "));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load AI Manager.");
@@ -234,6 +262,42 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
       setError(err instanceof Error ? err.message : "AI Manager run failed.");
     } finally {
       setRunning(false);
+    }
+  }
+
+  function openFeedbackEditor(entry: ActionLogRow, rating: "like" | "dislike") {
+    setFeedbackTarget(entry);
+    setFeedbackRating(rating);
+    setFeedbackGuide(entry.feedback?.guide ?? "");
+  }
+
+  async function saveFeedback() {
+    if (!feedbackTarget) return;
+    setFeedbackSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/manager/ai-manager/action-logs/${encodeURIComponent(feedbackTarget.id)}/feedback`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            actorEmail,
+            rating: feedbackRating,
+            guide: feedbackGuide
+          })
+        }
+      );
+      const body = (await response.json()) as { ok?: boolean; error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Unable to save feedback.");
+      setMessage(t("aiManagerFeedbackSaved"));
+      setFeedbackTarget(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to save feedback.");
+    } finally {
+      setFeedbackSaving(false);
     }
   }
 
@@ -439,7 +503,7 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
         {recentActionLogs.length === 0 ? (
           <p className="text-sm text-slate-500">{t("aiManagerNoActionLogs")}</p>
         ) : (
-          <ul className="max-h-72 space-y-2 overflow-auto">
+          <ul className="max-h-96 space-y-2 overflow-auto">
             {recentActionLogs.map((entry) => (
               <li key={entry.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -449,10 +513,64 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
                 <p className="mt-1 text-xs text-slate-500">
                   {(entry.actorEmail || entry.actorName || "—") +
                     (entry.actorRole ? ` · ${entry.actorRole}` : "")}
+                  {entry.entityLabel ? ` · ${entry.entityLabel}` : ""}
                 </p>
                 {entry.details ? (
                   <p className="mt-1 break-words text-xs text-slate-600">{entry.details}</p>
                 ) : null}
+                {entry.feedback ? (
+                  <p className="mt-2 text-xs text-slate-700">
+                    <span className={entry.feedback.rating === "like" ? "text-emerald-700" : "text-rose-700"}>
+                      {entry.feedback.rating === "like" ? t("aiManagerLiked") : t("aiManagerDisliked")}
+                    </span>
+                    {entry.feedback.guide ? ` — ${entry.feedback.guide}` : ""}
+                  </p>
+                ) : null}
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded-md border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-900"
+                    onClick={() => openFeedbackEditor(entry, "like")}
+                  >
+                    {t("aiManagerLike")}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md border border-rose-300 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-900"
+                    onClick={() => openFeedbackEditor(entry, "dislike")}
+                  >
+                    {t("aiManagerDislike")}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div>
+        <h4 className="mb-2 text-sm font-semibold text-slate-900">{t("aiManagerLearningGuides")}</h4>
+        <p className="mb-2 text-xs text-slate-500">{t("aiManagerLearningGuidesHint")}</p>
+        {learningGuides.length === 0 ? (
+          <p className="text-sm text-slate-500">{t("aiManagerNoLearningGuides")}</p>
+        ) : (
+          <ul className="max-h-64 space-y-2 overflow-auto">
+            {learningGuides.map((guide) => (
+              <li key={guide.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="font-medium text-slate-900">
+                    {guide.capability} · {guide.action}
+                  </span>
+                  <span
+                    className={`text-xs font-medium ${
+                      guide.rating === "like" ? "text-emerald-700" : "text-rose-700"
+                    }`}
+                  >
+                    {guide.rating === "like" ? t("aiManagerLiked") : t("aiManagerDisliked")}
+                  </span>
+                </div>
+                <p className="mt-1 whitespace-pre-wrap text-xs text-slate-700">{guide.guide}</p>
+                <p className="mt-1 text-xs text-slate-400">{formatWhen(guide.updatedAt)}</p>
               </li>
             ))}
           </ul>
@@ -492,6 +610,79 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
           </ul>
         )}
       </div>
+
+      {feedbackTarget ? (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center">
+          <div className="w-full max-w-lg rounded-xl bg-white p-4 shadow-xl">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h4 className="text-base font-semibold text-slate-900">{t("aiManagerFeedbackTitle")}</h4>
+              <button
+                type="button"
+                className="rounded-md border border-slate-300 px-2 py-1 text-sm"
+                onClick={() => setFeedbackTarget(null)}
+              >
+                {t("close")}
+              </button>
+            </div>
+            <p className="text-sm text-slate-700">{feedbackTarget.action}</p>
+            {feedbackTarget.details ? (
+              <p className="mt-1 text-xs text-slate-500">{feedbackTarget.details}</p>
+            ) : null}
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                  feedbackRating === "like"
+                    ? "bg-emerald-700 text-white"
+                    : "border border-emerald-300 text-emerald-900"
+                }`}
+                onClick={() => setFeedbackRating("like")}
+              >
+                {t("aiManagerLike")}
+              </button>
+              <button
+                type="button"
+                className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                  feedbackRating === "dislike"
+                    ? "bg-rose-700 text-white"
+                    : "border border-rose-300 text-rose-900"
+                }`}
+                onClick={() => setFeedbackRating("dislike")}
+              >
+                {t("aiManagerDislike")}
+              </button>
+            </div>
+            <label className="mt-4 block text-sm">
+              <span className="mb-1 block font-medium text-slate-800">{t("aiManagerGuideLabel")}</span>
+              <textarea
+                className="min-h-28 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                value={feedbackGuide}
+                onChange={(event) => setFeedbackGuide(event.target.value)}
+                placeholder={t("aiManagerGuidePlaceholder")}
+                maxLength={2000}
+              />
+              <span className="mt-1 block text-xs text-slate-500">{t("aiManagerGuideHint")}</span>
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+                onClick={() => setFeedbackTarget(null)}
+              >
+                {t("close")}
+              </button>
+              <button
+                type="button"
+                disabled={feedbackSaving}
+                className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
+                onClick={() => void saveFeedback()}
+              >
+                {feedbackSaving ? t("saving") : t("aiManagerSaveFeedback")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {selectedReport ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center">

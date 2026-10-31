@@ -394,6 +394,10 @@ import {
   runAiManagerTick,
   updateAiManagerSettings
 } from "./ai-manager.js";
+import {
+  listAiManagerFeedback,
+  upsertAiManagerActionFeedback
+} from "./ai-manager-feedback.js";
 import { handleResidentPortalAiChat, type ResidentPortalAiMessage } from "./resident-portal-ai-chat.js";
 import { generateManagerSupportReplyDraft } from "./resident-support-ai.js";
 import { getVentHammerRedeemToday, markVentHammerRedeemedToday } from "./vent-hammer-redeem-guard.js";
@@ -6138,6 +6142,55 @@ app.get("/manager/ai-manager/action-logs", async (request, response) => {
   } catch (error) {
     return response.status(403).json({
       error: error instanceof Error ? error.message : "Unable to load AI Manager action logs"
+    });
+  }
+});
+
+app.put("/manager/ai-manager/action-logs/:id/feedback", async (request, response) => {
+  const parsed = z
+    .object({
+      actorEmail: z.string().email(),
+      rating: z.enum(["like", "dislike"]),
+      guide: z.string().max(2000).optional()
+    })
+    .safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid AI Manager feedback payload." });
+  }
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["owner", "app_admin"],
+      "Only owners or app admins can rate AI Manager actions."
+    );
+    const feedback = await upsertAiManagerActionFeedback({
+      actorEmail: parsed.data.actorEmail,
+      actionLogId: String(request.params.id ?? ""),
+      rating: parsed.data.rating,
+      guide: parsed.data.guide
+    });
+    return response.json({ ok: true, feedback });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to save feedback";
+    const status = message.includes("not found") ? 404 : message.includes("Only") ? 403 : 400;
+    return response.status(status).json({ error: message });
+  }
+});
+
+app.get("/manager/ai-manager/feedback", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "").trim();
+  const limit = Number(request.query.limit ?? 40);
+  try {
+    await requirePortalRole(
+      actorEmail,
+      ["owner", "app_admin", "manager"],
+      "Only staff can view AI Manager feedback."
+    );
+    const feedback = await listAiManagerFeedback(Number.isFinite(limit) ? limit : 40);
+    return response.json({ feedback });
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to load AI Manager feedback"
     });
   }
 });

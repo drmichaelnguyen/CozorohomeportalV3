@@ -1,5 +1,9 @@
 # Changelog
 
+## [3.9.50] - 2026-10-30
+
+- **AI Manager learning feedback**: Owners can like/dislike Action log rows and write guides; guides are reused for similar chat replies, fine disputes, and owner digests (`api/data/ai-manager-feedback.json`).
+
 ## [3.9.49] - 2026-10-30
 
 - **AI Manager capability toggles**: Owners can enable/disable owner reports, support chat auto-replies, fine create/correct, and cleaning schedule assignment independently; each enabled function runs on ticks and is ActionLogged.

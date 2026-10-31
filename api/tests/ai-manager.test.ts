@@ -5,11 +5,15 @@ import {
   buildReportEmailSubject,
   defaultAiManagerConfig,
   formatOpsSnapshotForPrompt,
+  disputeDecisionFromGuides,
+  formatLearningGuidesForPrompt,
+  inferAiManagerCapabilityFromAction,
   mergeAiManagerConfig,
   normalizeAiManagerCapabilities,
   resolveReportRecipients,
   shouldEscalateSupportInsteadOfAutoReply,
   shouldSkipQuietTick,
+  type AiManagerLearningGuideLike,
   type AiManagerOpsSnapshot
 } from "../src/ai-manager-logic.js";
 
@@ -124,4 +128,42 @@ test("sensitive chat topics escalate instead of auto-reply", () => {
   assert.equal(shouldEscalateSupportInsteadOfAutoReply("Can you help book laundry?"), false);
   assert.equal(shouldEscalateSupportInsteadOfAutoReply("I want to terminate contract and refund deposit"), true);
   assert.equal(shouldEscalateSupportInsteadOfAutoReply("Xin gặp owner về hoàn cọc"), true);
+});
+
+test("infer capability from action names", () => {
+  assert.equal(inferAiManagerCapabilityFromAction("ai_manager.chat.reply"), "answerChat");
+  assert.equal(inferAiManagerCapabilityFromAction("ai_manager.fines.dispute_keep"), "manageFines");
+  assert.equal(inferAiManagerCapabilityFromAction("ai_manager.schedule.assign"), "scheduleAssignment");
+  assert.equal(inferAiManagerCapabilityFromAction("ai_manager.tick.report"), "ownerReports");
+});
+
+test("learning guides format and dispute decisions", () => {
+  const guides: AiManagerLearningGuideLike[] = [
+    {
+      action: "ai_manager.fines.dispute_cancel",
+      rating: "dislike",
+      guide: "Do not cancel cleaning fines unless the resident already paid.",
+      actionDetails: null,
+      entityLabel: null
+    },
+    {
+      action: "ai_manager.fines.dispute_cancel",
+      rating: "like",
+      guide: "Cancel fine when already paid or duplicate ticket.",
+      actionDetails: null,
+      entityLabel: null
+    }
+  ];
+  assert.match(formatLearningGuidesForPrompt(guides), /Owner learning guides/);
+  assert.equal(disputeDecisionFromGuides("I already paid this fine", guides), "CANCEL_FINE");
+  assert.equal(
+    disputeDecisionFromGuides("I disagree with the amount", [
+      {
+        ...guides[0]!,
+        rating: "like",
+        guide: "Always keep disputed cleaning fines unless clearly paid"
+      }
+    ]),
+    "KEEP_FINE"
+  );
 });

@@ -4,6 +4,15 @@
 
 export type AiManagerMode = "report_only" | "assist";
 
+export type AiManagerFeedbackRating = "like" | "dislike";
+
+export type AiManagerFeedbackCapability =
+  | "answerChat"
+  | "manageFines"
+  | "scheduleAssignment"
+  | "ownerReports"
+  | "other";
+
 /** Owner-controlled functions the AI Manager may perform on a tick. */
 export type AiManagerCapabilities = {
   /** Email/in-app owner digests (default on). */
@@ -383,6 +392,88 @@ export function shouldEscalateSupportInsteadOfAutoReply(latestBody: string): boo
     /owner only|gặp owner|gặp chủ/
   ];
   return patterns.some((pattern) => pattern.test(text));
+}
+
+export function inferAiManagerCapabilityFromAction(
+  action: string | null | undefined
+): AiManagerFeedbackCapability {
+  const value = String(action ?? "").toLowerCase();
+  if (value.includes("chat.") || value.includes("answer")) return "answerChat";
+  if (value.includes("fine") || value.includes("dispute")) return "manageFines";
+  if (value.includes("schedule") || value.includes("assign")) return "scheduleAssignment";
+  if (value.includes("tick.report") || value.includes("report") || value.includes("settings")) {
+    return "ownerReports";
+  }
+  return "other";
+}
+
+export type AiManagerLearningGuideLike = {
+  action: string;
+  rating: AiManagerFeedbackRating;
+  guide: string;
+  entityLabel?: string | null;
+  actionDetails?: string | null;
+};
+
+export function formatLearningGuidesForPrompt(
+  entries: AiManagerLearningGuideLike[],
+  options?: { maxChars?: number }
+): string {
+  if (!entries.length) return "";
+  const maxChars = options?.maxChars ?? 3500;
+  const lines: string[] = [
+    "Owner learning guides from past AI Manager actions (follow these for similar events):"
+  ];
+  for (const entry of entries) {
+    const tag = entry.rating === "like" ? "LIKED — do more like this" : "DISLIKED — avoid repeating this";
+    const details = entry.actionDetails
+      ? `; context=${String(entry.actionDetails).replace(/\s+/g, " ").trim().slice(0, 160)}`
+      : "";
+    const subject = entry.entityLabel ? `; subject=${entry.entityLabel}` : "";
+    const guide = String(entry.guide ?? "").replace(/\s+/g, " ").trim().slice(0, 400);
+    lines.push(`- [${tag}] action=${entry.action}${subject}${details}\n  Guide: ${guide}`);
+  }
+  const text = lines.join("\n");
+  return text.length <= maxChars ? text : `${text.slice(0, maxChars - 1)}…`;
+}
+
+/**
+ * Optional override for fine-dispute auto decisions when owner guides are present.
+ * Returns null when guides do not clearly dictate keep vs cancel.
+ */
+export function disputeDecisionFromGuides(
+  disputeText: string,
+  guides: AiManagerLearningGuideLike[]
+): "KEEP_FINE" | "CANCEL_FINE" | null {
+  if (!guides.length) return null;
+  const haystack = `${disputeText}\n${guides.map((g) => `${g.rating} ${g.guide}`).join("\n")}`.toLowerCase();
+
+  const cancelSignals = guides.filter(
+    (g) =>
+      g.rating === "like" &&
+      /cancel|waive|remove fine|xóa phạt|hủy phạt|đã thanh toán|already paid|duplicate|trùng/i.test(
+        g.guide
+      )
+  );
+  const keepSignals = guides.filter(
+    (g) =>
+      (g.rating === "like" && /keep|retain|do not cancel|không hủy|giữ phạt/i.test(g.guide)) ||
+      (g.rating === "dislike" && /should not have cancelled|không nên hủy|wrong cancel/i.test(g.guide))
+  );
+
+  if (
+    cancelSignals.length &&
+    /đã thanh toán|already paid|duplicate|trùng|nhầm người|wrong person/i.test(disputeText)
+  ) {
+    return "CANCEL_FINE";
+  }
+  if (keepSignals.length > cancelSignals.length) {
+    return "KEEP_FINE";
+  }
+  if (cancelSignals.length && /paid|duplicate|wrong/i.test(haystack)) {
+    return "CANCEL_FINE";
+  }
+  return null;
 }
 
 function clipText(value: string, max: number) {

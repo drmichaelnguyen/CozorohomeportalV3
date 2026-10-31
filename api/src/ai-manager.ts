@@ -104,17 +104,32 @@ export async function listAiManagerActionLogs(limit = 40) {
     orderBy: { createdAt: "desc" },
     take
   });
-  return rows.map((row) => ({
-    id: row.id,
-    action: row.action,
-    actorEmail: row.actorEmail,
-    actorName: row.actorName,
-    actorRole: row.actorRole,
-    entityId: row.entityId,
-    entityLabel: row.entityLabel,
-    details: row.details,
-    createdAt: row.createdAt.toISOString()
-  }));
+  const { getFeedbackByActionLogIds } = await import("./ai-manager-feedback.js");
+  const feedbackById = await getFeedbackByActionLogIds(rows.map((row) => row.id));
+  return rows.map((row) => {
+    const feedback = feedbackById.get(row.id) ?? null;
+    return {
+      id: row.id,
+      action: row.action,
+      actorEmail: row.actorEmail,
+      actorName: row.actorName,
+      actorRole: row.actorRole,
+      entityId: row.entityId,
+      entityLabel: row.entityLabel,
+      details: row.details,
+      createdAt: row.createdAt.toISOString(),
+      feedback: feedback
+        ? {
+            id: feedback.id,
+            rating: feedback.rating,
+            guide: feedback.guide,
+            capability: feedback.capability,
+            actorEmail: feedback.actorEmail,
+            updatedAt: feedback.updatedAt
+          }
+        : null
+    };
+  });
 }
 
 const dataDir = path.join(process.cwd(), "data");
@@ -503,14 +518,19 @@ async function summarizeSnapshotWithLlm(
   snapshot: AiManagerOpsSnapshot,
   actorEmail: string
 ): Promise<string> {
+  const { getLearningPromptBlock } = await import("./ai-manager-feedback.js");
+  const learningBlock = await getLearningPromptBlock("ownerReports");
   const systemPrompt = [
     "You are Cozoro AI Manager, a dutiful co-living operations manager for CozoroHome (D2/D7).",
     "Write a concise status report for the OWNER (not residents).",
     "Use clear English. Bullet priorities first, then brief notes.",
     "Do not invent facts outside the snapshot. Do not claim you already fixed things.",
     "If everything is clear, say so briefly and note you are still monitoring.",
-    "Keep under 350 words."
-  ].join(" ");
+    "Keep under 350 words.",
+    learningBlock ? `Follow these owner learning guides when similar situations appear:\n${learningBlock}` : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   const started = Date.now();
   try {
@@ -802,9 +822,11 @@ export async function getAiManagerStatus(actorEmail: string) {
     "Only staff can view AI Manager status."
   );
   const config = await readAiManagerConfig();
-  const [reports, actionLogs] = await Promise.all([
+  const { listAiManagerFeedback } = await import("./ai-manager-feedback.js");
+  const [reports, actionLogs, feedbackEntries] = await Promise.all([
     listAiManagerReports(10),
-    listAiManagerActionLogs(40)
+    listAiManagerActionLogs(40),
+    listAiManagerFeedback(40)
   ]);
   const owners = await listOwnerAndAdminEmails();
   return {
@@ -828,6 +850,7 @@ export async function getAiManagerStatus(actorEmail: string) {
       acComfortAlerts: report.snapshot.acComfortAlerts,
       summaryPreview: report.summaryText.slice(0, 280)
     })),
-    recentActionLogs: actionLogs
+    recentActionLogs: actionLogs,
+    learningGuides: feedbackEntries.filter((entry) => entry.guide.trim().length > 0)
   };
 }

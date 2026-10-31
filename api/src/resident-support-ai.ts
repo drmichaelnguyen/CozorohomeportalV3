@@ -617,6 +617,8 @@ export async function runResidentSupportAssistantTurn(input: {
 export async function generateManagerSupportReplyDraft(input: {
   conversationId: string;
   operatorEmail: string;
+  /** Optional owner learning guides / extra instructions for this draft. */
+  extraGuidance?: string;
 }): Promise<string | null> {
   if (!hasPortalLlmConfig("shared")) {
     return null;
@@ -671,7 +673,11 @@ export async function generateManagerSupportReplyDraft(input: {
 - Return only the message that should be sent to the resident. Do not add labels, analysis, quotation marks, or notes to staff.
 - Never claim that staff changed data, approved an exception, issued a refund, fixed equipment, or completed another action unless the conversation explicitly confirms it.
 - An earlier Cozoro Assistant message may already be in the thread. Do not repeat it mechanically; clarify, correct, or add the useful human follow-up.
-- This is a draft only. Do not save contact details or perform any mutation.`;
+- This is a draft only. Do not save contact details or perform any mutation.${
+    input.extraGuidance?.trim()
+      ? `\n\n## Owner learning guidance for similar events\n${input.extraGuidance.trim()}`
+      : ""
+  }`;
 
   const contents = compressThreadForGemini(
     conversation.messages.map((message) => ({

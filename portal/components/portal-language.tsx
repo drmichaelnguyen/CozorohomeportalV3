@@ -1456,10 +1456,35 @@ const translations: Record<string, { en: string; vi: string }> = {
   },
   aiManagerActionLogs: { en: "Action log", vi: "Nhật ký thao tác" },
   aiManagerActionLogsHint: {
-    en: "Durable ActionLog rows for account setup, settings changes, report ticks, skips, and failures.",
-    vi: "Các dòng ActionLog lưu bền vững cho tạo tài khoản, đổi cài đặt, lần chạy báo cáo, bỏ qua và lỗi."
+    en: "Review each action, mark like/dislike, and write a guide so the AI Manager learns for the next similar event.",
+    vi: "Xem từng thao tác, đánh giá thích/không thích, và viết hướng dẫn để Quản lý AI học cho lần tương tự."
   },
   aiManagerNoActionLogs: { en: "No AI Manager action logs yet.", vi: "Chưa có nhật ký thao tác Quản lý AI." },
+  aiManagerLike: { en: "Like", vi: "Thích" },
+  aiManagerDislike: { en: "Dislike", vi: "Không thích" },
+  aiManagerLiked: { en: "Liked", vi: "Đã thích" },
+  aiManagerDisliked: { en: "Disliked", vi: "Không thích" },
+  aiManagerFeedbackTitle: { en: "Rate this AI Manager action", vi: "Đánh giá thao tác Quản lý AI" },
+  aiManagerGuideLabel: { en: "Learning guide for similar events", vi: "Hướng dẫn học cho sự kiện tương tự" },
+  aiManagerGuidePlaceholder: {
+    en: "Example: For laundry booking questions, reply with machine hours and ask for preferred slot. Do not invent availability.",
+    vi: "Ví dụ: Với câu hỏi đặt máy giặt, trả lời giờ máy và hỏi khung giờ mong muốn. Không bịa chỗ trống."
+  },
+  aiManagerGuideHint: {
+    en: "This guide is injected into future AI Manager decisions for the same function (chat, fines, schedule, reports).",
+    vi: "Hướng dẫn này sẽ được đưa vào quyết định Quản lý AI sau này cho cùng chức năng (chat, phạt, lịch, báo cáo)."
+  },
+  aiManagerSaveFeedback: { en: "Save rating & guide", vi: "Lưu đánh giá & hướng dẫn" },
+  aiManagerFeedbackSaved: { en: "Feedback saved. The AI Manager will use this guide next time.", vi: "Đã lưu phản hồi. Quản lý AI sẽ dùng hướng dẫn này lần sau." },
+  aiManagerLearningGuides: { en: "Learning guides", vi: "Hướng dẫn học" },
+  aiManagerLearningGuidesHint: {
+    en: "Active owner guides collected from liked/disliked actions.",
+    vi: "Các hướng dẫn đang dùng từ thao tác đã đánh giá thích/không thích."
+  },
+  aiManagerNoLearningGuides: {
+    en: "No learning guides yet. Rate an action and add a short instruction.",
+    vi: "Chưa có hướng dẫn học. Hãy đánh giá một thao tác và thêm chỉ dẫn ngắn."
+  },
   aiManagerRecentReports: { en: "Recent reports", vi: "Báo cáo gần đây" },
   aiManagerNoReports: { en: "No reports yet. Enable the agent or run a report now.", vi: "Chưa có báo cáo. Hãy bật agent hoặc chạy báo cáo ngay." },
   aiManagerOpenReport: { en: "Open", vi: "Mở" },

@@ -69,7 +69,7 @@ Important release safety rules:
  - important `api/data/*` files such as caches, staff access, and other operational state
  - `api/data/chat-attachments/` — binary files for support/group chat images (DB rows only store metadata; missing files make past attachments 404)
  - `api/data/birthday-coin-grants.json` — yearly birthday coin grant ledger (prevents duplicate birthday payouts)
- - `api/data/ai-manager-config.json` / `api/data/ai-manager-reports.json` — AI Manager agent settings and owner report history
+ - `api/data/ai-manager-config.json` / `api/data/ai-manager-reports.json` / `api/data/ai-manager-feedback.json` — AI Manager settings, owner reports, and like/dislike learning guides
 - if `api/.google-oauth.json` is missing in production, Google Sheets / Gmail / Calendar startup calls can fail with `Google OAuth tokens are missing`
 
 Production sync rule:
@@ -188,7 +188,7 @@ const nextConfig: NextConfig = {
 | `GET /manager/support/conversations/:id?operatorEmail=` | Conversation thread |
 | `POST /manager/support/messages` | Send reply as manager |
 | `POST /manager/support/conversations/:id/ai-draft` | **Manager, owner, app_admin** — generate an editable, unsent reply draft from direct-thread context (including latest resident chat photos) and CozoroHome app knowledge. |
-| `GET/PUT /manager/ai-manager` · `POST .../ensure-account` · `POST .../run` · `GET .../action-logs` | **Owner, app_admin** (GET also staff) — Cozoro AI Manager account, digests, ActionLog audit trail; see `docs/ai-manager.md`. |
+| `GET/PUT /manager/ai-manager` · `POST .../run` · `GET .../action-logs` · `PUT .../action-logs/:id/feedback` | **Owner, app_admin** (GET also staff) — AI Manager account, digests, ActionLog, like/dislike learning guides; see `docs/ai-manager.md`. |
 | `POST /manager/support/conversations/:id/read` | Mark conversation read |
 | `GET /clients/laundry-bookings?email=` | Resident laundry bookings |
 | `GET /controller/cooker?email=` | Resident kitchen cooker status (on/off, reservations, photos required to toggle) |
@@ -298,6 +298,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.50 | AI Manager owner feedback: like/dislike actions and write learning guides reused on similar future events. |
 | 3.9.49 | AI Manager owner capability toggles: reports, answer chat, create/correct fines, cleaning schedule assignment. |
 | 3.9.48 | AI Manager writes durable ActionLog rows (account/settings/ticks) and shows them in Settings → AI Manager. |
 | 3.9.47 | Cozoro AI Manager: dedicated manager staff account + scheduled owner digests (support/contracts/cleaning/hostel/AC); Settings → AI Manager; assist mode suggests unsent support drafts; see `docs/ai-manager.md`. |

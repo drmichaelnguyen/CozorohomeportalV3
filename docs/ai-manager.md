@@ -26,6 +26,25 @@ It reuses the same LLM stack as other portal AI (9router `gpt-5` when configured
 
 Every capability action writes `ai_manager.*` rows to **ActionLog**.
 
+## Owner feedback & learning
+
+In **Settings → AI Manager → Action log**, owners can:
+
+1. Open any AI Manager action
+2. Mark **Like** or **Dislike**
+3. Write a **learning guide** for similar future events
+
+Guides are stored in `api/data/ai-manager-feedback.json` and injected into later ticks:
+
+| Capability | How guides are used |
+|------------|---------------------|
+| Answer chat | Appended to support reply draft system prompt |
+| Manage fines | Influence keep/cancel on open fine disputes |
+| Owner reports | Included in digest LLM system prompt |
+| Schedule assignment | Recorded on assign logs (fairness algorithm unchanged) |
+
+Also listed under **Learning guides** in the same Settings panel.
+
 ## What it watches
 
 Each tick builds an ops snapshot:
@@ -75,6 +94,8 @@ UI settings in `api/data/ai-manager-config.json` override / complement these aft
 | `GET` | `/manager/ai-manager/reports` | staff |
 | `GET` | `/manager/ai-manager/reports/:id` | staff |
 | `GET` | `/manager/ai-manager/action-logs` | staff |
+| `PUT` | `/manager/ai-manager/action-logs/:id/feedback` | owner / app_admin (like/dislike + guide) |
+| `GET` | `/manager/ai-manager/feedback` | staff |
 
 ## Action logs
 

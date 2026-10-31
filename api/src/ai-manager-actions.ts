@@ -18,6 +18,11 @@ import { generateManagerSupportReplyDraft } from "./resident-support-ai.js";
 import { postOperatorSupportMessage } from "./support.js";
 import { logAction } from "./action-log.js";
 import {
+  getLearningPromptBlock,
+  listLearningGuidesForCapability
+} from "./ai-manager-feedback.js";
+import {
+  disputeDecisionFromGuides,
   type AiManagerActionResult,
   type AiManagerOpsSnapshot,
   shouldEscalateSupportInsteadOfAutoReply
@@ -74,6 +79,8 @@ export async function runAnswerChatActions(input: {
   let escalated = 0;
   const errors: string[] = [];
 
+  const learningBlock = await getLearningPromptBlock("answerChat");
+
   for (const thread of input.snapshot.supportHighlights.slice(0, MAX_CHAT_REPLIES_PER_TICK)) {
     if (shouldEscalateSupportInsteadOfAutoReply(thread.latestBody)) {
       escalated += 1;
@@ -91,7 +98,8 @@ export async function runAnswerChatActions(input: {
     try {
       const draft = await generateManagerSupportReplyDraft({
         conversationId: thread.conversationId,
-        operatorEmail: input.operatorEmail
+        operatorEmail: input.operatorEmail,
+        extraGuidance: learningBlock || undefined
       });
       if (!draft?.trim()) {
         errors.push(`${thread.residentEmail}: empty draft`);
@@ -181,6 +189,7 @@ export async function runManageFinesActions(input: {
       if (!dispute) return false;
       return !/manager resolution/i.test(dispute);
     });
+    const fineGuides = await listLearningGuidesForCapability("manageFines", 12);
 
     let resolved = 0;
     for (const entry of openDisputes.slice(0, MAX_FINE_DISPUTE_RESOLUTIONS_PER_TICK)) {
@@ -191,12 +200,13 @@ export async function runManageFinesActions(input: {
       const dispute = String(entry.row[FINE_DISPUTE_COLUMN] ?? "").trim();
       if (!email || !timestamp || !content) continue;
 
-      // Conservative default: keep the fine and acknowledge the dispute unless the
-      // resident clearly reports a duplicate / already-paid case (cancel).
+      const guided = disputeDecisionFromGuides(dispute, fineGuides);
       const cancel =
-        /đã thanh toán|already paid|duplicate|trùng|nhầm người|wrong person|sai người/i.test(
-          dispute
-        );
+        guided === "CANCEL_FINE" ||
+        (guided == null &&
+          /đã thanh toán|already paid|duplicate|trùng|nhầm người|wrong person|sai người/i.test(
+            dispute
+          ));
       const decision = cancel ? "CANCEL_FINE" : "KEEP_FINE";
 
       await managerResolveFineDispute({
@@ -205,8 +215,12 @@ export async function runManageFinesActions(input: {
         content,
         decision,
         note: cancel
-          ? "AI Manager: cancelled after dispute indicated duplicate/wrong/paid."
-          : "AI Manager: reviewed dispute and kept the fine. Owner can reverse if needed.",
+          ? guided
+            ? "AI Manager: cancelled using owner learning guides + dispute text."
+            : "AI Manager: cancelled after dispute indicated duplicate/wrong/paid."
+          : guided
+            ? "AI Manager: kept fine using owner learning guides."
+            : "AI Manager: reviewed dispute and kept the fine. Owner can reverse if needed.",
         operator: input.operatorEmail
       });
       resolved += 1;
@@ -217,7 +231,7 @@ export async function runManageFinesActions(input: {
         actorName: input.displayName,
         entityId: `${email}|${timestamp}`,
         entityLabel: email,
-        details: `content=${content.slice(0, 80)}; amount=${amount}`
+        details: `content=${content.slice(0, 80)}; amount=${amount}; guided=${guided ?? "none"}`
       });
     }
     parts.push(`fineDisputesResolved=${resolved} openSeen=${openDisputes.length}`);
@@ -246,6 +260,7 @@ export async function runScheduleAssignmentActions(input: {
   displayName: string;
 }): Promise<AiManagerActionResult> {
   try {
+    const learningBlock = await getLearningPromptBlock("scheduleAssignment");
     const config = await getCleaningAutoSchedulerConfig();
     if (!config.enabled) {
       await logCapabilityAction({
@@ -262,12 +277,14 @@ export async function runScheduleAssignmentActions(input: {
       };
     }
 
+    // Learning guides for schedule are recorded on the action log for owner visibility;
+    // assignment still uses the shared fairness algorithm (guides inform future owner reviews).
     const result = await autoScheduleCleaningTasksByJob(config.jobs);
     await logCapabilityAction({
       action: "schedule.assign",
       actorEmail: input.operatorEmail,
       actorName: input.displayName,
-      details: `created=${result.created}; skipped=${result.skipped}`
+      details: `created=${result.created}; skipped=${result.skipped}; learningGuides=${learningBlock ? "yes" : "no"}`
     });
     return {
       capability: "scheduleAssignment",
