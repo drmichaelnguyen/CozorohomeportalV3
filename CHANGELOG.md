@@ -1,5 +1,9 @@
 # Changelog
 
+## [4.0.2] - 2026-10-30
+
+- **AI Manager reports → Messages chat**: Owner digests are posted into manager Messages as a conversation from the AI Manager account instead of being emailed. Settings no longer asks for report emails; Notification Center relies on the unread Messages badge/thread.
+
 ## [4.0.1] - 2026-10-30
 
 - **Gemini 3.8 Flash fallback**: When 9router fails, all AI agents (AI Manager, manager chat and reply drafts, Cozoro Assistant, Cozoro Bee, cleaning photo checks) and the Facebook bot fall back to `GEMINI_MODEL` (default `gemini-3.8-flash`, was hard-coded 2.5 Flash). Gemini 3+ runs with `GEMINI_THINKING_LEVEL=low` so thinking does not exhaust reply token limits, and tool-call `thoughtSignature`s are replayed so multi-step tool chats keep working. The bot previously had no Gemini fallback.

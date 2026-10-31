@@ -188,7 +188,7 @@ const nextConfig: NextConfig = {
 | `GET /manager/support/conversations/:id?operatorEmail=` | Conversation thread |
 | `POST /manager/support/messages` | Send reply as manager |
 | `POST /manager/support/conversations/:id/ai-draft` | **Manager, owner, app_admin** — generate an editable, unsent reply draft from direct-thread context (including latest resident chat photos) and CozoroHome app knowledge. |
-| `GET/PUT /manager/ai-manager` · `POST .../run` · `GET .../action-logs` · `PUT .../action-logs/:id/feedback` · `GET .../usage` | **Owner, app_admin** (GET status/logs also staff) — AI Manager account, digests, ActionLog, like/dislike learning guides, token usage by task/category; see `docs/ai-manager.md`. |
+| `GET/PUT /manager/ai-manager` · `POST .../run` · `GET .../action-logs` · `PUT .../action-logs/:id/feedback` · `GET .../usage` | **Owner, app_admin** (GET status/logs also staff) — AI Manager account, digests posted to Messages chat, ActionLog, like/dislike learning guides, token usage by task/category; see `docs/ai-manager.md`. |
 | `POST /manager/support/conversations/:id/read` | Mark conversation read |
 | `GET /clients/laundry-bookings?email=` | Resident laundry bookings |
 | `GET /controller/cooker?email=` | Resident kitchen cooker status (on/off, reservations, photos required to toggle) |
@@ -298,6 +298,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 4.0.2 | AI Manager owner reports post into manager Messages chat (no email); Settings drops report-email recipients. |
 | 4.0.1 | AI fallback upgraded to Gemini 3.8 Flash (`GEMINI_MODEL`, low thinking, tool-call thought signatures) for API agents and the Facebook bot when 9router fails; per-model AI usage cost estimates. |
 | 4.0.0 | Major release: Cozoro AI Manager (dedicated manager agent with owner digests, capability toggles, ActionLog audit trail, owner feedback/learning guides, per-task token monitoring) goes live in production. |
 | 3.9.51 | AI Manager token monitoring: attribute LLM usage per task/category (reports, chat, fines, schedule) and show breakdown in Settings. |

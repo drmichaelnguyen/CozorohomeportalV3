@@ -1331,36 +1331,9 @@ export async function listStaffSupportNotifications(operatorEmail: string) {
     });
   }
 
-  try {
-    const actor = await resolvePortalLogin(normalizedOperatorEmail);
-    if (actor.role === "owner" || actor.role === "app_admin") {
-      const { listRecentAiManagerReportsForOwner } = await import("./ai-manager.js");
-      const reports = await listRecentAiManagerReportsForOwner(3);
-      for (const report of reports.slice(0, 3)) {
-        const hot =
-          report.snapshot.supportUnreadThreads +
-          report.snapshot.pendingContractApprovals +
-          report.snapshot.cleaningPendingAudit +
-          report.snapshot.cleaningOverdueAssigned +
-          report.snapshot.hostelPendingBookings +
-          report.snapshot.acComfortAlerts;
-        notifications.push({
-          id: `ai-manager-report-${report.id}`,
-          type: "AI_MANAGER_REPORT",
-          conversationId: report.id,
-          residentEmail: "ai.manager@cozorohome.com",
-          residentName: "AI Manager",
-          title: hot > 0 ? `AI Manager: ${hot} item(s) need attention` : "AI Manager: all clear report",
-          body: report.summaryText.slice(0, 280),
-          createdAt: new Date(report.createdAt),
-          unreadCount: 1,
-          href: "/manager?view=settings&settingsSection=ai_manager"
-        });
-      }
-    }
-  } catch {
-    // AI Manager notices are best-effort
-  }
+  // AI Manager reports are delivered into manager Messages (support chat).
+  // Unread chat rows already surface as SUPPORT_REQUEST notifications, so we
+  // no longer add a separate AI_MANAGER_REPORT card here.
 
   return writeNotificationCache(staffNotificationCache, normalizedOperatorEmail, {
     notifications: notifications.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),

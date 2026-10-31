@@ -1,6 +1,6 @@
 # Cozoro AI Manager
 
-An autonomous **manager staff agent** with its own portal login. It watches day-to-day operations and **reports to owners**, instead of only answering when a human types in the Settings AI chat.
+An autonomous **manager staff agent** with its own portal login. It watches day-to-day operations and **reports to owners in Messages chat**, instead of only answering when a human types in the Settings AI chat.
 
 ## What it is
 
@@ -9,7 +9,7 @@ An autonomous **manager staff agent** with its own portal login. It watches day-
 | **Account** | Real staff row (`manager` role). Default email `ai.manager@cozorohome.com` (override with `AI_MANAGER_EMAIL`). |
 | **Login** | Same portal email/password login as any manager. Owners set the password from **Settings → AI Manager**. |
 | **Background job** | API `setInterval` (~30 min check) runs a tick when enabled and the configured interval has elapsed. |
-| **Report** | LLM digest emailed to owners + stored under `api/data/ai-manager-reports.json` + Notification Center card for owners. |
+| **Report** | LLM digest posted into **manager Messages** as a conversation from the AI Manager account + stored under `api/data/ai-manager-reports.json`. No owner email. |
 | **Modes** | `report_only` (default) or `assist` (unsent support drafts when chat auto-reply is off). |
 | **Capabilities** | Owner toggles in Settings: `ownerReports`, `answerChat`, `manageFines`, `scheduleAssignment` (all off except reports by default). |
 
@@ -19,8 +19,8 @@ It reuses the same LLM stack as other portal AI (9router `gpt-5` when configured
 
 | Toggle | When enabled on a tick |
 |--------|-------------------------|
-| **Owner reports** | LLM digest emailed + stored + Notification Center |
-| **Answer support chat** | Auto-sends AI replies on personal threads waiting for staff (max 5/tick). Sensitive topics (deposit refund, terminate, bed transfer, legal) escalate instead of auto-reply. |
+| **Owner reports** | LLM digest posted to Messages chat + stored in report history |
+| **Answer support chat** | Auto-sends AI replies on personal threads waiting for staff (max 5/tick). Sensitive topics (deposit refund, terminate, bed transfer, legal) escalate instead of auto-reply. The AI Manager’s own report thread is never treated as a resident needing reply. |
 | **Create / correct fines** | Runs missed-cleaning fine sweep; resolves open fine disputes with conservative keep/cancel rules |
 | **Cleaning schedule assignment** | Fills open cleaning slots via `autoScheduleCleaningTasksByJob` (respects admin auto-scheduler enablement) |
 
@@ -49,7 +49,7 @@ Also listed under **Learning guides** in the same Settings panel.
 
 Each tick builds an ops snapshot:
 
-- Support threads whose **latest message is from the resident**
+- Support threads whose **latest message is from the resident** (excluding the AI Manager report thread)
 - Pending contract approvals (registration / extension / transfer)
 - Cleaning tasks `DONE_PENDING_AUDIT`
 - Overdue cleaning still `ASSIGNED` (duty date before today, Vietnam calendar)
@@ -63,8 +63,8 @@ Quiet interval ticks with **nothing outstanding** are skipped (manual **Run repo
 1. Log in as **owner** or **app_admin**.
 2. Open **Manager → Settings → AI Manager**.
 3. Click **Create / refresh account** (optionally set a password ≥ 8 characters).
-4. Turn on **Enable scheduled agent**, choose mode and report emails, **Save**.
-5. Optionally **Run report now** to get the first digest immediately.
+4. Turn on **Enable scheduled agent**, choose mode, **Save**.
+5. Optionally **Run report now** — the digest appears in **Messages** as a conversation from the AI Manager.
 
 You can also log into the portal as the AI Manager email and use the normal manager workspace (Messages, cleaning, existing Manager AI chat). Scheduled automation still runs on the API process, not in the browser.
 
@@ -76,12 +76,11 @@ AI_MANAGER_ENABLED=1
 AI_MANAGER_EMAIL=ai.manager@cozorohome.com
 AI_MANAGER_NAME=Cozoro AI Manager
 AI_MANAGER_PASSWORD=choose-a-strong-password
-AI_MANAGER_REPORT_EMAILS=dr.trongto@gmail.com
 AI_MANAGER_INTERVAL_HOURS=6
 AI_MANAGER_MODE=report_only
 ```
 
-UI settings in `api/data/ai-manager-config.json` override / complement these after first save. Preserve that file (and `ai-manager-reports.json`) across production refreshes like other `api/data/*` operational state.
+`AI_MANAGER_REPORT_EMAILS` is ignored (reports are chat-only). UI settings in `api/data/ai-manager-config.json` override / complement these after first save. Preserve that file (and `ai-manager-reports.json`) across production refreshes like other `api/data/*` operational state.
 
 ## API
 
@@ -119,7 +118,7 @@ Every meaningful AI Manager event is written to the shared Prisma **`ActionLog`*
 |--------|------|
 | `ai_manager.account.ensure` | Account created/refreshed or password set |
 | `ai_manager.settings.update` | Owner saves Settings → AI Manager |
-| `ai_manager.tick.report` | Digest produced and (attempted) emailed |
+| `ai_manager.tick.report` | Digest produced and (attempted) posted to Messages |
 | `ai_manager.tick.skip` | Disabled / already running / quiet interval |
 | `ai_manager.tick.fail` | Tick threw |
 

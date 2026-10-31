@@ -15,7 +15,7 @@ export type AiManagerFeedbackCapability =
 
 /** Owner-controlled functions the AI Manager may perform on a tick. */
 export type AiManagerCapabilities = {
-  /** Email/in-app owner digests (default on). */
+  /** Post ops digests into manager Messages chat (default on). */
   ownerReports: boolean;
   /** Auto-reply to personal support threads in scope. */
   answerChat: boolean;
@@ -101,8 +101,14 @@ export type AiManagerReport = {
   summaryText: string;
   suggestedDrafts: AiManagerSuggestedDraft[];
   actionsTaken: AiManagerActionResult[];
-  emailedTo: string[];
-  emailErrors: string[];
+  /** Manager Messages conversation where the digest was posted. */
+  chatConversationId: string | null;
+  chatMessageId: string | null;
+  chatError: string | null;
+  /** @deprecated Legacy email delivery — kept so old report JSON still loads. */
+  emailedTo?: string[];
+  /** @deprecated Legacy email delivery — kept so old report JSON still loads. */
+  emailErrors?: string[];
 };
 
 export const DEFAULT_AI_MANAGER_EMAIL = "ai.manager@cozorohome.com";
@@ -327,7 +333,7 @@ export function shouldSkipQuietTick(
   );
 }
 
-export function buildReportEmailSubject(snapshot: AiManagerOpsSnapshot, createdAt: string): string {
+export function buildReportChatTitle(snapshot: AiManagerOpsSnapshot, createdAt: string): string {
   const hot =
     snapshot.supportUnreadThreads +
     snapshot.pendingContractApprovals +
@@ -338,12 +344,17 @@ export function buildReportEmailSubject(snapshot: AiManagerOpsSnapshot, createdA
     snapshot.openFineDisputes;
   const day = createdAt.slice(0, 10);
   return hot > 0
-    ? `[Cozoro AI Manager] ${hot} item(s) need attention — ${day}`
-    : `[Cozoro AI Manager] All clear — ${day}`;
+    ? `AI Manager report — ${hot} item(s) need attention (${day})`
+    : `AI Manager report — all clear (${day})`;
 }
 
-export function buildReportEmailBody(report: AiManagerReport): string {
+/** @deprecated Use buildReportChatTitle */
+export const buildReportEmailSubject = buildReportChatTitle;
+
+export function buildReportChatBody(report: AiManagerReport): string {
   const parts = [
+    buildReportChatTitle(report.snapshot, report.createdAt),
+    "",
     report.summaryText.trim(),
     "",
     "— Capabilities —",
@@ -376,11 +387,14 @@ export function buildReportEmailBody(report: AiManagerReport): string {
   }
 
   parts.push(
-    "Portal: open Settings → AI Manager for history and capability toggles.",
+    "Open Settings → AI Manager for history, capability toggles, and feedback.",
     `Report id: ${report.id}`
   );
   return parts.join("\n");
 }
+
+/** @deprecated Use buildReportChatBody */
+export const buildReportEmailBody = buildReportChatBody;
 
 /** Conservative gate: escalate instead of auto-replying. */
 export function shouldEscalateSupportInsteadOfAutoReply(latestBody: string): boolean {

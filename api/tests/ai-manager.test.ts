@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   buildFallbackReportSummary,
-  buildReportEmailSubject,
+  buildReportChatBody,
+  buildReportChatTitle,
   defaultAiManagerConfig,
   formatOpsSnapshotForPrompt,
   disputeDecisionFromGuides,
@@ -14,7 +15,8 @@ import {
   shouldEscalateSupportInsteadOfAutoReply,
   shouldSkipQuietTick,
   type AiManagerLearningGuideLike,
-  type AiManagerOpsSnapshot
+  type AiManagerOpsSnapshot,
+  type AiManagerReport
 } from "../src/ai-manager-logic.js";
 import {
   AI_MANAGER_USAGE_CATEGORIES,
@@ -103,10 +105,10 @@ test("quiet ticks respect capability-driven work", () => {
   );
 });
 
-test("fallback summary and email subject reflect hot items", () => {
+test("fallback summary and chat title/body reflect hot items", () => {
   const clear = sampleSnapshot();
   assert.match(buildFallbackReportSummary(clear), /All clear/i);
-  assert.match(buildReportEmailSubject(clear, "2026-10-30T12:00:00.000Z"), /All clear/);
+  assert.match(buildReportChatTitle(clear, "2026-10-30T12:00:00.000Z"), /all clear/i);
 
   const hot = sampleSnapshot({
     supportUnreadThreads: 2,
@@ -126,8 +128,32 @@ test("fallback summary and email subject reflect hot items", () => {
   assert.match(summary, /support thread/);
   assert.match(summary, /contract approval/);
   assert.match(summary, /fine dispute/);
-  assert.match(buildReportEmailSubject(hot, "2026-10-30T12:00:00.000Z"), /need attention/i);
+  assert.match(buildReportChatTitle(hot, "2026-10-30T12:00:00.000Z"), /need attention/i);
   assert.match(formatOpsSnapshotForPrompt(hot), /Ann/);
+
+  const report: AiManagerReport = {
+    id: "aimgr-test",
+    createdAt: "2026-10-30T12:00:00.000Z",
+    trigger: "manual",
+    mode: "report_only",
+    capabilities: {
+      ownerReports: true,
+      answerChat: false,
+      manageFines: false,
+      scheduleAssignment: false
+    },
+    snapshot: hot,
+    summaryText: summary,
+    suggestedDrafts: [],
+    actionsTaken: [],
+    chatConversationId: null,
+    chatMessageId: null,
+    chatError: null
+  };
+  const body = buildReportChatBody(report);
+  assert.match(body, /need attention/i);
+  assert.match(body, /Report id: aimgr-test/);
+  assert.match(body, /Open Settings → AI Manager/);
 });
 
 test("sensitive chat topics escalate instead of auto-reply", () => {
