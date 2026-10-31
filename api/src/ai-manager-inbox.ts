@@ -8,7 +8,9 @@ import { randomBytes } from "node:crypto";
 import path from "node:path";
 
 import { logAction } from "./action-log.js";
+import { recordGeminiUsage } from "./ai-usage.js";
 import { managerResolveFineDispute } from "./google-sheets.js";
+import { completeToolChatRound } from "./llm-tool-chat.js";
 import { requirePortalRole } from "./staff-access.js";
 import {
   appendMessageToTopic,
@@ -24,6 +26,7 @@ import {
   createInboxMessage,
   findOpenTopicDedupeKey,
   formatOpenTopicsForPrompt,
+  formatTopicTranscriptForPrompt,
   isTopicRecord,
   markTopicsRead,
   MAX_AI_MANAGER_INBOX_TOPICS,
@@ -480,7 +483,105 @@ export async function resolveAiManagerInboxChoice(input: {
       entityLabel: updated.residentEmail ?? updated.category,
       details: `choice=${choice?.id}; keepsOpen=1; ${summarizeTopicForLearning(updated).slice(0, 400)}`
     });
+    if (input.ownerReply?.trim()) {
+      return (await appendAiManagerTopicReply(updated.id, input.actorEmail)) ?? updated;
+    }
   }
+  return updated;
+}
+
+async function generateAiManagerTopicReply(
+  topic: AiManagerInboxTopic,
+  actorEmail: string
+): Promise<string | null> {
+  let learningBlock = "";
+  try {
+    const { getLearningPromptBlock } = await import("./ai-manager-feedback.js");
+    learningBlock = await getLearningPromptBlock("ownerReports");
+  } catch {
+    // Learning guides are optional context.
+  }
+  const systemPrompt = [
+    "You are Cozoro AI Manager, the operations manager agent for CozoroHome co-living (branches D2/D7).",
+    "You are chatting with the OWNER inside one topic thread of the owner AI Manager inbox.",
+    "Answer the owner's latest message directly, using only facts from the thread. Do not invent data.",
+    "Reply in the same language and register the owner uses (casual Vietnamese if they write casual Vietnamese).",
+    "Be short and plain: a few lines or a short bullet list. If asked to simplify, give only the 3–5 most important points.",
+    "You cannot execute actions from this chat. If the owner gives an instruction, confirm you noted it as guidance for the next run, or say which manager screen handles it.",
+    learningBlock ? `Owner learning guides:\n${learningBlock}` : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const started = Date.now();
+  try {
+    const round = await completeToolChatRound({
+      systemPrompt,
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text: `${formatTopicTranscriptForPrompt(topic)}\n\nWrite the AI Manager's reply to the owner's latest message.`
+            }
+          ]
+        }
+      ],
+      tools: [],
+      temperature: 0.4,
+      maxOutputTokens: 700,
+      geminiKind: "shared"
+    });
+    void recordGeminiUsage({
+      feature: "ai_manager_owner_chat",
+      modality: "text",
+      provider: round.provider,
+      model: round.model,
+      actorEmail,
+      usage: round.usage,
+      status: round.rateLimited ? "RATE_LIMITED" : round.text ? "SUCCESS" : "INVALID_RESPONSE",
+      latencyMs: Date.now() - started
+    });
+    return round.text?.trim() || null;
+  } catch (error) {
+    console.warn(
+      "[ai-manager] owner chat reply failed:",
+      error instanceof Error ? error.message : error
+    );
+    return null;
+  }
+}
+
+async function appendAiManagerTopicReply(
+  topicId: string,
+  actorEmail: string
+): Promise<AiManagerInboxTopic | null> {
+  const before = await getAiManagerInboxTopic(topicId);
+  if (!before || before.status !== "open") return before;
+  const text = await generateAiManagerTopicReply(before, actorEmail);
+  const body =
+    text ||
+    "Xin lỗi, mình chưa trả lời được lúc này (AI đang lỗi hoặc quá tải). Thử gửi lại sau ít phút nhé.\n\nSorry, I couldn't generate a reply right now. Please try again in a few minutes.";
+
+  // Re-read so we don't clobber writes that happened during the LLM call.
+  const file = await readInboxFile();
+  const index = file.topics.findIndex((topic) => topic.id === topicId);
+  if (index < 0) return null;
+  const updated = appendMessageToTopic(
+    file.topics[index],
+    createInboxMessage({
+      id: newId("msg"),
+      role: "ai_manager",
+      kind: "reply",
+      fromEmail: before.fromEmail,
+      fromName: before.fromName,
+      body
+    })
+  );
+  updated.readBy = Array.from(new Set([...updated.readBy, actorEmail.trim().toLowerCase()]));
+  file.topics[index] = updated;
+  file.topics = [updated, ...file.topics.filter((t) => t.id !== updated.id)];
+  await writeInboxFile(file);
   return updated;
 }
 
@@ -526,6 +627,7 @@ export async function replyAiManagerInboxItem(input: {
       entityLabel: updated.residentEmail ?? updated.category,
       details: `replyChars=${input.ownerReply.trim().length}; topic=open`
     });
+    return (await appendAiManagerTopicReply(updated.id, input.actorEmail)) ?? updated;
   }
   return updated;
 }

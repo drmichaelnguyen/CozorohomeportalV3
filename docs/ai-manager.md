@@ -124,6 +124,8 @@ On each tick the agent can:
 
 Owners can **reply inside a topic** (leave open or close after send), **pick a choice**, **close**, or **reopen**.
 
+When an owner reply leaves the topic open (or a keep-open choice includes reply text), the API generates an AI Manager answer from the full thread and appends it to the same topic before responding (feature key `ai_manager_owner_chat`). The reply is conversational only — it does not execute actions; instructions are picked up as guidance on later ticks.
+
 Deep link: `/manager?view=support_chat&tab=ai_manager`
 
 ## Token usage by task / category
@@ -136,6 +138,7 @@ Every AI Manager LLM call is recorded in `AiUsageEvent` under a dedicated featur
 | `ai_manager_chat_reply` | Answer support chat | Auto-sent replies and assist-mode unsent drafts |
 | `ai_manager_fines` | Create / correct fines | Reserved (dispute/sweep paths are rule-based today → usually 0 tokens) |
 | `ai_manager_schedule` | Cleaning schedule assignment | Reserved (uses shared fairness algo → usually 0 tokens) |
+| `ai_manager_owner_chat` | Owner reports | AI Manager answers to owner replies in inbox topics |
 
 View totals, **by task**, **by category**, and recent calls in **Settings → AI Manager → Token usage**, or `GET /manager/ai-manager/usage`. Global AI analytics (`Settings → AI usage`) still includes these features alongside other portal AI.
 

@@ -469,6 +469,41 @@ export function summarizeTopicForLearning(topic: AiManagerInboxTopic): string {
   return parts.join(" ").slice(0, 1800);
 }
 
+/** Plain-text transcript of a topic thread for the owner-chat LLM prompt (oldest first). */
+export function formatTopicTranscriptForPrompt(
+  topic: AiManagerInboxTopic,
+  options?: { maxChars?: number }
+): string {
+  const maxChars = options?.maxChars ?? 12000;
+  const header = [
+    `Topic: ${topic.title}`,
+    `Kind: ${topic.kind}; category: ${topic.category}; status: ${topic.status}`,
+    topic.residentEmail ? `Resident: ${topic.residentEmail}` : "",
+    topic.choices.length
+      ? `Choices offered: ${topic.choices.map((c) => c.label).join(" / ")}`
+      : ""
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const speaker = (m: AiManagerInboxMessage) =>
+    m.role === "ai_manager" ? "AI Manager" : m.role === "owner" ? `Owner (${m.fromName})` : "System";
+  const lines = topic.messages.map((m) => `[${m.createdAt}] ${speaker(m)}: ${m.body}`);
+  // Keep the opening message and the newest messages when the thread is long.
+  let body = lines.join("\n\n");
+  if (body.length > maxChars && lines.length > 1) {
+    const opening = lines[0].slice(0, Math.floor(maxChars / 2));
+    const tail: string[] = [];
+    let used = opening.length;
+    for (let i = lines.length - 1; i > 0; i -= 1) {
+      if (used + lines[i].length > maxChars) break;
+      tail.unshift(lines[i]);
+      used += lines[i].length;
+    }
+    body = [opening, "…", ...tail].join("\n\n");
+  }
+  return `${header}\n\nThread:\n${body}`;
+}
+
 /**
  * Inject open-topic owner guidance into AI Manager prompts so it knows what to do.
  */

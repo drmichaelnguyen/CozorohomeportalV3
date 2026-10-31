@@ -493,7 +493,13 @@ export function ManagerAiManagerInbox({
                         }
                         className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
                       >
-                        {language === "vi" ? "Gửi trả lời" : "Send reply"}
+                        {busy
+                          ? language === "vi"
+                            ? "AI đang trả lời…"
+                            : "AI Manager is replying…"
+                          : language === "vi"
+                            ? "Gửi trả lời"
+                            : "Send reply"}
                       </button>
                     </div>
                   </div>
