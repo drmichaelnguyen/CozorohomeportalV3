@@ -188,7 +188,7 @@ const nextConfig: NextConfig = {
 | `GET /manager/support/conversations/:id?operatorEmail=` | Conversation thread |
 | `POST /manager/support/messages` | Send reply as manager |
 | `POST /manager/support/conversations/:id/ai-draft` | **Manager, owner, app_admin** — generate an editable, unsent reply draft from direct-thread context (including latest resident chat photos) and CozoroHome app knowledge. |
-| `GET/PUT /manager/ai-manager` · `POST .../ensure-account` · `POST .../run` | **Owner, app_admin** (GET also staff) — Cozoro AI Manager account, scheduled owner digests, manual run; see `docs/ai-manager.md`. |
+| `GET/PUT /manager/ai-manager` · `POST .../ensure-account` · `POST .../run` · `GET .../action-logs` | **Owner, app_admin** (GET also staff) — Cozoro AI Manager account, digests, ActionLog audit trail; see `docs/ai-manager.md`. |
 | `POST /manager/support/conversations/:id/read` | Mark conversation read |
 | `GET /clients/laundry-bookings?email=` | Resident laundry bookings |
 | `GET /controller/cooker?email=` | Resident kitchen cooker status (on/off, reservations, photos required to toggle) |
@@ -298,6 +298,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.48 | AI Manager writes durable ActionLog rows (account/settings/ticks) and shows them in Settings → AI Manager. |
 | 3.9.47 | Cozoro AI Manager: dedicated manager staff account + scheduled owner digests (support/contracts/cleaning/hostel/AC); Settings → AI Manager; assist mode suggests unsent support drafts; see `docs/ai-manager.md`. |
 | 3.9.46 | Fix cleaning day-menu confusion: count APPROVED slots as occupied, show “Your duty” first, label other residents’ slots as taken (not “Already assigned”), and block same-day self-assign of a second task type. |
 | 3.9.45 | Donation partnership inbox for owners and managers: approve with coupon count and short-term or long-term stay codes, email the codes, and send reminders 3 days before and 10 days after the event. Marketing site should post `eventDate` to `POST /internal/donations`; see `docs/donation-partnerships.md`. |

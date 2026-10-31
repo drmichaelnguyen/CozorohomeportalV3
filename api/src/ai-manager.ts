@@ -13,6 +13,7 @@ import path from "node:path";
 
 import { CleaningTaskStatus, SupportMessageSenderRole } from "@prisma/client";
 
+import { logAction } from "./action-log.js";
 import { loadOpenAcComfortAlertsForStaff } from "./ac-comfort-votes.js";
 import { recordGeminiUsage } from "./ai-usage.js";
 import { appendAiTrainingExchange } from "./ai-training-log.js";
@@ -42,6 +43,69 @@ import {
   resolveReportRecipients,
   shouldSkipQuietTick
 } from "./ai-manager-logic.js";
+
+const AI_MANAGER_ENTITY_TYPE = "AiManager";
+const AI_MANAGER_ACTION_PREFIX = "ai_manager.";
+
+async function logAiManagerAction(input: {
+  action: string;
+  actorEmail?: string | null;
+  actorName?: string | null;
+  actorRole?: string | null;
+  entityId?: string | null;
+  entityLabel?: string | null;
+  details?: string | null;
+}) {
+  const action = input.action.startsWith(AI_MANAGER_ACTION_PREFIX)
+    ? input.action
+    : `${AI_MANAGER_ACTION_PREFIX}${input.action}`;
+  await logAction({
+    actorEmail: input.actorEmail,
+    actorName: input.actorName ?? "Cozoro AI Manager",
+    actorRole: input.actorRole ?? "manager",
+    action,
+    entityType: AI_MANAGER_ENTITY_TYPE,
+    entityId: input.entityId,
+    entityLabel: input.entityLabel,
+    details: input.details
+  });
+}
+
+function summarizeSnapshotForLog(snapshot: AiManagerOpsSnapshot): string {
+  return [
+    `support=${snapshot.supportUnreadThreads}`,
+    `contracts=${snapshot.pendingContractApprovals}`,
+    `audit=${snapshot.cleaningPendingAudit}`,
+    `overdue=${snapshot.cleaningOverdueAssigned}`,
+    `hostel=${snapshot.hostelPendingBookings}`,
+    `ac=${snapshot.acComfortAlerts}`
+  ].join("; ");
+}
+
+export async function listAiManagerActionLogs(limit = 40) {
+  const take = Math.max(1, Math.min(100, Math.trunc(limit) || 40));
+  const rows = await prisma.actionLog.findMany({
+    where: {
+      OR: [
+        { action: { startsWith: AI_MANAGER_ACTION_PREFIX } },
+        { entityType: AI_MANAGER_ENTITY_TYPE }
+      ]
+    },
+    orderBy: { createdAt: "desc" },
+    take
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    action: row.action,
+    actorEmail: row.actorEmail,
+    actorName: row.actorName,
+    actorRole: row.actorRole,
+    entityId: row.entityId,
+    entityLabel: row.entityLabel,
+    details: row.details,
+    createdAt: row.createdAt.toISOString()
+  }));
+}
 
 const dataDir = path.join(process.cwd(), "data");
 const configPath = path.join(dataDir, "ai-manager-config.json");
@@ -148,11 +212,14 @@ export async function ensureAiManagerAccount(options?: {
   actorEmail?: string;
 }): Promise<{ config: AiManagerConfig; passwordSet: boolean; generatedPassword?: string }> {
   const config = await readAiManagerConfig();
+  const wasProvisioned = Boolean(config.accountProvisionedAt);
+  const explicitActor = options?.actorEmail?.trim().toLowerCase() || null;
+
   await ensureSystemStaffAccount({
     email: config.email,
     role: "manager",
     name: config.displayName,
-    addedBy: options?.actorEmail?.trim().toLowerCase() || "system:ai-manager",
+    addedBy: explicitActor || "system:ai-manager",
     permissions: {
       branches: [],
       data: {
@@ -187,6 +254,23 @@ export async function ensureAiManagerAccount(options?: {
     accountProvisionedAt: config.accountProvisionedAt ?? new Date().toISOString()
   });
 
+  const shouldLog = Boolean(explicitActor) || passwordSet || !wasProvisioned;
+  if (shouldLog) {
+    await logAiManagerAction({
+      action: "account.ensure",
+      actorEmail: explicitActor || next.email,
+      actorName: next.displayName,
+      actorRole: explicitActor ? "owner" : "manager",
+      entityId: next.email,
+      entityLabel: next.displayName,
+      details: [
+        `firstProvision=${wasProvisioned ? "false" : "true"}`,
+        `passwordSet=${passwordSet ? "true" : "false"}`,
+        `generatedPassword=${generatedPassword ? "true" : "false"}`
+      ].join("; ")
+    });
+  }
+
   return { config: next, passwordSet, generatedPassword };
 }
 
@@ -206,9 +290,10 @@ export async function updateAiManagerSettings(
   const current = await readAiManagerConfig();
   const { password, ...configPatch } = patch;
   let next = mergeAiManagerConfig(current, configPatch);
+  const passwordUpdated = typeof password === "string" && password.trim().length >= 8;
 
-  if (typeof password === "string" && password.trim().length >= 8) {
-    await ensureAiManagerAccount({ password: password.trim(), actorEmail });
+  if (passwordUpdated) {
+    await ensureAiManagerAccount({ password: password!.trim(), actorEmail });
     next = await readAiManagerConfig();
     next = mergeAiManagerConfig(next, configPatch);
   } else {
@@ -223,6 +308,22 @@ export async function updateAiManagerSettings(
   next = await writeAiManagerConfig({
     ...next,
     accountProvisionedAt: next.accountProvisionedAt ?? new Date().toISOString()
+  });
+
+  await logAiManagerAction({
+    action: "settings.update",
+    actorEmail: actorEmail.trim().toLowerCase(),
+    actorRole: "owner",
+    entityId: next.email,
+    entityLabel: next.displayName,
+    details: [
+      `enabled=${next.enabled}`,
+      `mode=${next.mode}`,
+      `intervalHours=${next.intervalHours}`,
+      `reportEmails=${next.reportEmails.join(",") || "(owners)"}`,
+      `passwordUpdated=${passwordUpdated ? "true" : "false"}`,
+      `email=${next.email}`
+    ].join("; ")
   });
 
   return next;
@@ -468,6 +569,10 @@ export async function runAiManagerTick(options?: {
   force?: boolean;
 }): Promise<AiManagerTickResult> {
   if (tickRunning) {
+    await logAiManagerAction({
+      action: "tick.skip",
+      details: "reason=already_running"
+    });
     return { skipped: true, reason: "An AI Manager tick is already running." };
   }
 
@@ -478,6 +583,14 @@ export async function runAiManagerTick(options?: {
   try {
     let config = await readAiManagerConfig();
     if (!config.enabled && !force) {
+      await logAiManagerAction({
+        action: "tick.skip",
+        actorEmail: config.email,
+        actorName: config.displayName,
+        entityId: config.email,
+        entityLabel: config.displayName,
+        details: `trigger=${trigger}; reason=disabled`
+      });
       return { skipped: true, reason: "AI Manager is disabled." };
     }
 
@@ -490,6 +603,14 @@ export async function runAiManagerTick(options?: {
         ...config,
         lastTickAt: new Date().toISOString(),
         lastError: null
+      });
+      await logAiManagerAction({
+        action: "tick.skip",
+        actorEmail: config.email,
+        actorName: config.displayName,
+        entityId: config.email,
+        entityLabel: config.displayName,
+        details: `trigger=${trigger}; reason=quiet; ${summarizeSnapshotForLog(snapshot)}`
       });
       return { skipped: true, reason: "No outstanding items; quiet interval tick skipped." };
     }
@@ -539,6 +660,22 @@ export async function runAiManagerTick(options?: {
         : null
     });
 
+    await logAiManagerAction({
+      action: "tick.report",
+      actorEmail: config.email,
+      actorName: config.displayName,
+      entityId: report.id,
+      entityLabel: config.email,
+      details: [
+        `trigger=${trigger}`,
+        `mode=${config.mode}`,
+        summarizeSnapshotForLog(snapshot),
+        `drafts=${suggestedDrafts.length}`,
+        `emailedTo=${report.emailedTo.join(",") || "none"}`,
+        `emailErrors=${report.emailErrors.length}`
+      ].join("; ")
+    });
+
     console.log(
       `[ai-manager] tick trigger=${trigger} report=${report.id} emailed=${report.emailedTo.length} errors=${report.emailErrors.length}`
     );
@@ -549,6 +686,14 @@ export async function runAiManagerTick(options?: {
     try {
       const config = await readAiManagerConfig();
       await writeAiManagerConfig({ ...config, lastError: message, lastTickAt: new Date().toISOString() });
+      await logAiManagerAction({
+        action: "tick.fail",
+        actorEmail: config.email,
+        actorName: config.displayName,
+        entityId: config.email,
+        entityLabel: config.displayName,
+        details: `trigger=${trigger}; error=${message}`
+      });
     } catch {
       // ignore secondary write failure
     }
@@ -581,7 +726,10 @@ export async function getAiManagerStatus(actorEmail: string) {
     "Only staff can view AI Manager status."
   );
   const config = await readAiManagerConfig();
-  const reports = await listAiManagerReports(10);
+  const [reports, actionLogs] = await Promise.all([
+    listAiManagerReports(10),
+    listAiManagerActionLogs(40)
+  ]);
   const owners = await listOwnerAndAdminEmails();
   return {
     config: {
@@ -603,6 +751,7 @@ export async function getAiManagerStatus(actorEmail: string) {
       hostelPendingBookings: report.snapshot.hostelPendingBookings,
       acComfortAlerts: report.snapshot.acComfortAlerts,
       summaryPreview: report.summaryText.slice(0, 280)
-    }))
+    })),
+    recentActionLogs: actionLogs
   };
 }

@@ -1429,6 +1429,12 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "Log in as the AI Manager email to use the normal manager workspace (Messages, cleaning, etc.). The agent reports to owners; it does not auto-charge residents in v1.",
     vi: "Đăng nhập bằng email Quản lý AI để dùng workspace quản lý bình thường. Agent báo cáo cho owner; bản v1 không tự trừ tiền cư dân."
   },
+  aiManagerActionLogs: { en: "Action log", vi: "Nhật ký thao tác" },
+  aiManagerActionLogsHint: {
+    en: "Durable ActionLog rows for account setup, settings changes, report ticks, skips, and failures.",
+    vi: "Các dòng ActionLog lưu bền vững cho tạo tài khoản, đổi cài đặt, lần chạy báo cáo, bỏ qua và lỗi."
+  },
+  aiManagerNoActionLogs: { en: "No AI Manager action logs yet.", vi: "Chưa có nhật ký thao tác Quản lý AI." },
   aiManagerRecentReports: { en: "Recent reports", vi: "Báo cáo gần đây" },
   aiManagerNoReports: { en: "No reports yet. Enable the agent or run a report now.", vi: "Chưa có báo cáo. Hãy bật agent hoặc chạy báo cáo ngay." },
   aiManagerOpenReport: { en: "Open", vi: "Mở" },

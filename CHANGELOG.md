@@ -1,5 +1,9 @@
 # Changelog
 
+## [3.9.48] - 2026-10-30
+
+- **AI Manager action logs**: Account ensure, settings updates, report ticks, skips, and failures write to the shared `ActionLog` table; Settings → AI Manager shows the recent audit trail (`GET /manager/ai-manager/action-logs`).
+
 ## [3.9.47] - 2026-10-30
 
 - **AI Manager agent**: Dedicated manager portal account (default `ai.manager@cozorohome.com`) with scheduled ops digests emailed to owners; Settings → AI Manager for enable/mode/password/run-now; assist mode adds unsent support draft suggestions. See `docs/ai-manager.md`.

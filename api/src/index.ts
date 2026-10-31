@@ -387,6 +387,7 @@ import {
   ensureAiManagerAccount,
   getAiManagerReport,
   getAiManagerStatus,
+  listAiManagerActionLogs,
   listAiManagerReports,
   maybeRunScheduledAiManagerTick,
   readAiManagerConfig,
@@ -6111,6 +6112,24 @@ app.get("/manager/ai-manager/reports", async (request, response) => {
   } catch (error) {
     return response.status(403).json({
       error: error instanceof Error ? error.message : "Unable to load AI Manager reports"
+    });
+  }
+});
+
+app.get("/manager/ai-manager/action-logs", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "").trim();
+  const limit = Number(request.query.limit ?? 40);
+  try {
+    await requirePortalRole(
+      actorEmail,
+      ["owner", "app_admin", "manager"],
+      "Only staff can view AI Manager action logs."
+    );
+    const actionLogs = await listAiManagerActionLogs(Number.isFinite(limit) ? limit : 40);
+    return response.json({ actionLogs });
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to load AI Manager action logs"
     });
   }
 });

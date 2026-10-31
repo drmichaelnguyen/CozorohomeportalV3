@@ -62,6 +62,21 @@ UI settings in `api/data/ai-manager-config.json` override / complement these aft
 | `POST` | `/manager/ai-manager/run` | owner / app_admin (force tick) |
 | `GET` | `/manager/ai-manager/reports` | staff |
 | `GET` | `/manager/ai-manager/reports/:id` | staff |
+| `GET` | `/manager/ai-manager/action-logs` | staff |
+
+## Action logs
+
+Every meaningful AI Manager event is written to the shared Prisma **`ActionLog`** table (same audit store as other manager ops):
+
+| Action | When |
+|--------|------|
+| `ai_manager.account.ensure` | Account created/refreshed or password set |
+| `ai_manager.settings.update` | Owner saves Settings → AI Manager |
+| `ai_manager.tick.report` | Digest produced and (attempted) emailed |
+| `ai_manager.tick.skip` | Disabled / already running / quiet interval |
+| `ai_manager.tick.fail` | Tick threw |
+
+View recent rows in **Settings → AI Manager → Action log**, or `GET /manager/ai-manager/action-logs?actorEmail=…`. Interval “not elapsed yet” checks are **not** logged (would spam).
 
 ## Safety (v1)
 

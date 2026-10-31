@@ -34,10 +34,23 @@ type RecentReport = {
   summaryPreview: string;
 };
 
+type ActionLogRow = {
+  id: string;
+  action: string;
+  actorEmail: string | null;
+  actorName: string | null;
+  actorRole: string | null;
+  entityId: string | null;
+  entityLabel: string | null;
+  details: string | null;
+  createdAt: string;
+};
+
 type StatusResponse = {
   config: AiManagerConfig;
   effectiveReportEmails: string[];
   recentReports: RecentReport[];
+  recentActionLogs?: ActionLogRow[];
   error?: string;
 };
 
@@ -67,6 +80,7 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
   const [config, setConfig] = useState<AiManagerConfig | null>(null);
   const [effectiveReportEmails, setEffectiveReportEmails] = useState<string[]>([]);
   const [recentReports, setRecentReports] = useState<RecentReport[]>([]);
+  const [recentActionLogs, setRecentActionLogs] = useState<ActionLogRow[]>([]);
   const [reportEmailsText, setReportEmailsText] = useState("");
   const [password, setPassword] = useState("");
   const [selectedReport, setSelectedReport] = useState<FullReport | null>(null);
@@ -83,6 +97,7 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
       setConfig(body.config);
       setEffectiveReportEmails(body.effectiveReportEmails ?? []);
       setRecentReports(body.recentReports ?? []);
+      setRecentActionLogs(body.recentActionLogs ?? []);
       setReportEmailsText((body.config.reportEmails ?? []).join(", "));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load AI Manager.");
@@ -355,6 +370,32 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
           </p>
         ) : null}
         <p className="mt-2 text-xs text-slate-500">{t("aiManagerLoginHint")}</p>
+      </div>
+
+      <div>
+        <h4 className="mb-2 text-sm font-semibold text-slate-900">{t("aiManagerActionLogs")}</h4>
+        <p className="mb-2 text-xs text-slate-500">{t("aiManagerActionLogsHint")}</p>
+        {recentActionLogs.length === 0 ? (
+          <p className="text-sm text-slate-500">{t("aiManagerNoActionLogs")}</p>
+        ) : (
+          <ul className="max-h-72 space-y-2 overflow-auto">
+            {recentActionLogs.map((entry) => (
+              <li key={entry.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="font-medium text-slate-900">{entry.action}</span>
+                  <span className="text-xs text-slate-500">{formatWhen(entry.createdAt)}</span>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  {(entry.actorEmail || entry.actorName || "—") +
+                    (entry.actorRole ? ` · ${entry.actorRole}` : "")}
+                </p>
+                {entry.details ? (
+                  <p className="mt-1 break-words text-xs text-slate-600">{entry.details}</p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       <div>
