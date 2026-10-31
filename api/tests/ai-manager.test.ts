@@ -6,7 +6,9 @@ import {
   defaultAiManagerConfig,
   formatOpsSnapshotForPrompt,
   mergeAiManagerConfig,
+  normalizeAiManagerCapabilities,
   resolveReportRecipients,
+  shouldEscalateSupportInsteadOfAutoReply,
   shouldSkipQuietTick,
   type AiManagerOpsSnapshot
 } from "../src/ai-manager-logic.js";
@@ -23,21 +25,37 @@ function sampleSnapshot(overrides?: Partial<AiManagerOpsSnapshot>): AiManagerOps
     cleaningOverdueAssigned: 0,
     hostelPendingBookings: 0,
     acComfortAlerts: 0,
+    openFineDisputes: 0,
     ...overrides
   };
 }
 
-test("mergeAiManagerConfig clamps interval and normalizes emails", () => {
+test("mergeAiManagerConfig clamps interval and normalizes emails + capabilities", () => {
   const merged = mergeAiManagerConfig(defaultAiManagerConfig(), {
     enabled: true,
     mode: "assist",
     intervalHours: 500,
-    reportEmails: [" Owner@Example.com ", "bad", "owner@example.com"]
+    reportEmails: [" Owner@Example.com ", "bad", "owner@example.com"],
+    capabilities: { answerChat: true, manageFines: true }
   });
   assert.equal(merged.enabled, true);
   assert.equal(merged.mode, "assist");
   assert.equal(merged.intervalHours, 168);
   assert.deepEqual(merged.reportEmails, ["owner@example.com"]);
+  assert.equal(merged.capabilities.answerChat, true);
+  assert.equal(merged.capabilities.manageFines, true);
+  assert.equal(merged.capabilities.ownerReports, true);
+  assert.equal(merged.capabilities.scheduleAssignment, false);
+});
+
+test("normalizeAiManagerCapabilities fills defaults", () => {
+  assert.deepEqual(normalizeAiManagerCapabilities(undefined), {
+    ownerReports: true,
+    answerChat: false,
+    manageFines: false,
+    scheduleAssignment: false
+  });
+  assert.equal(normalizeAiManagerCapabilities({ scheduleAssignment: true }).scheduleAssignment, true);
 });
 
 test("resolveReportRecipients falls back to owners", () => {
@@ -51,10 +69,28 @@ test("resolveReportRecipients falls back to owners", () => {
   );
 });
 
-test("quiet ticks skip when nothing is outstanding", () => {
+test("quiet ticks respect capability-driven work", () => {
   assert.equal(shouldSkipQuietTick(sampleSnapshot(), false), true);
   assert.equal(shouldSkipQuietTick(sampleSnapshot({ supportUnreadThreads: 1 }), false), false);
   assert.equal(shouldSkipQuietTick(sampleSnapshot(), true), false);
+  assert.equal(
+    shouldSkipQuietTick(sampleSnapshot(), false, {
+      ownerReports: true,
+      answerChat: false,
+      manageFines: false,
+      scheduleAssignment: true
+    }),
+    false
+  );
+  assert.equal(
+    shouldSkipQuietTick(sampleSnapshot({ supportUnreadThreads: 2 }), false, {
+      ownerReports: true,
+      answerChat: true,
+      manageFines: false,
+      scheduleAssignment: false
+    }),
+    false
+  );
 });
 
 test("fallback summary and email subject reflect hot items", () => {
@@ -73,11 +109,19 @@ test("fallback summary and email subject reflect hot items", () => {
         latestBody: "Need help with laundry"
       }
     ],
-    pendingContractApprovals: 1
+    pendingContractApprovals: 1,
+    openFineDisputes: 1
   });
   const summary = buildFallbackReportSummary(hot);
   assert.match(summary, /support thread/);
   assert.match(summary, /contract approval/);
+  assert.match(summary, /fine dispute/);
   assert.match(buildReportEmailSubject(hot, "2026-10-30T12:00:00.000Z"), /need attention/i);
   assert.match(formatOpsSnapshotForPrompt(hot), /Ann/);
+});
+
+test("sensitive chat topics escalate instead of auto-reply", () => {
+  assert.equal(shouldEscalateSupportInsteadOfAutoReply("Can you help book laundry?"), false);
+  assert.equal(shouldEscalateSupportInsteadOfAutoReply("I want to terminate contract and refund deposit"), true);
+  assert.equal(shouldEscalateSupportInsteadOfAutoReply("Xin gặp owner về hoàn cọc"), true);
 });

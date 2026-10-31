@@ -1384,15 +1384,40 @@ const translations: Record<string, { en: string; vi: string }> = {
   aiManagerTab: { en: "AI Manager", vi: "Quản lý AI" },
   aiManagerTitle: { en: "AI Manager", vi: "Quản lý AI" },
   aiManagerDesc: {
-    en: "A dedicated manager account that watches operations and emails you status reports. Assist mode also prepares unsent support reply drafts.",
-    vi: "Tài khoản quản lý riêng theo dõi vận hành và gửi báo cáo cho bạn. Chế độ hỗ trợ còn soạn sẵn bản nháp trả lời hỗ trợ (chưa gửi)."
+    en: "A dedicated manager account that can report to you and — when you allow it — answer support chat, create/correct fines, and fill cleaning schedule slots.",
+    vi: "Tài khoản quản lý riêng có thể báo cáo cho bạn và — khi bạn cho phép — trả lời chat hỗ trợ, tạo/xử lý phạt, và phân công lịch vệ sinh."
   },
   aiManagerEnabled: { en: "Enable scheduled agent", vi: "Bật agent định kỳ" },
   aiManagerEnabledHint: {
-    en: "When on, the AI Manager surveys support, contracts, cleaning, hostel, and AC on a timer and reports to you.",
-    vi: "Khi bật, Quản lý AI rà soát tin nhắn, hợp đồng, vệ sinh, hostel và điều hòa theo lịch rồi báo cáo cho bạn."
+    en: "Master switch for the AI Manager tick. Individual functions below can still be turned off.",
+    vi: "Công tắc chính cho chu kỳ Quản lý AI. Vẫn có thể tắt từng chức năng bên dưới."
   },
-  aiManagerMode: { en: "Working mode", vi: "Chế độ làm việc" },
+  aiManagerCapabilities: { en: "Allowed functions", vi: "Chức năng được phép" },
+  aiManagerCapabilitiesHint: {
+    en: "Only checked functions may run during a tick. All actions are written to the Action log.",
+    vi: "Chỉ các chức năng được chọn mới chạy trong mỗi chu kỳ. Mọi thao tác đều ghi vào nhật ký."
+  },
+  aiManagerCapOwnerReports: { en: "Owner reports", vi: "Báo cáo cho owner" },
+  aiManagerCapOwnerReportsHint: {
+    en: "Email / Notification Center digests of ops status.",
+    vi: "Gửi digest trạng thái vận hành qua email / Notification Center."
+  },
+  aiManagerCapAnswerChat: { en: "Answer support chat", vi: "Trả lời chat hỗ trợ" },
+  aiManagerCapAnswerChatHint: {
+    en: "Auto-reply to personal resident threads in scope (sensitive topics escalate to you instead).",
+    vi: "Tự trả lời thread cá nhân trong phạm vi (chủ đề nhạy cảm sẽ chuyển lên bạn)."
+  },
+  aiManagerCapManageFines: { en: "Create / correct fines", vi: "Tạo / xử lý phạt" },
+  aiManagerCapManageFinesHint: {
+    en: "Create missed-cleaning fines and resolve open resident fine disputes (conservative keep/cancel rules).",
+    vi: "Tạo phạt bỏ vệ sinh và xử lý khiếu nại phạt đang mở (quy tắc giữ/hủy thận trọng)."
+  },
+  aiManagerCapSchedule: { en: "Cleaning schedule assignment", vi: "Phân công lịch vệ sinh" },
+  aiManagerCapScheduleHint: {
+    en: "Fill open cleaning slots using the existing auto-assign ranking jobs.",
+    vi: "Điền slot vệ sinh trống bằng thuật toán tự phân công hiện có."
+  },
+  aiManagerMode: { en: "Working mode", vi: "Chế độ làm việc" }
   aiManagerModeReportOnly: { en: "Report only (safest)", vi: "Chỉ báo cáo (an toàn nhất)" },
   aiManagerModeAssist: {
     en: "Assist — include suggested support drafts (not sent)",

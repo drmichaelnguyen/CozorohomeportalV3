@@ -1,5 +1,9 @@
 # Changelog
 
+## [3.9.49] - 2026-10-30
+
+- **AI Manager capability toggles**: Owners can enable/disable owner reports, support chat auto-replies, fine create/correct, and cleaning schedule assignment independently; each enabled function runs on ticks and is ActionLogged.
+
 ## [3.9.48] - 2026-10-30
 
 - **AI Manager action logs**: Account ensure, settings updates, report ticks, skips, and failures write to the shared `ActionLog` table; Settings → AI Manager shows the recent audit trail (`GET /manager/ai-manager/action-logs`).

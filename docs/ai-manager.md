@@ -10,9 +10,21 @@ An autonomous **manager staff agent** with its own portal login. It watches day-
 | **Login** | Same portal email/password login as any manager. Owners set the password from **Settings → AI Manager**. |
 | **Background job** | API `setInterval` (~30 min check) runs a tick when enabled and the configured interval has elapsed. |
 | **Report** | LLM digest emailed to owners + stored under `api/data/ai-manager-reports.json` + Notification Center card for owners. |
-| **Modes** | `report_only` (default) or `assist` (also prepares **unsent** support reply drafts in the report). |
+| **Modes** | `report_only` (default) or `assist` (unsent support drafts when chat auto-reply is off). |
+| **Capabilities** | Owner toggles in Settings: `ownerReports`, `answerChat`, `manageFines`, `scheduleAssignment` (all off except reports by default). |
 
 It reuses the same LLM stack as other portal AI (9router `gpt-5` when configured, else Gemini).
+
+## Owner-controlled functions
+
+| Toggle | When enabled on a tick |
+|--------|-------------------------|
+| **Owner reports** | LLM digest emailed + stored + Notification Center |
+| **Answer support chat** | Auto-sends AI replies on personal threads waiting for staff (max 5/tick). Sensitive topics (deposit refund, terminate, bed transfer, legal) escalate instead of auto-reply. |
+| **Create / correct fines** | Runs missed-cleaning fine sweep; resolves open fine disputes with conservative keep/cancel rules |
+| **Cleaning schedule assignment** | Fills open cleaning slots via `autoScheduleCleaningTasksByJob` (respects admin auto-scheduler enablement) |
+
+Every capability action writes `ai_manager.*` rows to **ActionLog**.
 
 ## What it watches
 
@@ -78,12 +90,13 @@ Every meaningful AI Manager event is written to the shared Prisma **`ActionLog`*
 
 View recent rows in **Settings → AI Manager → Action log**, or `GET /manager/ai-manager/action-logs?actorEmail=…`. Interval “not elapsed yet” checks are **not** logged (would spam).
 
-## Safety (v1)
+## Safety
 
-- Does **not** auto-send support replies, create fines, adjust coins, or write payment receipts from the scheduled loop.
-- Assist mode only **suggests** drafts inside the owner report.
-- Staff permissions on the AI account default to broad **read** plus support/cleaning write flags for future use; mutating automation is intentionally not wired yet.
-- Existing human **Manager AI chat** tools are unchanged and still require a logged-in operator.
+- Mutating functions stay **off** until an owner enables them in Settings.
+- Chat auto-reply skips sensitive topics and never posts to group channels.
+- Fine dispute cancels only when the resident text clearly indicates paid/duplicate/wrong person; otherwise the fine is kept with a logged note.
+- Schedule assignment uses the same fairness ranking as the human auto-scheduler and will no-op if that scheduler is disabled.
+- Existing human **Manager AI chat** tools are unchanged.
 
 ## Related
 

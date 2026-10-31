@@ -29,6 +29,13 @@ import {
   requirePortalRole
 } from "./staff-access.js";
 import {
+  countOpenFineDisputes,
+  runAnswerChatActions,
+  runManageFinesActions,
+  runScheduleAssignmentActions
+} from "./ai-manager-actions.js";
+import {
+  type AiManagerCapabilities,
   type AiManagerConfig,
   type AiManagerOpsSnapshot,
   type AiManagerReport,
@@ -38,8 +45,10 @@ import {
   buildReportEmailBody,
   buildReportEmailSubject,
   defaultAiManagerConfig,
+  formatCapabilitiesForLog,
   formatOpsSnapshotForPrompt,
   mergeAiManagerConfig,
+  normalizeAiManagerCapabilities,
   resolveReportRecipients,
   shouldSkipQuietTick
 } from "./ai-manager-logic.js";
@@ -78,7 +87,8 @@ function summarizeSnapshotForLog(snapshot: AiManagerOpsSnapshot): string {
     `audit=${snapshot.cleaningPendingAudit}`,
     `overdue=${snapshot.cleaningOverdueAssigned}`,
     `hostel=${snapshot.hostelPendingBookings}`,
-    `ac=${snapshot.acComfortAlerts}`
+    `ac=${snapshot.acComfortAlerts}`,
+    `fineDisputes=${snapshot.openFineDisputes}`
   ].join("; ");
 }
 
@@ -161,15 +171,17 @@ async function writeJsonFile(filePath: string, value: unknown) {
 
 export async function readAiManagerConfig(): Promise<AiManagerConfig> {
   const stored = await readJsonFile<Partial<AiManagerConfig>>(configPath, {});
+  const envDefaults = envAiManagerDefaults();
   return defaultAiManagerConfig({
-    ...envAiManagerDefaults(),
+    ...envDefaults,
     ...stored,
-    email: String(stored.email ?? envAiManagerDefaults().email ?? defaultAiManagerConfig().email)
+    email: String(stored.email ?? envDefaults.email ?? defaultAiManagerConfig().email)
       .trim()
       .toLowerCase(),
     reportEmails: Array.isArray(stored.reportEmails)
       ? stored.reportEmails
-      : envAiManagerDefaults().reportEmails ?? []
+      : envDefaults.reportEmails ?? [],
+    capabilities: normalizeAiManagerCapabilities(stored.capabilities ?? envDefaults.capabilities)
   });
 }
 
@@ -281,6 +293,7 @@ export async function updateAiManagerSettings(
     email: string;
     displayName: string;
     mode: string;
+    capabilities: Partial<AiManagerCapabilities>;
     reportEmails: string[];
     intervalHours: number;
     password: string;
@@ -301,7 +314,20 @@ export async function updateAiManagerSettings(
       email: next.email,
       role: "manager",
       name: next.displayName,
-      addedBy: actorEmail.trim().toLowerCase()
+      addedBy: actorEmail.trim().toLowerCase(),
+      permissions: {
+        branches: [],
+        data: {
+          clients: { read: true, write: false },
+          fines: { read: true, write: next.capabilities.manageFines },
+          payments: { read: true, write: false },
+          cleaning: { read: true, write: next.capabilities.scheduleAssignment },
+          laundry: { read: true, write: false },
+          support: { read: true, write: next.capabilities.answerChat },
+          coins: { read: true, write: false },
+          stats: { read: true, write: false }
+        }
+      }
     });
   }
 
@@ -322,7 +348,8 @@ export async function updateAiManagerSettings(
       `intervalHours=${next.intervalHours}`,
       `reportEmails=${next.reportEmails.join(",") || "(owners)"}`,
       `passwordUpdated=${passwordUpdated ? "true" : "false"}`,
-      `email=${next.email}`
+      `email=${next.email}`,
+      formatCapabilitiesForLog(next.capabilities)
     ].join("; ")
   });
 
@@ -438,18 +465,24 @@ export async function gatherAiManagerOpsSnapshot(): Promise<AiManagerOpsSnapshot
     };
   });
 
-  const [cleaningPendingAudit, cleaningOverdueAssigned, hostelPendingBookings, acAlerts] =
-    await Promise.all([
-      prisma.cleaningTask.count({ where: { status: CleaningTaskStatus.DONE_PENDING_AUDIT } }),
-      prisma.cleaningTask.count({
-        where: {
-          status: CleaningTaskStatus.ASSIGNED,
-          scheduledDate: { lt: new Date(`${todayKey}T00:00:00.000Z`) }
-        }
-      }),
-      countHostelPendingBookings(),
-      loadOpenAcComfortAlertsForStaff().catch(() => [])
-    ]);
+  const [
+    cleaningPendingAudit,
+    cleaningOverdueAssigned,
+    hostelPendingBookings,
+    acAlerts,
+    openFineDisputes
+  ] = await Promise.all([
+    prisma.cleaningTask.count({ where: { status: CleaningTaskStatus.DONE_PENDING_AUDIT } }),
+    prisma.cleaningTask.count({
+      where: {
+        status: CleaningTaskStatus.ASSIGNED,
+        scheduledDate: { lt: new Date(`${todayKey}T00:00:00.000Z`) }
+      }
+    }),
+    countHostelPendingBookings(),
+    loadOpenAcComfortAlertsForStaff().catch(() => []),
+    countOpenFineDisputes()
+  ]);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -461,7 +494,8 @@ export async function gatherAiManagerOpsSnapshot(): Promise<AiManagerOpsSnapshot
     cleaningPendingAudit,
     cleaningOverdueAssigned,
     hostelPendingBookings,
-    acComfortAlerts: acAlerts.length
+    acComfortAlerts: acAlerts.length,
+    openFineDisputes
   };
 }
 
@@ -598,7 +632,7 @@ export async function runAiManagerTick(options?: {
     config = await readAiManagerConfig();
 
     const snapshot = await gatherAiManagerOpsSnapshot();
-    if (shouldSkipQuietTick(snapshot, force) && trigger === "interval") {
+    if (shouldSkipQuietTick(snapshot, force, config.capabilities) && trigger === "interval") {
       await writeAiManagerConfig({
         ...config,
         lastTickAt: new Date().toISOString(),
@@ -615,35 +649,75 @@ export async function runAiManagerTick(options?: {
       return { skipped: true, reason: "No outstanding items; quiet interval tick skipped." };
     }
 
-    const summaryText = await summarizeSnapshotWithLlm(snapshot, config.email);
+    const actionsTaken: AiManagerReport["actionsTaken"] = [];
+
+    if (config.capabilities.scheduleAssignment) {
+      actionsTaken.push(
+        await runScheduleAssignmentActions({
+          operatorEmail: config.email,
+          displayName: config.displayName
+        })
+      );
+    }
+
+    if (config.capabilities.manageFines) {
+      actionsTaken.push(
+        await runManageFinesActions({
+          operatorEmail: config.email,
+          displayName: config.displayName
+        })
+      );
+    }
+
+    if (config.capabilities.answerChat) {
+      actionsTaken.push(
+        await runAnswerChatActions({
+          snapshot,
+          operatorEmail: config.email,
+          displayName: config.displayName
+        })
+      );
+    }
+
+    const summaryText = config.capabilities.ownerReports
+      ? await summarizeSnapshotWithLlm(snapshot, config.email)
+      : buildFallbackReportSummary(snapshot);
     const suggestedDrafts =
-      config.mode === "assist" ? await buildAssistDrafts(snapshot, config.email) : [];
+      !config.capabilities.answerChat && config.mode === "assist"
+        ? await buildAssistDrafts(snapshot, config.email)
+        : [];
 
     const owners = await listOwnerAndAdminEmails();
-    const recipients = resolveReportRecipients(config, owners);
+    const recipients = config.capabilities.ownerReports
+      ? resolveReportRecipients(config, owners)
+      : [];
     const report: AiManagerReport = {
       id: `aimgr-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
       createdAt: new Date().toISOString(),
       trigger,
       mode: config.mode,
+      capabilities: config.capabilities,
       snapshot,
       summaryText,
       suggestedDrafts,
+      actionsTaken,
       emailedTo: [],
       emailErrors: []
     };
 
-    const subject = buildReportEmailSubject(snapshot, report.createdAt);
-    const body = buildReportEmailBody(report);
+    if (config.capabilities.ownerReports) {
+      const subject = buildReportEmailSubject(snapshot, report.createdAt);
+      const body = buildReportEmailBody(report);
 
-    for (const to of recipients) {
-      try {
-        await sendGmailReceipt({ to, subject, body });
-        report.emailedTo.push(to);
-      } catch (error) {
-        report.emailErrors.push(
-          `${to}: ${error instanceof Error ? error.message : "email failed"}`
-        );
+      for (const to of recipients) {
+        try {
+          await sendGmailReceipt({ to, subject, body });
+          report.emailedTo.push(to);
+        } catch (error) {
+          report.emailErrors.push(
+            `${to}: ${error instanceof Error ? error.message : "email failed"}`
+          );
+        }
       }
     }
 
@@ -669,7 +743,9 @@ export async function runAiManagerTick(options?: {
       details: [
         `trigger=${trigger}`,
         `mode=${config.mode}`,
+        formatCapabilitiesForLog(config.capabilities),
         summarizeSnapshotForLog(snapshot),
+        `actions=${actionsTaken.map((a) => `${a.capability}:${a.ok ? "ok" : "fail"}`).join(",") || "none"}`,
         `drafts=${suggestedDrafts.length}`,
         `emailedTo=${report.emailedTo.join(",") || "none"}`,
         `emailErrors=${report.emailErrors.length}`

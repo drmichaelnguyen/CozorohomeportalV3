@@ -5,11 +5,19 @@ import { useCallback, useEffect, useState } from "react";
 import { API_BASE_URL } from "../lib/api-base-url";
 import { usePortalLanguage } from "./portal-language";
 
+type AiManagerCapabilities = {
+  ownerReports: boolean;
+  answerChat: boolean;
+  manageFines: boolean;
+  scheduleAssignment: boolean;
+};
+
 type AiManagerConfig = {
   enabled: boolean;
   email: string;
   displayName: string;
   mode: "report_only" | "assist";
+  capabilities: AiManagerCapabilities;
   reportEmails: string[];
   intervalHours: number;
   accountProvisionedAt: string | null;
@@ -70,6 +78,22 @@ function formatWhen(value: string | null) {
   return date.toLocaleString();
 }
 
+const DEFAULT_CAPABILITIES: AiManagerCapabilities = {
+  ownerReports: true,
+  answerChat: false,
+  manageFines: false,
+  scheduleAssignment: false
+};
+
+function normalizeCapabilities(value?: Partial<AiManagerCapabilities> | null): AiManagerCapabilities {
+  return {
+    ownerReports: value?.ownerReports ?? DEFAULT_CAPABILITIES.ownerReports,
+    answerChat: value?.answerChat ?? DEFAULT_CAPABILITIES.answerChat,
+    manageFines: value?.manageFines ?? DEFAULT_CAPABILITIES.manageFines,
+    scheduleAssignment: value?.scheduleAssignment ?? DEFAULT_CAPABILITIES.scheduleAssignment
+  };
+}
+
 export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
   const { t } = usePortalLanguage();
   const [loading, setLoading] = useState(true);
@@ -94,7 +118,10 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
       );
       const body = (await response.json()) as StatusResponse;
       if (!response.ok) throw new Error(body.error ?? "Unable to load AI Manager.");
-      setConfig(body.config);
+      setConfig({
+        ...body.config,
+        capabilities: normalizeCapabilities(body.config.capabilities)
+      });
       setEffectiveReportEmails(body.effectiveReportEmails ?? []);
       setRecentReports(body.recentReports ?? []);
       setRecentActionLogs(body.recentActionLogs ?? []);
@@ -129,6 +156,7 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
           email: config.email,
           displayName: config.displayName,
           mode: config.mode,
+          capabilities: config.capabilities,
           intervalHours: config.intervalHours,
           reportEmails,
           ...(password.trim().length >= 8 ? { password: password.trim() } : {})
@@ -253,6 +281,39 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
             <span className="mt-0.5 block text-slate-500">{t("aiManagerEnabledHint")}</span>
           </span>
         </label>
+
+        <div className="rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm md:col-span-2">
+          <p className="font-medium text-slate-900">{t("aiManagerCapabilities")}</p>
+          <p className="mt-0.5 text-xs text-slate-500">{t("aiManagerCapabilitiesHint")}</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {(
+              [
+                ["ownerReports", "aiManagerCapOwnerReports", "aiManagerCapOwnerReportsHint"],
+                ["answerChat", "aiManagerCapAnswerChat", "aiManagerCapAnswerChatHint"],
+                ["manageFines", "aiManagerCapManageFines", "aiManagerCapManageFinesHint"],
+                ["scheduleAssignment", "aiManagerCapSchedule", "aiManagerCapScheduleHint"]
+              ] as const
+            ).map(([key, labelKey, hintKey]) => (
+              <label key={key} className="flex items-start gap-3 rounded-md border border-slate-100 bg-slate-50 px-3 py-2">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={config.capabilities[key]}
+                  onChange={(event) =>
+                    setConfig({
+                      ...config,
+                      capabilities: { ...config.capabilities, [key]: event.target.checked }
+                    })
+                  }
+                />
+                <span>
+                  <span className="font-medium text-slate-900">{t(labelKey)}</span>
+                  <span className="mt-0.5 block text-xs text-slate-500">{t(hintKey)}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
 
         <label className="block text-sm">
           <span className="mb-1 block font-medium text-slate-800">{t("aiManagerMode")}</span>

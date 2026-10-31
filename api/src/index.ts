@@ -6012,6 +6012,14 @@ app.put("/manager/ai-manager", async (request, response) => {
       email: z.string().email().optional(),
       displayName: z.string().trim().min(1).max(80).optional(),
       mode: z.enum(["report_only", "assist"]).optional(),
+      capabilities: z
+        .object({
+          ownerReports: z.boolean().optional(),
+          answerChat: z.boolean().optional(),
+          manageFines: z.boolean().optional(),
+          scheduleAssignment: z.boolean().optional()
+        })
+        .optional(),
       reportEmails: z.array(z.string().email()).max(20).optional(),
       intervalHours: z.coerce.number().int().min(1).max(168).optional(),
       password: z.string().min(8).max(128).optional()

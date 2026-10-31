@@ -298,6 +298,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.49 | AI Manager owner capability toggles: reports, answer chat, create/correct fines, cleaning schedule assignment. |
 | 3.9.48 | AI Manager writes durable ActionLog rows (account/settings/ticks) and shows them in Settings → AI Manager. |
 | 3.9.47 | Cozoro AI Manager: dedicated manager staff account + scheduled owner digests (support/contracts/cleaning/hostel/AC); Settings → AI Manager; assist mode suggests unsent support drafts; see `docs/ai-manager.md`. |
 | 3.9.46 | Fix cleaning day-menu confusion: count APPROVED slots as occupied, show “Your duty” first, label other residents’ slots as taken (not “Already assigned”), and block same-day self-assign of a second task type. |
