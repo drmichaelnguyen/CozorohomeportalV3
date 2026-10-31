@@ -63,6 +63,7 @@ import { InlineHelp } from "./inline-help";
 import { ManagerSettingsTools } from "./manager-settings-tools";
 import { ManagerResidentGuidesEditor } from "./manager-resident-guides-editor";
 import { AdminAiUsageAnalytics } from "./admin-ai-usage-analytics";
+import { ManagerAiManagerPanel } from "./manager-ai-manager-panel";
 import { BedOccupancyAnalytics } from "./bed-occupancy-analytics";
 import { MemberTierAnalytics } from "./member-tier-analytics";
 import { PortalVisitAnalytics } from "./portal-visit-analytics";
@@ -290,7 +291,7 @@ type PricingSettingsSectionKey =
   | "stay_discounts"
   | "staff_accounts";
 
-type ManagerSettingsMainSection = "pricing" | "resident_guides" | "tools" | "ai_usage";
+type ManagerSettingsMainSection = "pricing" | "resident_guides" | "tools" | "ai_usage" | "ai_manager";
 type PricingSettingsSubTab = "long_term" | "short_term" | "referral" | "staff";
 type ClientSubTab = "list" | "details" | "checkout" | "analytics";
 type OwnerAnalyticsTab = "payments" | "coins" | "laundry" | "fines" | "cleaning" | "airfryer" | "occupancy" | "members" | "visits";
@@ -3247,11 +3248,13 @@ function buildPrepaidOwnerLinesDiff(
 export function ManagerClient({
   initialView = "overview",
   initialChatId,
-  initialSupportSubTab
+  initialSupportSubTab,
+  initialSettingsSection
 }: {
   initialView?: ManagerView;
   initialChatId?: string;
   initialSupportSubTab?: "messages" | "feedbacks" | "maintenance" | "assistant" | "web_ai" | "donations";
+  initialSettingsSection?: ManagerSettingsMainSection;
 }) {
 
   const router = useRouter();
@@ -3270,6 +3273,7 @@ export function ManagerClient({
     sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin";
   const canEditRentCoinUsage = isOwnerSession || isAppAdminSession;
   const canViewAiUsage = isOwnerSession || isAppAdminSession;
+  const canManageAiManager = isOwnerSession || isAppAdminSession;
   const [canManageMetaAiKnowledge, setCanManageMetaAiKnowledge] = useState(false);
   const canSendDepositRefundEmail =
     sessionRole === "manager" || sessionRole === "owner" || sessionRole === "app_admin";
@@ -3650,7 +3654,9 @@ export function ManagerClient({
   const [referralProgramLoading, setReferralProgramLoading] = useState(false);
   const [referralProgramSaving, setReferralProgramSaving] = useState(false);
   const [referralProgramMessage, setReferralProgramMessage] = useState("");
-  const [managerSettingsMainSection, setManagerSettingsMainSection] = useState<ManagerSettingsMainSection>("pricing");
+  const [managerSettingsMainSection, setManagerSettingsMainSection] = useState<ManagerSettingsMainSection>(
+    initialSettingsSection ?? "pricing"
+  );
   const [pricingSettingsTab, setPricingSettingsTab] = useState<PricingSettingsSubTab>("long_term");
   const [bedPricingExpanded, setBedPricingExpanded] = useState(false);
   const [pricingSettingsExpanded, setPricingSettingsExpanded] = useState<Record<PricingSettingsSectionKey, boolean>>({
@@ -6158,6 +6164,13 @@ export function ManagerClient({
   useEffect(() => {
     setActiveManagerView(initialView);
   }, [initialView]);
+
+  useEffect(() => {
+    if (!initialSettingsSection) return;
+    if (initialSettingsSection === "ai_manager" && !canManageAiManager) return;
+    if (initialSettingsSection === "ai_usage" && !canViewAiUsage) return;
+    setManagerSettingsMainSection(initialSettingsSection);
+  }, [initialSettingsSection, canManageAiManager, canViewAiUsage]);
 
   useEffect(() => {
     setShowAllStatsEntries(false);
@@ -12006,6 +12019,8 @@ export function ManagerClient({
                 <h2 className="text-xl font-bold text-slate-900">
                   {managerSettingsMainSection === "tools"
                     ? t("settingsToolsTitle")
+                    : managerSettingsMainSection === "ai_manager"
+                      ? t("aiManagerTitle")
                     : managerSettingsMainSection === "ai_usage"
                       ? "AI usage"
                     : managerSettingsMainSection === "resident_guides"
@@ -12019,6 +12034,8 @@ export function ManagerClient({
                 <p className="mt-1 text-sm text-slate-500">
                   {managerSettingsMainSection === "tools"
                     ? t("settingsToolsDesc")
+                    : managerSettingsMainSection === "ai_manager"
+                      ? t("aiManagerDesc")
                     : managerSettingsMainSection === "ai_usage"
                       ? "Token and estimated cost by text chat vs computer vision."
                     : managerSettingsMainSection === "resident_guides"
@@ -12048,7 +12065,15 @@ export function ManagerClient({
               ) : null}
             </div>
             <div className="mt-5 flex flex-wrap gap-2">
-              {(["pricing", "resident_guides", "tools", ...(canViewAiUsage ? ["ai_usage" as const] : [])] as const).map((sec) => (
+              {(
+                [
+                  "pricing",
+                  "resident_guides",
+                  "tools",
+                  ...(canManageAiManager ? (["ai_manager"] as const) : []),
+                  ...(canViewAiUsage ? (["ai_usage"] as const) : [])
+                ] as const
+              ).map((sec) => (
                 <button
                   key={sec}
                   type="button"
@@ -12059,6 +12084,8 @@ export function ManagerClient({
                 >
                   {sec === "pricing"
                     ? t("pricing")
+                    : sec === "ai_manager"
+                      ? t("aiManagerTab")
                     : sec === "ai_usage"
                       ? "AI usage"
                     : sec === "resident_guides"
@@ -13377,6 +13404,12 @@ export function ManagerClient({
                 await loadClients(true);
               }}
             />
+          ) : null}
+
+          {managerSettingsMainSection === "ai_manager" && canManageAiManager ? (
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <ManagerAiManagerPanel actorEmail={normalizedEmail} />
+            </div>
           ) : null}
 
           {managerSettingsMainSection === "ai_usage" && canViewAiUsage ? (

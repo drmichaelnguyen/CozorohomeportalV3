@@ -37,7 +37,7 @@ type ResidentNotification = {
 
 type StaffNotification = {
   id: string;
-  type: "SUPPORT_REQUEST" | "AC_COMFORT" | "HOSTEL_BOOKING";
+  type: "SUPPORT_REQUEST" | "AC_COMFORT" | "HOSTEL_BOOKING" | "AI_MANAGER_REPORT";
   conversationId: string;
   residentEmail: string;
   residentName: string | null;
@@ -213,6 +213,33 @@ export function NotificationCenterClient() {
                       >
                         {dismissingId === n.id ? "…" : t("notificationAcComfortDismiss")}
                       </button>
+                    </div>
+                  </div>
+                );
+              }
+              if (isAdminSession && (notification as StaffNotification).type === "AI_MANAGER_REPORT") {
+                const n = notification as StaffNotification;
+                return (
+                  <div key={n.id} className="rounded-2xl border border-teal-200 bg-teal-50/60 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">{n.title}</div>
+                        <p className="mt-2 whitespace-pre-wrap text-sm text-slate-600">{n.body}</p>
+                      </div>
+                      <div className="text-right">
+                        <div className="rounded-full bg-teal-100 px-3 py-1 text-xs font-semibold text-teal-800">
+                          AI Manager
+                        </div>
+                        <div className="mt-2 text-xs text-slate-500">{formatDateTime(n.createdAt)}</div>
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <Link
+                        href={n.href || "/manager?view=settings&settingsSection=ai_manager"}
+                        className="inline-flex rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-medium text-white"
+                      >
+                        Open AI Manager
+                      </Link>
                     </div>
                   </div>
                 );

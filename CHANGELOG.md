@@ -1,5 +1,9 @@
 # Changelog
 
+## [3.9.47] - 2026-10-30
+
+- **AI Manager agent**: Dedicated manager portal account (default `ai.manager@cozorohome.com`) with scheduled ops digests emailed to owners; Settings → AI Manager for enable/mode/password/run-now; assist mode adds unsent support draft suggestions. See `docs/ai-manager.md`.
+
 ## [3.9.46] - 2026-10-15
 
 - **Cleaning schedule day menu**: Residents no longer see another task type (e.g. Kitchen) presented as if it were their duty. The menu shows **Your duty** first; other slots say **Taken by someone else**.

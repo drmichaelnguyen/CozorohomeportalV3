@@ -1381,6 +1381,60 @@ const translations: Record<string, { en: string; vi: string }> = {
   longTermTab: { en: "Long-term", vi: "Dài hạn" },
   shortTermTab: { en: "Short-term", vi: "Ngắn hạn" },
   staffAccountsTab: { en: "Staff Accounts", vi: "Tài khoản nhân viên" },
+  aiManagerTab: { en: "AI Manager", vi: "Quản lý AI" },
+  aiManagerTitle: { en: "AI Manager", vi: "Quản lý AI" },
+  aiManagerDesc: {
+    en: "A dedicated manager account that watches operations and emails you status reports. Assist mode also prepares unsent support reply drafts.",
+    vi: "Tài khoản quản lý riêng theo dõi vận hành và gửi báo cáo cho bạn. Chế độ hỗ trợ còn soạn sẵn bản nháp trả lời hỗ trợ (chưa gửi)."
+  },
+  aiManagerEnabled: { en: "Enable scheduled agent", vi: "Bật agent định kỳ" },
+  aiManagerEnabledHint: {
+    en: "When on, the AI Manager surveys support, contracts, cleaning, hostel, and AC on a timer and reports to you.",
+    vi: "Khi bật, Quản lý AI rà soát tin nhắn, hợp đồng, vệ sinh, hostel và điều hòa theo lịch rồi báo cáo cho bạn."
+  },
+  aiManagerMode: { en: "Working mode", vi: "Chế độ làm việc" },
+  aiManagerModeReportOnly: { en: "Report only (safest)", vi: "Chỉ báo cáo (an toàn nhất)" },
+  aiManagerModeAssist: {
+    en: "Assist — include suggested support drafts (not sent)",
+    vi: "Hỗ trợ — kèm bản nháp trả lời (không gửi tự động)"
+  },
+  aiManagerAccountEmail: { en: "AI Manager login email", vi: "Email đăng nhập Quản lý AI" },
+  aiManagerDisplayName: { en: "Display name", vi: "Tên hiển thị" },
+  aiManagerIntervalHours: { en: "Report interval (hours)", vi: "Chu kỳ báo cáo (giờ)" },
+  aiManagerReportEmails: { en: "Report to (emails)", vi: "Gửi báo cáo tới (email)" },
+  aiManagerReportEmailsHint: {
+    en: "Comma-separated. Leave blank to use owners/app admins. Effective recipients",
+    vi: "Cách nhau bằng dấu phẩy. Để trống sẽ dùng owner/app admin. Người nhận hiện tại"
+  },
+  aiManagerPassword: { en: "Set portal password for AI Manager", vi: "Đặt mật khẩu portal cho Quản lý AI" },
+  aiManagerPasswordPlaceholder: {
+    en: "Optional — min 8 characters to update",
+    vi: "Tuỳ chọn — tối thiểu 8 ký tự để cập nhật"
+  },
+  aiManagerSave: { en: "Save AI Manager settings", vi: "Lưu cài đặt Quản lý AI" },
+  aiManagerSaved: { en: "AI Manager settings saved.", vi: "Đã lưu cài đặt Quản lý AI." },
+  aiManagerProvision: { en: "Create / refresh account", vi: "Tạo / cập nhật tài khoản" },
+  aiManagerAccountReady: {
+    en: "AI Manager staff account is ready. You can log in with that email on the portal.",
+    vi: "Tài khoản Quản lý AI đã sẵn sàng. Bạn có thể đăng nhập portal bằng email đó."
+  },
+  aiManagerRunNow: { en: "Run report now", vi: "Chạy báo cáo ngay" },
+  aiManagerRunning: { en: "Running…", vi: "Đang chạy…" },
+  aiManagerRunDone: { en: "AI Manager report finished", vi: "Báo cáo Quản lý AI đã xong" },
+  aiManagerRunSkipped: { en: "AI Manager tick skipped", vi: "Bỏ qua lần chạy Quản lý AI" },
+  aiManagerLastTick: { en: "Last tick", vi: "Lần chạy gần nhất" },
+  aiManagerAccountSince: { en: "Account provisioned", vi: "Tài khoản được tạo" },
+  aiManagerLastError: { en: "Last error", vi: "Lỗi gần nhất" },
+  aiManagerLoginHint: {
+    en: "Log in as the AI Manager email to use the normal manager workspace (Messages, cleaning, etc.). The agent reports to owners; it does not auto-charge residents in v1.",
+    vi: "Đăng nhập bằng email Quản lý AI để dùng workspace quản lý bình thường. Agent báo cáo cho owner; bản v1 không tự trừ tiền cư dân."
+  },
+  aiManagerRecentReports: { en: "Recent reports", vi: "Báo cáo gần đây" },
+  aiManagerNoReports: { en: "No reports yet. Enable the agent or run a report now.", vi: "Chưa có báo cáo. Hãy bật agent hoặc chạy báo cáo ngay." },
+  aiManagerOpenReport: { en: "Open", vi: "Mở" },
+  aiManagerReportDetail: { en: "AI Manager report", vi: "Báo cáo Quản lý AI" },
+  aiManagerSuggestedDrafts: { en: "Suggested support drafts (not sent)", vi: "Bản nháp hỗ trợ gợi ý (chưa gửi)" },
+  aiManagerLoadFailed: { en: "Unable to load AI Manager.", vi: "Không tải được Quản lý AI." },
   settingsToolsTab: { en: "Tools", vi: "Công cụ" },
   settingsToolsTitle: { en: "Tools", vi: "Công cụ" },
   settingsToolsDesc: {

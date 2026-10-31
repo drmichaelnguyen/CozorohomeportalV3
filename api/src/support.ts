@@ -96,6 +96,18 @@ export type StaffSupportInboxItem =
       createdAt: Date;
       unreadCount: number;
       href: string;
+    }
+  | {
+      id: string;
+      type: "AI_MANAGER_REPORT";
+      conversationId: string;
+      residentEmail: string;
+      residentName: string | null;
+      title: string;
+      body: string;
+      createdAt: Date;
+      unreadCount: number;
+      href: string;
     };
 
 const staffNotificationCache = new Map<string, CachedNotificationEntry<StaffSupportInboxItem>>();
@@ -1317,6 +1329,37 @@ export async function listStaffSupportNotifications(operatorEmail: string) {
       unreadCount: 1,
       href: "/manager?view=short_term"
     });
+  }
+
+  try {
+    const actor = await resolvePortalLogin(normalizedOperatorEmail);
+    if (actor.role === "owner" || actor.role === "app_admin") {
+      const { listRecentAiManagerReportsForOwner } = await import("./ai-manager.js");
+      const reports = await listRecentAiManagerReportsForOwner(3);
+      for (const report of reports.slice(0, 3)) {
+        const hot =
+          report.snapshot.supportUnreadThreads +
+          report.snapshot.pendingContractApprovals +
+          report.snapshot.cleaningPendingAudit +
+          report.snapshot.cleaningOverdueAssigned +
+          report.snapshot.hostelPendingBookings +
+          report.snapshot.acComfortAlerts;
+        notifications.push({
+          id: `ai-manager-report-${report.id}`,
+          type: "AI_MANAGER_REPORT",
+          conversationId: report.id,
+          residentEmail: "ai.manager@cozorohome.com",
+          residentName: "AI Manager",
+          title: hot > 0 ? `AI Manager: ${hot} item(s) need attention` : "AI Manager: all clear report",
+          body: report.summaryText.slice(0, 280),
+          createdAt: new Date(report.createdAt),
+          unreadCount: 1,
+          href: "/manager?view=settings&settingsSection=ai_manager"
+        });
+      }
+    }
+  } catch {
+    // AI Manager notices are best-effort
   }
 
   return writeNotificationCache(staffNotificationCache, normalizedOperatorEmail, {

@@ -451,6 +451,68 @@ export async function getStaffName(email: string): Promise<string | null> {
   return entry?.name?.trim() || null;
 }
 
+/**
+ * Upsert a staff row without an interactive owner actor (system / AI Manager bootstrap).
+ * Does not elevate existing owner/app_admin accounts.
+ */
+export async function ensureSystemStaffAccount(input: {
+  email: string;
+  role: StaffRole;
+  name: string;
+  addedBy: string;
+  permissions?: ManagerPermissions;
+}) {
+  const email = normalizeEmail(input.email);
+  if (!email.includes("@")) {
+    throw new Error("A valid staff email is required.");
+  }
+
+  const file = await readStaffAccessFile();
+  const existingIndex = file.staff.findIndex((entry) => normalizeEmail(entry.email) === email);
+  const now = new Date().toISOString();
+
+  if (existingIndex >= 0) {
+    const existing = file.staff[existingIndex]!;
+    if (existing.role === "owner" || existing.role === "app_admin") {
+      file.staff[existingIndex] = {
+        ...existing,
+        ...(input.name.trim() ? { name: input.name.trim() } : {}),
+        ...(input.permissions ? { permissions: input.permissions } : {})
+      };
+    } else {
+      file.staff[existingIndex] = {
+        ...existing,
+        role: input.role,
+        name: input.name.trim() || existing.name,
+        addedAt: now,
+        addedBy: normalizeEmail(input.addedBy) || "system",
+        ...(input.permissions ? { permissions: input.permissions } : {})
+      };
+    }
+  } else {
+    file.staff.push({
+      email,
+      role: input.role,
+      name: input.name.trim() || undefined,
+      addedAt: now,
+      addedBy: normalizeEmail(input.addedBy) || "system",
+      ...(input.permissions ? { permissions: input.permissions } : {})
+    });
+  }
+
+  await writeStaffAccessFile(file);
+  return (await readStaffAccessFile()).staff.find((entry) => normalizeEmail(entry.email) === email) ?? null;
+}
+
+/** Owner + app_admin emails (defaults + staff file) for digests that report to leadership. */
+export async function listOwnerAndAdminEmails(): Promise<string[]> {
+  const file = await readStaffAccessFile();
+  const fromFile = file.staff
+    .filter((entry) => entry.role === "owner" || entry.role === "app_admin")
+    .map((entry) => normalizeEmail(entry.email));
+  return [...new Set([...DEFAULT_APP_ADMIN_EMAILS, ...DEFAULT_OWNER_EMAILS, ...fromFile].filter(Boolean))];
+}
+
 /** Manager / owner / app_admin emails used for operational alerts (hostel bookings, etc.). */
 export async function listStaffNotifyEmails(): Promise<string[]> {
   const file = await readStaffAccessFile();

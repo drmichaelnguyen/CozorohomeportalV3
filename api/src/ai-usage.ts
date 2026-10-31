@@ -15,7 +15,8 @@ export const AI_FEATURE_LABELS: Record<string, string> = {
   manager_support_reply_draft: "Manager support reply draft",
   resident_portal: "Resident assistant",
   resident_support_thread: "Support assistant",
-  cleaning_photo_verification: "Cleaning photo verification"
+  cleaning_photo_verification: "Cleaning photo verification",
+  ai_manager_report: "AI Manager owner report"
 };
 
 export const AI_MODALITY_LABELS: Record<AiModality, string> = {

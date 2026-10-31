@@ -383,6 +383,16 @@ import {
   refundStripeHostelPayment
 } from "./stripe-hostel-payments.js";
 import { handleManagerAiChat, type AiChatMessage } from "./manager-ai-chat.js";
+import {
+  ensureAiManagerAccount,
+  getAiManagerReport,
+  getAiManagerStatus,
+  listAiManagerReports,
+  maybeRunScheduledAiManagerTick,
+  readAiManagerConfig,
+  runAiManagerTick,
+  updateAiManagerSettings
+} from "./ai-manager.js";
 import { handleResidentPortalAiChat, type ResidentPortalAiMessage } from "./resident-portal-ai-chat.js";
 import { generateManagerSupportReplyDraft } from "./resident-support-ai.js";
 import { getVentHammerRedeemToday, markVentHammerRedeemedToday } from "./vent-hammer-redeem-guard.js";
@@ -5977,6 +5987,150 @@ app.post("/manager/ai-chat", async (request, response) => {
   } catch (error) {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "AI assistant error"
+    });
+  }
+});
+
+app.get("/manager/ai-manager", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "").trim();
+  try {
+    const status = await getAiManagerStatus(actorEmail);
+    return response.json(status);
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to load AI Manager status"
+    });
+  }
+});
+
+app.put("/manager/ai-manager", async (request, response) => {
+  const parsed = z
+    .object({
+      actorEmail: z.string().email(),
+      enabled: z.boolean().optional(),
+      email: z.string().email().optional(),
+      displayName: z.string().trim().min(1).max(80).optional(),
+      mode: z.enum(["report_only", "assist"]).optional(),
+      reportEmails: z.array(z.string().email()).max(20).optional(),
+      intervalHours: z.coerce.number().int().min(1).max(168).optional(),
+      password: z.string().min(8).max(128).optional()
+    })
+    .safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid AI Manager settings payload." });
+  }
+
+  try {
+    const { actorEmail, ...patch } = parsed.data;
+    const config = await updateAiManagerSettings(actorEmail, patch);
+    return response.json({ ok: true, config });
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to update AI Manager settings"
+    });
+  }
+});
+
+app.post("/manager/ai-manager/ensure-account", async (request, response) => {
+  const parsed = z
+    .object({
+      actorEmail: z.string().email(),
+      password: z.string().min(8).max(128).optional()
+    })
+    .safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid AI Manager account payload." });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["owner", "app_admin"],
+      "Only owners or app admins can provision the AI Manager account."
+    );
+    const result = await ensureAiManagerAccount({
+      actorEmail: parsed.data.actorEmail,
+      password: parsed.data.password
+    });
+    return response.json({
+      ok: true,
+      config: result.config,
+      passwordSet: result.passwordSet,
+      // Only return a generated password once at provision time.
+      generatedPassword: result.generatedPassword ?? null
+    });
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to provision AI Manager account"
+    });
+  }
+});
+
+app.post("/manager/ai-manager/run", async (request, response) => {
+  const parsed = z
+    .object({
+      actorEmail: z.string().email(),
+      force: z.boolean().optional()
+    })
+    .safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid AI Manager run payload." });
+  }
+
+  try {
+    await requirePortalRole(
+      parsed.data.actorEmail,
+      ["owner", "app_admin"],
+      "Only owners or app admins can run the AI Manager."
+    );
+    // Ensure enabled for a manual owner-triggered report even if currently off,
+    // without permanently flipping the stored enabled flag.
+    const result = await runAiManagerTick({ trigger: "manual", force: parsed.data.force !== false });
+    return response.json(result);
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "AI Manager run failed"
+    });
+  }
+});
+
+app.get("/manager/ai-manager/reports", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "").trim();
+  const limit = Number(request.query.limit ?? 20);
+  try {
+    await requirePortalRole(
+      actorEmail,
+      ["owner", "app_admin", "manager"],
+      "Only staff can view AI Manager reports."
+    );
+    const reports = await listAiManagerReports(Number.isFinite(limit) ? limit : 20);
+    return response.json({ reports });
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to load AI Manager reports"
+    });
+  }
+});
+
+app.get("/manager/ai-manager/reports/:id", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "").trim();
+  try {
+    await requirePortalRole(
+      actorEmail,
+      ["owner", "app_admin", "manager"],
+      "Only staff can view AI Manager reports."
+    );
+    const report = await getAiManagerReport(String(request.params.id ?? ""));
+    if (!report) {
+      return response.status(404).json({ error: "Report not found." });
+    }
+    return response.json({ report });
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to load AI Manager report"
     });
   }
 });
@@ -12088,5 +12242,33 @@ app.listen(port, "127.0.0.1", () => {
   }, 15 * 60 * 1000);
   donationFollowUpTimer.unref();
 
+  void readAiManagerConfig()
+    .then(async (config) => {
+      if (!config.enabled && !envFlagAiManagerEnabled()) return;
+      await ensureAiManagerAccount().catch((error) => {
+        console.error("[ai-manager] account ensure failed", error);
+      });
+      if (config.enabled || envFlagAiManagerEnabled()) {
+        void runAiManagerTick({ trigger: "startup", force: false }).catch((error) => {
+          console.error("[ai-manager] startup tick failed", error);
+        });
+      }
+    })
+    .catch((error) => {
+      console.error("[ai-manager] startup config failed", error);
+    });
+
+  const aiManagerTimer = setInterval(() => {
+    void maybeRunScheduledAiManagerTick().catch((error) => {
+      console.error("[ai-manager] scheduled tick failed", error);
+    });
+  }, 30 * 60 * 1000);
+  aiManagerTimer.unref();
+
   startMetaAiKnowledgeSyncScheduler();
 });
+
+function envFlagAiManagerEnabled() {
+  const raw = process.env.AI_MANAGER_ENABLED?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}

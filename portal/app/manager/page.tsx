@@ -3,12 +3,21 @@ import { ManagerClient } from "../../components/manager-client";
 export default async function ManagerPage({
   searchParams
 }: {
-  searchParams?: Promise<{ view?: string; chat?: string }>;
+  searchParams?: Promise<{ view?: string; chat?: string; settingsSection?: string }>;
 }) {
   const resolvedSearchParams = (await searchParams) ?? {};
   const initialChatId = resolvedSearchParams.chat?.trim() || undefined;
   const view = resolvedSearchParams.view ?? (initialChatId ? "support_chat" : undefined);
   const openDonations = view === "donations";
+  const settingsSection = resolvedSearchParams.settingsSection?.trim();
+  const initialSettingsSection =
+    settingsSection === "ai_manager" ||
+    settingsSection === "ai_usage" ||
+    settingsSection === "tools" ||
+    settingsSection === "resident_guides" ||
+    settingsSection === "pricing"
+      ? settingsSection
+      : undefined;
   const initialView =
     openDonations ||
     view === "client_list" ||
@@ -24,13 +33,16 @@ export default async function ManagerPage({
       ? openDonations
         ? "support_chat"
         : view
-      : "overview";
+      : initialSettingsSection
+        ? "settings"
+        : "overview";
 
   return (
     <ManagerClient
       initialView={initialView}
       initialChatId={initialChatId}
       initialSupportSubTab={openDonations ? "donations" : undefined}
+      initialSettingsSection={initialSettingsSection}
     />
   );
 }
