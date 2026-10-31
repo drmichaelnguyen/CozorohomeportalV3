@@ -1417,7 +1417,7 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "Fill open cleaning slots using the existing auto-assign ranking jobs.",
     vi: "Điền slot vệ sinh trống bằng thuật toán tự phân công hiện có."
   },
-  aiManagerMode: { en: "Working mode", vi: "Chế độ làm việc" }
+  aiManagerMode: { en: "Working mode", vi: "Chế độ làm việc" },
   aiManagerModeReportOnly: { en: "Report only (safest)", vi: "Chỉ báo cáo (an toàn nhất)" },
   aiManagerModeAssist: {
     en: "Assist — include suggested support drafts (not sent)",
