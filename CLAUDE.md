@@ -69,7 +69,7 @@ Important release safety rules:
  - important `api/data/*` files such as caches, staff access, and other operational state
  - `api/data/chat-attachments/` — binary files for support/group chat images (DB rows only store metadata; missing files make past attachments 404)
  - `api/data/birthday-coin-grants.json` — yearly birthday coin grant ledger (prevents duplicate birthday payouts)
- - `api/data/ai-manager-config.json` / `api/data/ai-manager-reports.json` / `api/data/ai-manager-feedback.json` — AI Manager settings, owner reports, and like/dislike learning guides
+ - `api/data/ai-manager-config.json` / `api/data/ai-manager-reports.json` / `api/data/ai-manager-feedback.json` / `api/data/ai-manager-inbox.json` — AI Manager settings, owner reports, like/dislike learning guides, and owner/admin chat-tab escalations
 - if `api/.google-oauth.json` is missing in production, Google Sheets / Gmail / Calendar startup calls can fail with `Google OAuth tokens are missing`
 
 Production sync rule:
@@ -188,7 +188,7 @@ const nextConfig: NextConfig = {
 | `GET /manager/support/conversations/:id?operatorEmail=` | Conversation thread |
 | `POST /manager/support/messages` | Send reply as manager |
 | `POST /manager/support/conversations/:id/ai-draft` | **Manager, owner, app_admin** — generate an editable, unsent reply draft from direct-thread context (including latest resident chat photos) and CozoroHome app knowledge. |
-| `GET/PUT /manager/ai-manager` · `POST .../run` · `GET .../action-logs` · `PUT .../action-logs/:id/feedback` · `GET .../usage` | **Owner, app_admin** (GET status/logs also staff) — AI Manager account, digests, ActionLog, like/dislike learning guides, token usage by task/category; see `docs/ai-manager.md`. |
+| `GET/PUT /manager/ai-manager` · `POST .../run` · `GET .../action-logs` · `PUT .../action-logs/:id/feedback` · `GET .../usage` · `GET/POST .../inbox*` | **Owner, app_admin** (GET status/logs also staff) — AI Manager account, digests, ActionLog, like/dislike learning guides, token usage, and Messages→AI Manager inbox escalations; see `docs/ai-manager.md`. |
 | `POST /manager/support/conversations/:id/read` | Mark conversation read |
 | `GET /clients/laundry-bookings?email=` | Resident laundry bookings |
 | `GET /controller/cooker?email=` | Resident kitchen cooker status (on/off, reservations, photos required to toggle) |
@@ -298,6 +298,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 4.0.2 | Messages → **AI Manager** tab for owners/app admins: agent posts digests here and escalates when unsure with multiple-choice (or free-text) decisions; ambiguous fine disputes and sensitive support topics ask humans instead of guessing. |
 | 4.0.1 | AI fallback upgraded to Gemini 3.8 Flash (`GEMINI_MODEL`, low thinking, tool-call thought signatures) for API agents and the Facebook bot when 9router fails; per-model AI usage cost estimates. |
 | 4.0.0 | Major release: Cozoro AI Manager (dedicated manager agent with owner digests, capability toggles, ActionLog audit trail, owner feedback/learning guides, per-task token monitoring) goes live in production. |
 | 3.9.51 | AI Manager token monitoring: attribute LLM usage per task/category (reports, chat, fines, schedule) and show breakdown in Settings. |

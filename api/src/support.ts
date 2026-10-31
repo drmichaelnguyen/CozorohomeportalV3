@@ -1335,6 +1335,7 @@ export async function listStaffSupportNotifications(operatorEmail: string) {
     const actor = await resolvePortalLogin(normalizedOperatorEmail);
     if (actor.role === "owner" || actor.role === "app_admin") {
       const { listRecentAiManagerReportsForOwner } = await import("./ai-manager.js");
+      const { listOpenAiManagerEscalations } = await import("./ai-manager-inbox.js");
       const reports = await listRecentAiManagerReportsForOwner(3);
       for (const report of reports.slice(0, 3)) {
         const hot =
@@ -1354,7 +1355,22 @@ export async function listStaffSupportNotifications(operatorEmail: string) {
           body: report.summaryText.slice(0, 280),
           createdAt: new Date(report.createdAt),
           unreadCount: 1,
-          href: "/manager?view=settings&settingsSection=ai_manager"
+          href: "/manager?view=support_chat&tab=ai_manager"
+        });
+      }
+      const escalations = await listOpenAiManagerEscalations(5);
+      for (const item of escalations) {
+        notifications.push({
+          id: `ai-manager-escalation-${item.id}`,
+          type: "AI_MANAGER_REPORT",
+          conversationId: item.id,
+          residentEmail: item.residentEmail || "ai.manager@cozorohome.com",
+          residentName: "AI Manager",
+          title: item.title,
+          body: item.body.slice(0, 280),
+          createdAt: new Date(item.createdAt),
+          unreadCount: 1,
+          href: "/manager?view=support_chat&tab=ai_manager"
         });
       }
     }
