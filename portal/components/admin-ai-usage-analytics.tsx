@@ -40,8 +40,9 @@ type Analytics = {
     createdAt: string;
   }>;
   pricing: {
-    gemini25FlashInputUsdPerMillion: number;
-    gemini25FlashOutputUsdPerMillion: number;
+    geminiModel: string;
+    geminiInputUsdPerMillion: number | null;
+    geminiOutputUsdPerMillion: number | null;
   };
 };
 
@@ -160,9 +161,11 @@ export function AdminAiUsageAnalytics({ actorEmail }: { actorEmail: string }) {
       </div>
       {data ? (
         <p className="text-xs text-slate-500">
-          Gemini 2.5 Flash estimate: ${data.pricing.gemini25FlashInputUsdPerMillion}/1M input tokens and $
-          {data.pricing.gemini25FlashOutputUsdPerMillion}/1M output/thinking tokens. Vision usage stays at zero until a
-          computer-vision feature starts recording with modality `vision`.
+          {data.pricing.geminiInputUsdPerMillion != null && data.pricing.geminiOutputUsdPerMillion != null
+            ? `${data.pricing.geminiModel} estimate: $${data.pricing.geminiInputUsdPerMillion}/1M input tokens and $${data.pricing.geminiOutputUsdPerMillion}/1M output/thinking tokens. `
+            : `${data.pricing.geminiModel} has no price on file, so its cost shows as $0. `}
+          9router calls are not priced. Vision usage stays at zero until a computer-vision feature starts recording with
+          modality `vision`.
         </p>
       ) : null}
       <div className="grid gap-5 xl:grid-cols-2">

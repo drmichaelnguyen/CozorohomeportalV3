@@ -17,6 +17,8 @@ const topicDecisionSchema = z.object({
   reason: z.string().min(1).max(240)
 });
 
+const GEMINI_FETCH_TIMEOUT_MS = 45_000;
+
 export type TopicDecision = z.infer<typeof topicDecisionSchema>;
 
 export function sanitizeTextForLlm(text: string) {
@@ -99,6 +101,11 @@ async function callGemini<T>({
     throw new Error("GEMINI_API_KEY is not configured");
   }
 
+  // Gemini 3+ counts thinking against maxOutputTokens; 2.5 rejects thinkingLevel.
+  const geminiMajor = Number(/^gemini-(\d+)/.exec(model)?.[1]);
+  const thinkingConfig =
+    Number.isFinite(geminiMajor) && geminiMajor >= 3 ? { thinkingLevel: config.geminiThinkingLevel } : undefined;
+
   const response = await fetch(`${config.geminiApiBaseUrl}/models/${model}:generateContent`, {
     method: "POST",
     headers: {
@@ -115,9 +122,11 @@ async function callGemini<T>({
         temperature: 0.1,
         maxOutputTokens,
         responseMimeType: mimeType,
-        responseJsonSchema: jsonSchema
+        responseJsonSchema: jsonSchema,
+        ...(thinkingConfig ? { thinkingConfig } : {})
       }
-    })
+    }),
+    signal: AbortSignal.timeout(GEMINI_FETCH_TIMEOUT_MS)
   });
 
   if (!response.ok) {
@@ -126,6 +135,28 @@ async function callGemini<T>({
   }
 
   return response.json();
+}
+
+async function withGeminiFallback(
+  label: string,
+  viaRouter: () => Promise<string>,
+  viaGemini: (model: string) => Promise<string>,
+  geminiModel: string
+): Promise<string> {
+  if (config.llmProvider !== "nine_router" || !has9RouterConfig()) {
+    return viaGemini(geminiModel);
+  }
+
+  try {
+    return await viaRouter();
+  } catch (error) {
+    if (!config.geminiApiKey) throw error;
+    console.warn(
+      `[bot-llm] 9router ${label} failed, falling back to ${config.geminiModel}:`,
+      error instanceof Error ? error.message : error
+    );
+    return viaGemini(config.geminiModel);
+  }
 }
 
 export async function routeDormQuestion(question: string, conversationContext?: string) {
@@ -173,36 +204,40 @@ export async function routeDormQuestion(question: string, conversationContext?: 
     `Normalized customer question: ${sanitizedQuestion}`
   ].join("\n");
 
-  const text =
-    config.llmProvider === "nine_router" && has9RouterConfig()
-      ? await call9RouterChatCompletion({
-          systemInstruction:
-            "You are a strict JSON classifier. Return only valid JSON matching the schema.",
-          userPrompt: [
-            prompt,
-            "",
-            'Return JSON only with keys: decision ("allow"|"deny"), route ("simple_policy"|"deep_policy"|"off_topic"), reason (string).'
-          ].join("\n"),
-          model: config.routerModel,
-          temperature: 0.1
+  const text = await withGeminiFallback(
+    "router",
+    () =>
+      call9RouterChatCompletion({
+        systemInstruction:
+          "You are a strict JSON classifier. Return only valid JSON matching the schema.",
+        userPrompt: [
+          prompt,
+          "",
+          'Return JSON only with keys: decision ("allow"|"deny"), route ("simple_policy"|"deep_policy"|"off_topic"), reason (string).'
+        ].join("\n"),
+        model: config.routerModel,
+        temperature: 0.1
+      }),
+    async (model) =>
+      extractGeminiText(
+        await callGemini({
+          model,
+          prompt,
+          maxOutputTokens: 120,
+          mimeType: "application/json",
+          jsonSchema: {
+            type: "object",
+            properties: {
+              decision: { type: "string", enum: ["allow", "deny"] },
+              route: { type: "string", enum: ["simple_policy", "deep_policy", "off_topic"] },
+              reason: { type: "string" }
+            },
+            required: ["decision", "route", "reason"]
+          }
         })
-      : extractGeminiText(
-          await callGemini({
-            model: config.routerModel,
-            prompt,
-            maxOutputTokens: 120,
-            mimeType: "application/json",
-            jsonSchema: {
-              type: "object",
-              properties: {
-                decision: { type: "string", enum: ["allow", "deny"] },
-                route: { type: "string", enum: ["simple_policy", "deep_policy", "off_topic"] },
-                reason: { type: "string" }
-              },
-              required: ["decision", "route", "reason"]
-            }
-          })
-        );
+      ),
+    config.routerModel
+  );
 
   const jsonMatch = text.match(/\{[\s\S]*\}/);
   return topicDecisionSchema.parse(JSON.parse(jsonMatch?.[0] ?? text));
@@ -277,28 +312,31 @@ export async function answerWithLlm(params: {
     buildSourceList(params.results)
   ].join("\n");
 
-  if (config.llmProvider === "nine_router" && has9RouterConfig()) {
-    return call9RouterChatCompletion({
-      systemInstruction: "You are Cozoro, the Cozorohome dorm assistant. Follow the user prompt strictly.",
-      userPrompt: prompt,
-      model: config.answerModel,
-      temperature: 0.1
-    });
-  }
-
-  const payload = await callGemini({
-    model: config.answerModel,
-    prompt,
-    maxOutputTokens: 360,
-    mimeType: "text/plain"
-  });
-
-  const text = extractGeminiText(payload);
-  if (!text) {
-    throw new Error("Gemini response did not include text");
-  }
-
-  return text;
+  return withGeminiFallback(
+    "answer",
+    () =>
+      call9RouterChatCompletion({
+        systemInstruction: "You are Cozoro, the Cozorohome dorm assistant. Follow the user prompt strictly.",
+        userPrompt: prompt,
+        model: config.answerModel,
+        temperature: 0.1
+      }),
+    async (model) => {
+      const text = extractGeminiText(
+        await callGemini({
+          model,
+          prompt,
+          maxOutputTokens: 360,
+          mimeType: "text/plain"
+        })
+      );
+      if (!text) {
+        throw new Error("Gemini response did not include text");
+      }
+      return text;
+    },
+    config.answerModel
+  );
 }
 
 /** @deprecated Use answerWithLlm — kept for call-site compatibility. */

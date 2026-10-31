@@ -1,5 +1,6 @@
 import { CleaningAiVerdict, CleaningTaskType } from "@prisma/client";
 import { recordVisionUsage } from "./ai-usage.js";
+import { geminiThinkingConfig, getGeminiModel } from "./gemini-model.js";
 import { hasPortalLlmConfig, resolveGeminiGenerateUrl } from "./llm-tool-chat.js";
 import {
   describeCleaningReferenceSource,
@@ -217,6 +218,8 @@ async function verifyViaGemini(input: {
 
   const imageCount = input.referenceBuffers.length + input.completionBuffers.length;
   const started = Date.now();
+  const model = getGeminiModel();
+  const thinkingConfig = geminiThinkingConfig(model);
 
   const response = await fetch(geminiUrl, {
     method: "POST",
@@ -225,7 +228,8 @@ async function verifyViaGemini(input: {
       contents: [{ role: "user", parts }],
       generationConfig: {
         temperature: 0.2,
-        responseMimeType: "application/json"
+        responseMimeType: "application/json",
+        ...(thinkingConfig ? { thinkingConfig: { thinkingLevel: thinkingConfig.thinking_level } } : {})
       }
     }),
     signal: AbortSignal.timeout(GEMINI_TIMEOUT_MS)
@@ -238,6 +242,7 @@ async function verifyViaGemini(input: {
     await recordVisionUsage({
       feature: "cleaning_photo_verification",
       provider: "GOOGLE",
+      model,
       actorEmail: input.actorEmail,
       imageCount,
       status: response.status === 429 ? "RATE_LIMITED" : "ERROR",
@@ -250,6 +255,7 @@ async function verifyViaGemini(input: {
   await recordVisionUsage({
     feature: "cleaning_photo_verification",
     provider: "GOOGLE",
+    model,
     actorEmail: input.actorEmail,
     imageCount,
     usage: extractUsageMetadata(payload),

@@ -1,5 +1,10 @@
 # Changelog
 
+## [4.0.1] - 2026-10-30
+
+- **Gemini 3.8 Flash fallback**: When 9router fails, all AI agents (AI Manager, manager chat and reply drafts, Cozoro Assistant, Cozoro Bee, cleaning photo checks) and the Facebook bot fall back to `GEMINI_MODEL` (default `gemini-3.8-flash`, was hard-coded 2.5 Flash). Gemini 3+ runs with `GEMINI_THINKING_LEVEL=low` so thinking does not exhaust reply token limits, and tool-call `thoughtSignature`s are replayed so multi-step tool chats keep working. The bot previously had no Gemini fallback.
+- **AI usage cost accuracy**: Costs are estimated per model (2.5 Flash, 3.8 Flash incl. the 2027-01-01 price change); 9router calls are no longer priced at Gemini rates.
+
 ## [4.0.0] - 2026-10-30
 
 - **Major release — Cozoro AI Manager**: Ships the AI Manager agent (3.9.47–3.9.51) to production: dedicated manager account with scheduled owner digests, per-capability toggles (reports, chat replies, fines, cleaning schedule), ActionLog audit trail, owner like/dislike learning guides, and per-task AI token monitoring. See `docs/ai-manager.md`.

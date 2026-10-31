@@ -1,7 +1,7 @@
 /**
  * Resident-only **Cozoro Bee** chat (Messages tab).
- * Prefers 9router (`NINE_ROUTER_API_KEY`, gpt-5) when configured; otherwise Gemini 2.5 Flash
- * (`GEMINI_RESIDENT_PORTAL_AI_API_KEY` or `GEMINI_API_KEY`).
+ * Prefers 9router (`NINE_ROUTER_API_KEY`, gpt-5) when configured; otherwise Gemini (`GEMINI_MODEL`,
+ * default 3.8 Flash) via `GEMINI_RESIDENT_PORTAL_AI_API_KEY` or `GEMINI_API_KEY`.
  *
  * Tools only return data scoped to the authenticated resident email (server-enforced).
  */
@@ -10,7 +10,7 @@ import { CleaningAvailabilityType, CleaningTaskType } from "@prisma/client";
 
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
 import { recordGeminiUsage } from "./ai-usage.js";
-import { completeToolChatRound, type LlmChatContent } from "./llm-tool-chat.js";
+import { completeToolChatRound, modelFunctionCallContent, type LlmChatContent } from "./llm-tool-chat.js";
 import { appendAiToolInvocation, appendAiTrainingExchange } from "./ai-training-log.js";
 import { tryFounderEasterEggReply } from "./cozoro-founder-easter-egg.js";
 import {
@@ -1014,7 +1014,7 @@ export async function handleResidentPortalAiChat(
       language
     });
 
-    contents.push({ role: "model", parts: [{ functionCall: { name, args: args ?? {} } }] });
+    contents.push(modelFunctionCallContent(round.functionCall));
     contents.push({
       role: "user",
       parts: [{ functionResponse: { name, response: toolResponse } }]

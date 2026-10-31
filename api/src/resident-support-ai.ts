@@ -32,6 +32,7 @@ import { geminiCapacityReply } from "./gemini-capacity-reply.js";
 import {
   completeToolChatRound,
   hasPortalLlmConfig,
+  modelFunctionCallContent,
   type LlmChatContent,
   type LlmChatPart,
   type LlmChatTool
@@ -599,7 +600,7 @@ export async function runResidentSupportAssistantTurn(input: {
       meta: { preferVietnamese }
     });
 
-    contents.push({ role: "model", parts: [{ functionCall: { name, args } }] });
+    contents.push(modelFunctionCallContent(round.functionCall));
     contents.push({
       role: "user",
       parts: [{ functionResponse: { name, response: toolResponse } }]
@@ -783,7 +784,7 @@ export async function generateManagerSupportReplyDraft(input: {
       conversationId: input.conversationId,
       meta: { feature: "manager_support_reply_draft", residentEmail }
     });
-    contents.push({ role: "model", parts: [{ functionCall: { name, args } }] });
+    contents.push(modelFunctionCallContent(round.functionCall));
     contents.push({ role: "user", parts: [{ functionResponse: { name, response: toolResponse } }] });
   }
 

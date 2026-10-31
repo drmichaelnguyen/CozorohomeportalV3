@@ -45,4 +45,4 @@ Each line is one JSON object.
 
 ## Model
 
-Prefers **9router** (`gpt-5`) when `NINE_ROUTER_API_KEY` is set; otherwise Gemini **2.5 Flash**. Resident Bee may use `GEMINI_RESIDENT_PORTAL_AI_API_KEY` with fallback to `GEMINI_API_KEY` (see `resident-portal-ai-chat.ts`). Support-thread image turns use the same multimodal path as cleaning photo verification (`image_url` / `inline_data`).
+Prefers **9router** (`gpt-5`) when `NINE_ROUTER_API_KEY` is set, falling back to Gemini when 9router fails; otherwise Gemini directly. The Gemini model is `GEMINI_MODEL` (default **`gemini-3.8-flash`**, thinking level `GEMINI_THINKING_LEVEL`, default `low`). Gemini 3+ tool calls carry a `thoughtSignature` that `modelFunctionCallContent` replays on the next turn. Resident Bee may use `GEMINI_RESIDENT_PORTAL_AI_API_KEY` with fallback to `GEMINI_API_KEY` (see `resident-portal-ai-chat.ts`). Support-thread image turns use the same multimodal path as cleaning photo verification (`image_url` / `inline_data`).

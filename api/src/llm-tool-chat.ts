@@ -1,16 +1,28 @@
 import { isGeminiCapacityOrRateLimit } from "./gemini-capacity-reply.js";
 import type { GeminiUsageMetadata } from "./ai-usage.js";
 import {
+  GEMINI_SKIP_THOUGHT_SIGNATURE,
+  geminiThinkingConfig,
+  getGeminiModel
+} from "./gemini-model.js";
+import {
   call9RouterChatCompletion,
   has9RouterConfig,
   prefer9Router,
   type OpenAiChatMessage
 } from "./nine-router.js";
 
+export type LlmFunctionCall = {
+  name: string;
+  args: Record<string, unknown>;
+  /** Gemini 3+ requires this to be echoed back with the call on the next turn. */
+  thoughtSignature?: string;
+};
+
 export type LlmChatPart =
   | { text: string }
   | { inlineData: { mimeType: string; data: string } }
-  | { functionCall: { name: string; args: Record<string, unknown> } }
+  | { functionCall: { name: string; args: Record<string, unknown> }; thoughtSignature?: string }
   | { functionResponse: { name: string; response: Record<string, unknown> } };
 
 export type LlmChatContent = {
@@ -32,7 +44,7 @@ export type LlmChatTool = {
 
 export type ToolChatRoundResult = {
   text: string | null;
-  functionCall: { name: string; args: Record<string, unknown> } | null;
+  functionCall: LlmFunctionCall | null;
   usage?: GeminiUsageMetadata;
   provider: string;
   model: string;
@@ -151,22 +163,42 @@ function geminiContentsToOpenAiMessages(systemPrompt: string, contents: LlmChatC
   return messages;
 }
 
+/** Model turn that replays a tool call into the history, keeping any Gemini thought signature. */
+export function modelFunctionCallContent(call: LlmFunctionCall): LlmChatContent {
+  return {
+    role: "model",
+    parts: [
+      {
+        functionCall: { name: call.name, args: call.args ?? {} },
+        ...(call.thoughtSignature ? { thoughtSignature: call.thoughtSignature } : {})
+      }
+    ]
+  };
+}
+
 /** Gemini REST accepts camelCase; also emit snake_case inline_data for image parts (proven in cleaning vision). */
 function toGeminiRequestContents(contents: LlmChatContent[]) {
-  return contents.map((content) => ({
-    role: content.role,
-    parts: content.parts.map((part) => {
-      if ("inlineData" in part) {
-        return {
-          inline_data: {
-            mime_type: part.inlineData.mimeType,
-            data: part.inlineData.data
-          }
-        };
-      }
-      return part;
-    })
-  }));
+  return contents.map((content) => {
+    let signedFirstCall = false;
+    return {
+      role: content.role,
+      parts: content.parts.map((part) => {
+        if ("inlineData" in part) {
+          return {
+            inline_data: {
+              mime_type: part.inlineData.mimeType,
+              data: part.inlineData.data
+            }
+          };
+        }
+        if ("functionCall" in part && !signedFirstCall) {
+          signedFirstCall = true;
+          return { ...part, thoughtSignature: part.thoughtSignature || GEMINI_SKIP_THOUGHT_SIGNATURE };
+        }
+        return part;
+      })
+    };
+  });
 }
 
 function usageFromNineRouter(usage: {
@@ -187,7 +219,7 @@ export function resolveGeminiGenerateUrl(kind: "shared" | "resident"): string | 
       ? process.env.GEMINI_RESIDENT_PORTAL_AI_API_KEY?.trim() || process.env.GEMINI_API_KEY?.trim()
       : process.env.GEMINI_API_KEY?.trim();
   if (!key) return null;
-  return `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
+  return `https://generativelanguage.googleapis.com/v1beta/models/${getGeminiModel()}:generateContent?key=${key}`;
 }
 
 export function hasPortalLlmConfig(kind: "shared" | "resident" = "shared"): boolean {
@@ -211,6 +243,8 @@ async function completeGeminiRound(input: {
   maxOutputTokens: number;
   geminiUrl: string;
 }): Promise<ToolChatRoundResult> {
+  const model = getGeminiModel();
+  const thinkingConfig = geminiThinkingConfig(model);
   const body = {
     system_instruction: { parts: [{ text: input.systemPrompt }] },
     contents: toGeminiRequestContents(input.contents),
@@ -218,7 +252,8 @@ async function completeGeminiRound(input: {
     tool_config: { function_calling_config: { mode: "AUTO" } },
     generation_config: {
       temperature: input.temperature,
-      max_output_tokens: input.maxOutputTokens
+      max_output_tokens: input.maxOutputTokens,
+      ...(thinkingConfig ? { thinking_config: thinkingConfig } : {})
     }
   };
 
@@ -237,7 +272,7 @@ async function completeGeminiRound(input: {
       text: null,
       functionCall: null,
       provider: "GOOGLE",
-      model: "gemini-2.5-flash",
+      model,
       rateLimited: false,
       invalidJson: true,
       httpStatus: res.status
@@ -250,7 +285,7 @@ async function completeGeminiRound(input: {
       functionCall: null,
       usage: data.usageMetadata,
       provider: "GOOGLE",
-      model: "gemini-2.5-flash",
+      model,
       rateLimited: true,
       httpStatus: res.status,
       errorMessage: data.error?.message
@@ -263,7 +298,7 @@ async function completeGeminiRound(input: {
       functionCall: null,
       usage: data.usageMetadata,
       provider: "GOOGLE",
-      model: "gemini-2.5-flash",
+      model,
       rateLimited: false,
       errorMessage: data.error.message ?? "Gemini error",
       httpStatus: res.status
@@ -278,7 +313,7 @@ async function completeGeminiRound(input: {
       functionCall: null,
       usage: data.usageMetadata,
       provider: "GOOGLE",
-      model: "gemini-2.5-flash",
+      model,
       rateLimited: false,
       emptyCandidate: true,
       finishReason: candidate?.finishReason ?? null,
@@ -287,18 +322,20 @@ async function completeGeminiRound(input: {
   }
 
   const functionCallPart = parts.find(
-    (part): part is { functionCall: { name: string; args: Record<string, unknown> } } => "functionCall" in part
+    (part): part is { functionCall: { name: string; args: Record<string, unknown> }; thoughtSignature?: string } =>
+      "functionCall" in part
   );
   if (functionCallPart) {
     return {
       text: null,
       functionCall: {
         name: functionCallPart.functionCall.name,
-        args: functionCallPart.functionCall.args ?? {}
+        args: functionCallPart.functionCall.args ?? {},
+        ...(functionCallPart.thoughtSignature ? { thoughtSignature: functionCallPart.thoughtSignature } : {})
       },
       usage: data.usageMetadata,
       provider: "GOOGLE",
-      model: "gemini-2.5-flash",
+      model,
       rateLimited: false,
       httpStatus: res.status
     };
@@ -310,7 +347,7 @@ async function completeGeminiRound(input: {
     functionCall: null,
     usage: data.usageMetadata,
     provider: "GOOGLE",
-    model: "gemini-2.5-flash",
+    model,
     rateLimited: false,
     httpStatus: res.status
   };

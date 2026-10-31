@@ -25,7 +25,7 @@ Image-only messages (no text) also trigger the assistant.
    - Appends multimodal parts (text + inline images) to the last user turn.
 4. `completeToolChatRound` (`api/src/llm-tool-chat.ts`) sends images to:
    - **9router** as OpenAI-style `image_url` data URLs, or
-   - **Gemini 2.5 Flash** as `inline_data` parts (same pattern as cleaning photo verification).
+   - **Gemini** (`GEMINI_MODEL`, default `gemini-3.8-flash`) as `inline_data` parts (same pattern as cleaning photo verification).
 5. Usage with images is recorded via `recordVisionUsage` (feature `resident_support_thread` / `manager_support_reply_draft`).
 
 ## Limits / scope

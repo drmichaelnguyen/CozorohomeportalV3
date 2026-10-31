@@ -15,6 +15,8 @@ const envSchema = z.object({
   BOT_LLM_PROVIDER: z.enum(["none", "nine_router", "gemini", "openai"]).optional(),
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_API_BASE_URL: z.string().url().optional(),
+  GEMINI_MODEL: z.string().optional(),
+  GEMINI_THINKING_LEVEL: z.string().optional(),
   BOT_ROUTER_MODEL: z.string().optional(),
   BOT_ANSWER_MODEL: z.string().optional(),
   BOT_ROUTER_TRAINING_FILE: z.string().optional(),
@@ -67,6 +69,7 @@ const inferredProvider =
       : env.OPENAI_API_KEY?.trim()
         ? "openai"
         : "none");
+const geminiModel = env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
 
 export const config = {
   port: Number(env.PORT ?? 4010),
@@ -84,6 +87,9 @@ export const config = {
   geminiApiKey: env.GEMINI_API_KEY?.trim() ?? "",
   geminiApiBaseUrl:
     env.GEMINI_API_BASE_URL?.replace(/\/+$/, "") ?? "https://generativelanguage.googleapis.com/v1beta",
+  /** Gemini answer model, and the fallback for both router and answer calls when 9router fails. */
+  geminiModel,
+  geminiThinkingLevel: env.GEMINI_THINKING_LEVEL?.trim().toLowerCase() || "low",
   nineRouterApiKey: env.NINE_ROUTER_API_KEY?.trim() ?? "",
   nineRouterUrl:
     env.NINE_ROUTER_URL?.trim() || "https://9router.k-aithelittlelion.com/v1/chat/completions",
@@ -93,7 +99,7 @@ export const config = {
     (inferredProvider === "nine_router" ? "gpt-5" : "gemini-2.5-flash-lite"),
   answerModel:
     env.BOT_ANSWER_MODEL?.trim() ??
-    (inferredProvider === "nine_router" ? "gpt-5" : "gemini-2.5-flash"),
+    (inferredProvider === "nine_router" ? "gpt-5" : geminiModel),
   routerTrainingFile: resolveLocalPath(env.BOT_ROUTER_TRAINING_FILE ?? "./data/router-training.json"),
   openAiApiKey: env.OPENAI_API_KEY?.trim() ?? "",
   openAiModel: env.OPENAI_MODEL?.trim() ?? "gpt-4.1-mini",

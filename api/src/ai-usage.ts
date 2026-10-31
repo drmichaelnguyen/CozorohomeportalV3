@@ -1,3 +1,4 @@
+import { getGeminiModel } from "./gemini-model.js";
 import { prisma } from "./prisma.js";
 import {
   AI_MANAGER_USAGE_CATEGORIES,
@@ -37,15 +38,50 @@ export const AI_MODALITY_LABELS: Record<AiModality, string> = {
   vision: "Computer vision"
 };
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
+type ModelPricing = {
+  inputPerMillionUsd: number;
+  cachedInputPerMillionUsd: number;
+  outputPerMillionUsd: number;
+  version: string;
+  /** Exclusive end of this price tier (ISO); omitted on the latest tier. */
+  until?: string;
+};
 
-// Gemini 2.5 Flash standard paid-tier pricing, checked 2026-07-21.
-const GEMINI_25_FLASH_PRICING = {
-  inputPerMillionUsd: 0.3,
-  cachedInputPerMillionUsd: 0.03,
-  outputPerMillionUsd: 2.5,
-  version: "gemini-2.5-flash-standard-2026-07-21"
-} as const;
+// Gemini standard paid-tier pricing per model, newest tier last. Checked 2026-10-30.
+const GEMINI_MODEL_PRICING: Record<string, ModelPricing[]> = {
+  "gemini-2.5-flash": [
+    {
+      inputPerMillionUsd: 0.3,
+      cachedInputPerMillionUsd: 0.03,
+      outputPerMillionUsd: 2.5,
+      version: "gemini-2.5-flash-standard-2026-07-21"
+    }
+  ],
+  "gemini-3.8-flash": [
+    {
+      inputPerMillionUsd: 0.75,
+      cachedInputPerMillionUsd: 0.075,
+      outputPerMillionUsd: 3.75,
+      version: "gemini-3.8-flash-standard-2026-10-30",
+      until: "2027-01-01T00:00:00Z"
+    },
+    {
+      inputPerMillionUsd: 1.5,
+      cachedInputPerMillionUsd: 0.15,
+      outputPerMillionUsd: 7.5,
+      version: "gemini-3.8-flash-standard-2027-01-01"
+    }
+  ]
+};
+
+const UNPRICED_VERSION = "unpriced";
+
+function resolveModelPricing(provider: string, model: string, at = new Date()): ModelPricing | null {
+  if (provider !== "GOOGLE") return null;
+  const tiers = GEMINI_MODEL_PRICING[model];
+  if (!tiers?.length) return null;
+  return tiers.find((tier) => !tier.until || at < new Date(tier.until)) ?? tiers[tiers.length - 1];
+}
 
 function safeTokenCount(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
@@ -55,17 +91,27 @@ function normalizeModality(value?: string | null): AiModality {
   return value === "vision" ? "vision" : "text";
 }
 
-export function estimateGemini25FlashCostMicros(usage?: GeminiUsageMetadata): number {
-  if (!usage) return 0;
+function estimateCostMicros(pricing: ModelPricing | null, usage?: GeminiUsageMetadata): number {
+  if (!pricing || !usage) return 0;
   const prompt = safeTokenCount(usage.promptTokenCount);
   const cached = Math.min(prompt, safeTokenCount(usage.cachedContentTokenCount));
   const uncached = prompt - cached;
   const output = safeTokenCount(usage.candidatesTokenCount) + safeTokenCount(usage.thoughtsTokenCount);
   return Math.round(
-    uncached * GEMINI_25_FLASH_PRICING.inputPerMillionUsd +
-      cached * GEMINI_25_FLASH_PRICING.cachedInputPerMillionUsd +
-      output * GEMINI_25_FLASH_PRICING.outputPerMillionUsd
+    uncached * pricing.inputPerMillionUsd +
+      cached * pricing.cachedInputPerMillionUsd +
+      output * pricing.outputPerMillionUsd
   );
+}
+
+function currentGeminiPricingSummary() {
+  const model = getGeminiModel();
+  const pricing = resolveModelPricing("GOOGLE", model);
+  return {
+    geminiModel: model,
+    geminiInputUsdPerMillion: pricing?.inputPerMillionUsd ?? null,
+    geminiOutputUsdPerMillion: pricing?.outputPerMillionUsd ?? null
+  };
 }
 
 type UsageStatus = "SUCCESS" | "ERROR" | "RATE_LIMITED" | "INVALID_RESPONSE";
@@ -90,12 +136,15 @@ export async function recordAiUsage(input: RecordAiUsageInput) {
   const cachedTokens = safeTokenCount(usage?.cachedContentTokenCount);
   const totalTokens = safeTokenCount(usage?.totalTokenCount) || promptTokens + outputTokens + thinkingTokens;
   const imageCount = Math.max(0, Math.trunc(input.imageCount ?? 0));
+  const provider = input.provider?.trim() || "GOOGLE";
+  const model = input.model?.trim() || getGeminiModel();
+  const pricing = resolveModelPricing(provider, model);
 
   try {
     await prisma.aiUsageEvent.create({
       data: {
-        provider: input.provider?.trim() || "GOOGLE",
-        model: input.model?.trim() || DEFAULT_MODEL,
+        provider,
+        model,
         feature: input.feature,
         modality: normalizeModality(input.modality),
         actorEmail: input.actorEmail?.trim().toLowerCase() || null,
@@ -105,8 +154,8 @@ export async function recordAiUsage(input: RecordAiUsageInput) {
         cachedTokens,
         totalTokens,
         imageCount,
-        estimatedCostMicros: estimateGemini25FlashCostMicros(usage),
-        pricingVersion: GEMINI_25_FLASH_PRICING.version,
+        estimatedCostMicros: estimateCostMicros(pricing, usage),
+        pricingVersion: pricing?.version ?? UNPRICED_VERSION,
         status: input.status ?? "SUCCESS",
         latencyMs: input.latencyMs == null ? null : Math.max(0, Math.trunc(input.latencyMs))
       }
@@ -120,7 +169,6 @@ export async function recordAiUsage(input: RecordAiUsageInput) {
 export async function recordGeminiUsage(input: RecordAiUsageInput) {
   await recordAiUsage({
     provider: "GOOGLE",
-    model: DEFAULT_MODEL,
     modality: "text",
     ...input
   });
@@ -130,7 +178,6 @@ export async function recordGeminiUsage(input: RecordAiUsageInput) {
 export async function recordVisionUsage(input: RecordAiUsageInput) {
   await recordAiUsage({
     provider: "GOOGLE",
-    model: DEFAULT_MODEL,
     ...input,
     modality: "vision"
   });
@@ -285,12 +332,9 @@ export async function getAiUsageAnalytics(days: number) {
       createdAt: row.createdAt.toISOString()
     })),
     featureLabels: AI_FEATURE_LABELS,
-    pricing: {
-      gemini25FlashInputUsdPerMillion: GEMINI_25_FLASH_PRICING.inputPerMillionUsd,
-      gemini25FlashOutputUsdPerMillion: GEMINI_25_FLASH_PRICING.outputPerMillionUsd
-    },
+    pricing: currentGeminiPricingSummary(),
     pricingNote:
-      "Estimated paid-tier cost in USD; actual billing may differ due to free-tier usage, taxes, credits, or provider pricing changes. Computer vision is tracked separately from text chat."
+      "Estimated Gemini paid-tier cost in USD at each call's model rate; 9router calls are not priced. Actual billing may differ due to free-tier usage, taxes, credits, or provider pricing changes. Computer vision is tracked separately from text chat."
   };
 }
 
@@ -400,9 +444,6 @@ export async function getAiManagerUsageAnalytics(days: number) {
       latencyMs: row.latencyMs,
       createdAt: row.createdAt.toISOString()
     })),
-    pricing: {
-      gemini25FlashInputUsdPerMillion: GEMINI_25_FLASH_PRICING.inputPerMillionUsd,
-      gemini25FlashOutputUsdPerMillion: GEMINI_25_FLASH_PRICING.outputPerMillionUsd
-    }
+    pricing: currentGeminiPricingSummary()
   };
 }

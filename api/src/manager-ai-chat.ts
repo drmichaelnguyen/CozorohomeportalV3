@@ -1,5 +1,5 @@
 /**
- * Manager AI Chat — 9router (gpt-5) when NINE_ROUTER_API_KEY is set, else Gemini 2.5 Flash.
+ * Manager AI Chat — 9router (gpt-5) when NINE_ROUTER_API_KEY is set, else Gemini (GEMINI_MODEL, default 3.8 Flash).
  *
  * Supported actions (executed server-side after model confirms intent):
  *   add_coins      — POST /manager/coins/adjust
@@ -12,7 +12,7 @@
 
 import { AI_CHAT_CONTEXT_MESSAGE_LIMIT } from "./ai-chat-constants.js";
 import { recordGeminiUsage } from "./ai-usage.js";
-import { completeToolChatRound, type LlmChatContent } from "./llm-tool-chat.js";
+import { completeToolChatRound, modelFunctionCallContent, type LlmChatContent } from "./llm-tool-chat.js";
 import { appendAiToolInvocation, appendAiTrainingExchange } from "./ai-training-log.js";
 import { geminiModelDoesNotKnowReply } from "./gemini-capacity-reply.js";
 import { tryFounderEasterEggReply } from "./cozoro-founder-easter-egg.js";
@@ -626,7 +626,7 @@ export async function handleManagerAiChat(
         meta: toolResult.navigateTo ? { navigateTo: toolResult.navigateTo } : undefined
       });
 
-      contents.push({ role: "model", parts: [{ functionCall: { name, args } }] });
+      contents.push(modelFunctionCallContent(round.functionCall));
       contents.push({
         role: "user",
         parts: [{ functionResponse: { name, response: toolResult.result } }]
