@@ -25,10 +25,9 @@ export default async function ManagerPage({
       : tab === "ai_manager" || tab === "donations" || tab === "web_ai" || tab === "assistant" || tab === "messages" || tab === "feedbacks" || tab === "maintenance"
         ? tab
         : undefined;
-  const initialView =
-    openDonations ||
-    Boolean(initialSupportSubTab) ||
-    view === "client_list" ||
+  const initialView = initialSupportSubTab
+    ? "support_chat"
+    : view === "client_list" ||
     view === "owners_employees" ||
     view === "support_chat" ||
     view === "feedbacks" ||
@@ -38,9 +37,7 @@ export default async function ManagerPage({
     view === "overview" ||
     view === "short_term" ||
     view === "settings"
-      ? openDonations || initialSupportSubTab
-        ? "support_chat"
-        : view
+      ? view
       : initialSettingsSection
         ? "settings"
         : "overview";
