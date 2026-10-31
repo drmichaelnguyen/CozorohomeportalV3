@@ -398,6 +398,15 @@ import {
   listAiManagerFeedback,
   upsertAiManagerActionFeedback
 } from "./ai-manager-feedback.js";
+import {
+  acknowledgeAiManagerInboxItem,
+  closeAiManagerInboxTopic,
+  getAiManagerInboxSummary,
+  markAiManagerInboxRead,
+  reopenAiManagerInboxTopic,
+  replyAiManagerInboxItem,
+  resolveAiManagerInboxChoice
+} from "./ai-manager-inbox.js";
 import { handleResidentPortalAiChat, type ResidentPortalAiMessage } from "./resident-portal-ai-chat.js";
 import { generateManagerSupportReplyDraft } from "./resident-support-ai.js";
 import { getVentHammerRedeemToday, markVentHammerRedeemedToday } from "./vent-hammer-redeem-guard.js";
@@ -6228,6 +6237,172 @@ app.get("/manager/ai-manager/usage", async (request, response) => {
   } catch (error) {
     return response.status((error as Error & { statusCode?: number }).statusCode ?? 403).json({
       error: error instanceof Error ? error.message : "Unable to load AI Manager usage."
+    });
+  }
+});
+
+app.get("/manager/ai-manager/inbox", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "").trim().toLowerCase();
+  try {
+    const summary = await getAiManagerInboxSummary(actorEmail);
+    return response.json(summary);
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 403).json({
+      error: error instanceof Error ? error.message : "Unable to load AI Manager inbox."
+    });
+  }
+});
+
+app.post("/manager/ai-manager/inbox/:id/choose", async (request, response) => {
+  const parsed = z
+    .object({
+      actorEmail: z.string().email(),
+      choiceId: z.string().trim().min(1).max(64),
+      ownerReply: z.string().max(2000).optional(),
+      actorName: z.string().trim().max(80).optional()
+    })
+    .safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid AI Manager inbox choice payload." });
+  }
+  try {
+    const topic = await resolveAiManagerInboxChoice({
+      actorEmail: parsed.data.actorEmail,
+      itemId: String(request.params.id ?? ""),
+      choiceId: parsed.data.choiceId,
+      ownerReply: parsed.data.ownerReply,
+      actorName: parsed.data.actorName
+    });
+    return response.json({ ok: true, topic, item: topic });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to resolve escalation";
+    const status = (error as Error & { statusCode?: number }).statusCode
+      ?? (message.includes("Only") ? 403 : message.includes("not found") || message.includes("Topic not found") ? 404 : 400);
+    return response.status(status).json({ error: message });
+  }
+});
+
+app.post("/manager/ai-manager/inbox/:id/reply", async (request, response) => {
+  const parsed = z
+    .object({
+      actorEmail: z.string().email(),
+      ownerReply: z.string().trim().min(1).max(2000),
+      closeTopic: z.boolean().optional(),
+      actorName: z.string().trim().max(80).optional()
+    })
+    .safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid AI Manager inbox reply payload." });
+  }
+  try {
+    const topic = await replyAiManagerInboxItem({
+      actorEmail: parsed.data.actorEmail,
+      itemId: String(request.params.id ?? ""),
+      ownerReply: parsed.data.ownerReply,
+      closeTopic: parsed.data.closeTopic,
+      actorName: parsed.data.actorName
+    });
+    return response.json({ ok: true, topic, item: topic });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to reply";
+    const status = (error as Error & { statusCode?: number }).statusCode
+      ?? (message.includes("Only") ? 403 : message.includes("not found") || message.includes("Topic not found") ? 404 : 400);
+    return response.status(status).json({ error: message });
+  }
+});
+
+app.post("/manager/ai-manager/inbox/:id/close", async (request, response) => {
+  const parsed = z
+    .object({
+      actorEmail: z.string().email(),
+      note: z.string().max(2000).optional()
+    })
+    .safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid AI Manager inbox close payload." });
+  }
+  try {
+    const topic = await closeAiManagerInboxTopic({
+      actorEmail: parsed.data.actorEmail,
+      itemId: String(request.params.id ?? ""),
+      note: parsed.data.note
+    });
+    return response.json({ ok: true, topic, item: topic });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to close topic";
+    const status = (error as Error & { statusCode?: number }).statusCode
+      ?? (message.includes("Only") ? 403 : message.includes("not found") || message.includes("Topic not found") ? 404 : 400);
+    return response.status(status).json({ error: message });
+  }
+});
+
+app.post("/manager/ai-manager/inbox/:id/reopen", async (request, response) => {
+  const parsed = z
+    .object({
+      actorEmail: z.string().email(),
+      note: z.string().max(2000).optional()
+    })
+    .safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid AI Manager inbox reopen payload." });
+  }
+  try {
+    const topic = await reopenAiManagerInboxTopic({
+      actorEmail: parsed.data.actorEmail,
+      itemId: String(request.params.id ?? ""),
+      note: parsed.data.note
+    });
+    return response.json({ ok: true, topic, item: topic });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to reopen topic";
+    const status = (error as Error & { statusCode?: number }).statusCode
+      ?? (message.includes("Only") ? 403 : message.includes("not found") || message.includes("Topic not found") ? 404 : 400);
+    return response.status(status).json({ error: message });
+  }
+});
+
+app.post("/manager/ai-manager/inbox/:id/ack", async (request, response) => {
+  const parsed = z
+    .object({
+      actorEmail: z.string().email()
+    })
+    .safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid AI Manager inbox ack payload." });
+  }
+  try {
+    const topic = await acknowledgeAiManagerInboxItem({
+      actorEmail: parsed.data.actorEmail,
+      itemId: String(request.params.id ?? "")
+    });
+    return response.json({ ok: true, topic, item: topic });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to acknowledge";
+    const status = (error as Error & { statusCode?: number }).statusCode
+      ?? (message.includes("Only") ? 403 : message.includes("not found") || message.includes("Topic not found") ? 404 : 400);
+    return response.status(status).json({ error: message });
+  }
+});
+
+app.post("/manager/ai-manager/inbox/mark-read", async (request, response) => {
+  const parsed = z
+    .object({
+      actorEmail: z.string().email(),
+      ids: z.array(z.string().min(1)).max(100).optional()
+    })
+    .safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid AI Manager inbox mark-read payload." });
+  }
+  try {
+    const result = await markAiManagerInboxRead({
+      actorEmail: parsed.data.actorEmail,
+      ids: parsed.data.ids
+    });
+    return response.json(result);
+  } catch (error) {
+    return response.status((error as Error & { statusCode?: number }).statusCode ?? 403).json({
+      error: error instanceof Error ? error.message : "Unable to mark inbox read."
     });
   }
 });

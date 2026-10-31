@@ -52,6 +52,7 @@ import { ManagerAiChat } from "./manager-ai-chat";
 import { ManagerSupportInbox } from "./manager-support-inbox";
 import { ManagerDonationInbox } from "./manager-donation-inbox";
 import { ManagerWebLeadInbox } from "./manager-web-lead-inbox";
+import { ManagerAiManagerInbox } from "./manager-ai-manager-inbox";
 import { LaundryScheduleManager } from "./laundry-schedule-manager";
 import { usePortalLanguage } from "./portal-language";
 import { PrepaidPackageBreakdownRows } from "./next-payment-summary";
@@ -3253,7 +3254,7 @@ export function ManagerClient({
 }: {
   initialView?: ManagerView;
   initialChatId?: string;
-  initialSupportSubTab?: "messages" | "feedbacks" | "maintenance" | "assistant" | "web_ai" | "donations";
+  initialSupportSubTab?: "messages" | "feedbacks" | "maintenance" | "assistant" | "web_ai" | "donations" | "ai_manager";
   initialSettingsSection?: ManagerSettingsMainSection;
 }) {
 
@@ -3858,8 +3859,10 @@ export function ManagerClient({
   const [controllerActionPending, setControllerActionPending] = useState<Record<string, string>>({});
   const [controllerActionFeedback, setControllerActionFeedback] = useState<Record<string, { tone: "success" | "error"; message: string }>>({});
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
-  const [supportSubTab, setSupportSubTab] = useState<"messages" | "feedbacks" | "maintenance" | "assistant" | "web_ai" | "donations">(
-    initialSupportSubTab ?? "messages"
+  const [supportSubTab, setSupportSubTab] = useState<"messages" | "feedbacks" | "maintenance" | "assistant" | "web_ai" | "donations" | "ai_manager">(
+    initialSupportSubTab === "ai_manager" && !canManageAiManager
+      ? "messages"
+      : initialSupportSubTab ?? "messages"
   );
   const [clientSubTab, setClientSubTab] = useState<ClientSubTab>("list");
   const [clientTermTab, setClientTermTab] = useState<"long_term" | "short_term" | "inactive">(
@@ -13994,6 +13997,19 @@ export function ManagerClient({
               >
                 {language === "vi" ? "Quyên góp" : "Donations"}
               </button>
+              {canManageAiManager ? (
+                <button
+                  type="button"
+                  onClick={() => setSupportSubTab("ai_manager")}
+                  className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold transition-all sm:text-sm ${
+                    supportSubTab === "ai_manager"
+                      ? "bg-slate-900 text-white shadow-sm"
+                      : "text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  {t("aiManagerChatTab", "AI Manager")}
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => {
@@ -14034,6 +14050,11 @@ export function ManagerClient({
                   setActiveManagerView("client_list");
                 }
               }}
+            />
+          ) : supportSubTab === "ai_manager" && canManageAiManager ? (
+            <ManagerAiManagerInbox
+              operatorEmail={normalizedEmail}
+              enabled={canManageAiManager}
             />
           ) : supportSubTab === "assistant" ? (
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">

@@ -27,6 +27,11 @@ import {
   type AiManagerOpsSnapshot,
   shouldEscalateSupportInsteadOfAutoReply
 } from "./ai-manager-logic.js";
+import {
+  escalateFineDisputeToOwner,
+  escalateSupportChatToOwner,
+  isAmbiguousFineDispute
+} from "./ai-manager-inbox.js";
 
 // Must match api/src/google-sheets.ts fine sheet headers.
 const FINE_DISPUTE_COLUMN = "Khieu nai tu khach hang";
@@ -84,13 +89,26 @@ export async function runAnswerChatActions(input: {
   for (const thread of input.snapshot.supportHighlights.slice(0, MAX_CHAT_REPLIES_PER_TICK)) {
     if (shouldEscalateSupportInsteadOfAutoReply(thread.latestBody)) {
       escalated += 1;
+      try {
+        await escalateSupportChatToOwner({
+          fromEmail: input.operatorEmail,
+          fromName: input.displayName,
+          conversationId: thread.conversationId,
+          residentEmail: thread.residentEmail,
+          residentName: thread.residentName,
+          latestBody: thread.latestBody,
+          reason: "sensitive_topic"
+        });
+      } catch {
+        // Inbox write is best-effort; action log still records the escalate.
+      }
       await logCapabilityAction({
         action: "chat.escalate",
         actorEmail: input.operatorEmail,
         actorName: input.displayName,
         entityId: thread.conversationId,
         entityLabel: thread.residentEmail,
-        details: "reason=sensitive_topic; auto_reply_skipped"
+        details: "reason=sensitive_topic; auto_reply_skipped; inbox=1"
       });
       continue;
     }
@@ -202,12 +220,41 @@ export async function runManageFinesActions(input: {
       if (!email || !timestamp || !content) continue;
 
       const guided = disputeDecisionFromGuides(dispute, fineGuides);
-      const cancel =
+      const clearCancel =
         guided === "CANCEL_FINE" ||
         (guided == null &&
           /đã thanh toán|already paid|duplicate|trùng|nhầm người|wrong person|sai người/i.test(
             dispute
           ));
+      const clearKeep = guided === "KEEP_FINE";
+
+      // When unsure, ask the human owner/admin in the AI Manager chat tab.
+      if (!clearCancel && !clearKeep && isAmbiguousFineDispute(dispute)) {
+        try {
+          await escalateFineDisputeToOwner({
+            fromEmail: input.operatorEmail,
+            fromName: input.displayName,
+            email,
+            timestamp,
+            content,
+            amount,
+            dispute
+          });
+        } catch {
+          // Inbox write is best-effort.
+        }
+        await logCapabilityAction({
+          action: "fines.dispute_escalate",
+          actorEmail: input.operatorEmail,
+          actorName: input.displayName,
+          entityId: `${email}|${timestamp}`,
+          entityLabel: email,
+          details: `content=${content.slice(0, 80)}; amount=${amount}; reason=ambiguous`
+        });
+        continue;
+      }
+
+      const cancel = clearCancel;
       const decision = cancel ? "CANCEL_FINE" : "KEEP_FINE";
 
       await managerResolveFineDispute({

@@ -35,6 +35,11 @@ import {
   runScheduleAssignmentActions
 } from "./ai-manager-actions.js";
 import {
+  escalatePendingContractToOwner,
+  escalateSupportChatToOwner,
+  postAiManagerReportToInbox
+} from "./ai-manager-inbox.js";
+import {
   type AiManagerCapabilities,
   type AiManagerConfig,
   type AiManagerOpsSnapshot,
@@ -50,6 +55,7 @@ import {
   mergeAiManagerConfig,
   normalizeAiManagerCapabilities,
   resolveReportRecipients,
+  shouldEscalateSupportInsteadOfAutoReply,
   shouldSkipQuietTick
 } from "./ai-manager-logic.js";
 
@@ -747,6 +753,80 @@ export async function runAiManagerTick(options?: {
     file.reports = [report, ...file.reports].slice(0, MAX_AI_MANAGER_REPORTS);
     await writeReportsFile(file);
 
+    // Mirror the digest into the owner/admin AI Manager chat tab, and escalate
+    // items the agent cannot safely decide alone (contracts; sensitive chat when
+    // answerChat is off so owners still see a multiple-choice ask).
+    let inboxPosted = 0;
+    try {
+      if (config.capabilities.ownerReports) {
+        const hot =
+          snapshot.supportUnreadThreads +
+          snapshot.pendingContractApprovals +
+          snapshot.cleaningPendingAudit +
+          snapshot.cleaningOverdueAssigned +
+          snapshot.hostelPendingBookings +
+          snapshot.acComfortAlerts +
+          snapshot.openFineDisputes;
+        await postAiManagerReportToInbox({
+          fromEmail: config.email,
+          fromName: config.displayName,
+          reportId: report.id,
+          title:
+            hot > 0
+              ? `Ops report: ${hot} item(s) need attention`
+              : "Ops report: all clear",
+          body: [
+            summaryText.trim(),
+            "",
+            actionsTaken.length
+              ? `Actions this tick:\n${actionsTaken
+                  .map((a) => `• ${a.capability}: ${a.summary}`)
+                  .join("\n")}`
+              : "No mutating actions this tick.",
+            suggestedDrafts.length
+              ? `\nSuggested support drafts (not sent): ${suggestedDrafts.length}`
+              : "",
+            `\nReport id: ${report.id}`
+          ]
+            .filter(Boolean)
+            .join("\n")
+        });
+        inboxPosted += 1;
+      }
+
+      for (const approval of snapshot.pendingContractHighlights.slice(0, 5)) {
+        const posted = await escalatePendingContractToOwner({
+          fromEmail: config.email,
+          fromName: config.displayName,
+          approvalId: approval.id,
+          type: approval.type,
+          email: approval.email,
+          summary: approval.summary,
+          relatedReportId: report.id
+        });
+        if (posted) inboxPosted += 1;
+      }
+
+      if (!config.capabilities.answerChat) {
+        for (const thread of snapshot.supportHighlights.slice(0, 5)) {
+          if (!shouldEscalateSupportInsteadOfAutoReply(thread.latestBody)) continue;
+          const posted = await escalateSupportChatToOwner({
+            fromEmail: config.email,
+            fromName: config.displayName,
+            conversationId: thread.conversationId,
+            residentEmail: thread.residentEmail,
+            residentName: thread.residentName,
+            latestBody: thread.latestBody,
+            reason: "sensitive_topic; answerChat_off",
+            relatedReportId: report.id
+          });
+          if (posted) inboxPosted += 1;
+        }
+      }
+    } catch (error) {
+      console.error("[ai-manager] inbox post failed", error);
+    }
+
     await writeAiManagerConfig({
       ...config,
       lastTickAt: report.createdAt,
@@ -769,6 +849,7 @@ export async function runAiManagerTick(options?: {
         summarizeSnapshotForLog(snapshot),
         `actions=${actionsTaken.map((a) => `${a.capability}:${a.ok ? "ok" : "fail"}`).join(",") || "none"}`,
         `drafts=${suggestedDrafts.length}`,
+        `inboxPosted=${inboxPosted}`,
         `emailedTo=${report.emailedTo.join(",") || "none"}`,
         `emailErrors=${report.emailErrors.length}`
       ].join("; ")

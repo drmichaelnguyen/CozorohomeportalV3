@@ -235,7 +235,7 @@ export function NotificationCenterClient() {
                     </div>
                     <div className="mt-3">
                       <Link
-                        href={n.href || "/manager?view=settings&settingsSection=ai_manager"}
+                        href={n.href || "/manager?view=support_chat&tab=ai_manager"}
                         className="inline-flex rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-medium text-white"
                       >
                         Open AI Manager
