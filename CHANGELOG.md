@@ -1,5 +1,9 @@
 # Changelog
 
+## [4.0.0] - 2026-10-30
+
+- **Major release — Cozoro AI Manager**: Ships the AI Manager agent (3.9.47–3.9.51) to production: dedicated manager account with scheduled owner digests, per-capability toggles (reports, chat replies, fines, cleaning schedule), ActionLog audit trail, owner like/dislike learning guides, and per-task AI token monitoring. See `docs/ai-manager.md`.
+
 ## [3.9.50] - 2026-10-30
 
 - **AI Manager learning feedback**: Owners can like/dislike Action log rows and write guides; guides are reused for similar chat replies, fine disputes, and owner digests (`api/data/ai-manager-feedback.json`).

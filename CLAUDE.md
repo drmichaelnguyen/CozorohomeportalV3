@@ -298,6 +298,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 4.0.0 | Major release: Cozoro AI Manager (dedicated manager agent with owner digests, capability toggles, ActionLog audit trail, owner feedback/learning guides, per-task token monitoring) goes live in production. |
 | 3.9.51 | AI Manager token monitoring: attribute LLM usage per task/category (reports, chat, fines, schedule) and show breakdown in Settings. |
 | 3.9.50 | AI Manager owner feedback: like/dislike actions and write learning guides reused on similar future events. |
 | 3.9.49 | AI Manager owner capability toggles: reports, answer chat, create/correct fines, cleaning schedule assignment. |
