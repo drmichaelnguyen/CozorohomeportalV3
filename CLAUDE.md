@@ -188,7 +188,7 @@ const nextConfig: NextConfig = {
 | `GET /manager/support/conversations/:id?operatorEmail=` | Conversation thread |
 | `POST /manager/support/messages` | Send reply as manager |
 | `POST /manager/support/conversations/:id/ai-draft` | **Manager, owner, app_admin** — generate an editable, unsent reply draft from direct-thread context (including latest resident chat photos) and CozoroHome app knowledge. |
-| `GET/PUT /manager/ai-manager` · `POST .../run` · `GET .../action-logs` · `PUT .../action-logs/:id/feedback` · `GET .../usage` | **Owner, app_admin** (GET status/logs also staff) — AI Manager account, digests, ActionLog, like/dislike learning guides, token usage by task/category; see `docs/ai-manager.md`. |
+| `GET/PUT /manager/ai-manager` · `POST .../run` · `POST .../chat` · `GET .../action-logs` · `PUT .../action-logs/:id/feedback` · `GET .../usage` | **Owner, app_admin** (GET status/logs also staff) — AI Manager account, owner instruction chat, digests, ActionLog, like/dislike learning guides, token usage by task/category; see `docs/ai-manager.md`. |
 | `POST /manager/support/conversations/:id/read` | Mark conversation read |
 | `GET /clients/laundry-bookings?email=` | Resident laundry bookings |
 | `GET /controller/cooker?email=` | Resident kitchen cooker status (on/off, reservations, photos required to toggle) |
@@ -298,6 +298,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 3.9.52 | AI Manager owner chat: owners instruct the agent (ops status, one-shot actions, capability toggles, standing guides) from Settings. |
 | 3.9.51 | AI Manager token monitoring: attribute LLM usage per task/category (reports, chat, fines, schedule) and show breakdown in Settings. |
 | 3.9.50 | AI Manager owner feedback: like/dislike actions and write learning guides reused on similar future events. |
 | 3.9.49 | AI Manager owner capability toggles: reports, answer chat, create/correct fines, cleaning schedule assignment. |

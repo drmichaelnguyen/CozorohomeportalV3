@@ -398,6 +398,7 @@ import {
   listAiManagerFeedback,
   upsertAiManagerActionFeedback
 } from "./ai-manager-feedback.js";
+import { handleAiManagerOwnerChat } from "./ai-manager-owner-chat.js";
 import { handleResidentPortalAiChat, type ResidentPortalAiMessage } from "./resident-portal-ai-chat.js";
 import { generateManagerSupportReplyDraft } from "./resident-support-ai.js";
 import { getVentHammerRedeemToday, markVentHammerRedeemedToday } from "./vent-hammer-redeem-guard.js";
@@ -6229,6 +6230,34 @@ app.get("/manager/ai-manager/usage", async (request, response) => {
     return response.status((error as Error & { statusCode?: number }).statusCode ?? 403).json({
       error: error instanceof Error ? error.message : "Unable to load AI Manager usage."
     });
+  }
+});
+
+app.post("/manager/ai-manager/chat", async (request, response) => {
+  const parsed = z
+    .object({
+      actorEmail: z.string().email(),
+      language: z.enum(["en", "vi"]).optional(),
+      history: z
+        .array(z.object({ role: z.enum(["user", "model"]), text: z.string() }))
+        .min(1)
+        .max(40)
+    })
+    .safeParse(request.body);
+
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Invalid AI Manager chat payload." });
+  }
+
+  try {
+    const result = await handleAiManagerOwnerChat(parsed.data.actorEmail, parsed.data.history, {
+      language: parsed.data.language
+    });
+    return response.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "AI Manager chat failed";
+    const status = /only owners/i.test(message) ? 403 : 400;
+    return response.status(status).json({ error: message });
   }
 });
 

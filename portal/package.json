@@ -1,6 +1,6 @@
 {
   "name": "cozorohome-portal",
-  "version": "3.9.51",
+  "version": "3.9.52",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000 --webpack",

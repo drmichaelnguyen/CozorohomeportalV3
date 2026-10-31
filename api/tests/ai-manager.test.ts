@@ -148,9 +148,11 @@ test("AI Manager usage features map 1:1 to capability categories", () => {
     "ai_manager_report",
     "ai_manager_chat_reply",
     "ai_manager_fines",
-    "ai_manager_schedule"
+    "ai_manager_schedule",
+    "ai_manager_owner_chat"
   ]);
   assert.equal(isAiManagerUsageFeature("ai_manager_chat_reply"), true);
+  assert.equal(isAiManagerUsageFeature("ai_manager_owner_chat"), true);
   assert.equal(isAiManagerUsageFeature("manager_support_reply_draft"), false);
   for (const feature of AI_MANAGER_USAGE_FEATURES) {
     assert.ok(AI_MANAGER_USAGE_FEATURE_LABELS[feature].includes("AI Manager"));
@@ -162,6 +164,7 @@ test("AI Manager usage features map 1:1 to capability categories", () => {
   assert.equal(AI_MANAGER_USAGE_CATEGORIES.ai_manager_chat_reply.capability, "answerChat");
   assert.equal(AI_MANAGER_USAGE_CATEGORIES.ai_manager_fines.capability, "manageFines");
   assert.equal(AI_MANAGER_USAGE_CATEGORIES.ai_manager_schedule.capability, "scheduleAssignment");
+  assert.equal(AI_MANAGER_USAGE_CATEGORIES.ai_manager_owner_chat.capability, "ownerChat");
 });
 
 test("learning guides format and dispute decisions", () => {

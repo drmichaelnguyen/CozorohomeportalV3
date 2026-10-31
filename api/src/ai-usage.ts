@@ -359,6 +359,7 @@ export async function getAiManagerUsageAnalytics(days: number) {
     answerChat: "Answer support chat",
     manageFines: "Create / correct fines",
     scheduleAssignment: "Cleaning schedule assignment",
+    ownerChat: "Owner chat",
     other: "Other"
   };
 
