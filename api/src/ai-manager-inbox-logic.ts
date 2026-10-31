@@ -220,9 +220,9 @@ export function closeTopic(
   if (topic.status === "closed") return topic;
   const now = input.nowIso ?? new Date().toISOString();
   const email = input.actorEmail.trim().toLowerCase();
-  let next = {
+  let next: AiManagerInboxTopic = {
     ...topic,
-    status: "closed" as const,
+    status: "closed",
     closedAt: now,
     closedByEmail: email,
     updatedAt: now,

@@ -188,7 +188,7 @@ const nextConfig: NextConfig = {
 | `GET /manager/support/conversations/:id?operatorEmail=` | Conversation thread |
 | `POST /manager/support/messages` | Send reply as manager |
 | `POST /manager/support/conversations/:id/ai-draft` | **Manager, owner, app_admin** — generate an editable, unsent reply draft from direct-thread context (including latest resident chat photos) and CozoroHome app knowledge. |
-| `GET/PUT /manager/ai-manager` · `POST .../run` · `GET .../action-logs` · `PUT .../action-logs/:id/feedback` · `GET .../usage` · `GET/POST .../inbox*` | **Owner, app_admin** (GET status/logs also staff) — AI Manager account, digests, ActionLog, like/dislike learning guides, token usage, and Messages→AI Manager inbox escalations; see `docs/ai-manager.md`. |
+| `GET/PUT /manager/ai-manager` · `POST .../run` · `GET .../action-logs` · `PUT .../action-logs/:id/feedback` · `GET .../usage` · `GET/POST .../inbox*` | **Owner, app_admin** (GET status/logs also staff) — AI Manager account, digests posted to Messages chat (no email), ActionLog, like/dislike learning guides, token usage by task/category, and Messages→AI Manager inbox escalations; see `docs/ai-manager.md`. |
 | `POST /manager/support/conversations/:id/read` | Mark conversation read |
 | `GET /clients/laundry-bookings?email=` | Resident laundry bookings |
 | `GET /controller/cooker?email=` | Resident kitchen cooker status (on/off, reservations, photos required to toggle) |
@@ -298,6 +298,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 4.0.4 | AI Manager owner reports post into manager Messages chat (no email); Settings drops report-email recipients. Digests still mirror into the owner AI Manager tab; Notification Center keeps escalation cards only. |
 | 4.0.3 | AI Manager chat uses **open/closed topics** with threaded replies so the agent follows owner guidance inside each topic instead of a flat message list. |
 | 4.0.2 | Messages → **AI Manager** tab for owners/app admins: agent posts digests here and escalates when unsure with multiple-choice (or free-text) decisions; ambiguous fine disputes and sensitive support topics ask humans instead of guessing. |
 | 4.0.1 | AI fallback upgraded to Gemini 3.8 Flash (`GEMINI_MODEL`, low thinking, tool-call thought signatures) for API agents and the Facebook bot when 9router fails; per-model AI usage cost estimates. |

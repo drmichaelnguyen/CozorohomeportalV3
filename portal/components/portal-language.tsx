@@ -1384,8 +1384,8 @@ const translations: Record<string, { en: string; vi: string }> = {
   aiManagerTab: { en: "AI Manager", vi: "Quản lý AI" },
   aiManagerTitle: { en: "AI Manager", vi: "Quản lý AI" },
   aiManagerDesc: {
-    en: "A dedicated manager account that can report to you and — when you allow it — answer support chat, create/correct fines, and fill cleaning schedule slots.",
-    vi: "Tài khoản quản lý riêng có thể báo cáo cho bạn và — khi bạn cho phép — trả lời chat hỗ trợ, tạo/xử lý phạt, và phân công lịch vệ sinh."
+    en: "A dedicated manager account that posts ops reports into Messages chat and — when you allow it — can answer support chat, create/correct fines, and fill cleaning schedule slots.",
+    vi: "Tài khoản quản lý riêng gửi báo cáo vận hành vào chat Messages và — khi bạn cho phép — có thể trả lời chat hỗ trợ, tạo/xử lý phạt, và phân công lịch vệ sinh."
   },
   aiManagerEnabled: { en: "Enable scheduled agent", vi: "Bật agent định kỳ" },
   aiManagerEnabledHint: {
@@ -1399,8 +1399,8 @@ const translations: Record<string, { en: string; vi: string }> = {
   },
   aiManagerCapOwnerReports: { en: "Owner reports", vi: "Báo cáo cho owner" },
   aiManagerCapOwnerReportsHint: {
-    en: "Email / Notification Center digests of ops status.",
-    vi: "Gửi digest trạng thái vận hành qua email / Notification Center."
+    en: "Post ops digests into manager Messages chat (no email).",
+    vi: "Gửi digest trạng thái vận hành vào chat Messages (không gửi email)."
   },
   aiManagerCapAnswerChat: { en: "Answer support chat", vi: "Trả lời chat hỗ trợ" },
   aiManagerCapAnswerChatHint: {
@@ -1426,11 +1426,19 @@ const translations: Record<string, { en: string; vi: string }> = {
   aiManagerAccountEmail: { en: "AI Manager login email", vi: "Email đăng nhập Quản lý AI" },
   aiManagerDisplayName: { en: "Display name", vi: "Tên hiển thị" },
   aiManagerIntervalHours: { en: "Report interval (hours)", vi: "Chu kỳ báo cáo (giờ)" },
-  aiManagerReportEmails: { en: "Report to (emails)", vi: "Gửi báo cáo tới (email)" },
-  aiManagerReportEmailsHint: {
-    en: "Comma-separated. Leave blank to use owners/app admins. Effective recipients",
-    vi: "Cách nhau bằng dấu phẩy. Để trống sẽ dùng owner/app admin. Người nhận hiện tại"
+  aiManagerChatDelivered: {
+    en: "Posted to Messages chat",
+    vi: "Đã gửi vào chat Messages"
   },
+  aiManagerChatNotPosted: {
+    en: "Not posted to chat",
+    vi: "Chưa gửi vào chat"
+  },
+  aiManagerChatDeliveryFailed: {
+    en: "Chat delivery failed",
+    vi: "Gửi chat thất bại"
+  },
+  aiManagerOpenInChat: { en: "Open in Messages", vi: "Mở trong Messages" },
   aiManagerPassword: { en: "Set portal password for AI Manager", vi: "Đặt mật khẩu portal cho Quản lý AI" },
   aiManagerPasswordPlaceholder: {
     en: "Optional — min 8 characters to update",
@@ -1451,8 +1459,8 @@ const translations: Record<string, { en: string; vi: string }> = {
   aiManagerAccountSince: { en: "Account provisioned", vi: "Tài khoản được tạo" },
   aiManagerLastError: { en: "Last error", vi: "Lỗi gần nhất" },
   aiManagerLoginHint: {
-    en: "Log in as the AI Manager email to use the normal manager workspace (Messages, cleaning, etc.). The agent reports to owners; it does not auto-charge residents in v1.",
-    vi: "Đăng nhập bằng email Quản lý AI để dùng workspace quản lý bình thường. Agent báo cáo cho owner; bản v1 không tự trừ tiền cư dân."
+    en: "Reports appear in Messages as a conversation from the AI Manager. You can also log in as that email for the normal manager workspace. It does not auto-charge residents in v1.",
+    vi: "Báo cáo hiện trong Messages như một cuộc trò chuyện từ Quản lý AI. Bạn cũng có thể đăng nhập bằng email đó để dùng workspace quản lý. Bản v1 không tự trừ tiền cư dân."
   },
   aiManagerActionLogs: { en: "Action log", vi: "Nhật ký thao tác" },
   aiManagerActionLogsHint: {

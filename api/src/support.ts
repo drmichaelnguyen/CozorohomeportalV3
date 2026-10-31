@@ -1331,33 +1331,13 @@ export async function listStaffSupportNotifications(operatorEmail: string) {
     });
   }
 
+  // AI Manager reports are delivered into manager Messages (support chat).
+  // Unread chat rows already surface as SUPPORT_REQUEST notifications, so only
+  // open owner escalations get a separate AI_MANAGER_REPORT card here.
   try {
     const actor = await resolvePortalLogin(normalizedOperatorEmail);
     if (actor.role === "owner" || actor.role === "app_admin") {
-      const { listRecentAiManagerReportsForOwner } = await import("./ai-manager.js");
       const { listOpenAiManagerEscalations } = await import("./ai-manager-inbox.js");
-      const reports = await listRecentAiManagerReportsForOwner(3);
-      for (const report of reports.slice(0, 3)) {
-        const hot =
-          report.snapshot.supportUnreadThreads +
-          report.snapshot.pendingContractApprovals +
-          report.snapshot.cleaningPendingAudit +
-          report.snapshot.cleaningOverdueAssigned +
-          report.snapshot.hostelPendingBookings +
-          report.snapshot.acComfortAlerts;
-        notifications.push({
-          id: `ai-manager-report-${report.id}`,
-          type: "AI_MANAGER_REPORT",
-          conversationId: report.id,
-          residentEmail: "ai.manager@cozorohome.com",
-          residentName: "AI Manager",
-          title: hot > 0 ? `AI Manager: ${hot} item(s) need attention` : "AI Manager: all clear report",
-          body: report.summaryText.slice(0, 280),
-          createdAt: new Date(report.createdAt),
-          unreadCount: 1,
-          href: "/manager?view=support_chat&tab=ai_manager"
-        });
-      }
       const escalations = await listOpenAiManagerEscalations(5);
       for (const item of escalations) {
         notifications.push({
@@ -1367,8 +1347,12 @@ export async function listStaffSupportNotifications(operatorEmail: string) {
           residentEmail: item.residentEmail || "ai.manager@cozorohome.com",
           residentName: "AI Manager",
           title: item.title,
-          body: item.body.slice(0, 280),
-          createdAt: new Date(item.createdAt),
+          body: (
+            [...item.messages].reverse().find((m) => m.role === "ai_manager")?.body ??
+            item.messages[item.messages.length - 1]?.body ??
+            ""
+          ).slice(0, 280),
+          createdAt: new Date(item.updatedAt),
           unreadCount: 1,
           href: "/manager?view=support_chat&tab=ai_manager"
         });

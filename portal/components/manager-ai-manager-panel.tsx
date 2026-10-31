@@ -18,7 +18,7 @@ type AiManagerConfig = {
   displayName: string;
   mode: "report_only" | "assist";
   capabilities: AiManagerCapabilities;
-  reportEmails: string[];
+  reportEmails?: string[];
   intervalHours: number;
   accountProvisionedAt: string | null;
   lastTickAt: string | null;
@@ -31,8 +31,9 @@ type RecentReport = {
   createdAt: string;
   trigger: string;
   mode: string;
-  emailedTo: string[];
-  emailErrors: string[];
+  chatConversationId: string | null;
+  chatMessageId: string | null;
+  chatError: string | null;
   supportUnreadThreads: number;
   pendingContractApprovals: number;
   cleaningPendingAudit: number;
@@ -77,7 +78,6 @@ type LearningGuide = {
 
 type StatusResponse = {
   config: AiManagerConfig;
-  effectiveReportEmails: string[];
   recentReports: RecentReport[];
   recentActionLogs?: ActionLogRow[];
   learningGuides?: LearningGuide[];
@@ -89,8 +89,9 @@ type FullReport = {
   createdAt: string;
   summaryText: string;
   suggestedDrafts: Array<{ conversationId: string; residentEmail: string; draft: string }>;
-  emailedTo: string[];
-  emailErrors: string[];
+  chatConversationId?: string | null;
+  chatMessageId?: string | null;
+  chatError?: string | null;
 };
 
 type UsageBucket = {
@@ -161,11 +162,9 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [config, setConfig] = useState<AiManagerConfig | null>(null);
-  const [effectiveReportEmails, setEffectiveReportEmails] = useState<string[]>([]);
   const [recentReports, setRecentReports] = useState<RecentReport[]>([]);
   const [recentActionLogs, setRecentActionLogs] = useState<ActionLogRow[]>([]);
   const [learningGuides, setLearningGuides] = useState<LearningGuide[]>([]);
-  const [reportEmailsText, setReportEmailsText] = useState("");
   const [password, setPassword] = useState("");
   const [selectedReport, setSelectedReport] = useState<FullReport | null>(null);
   const [feedbackTarget, setFeedbackTarget] = useState<ActionLogRow | null>(null);
@@ -190,11 +189,9 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
         ...body.config,
         capabilities: normalizeCapabilities(body.config.capabilities)
       });
-      setEffectiveReportEmails(body.effectiveReportEmails ?? []);
       setRecentReports(body.recentReports ?? []);
       setRecentActionLogs(body.recentActionLogs ?? []);
       setLearningGuides(body.learningGuides ?? []);
-      setReportEmailsText((body.config.reportEmails ?? []).join(", "));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load AI Manager.");
     } finally {
@@ -233,10 +230,6 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
     setError("");
     setMessage("");
     try {
-      const reportEmails = reportEmailsText
-        .split(/[,;\s]+/)
-        .map((value) => value.trim())
-        .filter(Boolean);
       const response = await fetch(`${API_BASE_URL}/manager/ai-manager`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -248,7 +241,6 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
           mode: config.mode,
           capabilities: config.capabilities,
           intervalHours: config.intervalHours,
-          reportEmails,
           ...(password.trim().length >= 8 ? { password: password.trim() } : {})
         })
       });
@@ -488,19 +480,6 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
               setConfig({ ...config, intervalHours: Number(event.target.value) || config.intervalHours })
             }
           />
-        </label>
-
-        <label className="block text-sm md:col-span-2">
-          <span className="mb-1 block font-medium text-slate-800">{t("aiManagerReportEmails")}</span>
-          <input
-            className="w-full rounded-md border border-slate-300 px-3 py-2"
-            value={reportEmailsText}
-            onChange={(event) => setReportEmailsText(event.target.value)}
-            placeholder="owner@example.com, other@example.com"
-          />
-          <span className="mt-1 block text-xs text-slate-500">
-            {t("aiManagerReportEmailsHint")}: {effectiveReportEmails.join(", ") || "—"}
-          </span>
         </label>
 
         <label className="block text-sm md:col-span-2">
@@ -801,15 +780,32 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
                       audit {report.cleaningPendingAudit} · overdue {report.cleaningOverdueAssigned} · hostel{" "}
                       {report.hostelPendingBookings} · AC {report.acComfortAlerts}
                     </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {report.chatError
+                        ? `${t("aiManagerChatDeliveryFailed")}: ${report.chatError}`
+                        : report.chatConversationId
+                          ? t("aiManagerChatDelivered")
+                          : t("aiManagerChatNotPosted")}
+                    </p>
                     <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{report.summaryPreview}</p>
                   </div>
-                  <button
-                    type="button"
-                    className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700"
-                    onClick={() => void openReport(report.id)}
-                  >
-                    {t("aiManagerOpenReport")}
-                  </button>
+                  <div className="flex flex-col gap-2">
+                    {report.chatConversationId ? (
+                      <a
+                        href={`/manager?view=support_chat&chat=${encodeURIComponent(report.chatConversationId)}`}
+                        className="rounded-md border border-teal-300 bg-teal-50 px-2 py-1 text-center text-xs font-medium text-teal-900"
+                      >
+                        {t("aiManagerOpenInChat")}
+                      </a>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700"
+                      onClick={() => void openReport(report.id)}
+                    >
+                      {t("aiManagerOpenReport")}
+                    </button>
+                  </div>
                 </div>
               </li>
             ))}
@@ -906,6 +902,21 @@ export function ManagerAiManagerPanel({ actorEmail }: { actorEmail: string }) {
             <p className="mb-2 text-xs text-slate-500">
               {selectedReport.id} · {formatWhen(selectedReport.createdAt)}
             </p>
+            {selectedReport.chatConversationId ? (
+              <p className="mb-2 text-xs text-slate-500">
+                <a
+                  href={`/manager?view=support_chat&chat=${encodeURIComponent(selectedReport.chatConversationId)}`}
+                  className="font-medium text-teal-800 underline"
+                >
+                  {t("aiManagerOpenInChat")}
+                </a>
+              </p>
+            ) : null}
+            {selectedReport.chatError ? (
+              <p className="mb-2 text-xs text-rose-700">
+                {t("aiManagerChatDeliveryFailed")}: {selectedReport.chatError}
+              </p>
+            ) : null}
             <pre className="whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-sm text-slate-800">
               {selectedReport.summaryText}
             </pre>

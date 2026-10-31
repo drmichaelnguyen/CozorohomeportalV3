@@ -3,8 +3,8 @@
  *
  * The agent logs in as a real portal manager (default ai.manager@cozorohome.com),
  * surveys ops (support, contracts, cleaning, hostel, AC), writes an LLM digest,
- * emails owners, and optionally prepares unsent support reply drafts (assist mode).
- * It does not auto-mutate resident money/sheets in v1.
+ * posts it into manager Messages chat, and optionally prepares unsent support
+ * reply drafts (assist mode). It does not auto-mutate resident money/sheets in v1.
  */
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -22,12 +22,14 @@ import { completeToolChatRound } from "./llm-tool-chat.js";
 import { upsertStoredPassword } from "./portal-auth.js";
 import { prisma } from "./prisma.js";
 import { generateManagerSupportReplyDraft } from "./resident-support-ai.js";
-import { sendGmailReceipt } from "./google-sheets.js";
 import {
   ensureSystemStaffAccount,
-  listOwnerAndAdminEmails,
   requirePortalRole
 } from "./staff-access.js";
+import {
+  getOrCreateSupportConversationForResident,
+  postResidentSupportMessage
+} from "./support.js";
 import {
   countOpenFineDisputes,
   runAnswerChatActions,
@@ -47,14 +49,12 @@ import {
   type AiManagerSuggestedDraft,
   MAX_AI_MANAGER_REPORTS,
   buildFallbackReportSummary,
-  buildReportEmailBody,
-  buildReportEmailSubject,
+  buildReportChatBody,
   defaultAiManagerConfig,
   formatCapabilitiesForLog,
   formatOpsSnapshotForPrompt,
   mergeAiManagerConfig,
   normalizeAiManagerCapabilities,
-  resolveReportRecipients,
   shouldEscalateSupportInsteadOfAutoReply,
   shouldSkipQuietTick
 } from "./ai-manager-logic.js";
@@ -212,9 +212,27 @@ export async function writeAiManagerConfig(config: AiManagerConfig): Promise<AiM
   return next;
 }
 
+function normalizeStoredReport(raw: Partial<AiManagerReport> & Record<string, unknown>): AiManagerReport | null {
+  if (!raw || typeof raw.id !== "string" || typeof raw.createdAt !== "string") return null;
+  return {
+    ...(raw as AiManagerReport),
+    chatConversationId:
+      typeof raw.chatConversationId === "string" ? raw.chatConversationId : null,
+    chatMessageId: typeof raw.chatMessageId === "string" ? raw.chatMessageId : null,
+    chatError: typeof raw.chatError === "string" ? raw.chatError : null,
+    emailedTo: Array.isArray(raw.emailedTo) ? (raw.emailedTo as string[]) : undefined,
+    emailErrors: Array.isArray(raw.emailErrors) ? (raw.emailErrors as string[]) : undefined
+  };
+}
+
 async function readReportsFile(): Promise<ReportsFile> {
   const file = await readJsonFile<Partial<ReportsFile>>(reportsPath, { reports: [] });
-  return { reports: Array.isArray(file.reports) ? file.reports : [] };
+  const reports = Array.isArray(file.reports)
+    ? file.reports
+        .map((report) => normalizeStoredReport(report as Partial<AiManagerReport> & Record<string, unknown>))
+        .filter((report): report is AiManagerReport => report != null)
+    : [];
+  return { reports };
 }
 
 async function writeReportsFile(file: ReportsFile) {
@@ -367,7 +385,6 @@ export async function updateAiManagerSettings(
       `enabled=${next.enabled}`,
       `mode=${next.mode}`,
       `intervalHours=${next.intervalHours}`,
-      `reportEmails=${next.reportEmails.join(",") || "(owners)"}`,
       `passwordUpdated=${passwordUpdated ? "true" : "false"}`,
       `email=${next.email}`,
       formatCapabilitiesForLog(next.capabilities)
@@ -409,8 +426,13 @@ async function countHostelPendingBookings(): Promise<number> {
   }
 }
 
-export async function gatherAiManagerOpsSnapshot(): Promise<AiManagerOpsSnapshot> {
+export async function gatherAiManagerOpsSnapshot(options?: {
+  excludeResidentEmails?: string[];
+}): Promise<AiManagerOpsSnapshot> {
   const todayKey = vietnamTodayKey();
+  const excludeEmails = new Set(
+    (options?.excludeResidentEmails ?? []).map((email) => email.trim().toLowerCase()).filter(Boolean)
+  );
 
   const conversations = await prisma.supportConversation.findMany({
     where: { messages: { some: {} } },
@@ -428,6 +450,8 @@ export async function gatherAiManagerOpsSnapshot(): Promise<AiManagerOpsSnapshot
   let supportUnreadMessages = 0;
 
   for (const conversation of conversations) {
+    // Never treat the AI Manager's own report thread as a resident needing reply.
+    if (excludeEmails.has(conversation.residentEmail.trim().toLowerCase())) continue;
     // Needs staff reply when the latest message is from the resident.
     const latest = conversation.messages[0];
     if (!latest || latest.senderRole !== SupportMessageSenderRole.RESIDENT) continue;
@@ -659,7 +683,9 @@ export async function runAiManagerTick(options?: {
     await ensureAiManagerAccount();
     config = await readAiManagerConfig();
 
-    const snapshot = await gatherAiManagerOpsSnapshot();
+    const snapshot = await gatherAiManagerOpsSnapshot({
+      excludeResidentEmails: [config.email]
+    });
     if (shouldSkipQuietTick(snapshot, force, config.capabilities) && trigger === "interval") {
       await writeAiManagerConfig({
         ...config,
@@ -715,10 +741,6 @@ export async function runAiManagerTick(options?: {
         ? await buildAssistDrafts(snapshot, config.email)
         : [];
 
-    const owners = await listOwnerAndAdminEmails();
-    const recipients = config.capabilities.ownerReports
-      ? resolveReportRecipients(config, owners)
-      : [];
     const report: AiManagerReport = {
       id: `aimgr-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
       createdAt: new Date().toISOString(),
@@ -729,23 +751,29 @@ export async function runAiManagerTick(options?: {
       summaryText,
       suggestedDrafts,
       actionsTaken,
-      emailedTo: [],
-      emailErrors: []
+      chatConversationId: null,
+      chatMessageId: null,
+      chatError: null
     };
 
     if (config.capabilities.ownerReports) {
-      const subject = buildReportEmailSubject(snapshot, report.createdAt);
-      const body = buildReportEmailBody(report);
-
-      for (const to of recipients) {
-        try {
-          await sendGmailReceipt({ to, subject, body });
-          report.emailedTo.push(to);
-        } catch (error) {
-          report.emailErrors.push(
-            `${to}: ${error instanceof Error ? error.message : "email failed"}`
-          );
+      try {
+        const conversation = await getOrCreateSupportConversationForResident(config.email);
+        if (conversation.residentName !== config.displayName) {
+          await prisma.supportConversation.update({
+            where: { id: conversation.id },
+            data: { residentName: config.displayName }
+          });
         }
+        const posted = await postResidentSupportMessage({
+          email: config.email,
+          body: buildReportChatBody(report),
+          pagePath: "/manager?view=settings&settingsSection=ai_manager"
+        });
+        report.chatConversationId = posted.conversation.id;
+        report.chatMessageId = posted.message.id;
+      } catch (error) {
+        report.chatError = error instanceof Error ? error.message : "chat delivery failed";
       }
     }
 
@@ -831,9 +859,7 @@ export async function runAiManagerTick(options?: {
       ...config,
       lastTickAt: report.createdAt,
       lastReportId: report.id,
-      lastError: report.emailErrors.length
-        ? report.emailErrors.slice(0, 3).join("; ")
-        : null
+      lastError: report.chatError
     });
 
     await logAiManagerAction({
@@ -850,13 +876,14 @@ export async function runAiManagerTick(options?: {
         `actions=${actionsTaken.map((a) => `${a.capability}:${a.ok ? "ok" : "fail"}`).join(",") || "none"}`,
         `drafts=${suggestedDrafts.length}`,
         `inboxPosted=${inboxPosted}`,
-        `emailedTo=${report.emailedTo.join(",") || "none"}`,
-        `emailErrors=${report.emailErrors.length}`
+        `chatConversationId=${report.chatConversationId || "none"}`,
+        `chatMessageId=${report.chatMessageId || "none"}`,
+        `chatError=${report.chatError || "none"}`
       ].join("; ")
     });
 
     console.log(
-      `[ai-manager] tick trigger=${trigger} report=${report.id} emailed=${report.emailedTo.length} errors=${report.emailErrors.length}`
+      `[ai-manager] tick trigger=${trigger} report=${report.id} chat=${report.chatConversationId || "none"} error=${report.chatError || "none"}`
     );
 
     return { skipped: false, report };
@@ -911,20 +938,19 @@ export async function getAiManagerStatus(actorEmail: string) {
     listAiManagerActionLogs(40),
     listAiManagerFeedback(40)
   ]);
-  const owners = await listOwnerAndAdminEmails();
   return {
     config: {
       ...config,
       // Never expose password material
     },
-    effectiveReportEmails: resolveReportRecipients(config, owners),
     recentReports: reports.map((report) => ({
       id: report.id,
       createdAt: report.createdAt,
       trigger: report.trigger,
       mode: report.mode,
-      emailedTo: report.emailedTo,
-      emailErrors: report.emailErrors,
+      chatConversationId: report.chatConversationId ?? null,
+      chatMessageId: report.chatMessageId ?? null,
+      chatError: report.chatError ?? null,
       supportUnreadThreads: report.snapshot.supportUnreadThreads,
       pendingContractApprovals: report.snapshot.pendingContractApprovals,
       cleaningPendingAudit: report.snapshot.cleaningPendingAudit,
