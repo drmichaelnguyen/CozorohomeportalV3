@@ -1485,6 +1485,38 @@ const translations: Record<string, { en: string; vi: string }> = {
     en: "No learning guides yet. Rate an action and add a short instruction.",
     vi: "Chưa có hướng dẫn học. Hãy đánh giá một thao tác và thêm chỉ dẫn ngắn."
   },
+  aiManagerChatTitle: { en: "Chat with AI Manager", vi: "Chat với Quản lý AI" },
+  aiManagerChatHint: {
+    en: "Tell the agent what to do now, or set standing instructions for later ticks.",
+    vi: "Bảo agent làm ngay, hoặc đặt hướng dẫn lâu dài cho các lần chạy sau."
+  },
+  aiManagerChatEmpty: {
+    en: "Ask for a status check, run a report, answer support chat, assign cleaning, or change settings.",
+    vi: "Hỏi tình trạng, chạy báo cáo, trả lời chat hỗ trợ, phân công vệ sinh, hoặc đổi cài đặt."
+  },
+  aiManagerChatPlaceholder: {
+    en: "e.g. Reply to waiting support chats, then send me a report",
+    vi: "vd: Trả lời các chat hỗ trợ đang chờ, rồi gửi báo cáo cho tôi"
+  },
+  aiManagerChatSend: { en: "Send", vi: "Gửi" },
+  aiManagerChatClear: { en: "Clear", vi: "Xóa" },
+  aiManagerChatThinking: { en: "AI Manager is working…", vi: "Quản lý AI đang xử lý…" },
+  aiManagerChatQuick1: {
+    en: "What’s outstanding right now?",
+    vi: "Hiện có việc gì đang tồn đọng?"
+  },
+  aiManagerChatQuick2: {
+    en: "Run an owner report now and email me.",
+    vi: "Chạy báo cáo cho owner ngay và gửi email cho tôi."
+  },
+  aiManagerChatQuick3: {
+    en: "Answer waiting support chats now.",
+    vi: "Trả lời các chat hỗ trợ đang chờ ngay."
+  },
+  aiManagerChatQuick4: {
+    en: "From now on, keep Answer support chat enabled.",
+    vi: "Từ giờ hãy bật sẵn chức năng Trả lời chat hỗ trợ."
+  },
   aiManagerTokenUsage: { en: "Token usage", vi: "Lượng token sử dụng" },
   aiManagerTokenUsageHint: {
     en: "LLM tokens and estimated cost for each AI Manager task and category (reports, chat, fines, schedule).",

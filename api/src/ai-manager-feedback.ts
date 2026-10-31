@@ -149,6 +149,67 @@ export async function upsertAiManagerActionFeedback(input: {
   return nextEntry;
 }
 
+/**
+ * Standing instruction from owner chat (not tied to a prior ActionLog row).
+ * Injected into later ticks the same way as like/dislike guides.
+ */
+export async function addAiManagerStandingGuide(input: {
+  actorEmail: string;
+  capability: AiManagerFeedbackCapability;
+  guide: string;
+  rating?: AiManagerFeedbackRating;
+}): Promise<AiManagerFeedbackEntry> {
+  const actorEmail = input.actorEmail.trim().toLowerCase();
+  const guide = String(input.guide ?? "").trim().slice(0, 2000);
+  if (!guide) {
+    throw new Error("Guide text is required.");
+  }
+  const capability = input.capability;
+  const allowed: AiManagerFeedbackCapability[] = [
+    "answerChat",
+    "manageFines",
+    "scheduleAssignment",
+    "ownerReports",
+    "other"
+  ];
+  if (!allowed.includes(capability)) {
+    throw new Error("Invalid capability for standing guide.");
+  }
+  const rating: AiManagerFeedbackRating = input.rating === "dislike" ? "dislike" : "like";
+  const now = new Date().toISOString();
+  const id = `aimfb-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
+  const nextEntry: AiManagerFeedbackEntry = {
+    id,
+    actionLogId: `standing-${id}`,
+    action: "ai_manager.owner_chat.instruction",
+    capability,
+    rating,
+    guide,
+    actorEmail,
+    createdAt: now,
+    updatedAt: now,
+    actionDetails: "source=owner_chat",
+    entityLabel: null
+  };
+
+  const file = await readFeedbackFile();
+  file.entries.unshift(nextEntry);
+  await writeFeedbackFile(file);
+
+  await logAction({
+    actorEmail,
+    actorRole: "owner",
+    actorName: actorEmail,
+    action: "ai_manager.owner_chat.instruction",
+    entityType: "AiManagerFeedback",
+    entityId: nextEntry.id,
+    entityLabel: capability,
+    details: `rating=${rating}; capability=${capability}; guideChars=${guide.length}`
+  });
+
+  return nextEntry;
+}
+
 /** Active learning notes for a capability (guides with text), newest first. */
 export async function listLearningGuidesForCapability(
   capability: AiManagerFeedbackCapability,
