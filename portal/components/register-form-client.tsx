@@ -93,6 +93,8 @@ type FormState = {
   referralCode: string;
   /** Donation partnership stay code (CZD-…). */
   donationCouponCode: string;
+  /** Staff-managed stay promo code. */
+  promoCode: string;
 };
 
 const branchOptions: Array<{ id: BranchId; label: string; address: string }> = [
@@ -229,6 +231,12 @@ const T = {
     donationCouponChecking: "Checking partnership code…",
     donationCouponValid: (n: string) => `One month of rent off the first payment: −${n}. Deposit unchanged.`,
     donationCouponInvalid: "This code is not available for a long-term stay.",
+    promoCodeLabel: "Promo code (optional)",
+    promoCodePlaceholder: "SUMMER10",
+    promoCodeChecking: "Checking promo code…",
+    promoCodeValid: (n: string) => `Promo applied to first payment: −${n}. Deposit unchanged.`,
+    promoCodeInvalid: "This promo code is not available for this registration.",
+    promoOrDonationOnly: "Use either a partnership coupon or a promo code, not both.",
     referralFirstPaymentOff: (n: string) => `Referral (one-time): −${n} from first payment estimate`,
     // Validation errors
     chooseSexBranchBed: "Please choose sex, branch, and an available bed first.",
@@ -356,6 +364,12 @@ const T = {
     donationCouponChecking: "Đang kiểm tra mã hợp tác…",
     donationCouponValid: (n: string) => `Miễn một tháng tiền phòng trên thanh toán đầu: −${n}. Tiền cọc giữ nguyên.`,
     donationCouponInvalid: "Mã này không dùng được cho lưu trú dài hạn.",
+    promoCodeLabel: "Mã khuyến mãi (không bắt buộc)",
+    promoCodePlaceholder: "SUMMER10",
+    promoCodeChecking: "Đang kiểm tra mã khuyến mãi…",
+    promoCodeValid: (n: string) => `Đã áp dụng mã khuyến mãi cho thanh toán đầu: −${n}. Tiền cọc giữ nguyên.`,
+    promoCodeInvalid: "Mã khuyến mãi không dùng được cho đăng ký này.",
+    promoOrDonationOnly: "Chỉ dùng một trong hai: mã hợp tác hoặc mã khuyến mãi.",
     referralFirstPaymentOff: (n: string) => `Giới thiệu (một lần): −${n} trên thanh toán lần đầu (ước tính)`,
     // Validation errors
     chooseSexBranchBed: "Vui lòng chọn giới tính, chi nhánh và giường trống trước.",
@@ -392,7 +406,8 @@ const initialFormState: FormState = {
   idScanFile: null,
   agreed: false,
   referralCode: "",
-  donationCouponCode: ""
+  donationCouponCode: "",
+  promoCode: ""
 };
 
 function formatCurrency(value: number) {
@@ -558,6 +573,8 @@ export function RegisterFormClient() {
   const [referralLookup, setReferralLookup] = useState<"idle" | "checking" | "ok" | "bad">("idle");
   const [donationCouponLookup, setDonationCouponLookup] = useState<"idle" | "checking" | "ok" | "bad">("idle");
   const [donationCouponDiscount, setDonationCouponDiscount] = useState(0);
+  const [promoCodeLookup, setPromoCodeLookup] = useState<"idle" | "checking" | "ok" | "bad">("idle");
+  const [promoCodeDiscount, setPromoCodeDiscount] = useState(0);
 
   useEffect(() => {
     const email = form.email.trim();
@@ -779,6 +796,11 @@ export function RegisterFormClient() {
       setDonationCouponDiscount(0);
       return;
     }
+    if (form.promoCode.trim()) {
+      setDonationCouponLookup("bad");
+      setDonationCouponDiscount(0);
+      return;
+    }
     if (!selectedBed) {
       setDonationCouponLookup("idle");
       return;
@@ -813,7 +835,59 @@ export function RegisterFormClient() {
         });
     }, 450);
     return () => window.clearTimeout(tmr);
-  }, [form.donationCouponCode, selectedBed]);
+  }, [form.donationCouponCode, form.promoCode, selectedBed]);
+
+  useEffect(() => {
+    const code = form.promoCode.trim();
+    if (!code) {
+      setPromoCodeLookup("idle");
+      setPromoCodeDiscount(0);
+      return;
+    }
+    if (form.donationCouponCode.trim()) {
+      setPromoCodeLookup("bad");
+      setPromoCodeDiscount(0);
+      return;
+    }
+    if (!selectedBed || !form.branchId) {
+      setPromoCodeLookup("idle");
+      return;
+    }
+    setPromoCodeLookup("checking");
+    const monthlyRentVnd = selectedBed.pricing.monthlyPrice;
+    const depositVnd = selectedBed.pricing.deposit;
+    const months = Number(form.contractMonths) || 0;
+    const tmr = window.setTimeout(() => {
+      void fetch(`${API_BASE_URL}/api/public/promo-codes/quote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code,
+          termType: "LONG_TERM",
+          months,
+          branchId: form.branchId,
+          bedNumber: selectedBed.bedNumber,
+          monthlyRentVnd,
+          depositVnd
+        })
+      })
+        .then(async (response) => {
+          const data = (await response.json()) as { ok?: boolean; discountVnd?: number };
+          if (!response.ok || !data.ok) {
+            setPromoCodeLookup("bad");
+            setPromoCodeDiscount(0);
+            return;
+          }
+          setPromoCodeLookup("ok");
+          setPromoCodeDiscount(Math.max(0, Number(data.discountVnd) || 0));
+        })
+        .catch(() => {
+          setPromoCodeLookup("bad");
+          setPromoCodeDiscount(0);
+        });
+    }, 450);
+    return () => window.clearTimeout(tmr);
+  }, [form.promoCode, form.donationCouponCode, form.branchId, form.contractMonths, selectedBed]);
 
   useEffect(() => {
     if (!availability || !form.bedNumber) {
@@ -936,12 +1010,17 @@ export function RegisterFormClient() {
           referralLookup === "ok" && referralMarketing?.enabled
             ? Math.min(scaledReferralDiscount, firstPaymentBeforeReferral)
             : 0;
+        const rentCapAfterReferral = Math.max(
+          0,
+          firstPaymentBeforeReferral - selectedBed.pricing.deposit - referralFirstPaymentCut
+        );
         const donationCut =
           donationCouponLookup === "ok"
-            ? Math.min(
-                donationCouponDiscount,
-                Math.max(0, firstPaymentBeforeReferral - selectedBed.pricing.deposit - referralFirstPaymentCut)
-              )
+            ? Math.min(donationCouponDiscount, rentCapAfterReferral)
+            : 0;
+        const promoCut =
+          promoCodeLookup === "ok" && donationCut <= 0
+            ? Math.min(promoCodeDiscount, rentCapAfterReferral)
             : 0;
         return {
           monthlyPrice: selectedBed.pricing.monthlyPrice,
@@ -949,6 +1028,7 @@ export function RegisterFormClient() {
           firstPaymentBeforeReferral,
           referralFirstPaymentCut,
           donationCut,
+          promoCut,
           discountedMonthlyPrice,
           cleaningFee,
           parkingFee,
@@ -958,7 +1038,7 @@ export function RegisterFormClient() {
           oneTimeDiscounts,
           // Average monthly cost = recurring total minus the freq discount spread
           monthlyTotal: monthlyRecurringTotal - paymentFreqMonthlyDiscount,
-          firstPayment: Math.max(0, firstPaymentBeforeReferral - referralFirstPaymentCut - donationCut),
+          firstPayment: Math.max(0, firstPaymentBeforeReferral - referralFirstPaymentCut - donationCut - promoCut),
         };
       })()
     : null;
@@ -1034,11 +1114,24 @@ export function RegisterFormClient() {
     }
 
     const donationTrimmed = form.donationCouponCode.trim();
+    const promoTrimmed = form.promoCode.trim();
+    if (donationTrimmed && promoTrimmed) {
+      setSubmitError(t.promoOrDonationOnly);
+      return;
+    }
     if (donationTrimmed && (donationCouponLookup !== "ok" || !pricingSummary || pricingSummary.donationCut <= 0)) {
       setSubmitError(
         lang === "vi"
           ? "Nhập mã hợp tác hợp lệ hoặc để trống ô mã."
           : "Enter a valid partnership code or clear the field."
+      );
+      return;
+    }
+    if (promoTrimmed && (promoCodeLookup !== "ok" || !pricingSummary || pricingSummary.promoCut <= 0)) {
+      setSubmitError(
+        lang === "vi"
+          ? "Nhập mã khuyến mãi hợp lệ hoặc để trống ô mã."
+          : "Enter a valid promo code or clear the field."
       );
       return;
     }
@@ -1073,8 +1166,11 @@ export function RegisterFormClient() {
           monthlyPrice: pricingSummary.monthlyPrice,
           deposit: pricingSummary.deposit,
           firstPaymentSubtotalBeforeReferral:
-            referralTrimmed || donationTrimmed ? pricingSummary.firstPaymentBeforeReferral : undefined,
+            referralTrimmed || donationTrimmed || promoTrimmed
+              ? pricingSummary.firstPaymentBeforeReferral
+              : undefined,
           donationCouponCode: donationTrimmed || undefined,
+          promoCode: promoTrimmed || undefined,
           paymentFrequency: form.paymentFrequency || undefined,
           currentStatus: form.currentStatus || undefined,
           schoolOrWorkplace: form.schoolOrWorkplace || undefined,
@@ -1386,7 +1482,32 @@ export function RegisterFormClient() {
                   <span className="font-medium text-teal-800">{t.donationCouponValid(formatCurrency(pricingSummary.donationCut))}</span>
                 ) : null}
                 {donationCouponLookup === "bad" && form.donationCouponCode.trim() ? (
-                  <span className="text-rose-600">{t.donationCouponInvalid}</span>
+                  <span className="text-rose-600">
+                    {form.promoCode.trim() ? t.promoOrDonationOnly : t.donationCouponInvalid}
+                  </span>
+                ) : null}
+              </p>
+            </div>
+            <div className="md:col-span-2 rounded-[1.5rem] border border-violet-200 bg-violet-50/40 p-4 space-y-2">
+              <label className="space-y-2 block">
+                <span className="text-sm font-medium text-slate-700">{t.promoCodeLabel}</span>
+                <input
+                  value={form.promoCode}
+                  onChange={(event) => updateForm("promoCode", event.target.value.toUpperCase())}
+                  placeholder={t.promoCodePlaceholder}
+                  className="w-full rounded-2xl border border-violet-200 bg-white px-4 py-3 font-mono text-sm outline-none focus:border-violet-500"
+                  autoComplete="off"
+                />
+              </label>
+              <p className="min-h-[1.25rem] text-xs text-slate-600">
+                {promoCodeLookup === "checking" ? t.promoCodeChecking : null}
+                {promoCodeLookup === "ok" && pricingSummary ? (
+                  <span className="font-medium text-violet-800">{t.promoCodeValid(formatCurrency(pricingSummary.promoCut))}</span>
+                ) : null}
+                {promoCodeLookup === "bad" && form.promoCode.trim() ? (
+                  <span className="text-rose-600">
+                    {form.donationCouponCode.trim() ? t.promoOrDonationOnly : t.promoCodeInvalid}
+                  </span>
                 ) : null}
               </p>
             </div>
@@ -1717,7 +1838,9 @@ export function RegisterFormClient() {
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="text-sm">{t.firstPaymentEstimate}</span>
                     <div className="flex flex-wrap items-center gap-2">
-                      {pricingSummary.referralFirstPaymentCut > 0 ? (
+                      {pricingSummary.referralFirstPaymentCut > 0 ||
+                      pricingSummary.donationCut > 0 ||
+                      pricingSummary.promoCut > 0 ? (
                         <>
                           <span className="font-semibold text-slate-400 line-through">
                             {formatCurrency(pricingSummary.firstPaymentBeforeReferral)}
@@ -1732,6 +1855,9 @@ export function RegisterFormClient() {
                   </div>
                   {pricingSummary.referralFirstPaymentCut > 0 ? (
                     <p className="mt-2 text-xs text-emerald-700">{t.referralFirstPaymentOff(formatCurrency(pricingSummary.referralFirstPaymentCut))}</p>
+                  ) : null}
+                  {pricingSummary.promoCut > 0 ? (
+                    <p className="mt-2 text-xs text-violet-700">{t.promoCodeValid(formatCurrency(pricingSummary.promoCut))}</p>
                   ) : null}
                   {showFirstPaymentDetail ? (() => {
                     const multiplier = getFirstPaymentMultiplier(form.paymentFrequency);

@@ -19,7 +19,9 @@ const state = {
   closedBranches: [],
   branchClosureNotice: null,
   recentGuestProfileLoaded: false,
-  donationCouponValid: false
+  donationCouponValid: false,
+  promoCodeValid: false,
+  promoDiscountVnd: 0
 };
 
 let recentGuestProfileSaveTimer = null;
@@ -82,6 +84,8 @@ const els = {
   referralCode: document.getElementById("referralCode"),
   donationCouponCode: document.getElementById("donationCouponCode"),
   donationCouponStatus: document.getElementById("donationCouponStatus"),
+  promoCode: document.getElementById("promoCode"),
+  promoCodeStatus: document.getElementById("promoCodeStatus"),
   referralHostelBanner: document.getElementById("referralHostelBanner"),
   referralHostelBody: document.getElementById("referralHostelBody"),
   branchClosureBanner: document.getElementById("branchClosureBanner")
@@ -820,6 +824,10 @@ function calculateBedPricingPreview(bedDetails) {
     const cut = Math.min(Math.max(0, Math.round(waiver)), Math.max(0, stayTotal));
     stayTotal -= cut;
     pricedDiscountAmount += cut;
+  } else if (state.promoCodeValid) {
+    const cut = Math.min(Math.max(0, Math.round(state.promoDiscountVnd || 0)), Math.max(0, stayTotal));
+    stayTotal -= cut;
+    pricedDiscountAmount += cut;
   }
   const nightlyRateAfterDiscount = nights > 0 ? Math.round(stayTotal / nights) : 0;
 
@@ -1353,7 +1361,8 @@ async function bookSelectedBed() {
     notes: els.notes.value,
     guestAuthToken: state.authToken,
     referralCode: els.referralCode ? String(els.referralCode.value || "").trim() : "",
-    donationCouponCode: els.donationCouponCode ? String(els.donationCouponCode.value || "").trim() : ""
+    donationCouponCode: els.donationCouponCode ? String(els.donationCouponCode.value || "").trim() : "",
+    promoCode: els.promoCode ? String(els.promoCode.value || "").trim() : ""
   };
 
   if (state.branchId === "D2") {
@@ -1476,11 +1485,20 @@ els.idPhoto.addEventListener("change", () => {
 els.bookBtn.addEventListener("click", () => void bookSelectedBed());
 
 let donationCouponTimer = null;
+let promoCodeTimer = null;
 async function refreshDonationCoupon() {
   const code = els.donationCouponCode ? String(els.donationCouponCode.value || "").trim() : "";
+  const promoCode = els.promoCode ? String(els.promoCode.value || "").trim() : "";
   if (!code) {
     state.donationCouponValid = false;
     if (els.donationCouponStatus) els.donationCouponStatus.textContent = "";
+    renderRooms();
+    updatePriceSummary(calculatePricingPreview());
+    return;
+  }
+  if (promoCode) {
+    state.donationCouponValid = false;
+    if (els.donationCouponStatus) els.donationCouponStatus.textContent = window.t("promoOrDonationOnly");
     renderRooms();
     updatePriceSummary(calculatePricingPreview());
     return;
@@ -1506,10 +1524,78 @@ async function refreshDonationCoupon() {
   updatePriceSummary(calculatePricingPreview());
 }
 
+async function refreshPromoCode() {
+  const code = els.promoCode ? String(els.promoCode.value || "").trim() : "";
+  const donationCode = els.donationCouponCode ? String(els.donationCouponCode.value || "").trim() : "";
+  if (!code) {
+    state.promoCodeValid = false;
+    state.promoDiscountVnd = 0;
+    if (els.promoCodeStatus) els.promoCodeStatus.textContent = "";
+    renderRooms();
+    updatePriceSummary(calculatePricingPreview());
+    return;
+  }
+  if (donationCode) {
+    state.promoCodeValid = false;
+    state.promoDiscountVnd = 0;
+    if (els.promoCodeStatus) els.promoCodeStatus.textContent = window.t("promoOrDonationOnly");
+    renderRooms();
+    updatePriceSummary(calculatePricingPreview());
+    return;
+  }
+  try {
+    const bed = state.selectedBed;
+    const priorValid = state.promoCodeValid;
+    const priorDiscount = state.promoDiscountVnd;
+    state.promoCodeValid = false;
+    state.promoDiscountVnd = 0;
+    const preview = calculatePricingPreview();
+    state.promoCodeValid = priorValid;
+    state.promoDiscountVnd = priorDiscount;
+    const nights = Number(preview?.nights || 0);
+    const nightlyRates = Array.isArray(bed?.nightlyPrices)
+      ? bed.nightlyPrices.map((entry) => Number(entry?.nightlyPrice ?? entry)).filter((rate) => Number.isFinite(rate) && rate > 0)
+      : [];
+    const response = await fetch("/api/promo-code/quote", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code,
+        nights,
+        branchId: state.branchId,
+        bedNumber: bed?.bedNumber,
+        nightlyRates,
+        staySubtotalVnd: preview ? Math.max(0, Math.round(preview.stayTotal)) : undefined
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    state.promoCodeValid = response.ok && data.ok === true && Number(data.discountVnd) > 0;
+    state.promoDiscountVnd = state.promoCodeValid ? Math.max(0, Number(data.discountVnd) || 0) : 0;
+    if (els.promoCodeStatus) {
+      els.promoCodeStatus.textContent = state.promoCodeValid
+        ? window.t("promoCodeValid")
+        : data.error || window.t("promoCodeInvalid");
+    }
+  } catch {
+    state.promoCodeValid = false;
+    state.promoDiscountVnd = 0;
+    if (els.promoCodeStatus) els.promoCodeStatus.textContent = window.t("promoCodeInvalid");
+  }
+  renderRooms();
+  updatePriceSummary(calculatePricingPreview());
+}
+
 if (els.donationCouponCode) {
   els.donationCouponCode.addEventListener("input", () => {
     clearTimeout(donationCouponTimer);
     donationCouponTimer = setTimeout(() => void refreshDonationCoupon(), 350);
+  });
+}
+
+if (els.promoCode) {
+  els.promoCode.addEventListener("input", () => {
+    clearTimeout(promoCodeTimer);
+    promoCodeTimer = setTimeout(() => void refreshPromoCode(), 350);
   });
 }
 

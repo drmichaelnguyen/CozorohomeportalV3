@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.0.6] - 2026-11-25
+
+- **Stay promo codes**: Owners can create typed promo codes (fixed VND, % off, or waive nights/months) with max uses (including 1-time), min nights/months, optional bed allowlists, and expiry. Guests enter them on long-term registration and short-term hostel booking; codes do not stack with partnership coupons. See `docs/stay-promo-codes.md`.
+
+## [4.0.5] - 2026-10-30
+
+- **AI Manager owner reply**: Posting in an open AI Manager topic gets an LLM reply in the same thread (same language as the owner; usage feature `ai_manager_owner_chat`).
+
 ## [4.0.4] - 2026-10-30
 
 - **AI Manager reports → Messages chat**: Owner digests are posted into manager Messages as a conversation from the AI Manager account instead of being emailed, and are still mirrored into the owner Messages → AI Manager tab. Settings no longer asks for report emails; Notification Center relies on the unread Messages badge/thread for reports and keeps cards only for open owner escalations.

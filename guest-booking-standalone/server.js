@@ -1931,6 +1931,7 @@ function getGuestBookingSubmission(req) {
   const cancellationPolicy = normalizeCancellationPolicy(req.body.cancellationPolicy);
   const referralCode = String(req.body.referralCode || "").trim();
   const donationCouponCode = String(req.body.donationCouponCode || "").trim();
+  const promoCode = String(req.body.promoCode || "").trim();
 
   return {
     isVietnamese,
@@ -1948,12 +1949,18 @@ function getGuestBookingSubmission(req) {
     guestAuthToken,
     cancellationPolicy,
     referralCode,
-    donationCouponCode
+    donationCouponCode,
+    promoCode
   };
 }
 
 function donationCouponCodeFromNotes(notes) {
   const match = String(notes || "").match(/Donation coupon:\s*(CZD-[A-Z0-9]{4}-[A-Z0-9]{4})/i);
+  return match ? match[1].toUpperCase() : "";
+}
+
+function promoCodeFromNotes(notes) {
+  const match = String(notes || "").match(/Promo code:\s*([A-Z0-9_-]{3,32})/i);
   return match ? match[1].toUpperCase() : "";
 }
 
@@ -2013,6 +2020,38 @@ async function releaseDonationCouponOnMainApp(code, redemptionRef) {
   }
 }
 
+async function redeemPromoCodeOnMainApp(input) {
+  const response = await fetch(`${MAIN_APP_API_URL}/internal/promo-codes/redeem`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(MAIN_APP_API_KEY ? { "x-internal-api-key": MAIN_APP_API_KEY } : {})
+    },
+    body: JSON.stringify(input)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || "Promo code could not be redeemed.");
+  }
+  return data;
+}
+
+async function releasePromoCodeOnMainApp(code, redemptionRef) {
+  if (!code || !redemptionRef) return;
+  try {
+    await fetch(`${MAIN_APP_API_URL}/internal/promo-codes/release`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(MAIN_APP_API_KEY ? { "x-internal-api-key": MAIN_APP_API_KEY } : {})
+      },
+      body: JSON.stringify({ code, redemptionRef })
+    });
+  } catch (error) {
+    console.error("[promo-code] release failed", error);
+  }
+}
+
 async function createPendingBooking(input, pricingConfig = null) {
   const connectionPool = await getPool();
   const { start, end } = ensureValidDateRange(input.checkIn, input.checkOut, { disallowPastCheckIn: true });
@@ -2044,7 +2083,12 @@ async function createPendingBooking(input, pricingConfig = null) {
   }
   const id = createId();
   let donationCodeStored = "";
+  let promoCodeStored = "";
   const donationRaw = typeof input.donationCouponCode === "string" ? input.donationCouponCode.trim() : "";
+  const promoRaw = typeof input.promoCode === "string" ? input.promoCode.trim() : "";
+  if (donationRaw && promoRaw) {
+    throw new Error("Use either a partnership coupon or a promo code, not both.");
+  }
   if (donationRaw) {
     const redeemed = await redeemDonationCouponOnMainApp({
       code: donationRaw,
@@ -2069,11 +2113,40 @@ async function createPendingBooking(input, pricingConfig = null) {
       throw new Error("This stay has no amount the partnership coupon can waive.");
     }
   }
+  if (promoRaw) {
+    const redeemed = await redeemPromoCodeOnMainApp({
+      code: promoRaw,
+      termType: "SHORT_TERM",
+      email: input.guestEmail,
+      redemptionRef: id,
+      nights: pricing.nights,
+      branchId: input.branchId,
+      bedNumber: input.bedNumber,
+      nightlyRates: nightlyPrices.map((entry) => entry.nightlyPrice),
+      staySubtotalVnd: Math.max(0, Math.round(pricing.stayTotal)),
+      maxDiscountVnd: Math.max(0, Math.round(pricing.stayTotal))
+    });
+    const cut = Math.min(Math.max(0, Number(redeemed.discountVnd) || 0), Math.max(0, pricing.stayTotal));
+    const nextStay = Math.max(0, pricing.stayTotal - cut);
+    pricing = {
+      ...pricing,
+      promoDiscountAmount: cut,
+      stayTotal: nextStay,
+      total: nextStay + pricing.depositAmount,
+      discountAmount: pricing.discountAmount + cut
+    };
+    promoCodeStored = String(redeemed.code || promoRaw).toUpperCase();
+    if (cut <= 0) {
+      await releasePromoCodeOnMainApp(promoCodeStored, id);
+      throw new Error("This stay has no amount the promo code can reduce.");
+    }
+  }
   let idPhoto = null;
 
   const mergedNotes = [
     referralCodeStored ? `Referral code: ${referralCodeStored}` : "",
     donationCodeStored ? `Donation coupon: ${donationCodeStored}` : "",
+    promoCodeStored ? `Promo code: ${promoCodeStored}` : "",
     input.notes || ""
   ]
     .filter(Boolean)
@@ -2130,6 +2203,9 @@ async function createPendingBooking(input, pricingConfig = null) {
     if (donationCodeStored) {
       await releaseDonationCouponOnMainApp(donationCodeStored, id);
     }
+    if (promoCodeStored) {
+      await releasePromoCodeOnMainApp(promoCodeStored, id);
+    }
     throw error;
   }
 
@@ -2142,7 +2218,8 @@ async function createPendingBooking(input, pricingConfig = null) {
     nightlyPriceSource: bedPricing.source,
     nightlyPrices: nightlyPrices.map((entry) => ({ date: entry.date, nightlyPrice: entry.nightlyPrice, source: entry.source })),
     referralCode: referralCodeStored,
-    donationCouponCode: donationCodeStored
+    donationCouponCode: donationCodeStored,
+    promoCode: promoCodeStored
   };
 }
 
@@ -2249,6 +2326,37 @@ app.post("/api/donation-coupon/quote", async (req, res) => {
   } catch (error) {
     return res.status(500).json({
       error: error instanceof Error ? error.message : "Unable to check the coupon."
+    });
+  }
+});
+
+app.post("/api/promo-code/quote", async (req, res) => {
+  const code = String(req.body?.code || "").trim();
+  if (!code) {
+    return res.status(400).json({ error: "code is required." });
+  }
+  try {
+    const response = await fetch(`${MAIN_APP_API_URL}/api/public/promo-codes/quote`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code,
+        termType: "SHORT_TERM",
+        nights: req.body?.nights != null ? Number(req.body.nights) : undefined,
+        branchId: req.body?.branchId || undefined,
+        bedNumber: req.body?.bedNumber != null ? Number(req.body.bedNumber) : undefined,
+        nightlyRates: Array.isArray(req.body?.nightlyRates) ? req.body.nightlyRates : [],
+        staySubtotalVnd: req.body?.staySubtotalVnd != null ? Number(req.body.staySubtotalVnd) : undefined
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return res.status(response.status).json({ error: data.error || "Invalid promo code." });
+    }
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to check the promo code."
     });
   }
 });
@@ -2506,7 +2614,8 @@ app.post("/api/bookings", async (req, res) => {
       status: "CONFIRMED",
       paymentStatus: null,
       referralCode: submission.referralCode,
-      donationCouponCode: submission.donationCouponCode
+      donationCouponCode: submission.donationCouponCode,
+      promoCode: submission.promoCode
     }, pricingConfig);
 
     await syncPaidGuestBookingToMainApp({
@@ -2612,7 +2721,8 @@ app.post("/api/create-checkout-session", async (req, res) => {
       notes: submission.notes,
       cancellationPolicy: submission.cancellationPolicy,
       referralCode: submission.referralCode,
-      donationCouponCode: submission.donationCouponCode
+      donationCouponCode: submission.donationCouponCode,
+      promoCode: submission.promoCode
     }, pricingConfig);
 
     await notifyCreatedPendingBooking(
@@ -3155,6 +3265,10 @@ app.post("/api/guest-bookings/:id/cancel", async (req, res) => {
     const donationCode = donationCouponCodeFromNotes(booking.notes);
     if (donationCode) {
       await releaseDonationCouponOnMainApp(donationCode, bookingId);
+    }
+    const promoCode = promoCodeFromNotes(booking.notes);
+    if (promoCode) {
+      await releasePromoCodeOnMainApp(promoCode, bookingId);
     }
 
     const [updatedRows] = await connectionPool.query(

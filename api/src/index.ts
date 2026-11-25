@@ -253,6 +253,15 @@ import {
   upsertDonationRequest
 } from "./donation-partnerships.js";
 import { normalizeDonationType, parseEventDate } from "./donation-partnership-logic.js";
+import {
+  deleteStayPromoCode,
+  listStayPromoCodes,
+  quoteStayPromoCode,
+  redeemStayPromoCode,
+  releaseStayPromoCode,
+  StayPromoError,
+  upsertStayPromoCode
+} from "./stay-promo-codes.js";
 import type {
   ContractExtensionNegotiation,
   ContractExtensionTermsSnapshot
@@ -505,6 +514,11 @@ type PendingContractApproval = {
   } | null;
   /** Partnership stay coupon consumed by this registration. Released if the request is rejected. */
   donationCoupon?: {
+    code: string;
+    discountVnd: number;
+  } | null;
+  /** Staff promo code consumed by this registration. Released if the request is rejected. */
+  stayPromo?: {
     code: string;
     discountVnd: number;
   } | null;
@@ -1922,6 +1936,8 @@ const publicRegistrationSchema = z.object({
   firstPaymentSubtotalBeforeReferral: z.coerce.number().int().nonnegative().optional(),
   /** Donation partnership code. Waives one month of rent on the first payment. */
   donationCouponCode: z.string().trim().max(32).optional(),
+  /** Staff promo code. Does not stack with donationCouponCode. */
+  promoCode: z.string().trim().max(32).optional(),
   clientSignatureDataUrl: z.string().trim().optional(),
   clientSignatureTimestamp: z.string().trim().optional()
 });
@@ -5141,6 +5157,151 @@ app.post("/internal/donations/coupons/release", async (request, response) => {
   } catch (error) {
     return response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to release donation coupon"
+    });
+  }
+});
+
+const stayPromoQuoteSchema = z.object({
+  code: z.string().trim().min(3).max(32),
+  termType: z.enum(["SHORT_TERM", "LONG_TERM"]),
+  nights: z.coerce.number().int().positive().optional().nullable(),
+  months: z.coerce.number().int().positive().optional().nullable(),
+  branchId: z.string().trim().max(8).optional().nullable(),
+  bedNumber: z.coerce.number().int().positive().optional().nullable(),
+  nightlyRates: z.array(z.coerce.number().nonnegative()).max(60).optional(),
+  staySubtotalVnd: z.coerce.number().int().nonnegative().optional().nullable(),
+  monthlyRentVnd: z.coerce.number().int().nonnegative().optional().nullable(),
+  firstPaymentSubtotalVnd: z.coerce.number().int().nonnegative().optional().nullable(),
+  depositVnd: z.coerce.number().int().nonnegative().optional().nullable(),
+  otherDiscountVnd: z.coerce.number().int().nonnegative().optional().nullable(),
+  maxDiscountVnd: z.coerce.number().int().nonnegative().optional().nullable()
+});
+
+app.get("/manager/promo-codes", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "").trim();
+  if (!actorEmail) return response.status(400).json({ error: "actorEmail is required" });
+  try {
+    const codes = await listStayPromoCodes(actorEmail);
+    return response.json({ codes });
+  } catch (error) {
+    return response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to list promo codes"
+    });
+  }
+});
+
+app.put("/manager/promo-codes", async (request, response) => {
+  const parsed = z
+    .object({
+      actorEmail: z.string().email(),
+      promo: z.object({
+        id: z.string().trim().optional().nullable(),
+        code: z.string().trim().min(3).max(32),
+        label: z.string().trim().min(1).max(160),
+        labelVi: z.string().trim().max(160).optional().nullable(),
+        notes: z.string().trim().max(2000).optional().nullable(),
+        termType: z.enum(["LONG_TERM", "SHORT_TERM", "BOTH"]),
+        benefitType: z.enum(["FIXED_VND", "PERCENT_OFF", "WAIVE_UNITS"]),
+        amountVnd: z.coerce.number().int().nonnegative().optional().nullable(),
+        percentOff: z.coerce.number().int().min(0).max(100).optional().nullable(),
+        benefitUnits: z.coerce.number().int().positive().optional().nullable(),
+        maxUses: z.coerce.number().int().positive(),
+        minNights: z.coerce.number().int().positive().optional().nullable(),
+        minMonths: z.coerce.number().int().positive().optional().nullable(),
+        allowedBeds: z
+          .array(
+            z.object({
+              branchId: z.string().trim().min(1).max(8),
+              bedNumber: z.coerce.number().int().positive()
+            })
+          )
+          .max(80)
+          .optional()
+          .nullable(),
+        enabled: z.boolean(),
+        expiresAt: z.string().trim().optional().nullable()
+      })
+    })
+    .safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Invalid promo code payload" });
+  try {
+    const row = await upsertStayPromoCode(parsed.data.actorEmail, parsed.data.promo);
+    return response.json({ ok: true, row });
+  } catch (error) {
+    const statusCode = error instanceof StayPromoError ? error.statusCode : 400;
+    return response.status(statusCode).json({
+      error: error instanceof Error ? error.message : "Unable to save promo code"
+    });
+  }
+});
+
+app.delete("/manager/promo-codes/:id", async (request, response) => {
+  const actorEmail = String(request.query.actorEmail ?? "").trim();
+  if (!actorEmail) return response.status(400).json({ error: "actorEmail is required" });
+  try {
+    const result = await deleteStayPromoCode(actorEmail, request.params.id ?? "");
+    return response.json(result);
+  } catch (error) {
+    const statusCode = error instanceof StayPromoError ? error.statusCode : 400;
+    return response.status(statusCode).json({
+      error: error instanceof Error ? error.message : "Unable to delete promo code"
+    });
+  }
+});
+
+app.post("/api/public/promo-codes/quote", async (request, response) => {
+  const parsed = stayPromoQuoteSchema.safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Invalid promo quote" });
+  try {
+    const quote = await quoteStayPromoCode(parsed.data);
+    return response.json(quote);
+  } catch (error) {
+    const statusCode = error instanceof StayPromoError ? error.statusCode : 400;
+    return response.status(statusCode).json({
+      error: error instanceof Error ? error.message : "Unable to quote promo code"
+    });
+  }
+});
+
+app.post("/internal/promo-codes/redeem", async (request, response) => {
+  if (!isAuthorizedInternalRequest(request)) {
+    return response.status(403).json({ error: "Unauthorized" });
+  }
+  const parsed = stayPromoQuoteSchema
+    .extend({
+      email: z.string().trim().email(),
+      redemptionRef: z.string().trim().min(1).max(191)
+    })
+    .safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Invalid promo redemption" });
+  try {
+    const result = await redeemStayPromoCode(parsed.data);
+    return response.json(result);
+  } catch (error) {
+    const statusCode = error instanceof StayPromoError ? error.statusCode : 400;
+    return response.status(statusCode).json({
+      error: error instanceof Error ? error.message : "Unable to redeem promo code"
+    });
+  }
+});
+
+app.post("/internal/promo-codes/release", async (request, response) => {
+  if (!isAuthorizedInternalRequest(request)) {
+    return response.status(403).json({ error: "Unauthorized" });
+  }
+  const parsed = z
+    .object({
+      code: z.string().trim().min(3).max(32),
+      redemptionRef: z.string().trim().min(1).max(191)
+    })
+    .safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Invalid promo release" });
+  try {
+    const result = await releaseStayPromoCode(parsed.data);
+    return response.json({ ok: true, ...result });
+  } catch (error) {
+    return response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to release promo code"
     });
   }
 });
@@ -10791,7 +10952,14 @@ app.post("/api/public/register", async (request, response) => {
     }
 
     const donationCodeRaw = parsed.data.donationCouponCode?.trim() || "";
+    const promoCodeRaw = parsed.data.promoCode?.trim() || "";
+    if (donationCodeRaw && promoCodeRaw) {
+      return response.status(400).json({
+        error: "Use either a partnership coupon or a promo code, not both."
+      });
+    }
     let donationQuote: { code: string; discountVnd: number } | null = null;
+    let promoQuote: { code: string; discountVnd: number } | null = null;
     if (donationCodeRaw) {
       const priced = await quoteDonationCoupon({
         code: donationCodeRaw,
@@ -10810,6 +10978,27 @@ app.post("/api/public/register", async (request, response) => {
       const couponLine = `Donation partnership coupon ${priced.code}: −${priced.discountVnd.toLocaleString("vi-VN")} VND one-time first payment (one month of rent; deposit unchanged)`;
       mergedAdditionalTerms = [mergedAdditionalTerms, couponLine].filter(Boolean).join(" | ");
     }
+    if (promoCodeRaw) {
+      const priced = await quoteStayPromoCode({
+        code: promoCodeRaw,
+        termType: "LONG_TERM",
+        months: parsed.data.contractMonths,
+        branchId: parsed.data.branchId,
+        bedNumber: parsed.data.bedNumber,
+        monthlyRentVnd: parsed.data.monthlyPrice,
+        firstPaymentSubtotalVnd: parsed.data.firstPaymentSubtotalBeforeReferral ?? null,
+        depositVnd: parsed.data.deposit,
+        otherDiscountVnd: referralDiscountVnd
+      });
+      if (priced.discountVnd <= 0) {
+        return response.status(400).json({
+          error: "This promo code cannot reduce the first payment further. The deposit is not discounted."
+        });
+      }
+      promoQuote = { code: priced.code, discountVnd: priced.discountVnd };
+      const promoLine = `Promo code ${priced.code}: −${priced.discountVnd.toLocaleString("vi-VN")} VND one-time first payment (deposit unchanged)`;
+      mergedAdditionalTerms = [mergedAdditionalTerms, promoLine].filter(Boolean).join(" | ");
+    }
 
     const result = await runWithWriteGuard({
       key: createWriteGuardKey("/api/public/register", parsed.data),
@@ -10821,12 +11010,14 @@ app.post("/api/public/register", async (request, response) => {
           referralCode: _referralIgnored,
           firstPaymentSubtotalBeforeReferral: _fpSubtotalIgnored,
           donationCouponCode: _donationCouponIgnored,
+          promoCode: _promoCodeIgnored,
           ...registrationFields
         } = parsed.data;
         void _parkingOptionIdIgnored;
         void _referralIgnored;
         void _fpSubtotalIgnored;
         void _donationCouponIgnored;
+        void _promoCodeIgnored;
 
         const pendingId = randomUUID();
         const file = await readContractApprovals();
@@ -10855,6 +11046,24 @@ app.post("/api/public/register", async (request, response) => {
           donationCoupon = { code: redeemed.code, discountVnd: redeemed.discountVnd };
         }
 
+        let stayPromo: { code: string; discountVnd: number } | null = null;
+        if (promoQuote) {
+          const redeemed = await redeemStayPromoCode({
+            code: promoQuote.code,
+            termType: "LONG_TERM",
+            email: parsed.data.email,
+            redemptionRef: pendingId,
+            months: parsed.data.contractMonths,
+            branchId: parsed.data.branchId,
+            bedNumber: parsed.data.bedNumber,
+            monthlyRentVnd: parsed.data.monthlyPrice,
+            firstPaymentSubtotalVnd: parsed.data.firstPaymentSubtotalBeforeReferral ?? null,
+            depositVnd: parsed.data.deposit,
+            otherDiscountVnd: referralDiscountVnd
+          });
+          stayPromo = { code: redeemed.code, discountVnd: redeemed.discountVnd };
+        }
+
         const pending: PendingContractApproval = {
           id: pendingId,
           type: "registration",
@@ -10864,6 +11073,7 @@ app.post("/api/public/register", async (request, response) => {
           clientSignatureTimestamp: parsed.data.clientSignatureTimestamp,
           referralRewards,
           donationCoupon,
+          stayPromo,
           registration: {
             ...registrationFields,
             additionalTerms: mergedAdditionalTerms || undefined,
@@ -10883,6 +11093,9 @@ app.post("/api/public/register", async (request, response) => {
         } catch (error) {
           if (donationCoupon) {
             await releaseDonationCoupon({ code: donationCoupon.code, redemptionRef: pendingId });
+          }
+          if (stayPromo) {
+            await releaseStayPromoCode({ code: stayPromo.code, redemptionRef: pendingId });
           }
           throw error;
         }
@@ -11155,6 +11368,9 @@ app.post("/manager/contract-approvals/:id/reject", async (request, response) => 
     if (item.status !== "pending") return response.status(400).json({ error: "This approval request has already been reviewed" });
     if (item.donationCoupon?.code) {
       await releaseDonationCoupon({ code: item.donationCoupon.code, redemptionRef: item.id });
+    }
+    if (item.stayPromo?.code) {
+      await releaseStayPromoCode({ code: item.stayPromo.code, redemptionRef: item.id });
     }
     item.status = "rejected";
     item.reviewedAt = new Date().toISOString();

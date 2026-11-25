@@ -293,7 +293,7 @@ type PricingSettingsSectionKey =
   | "staff_accounts";
 
 type ManagerSettingsMainSection = "pricing" | "resident_guides" | "tools" | "ai_usage" | "ai_manager";
-type PricingSettingsSubTab = "long_term" | "short_term" | "referral" | "staff";
+type PricingSettingsSubTab = "long_term" | "short_term" | "promo" | "referral" | "staff";
 type ClientSubTab = "list" | "details" | "checkout" | "analytics";
 type OwnerAnalyticsTab = "payments" | "coins" | "laundry" | "fines" | "cleaning" | "airfryer" | "occupancy" | "members" | "visits";
 type PaymentAnalyticsChartView = "bar" | "donut";
@@ -3701,6 +3701,47 @@ export function ManagerClient({
     firstContractOnly: boolean;
     saving: boolean; result: string;
   } | null>(null);
+  type StayPromoCodeRow = {
+    id: string;
+    code: string;
+    label: string;
+    labelVi: string | null;
+    notes: string | null;
+    termType: "LONG_TERM" | "SHORT_TERM" | "BOTH";
+    benefitType: "FIXED_VND" | "PERCENT_OFF" | "WAIVE_UNITS";
+    amountVnd: number | null;
+    percentOff: number | null;
+    benefitUnits: number | null;
+    maxUses: number;
+    usedCount: number;
+    minNights: number | null;
+    minMonths: number | null;
+    allowedBeds: Array<{ branchId: string; bedNumber: number }> | null;
+    enabled: boolean;
+    expiresAt: string | null;
+  };
+  const [promoCodes, setPromoCodes] = useState<StayPromoCodeRow[]>([]);
+  const [promoCodesLoading, setPromoCodesLoading] = useState(false);
+  const [promoEdit, setPromoEdit] = useState<{
+    id: string;
+    code: string;
+    label: string;
+    labelVi: string;
+    notes: string;
+    termType: "LONG_TERM" | "SHORT_TERM" | "BOTH";
+    benefitType: "FIXED_VND" | "PERCENT_OFF" | "WAIVE_UNITS";
+    amountVnd: string;
+    percentOff: string;
+    benefitUnits: string;
+    maxUses: string;
+    minNights: string;
+    minMonths: string;
+    allowedBedsText: string;
+    enabled: boolean;
+    expiresAt: string;
+    saving: boolean;
+    result: string;
+  } | null>(null);
   const [terminateDialog, setTerminateDialog] = useState(false);
   const [terminateNote, setTerminateNote] = useState("");
   const [terminateLoading, setTerminateLoading] = useState(false);
@@ -5959,6 +6000,25 @@ export function ManagerClient({
       }
     } finally {
       setReferralProgramLoading(false);
+    }
+  }
+
+  async function loadPromoCodes() {
+    setPromoCodesLoading(true);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/manager/promo-codes?actorEmail=${encodeURIComponent(normalizedEmail)}`
+      );
+      const data = (await res.json()) as { codes?: StayPromoCodeRow[]; error?: string };
+      if (res.ok) {
+        setPromoCodes(Array.isArray(data.codes) ? data.codes : []);
+      } else {
+        setPromoCodes([]);
+      }
+    } catch {
+      setPromoCodes([]);
+    } finally {
+      setPromoCodesLoading(false);
     }
   }
 
@@ -12099,7 +12159,7 @@ export function ManagerClient({
             </div>
             {managerSettingsMainSection === "pricing" ? (
               <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-4 dark:border-slate-600/60">
-                {(["long_term", "short_term", "referral", "staff"] as const).map((tab) => (
+                {(["long_term", "short_term", "promo", "referral", "staff"] as const).map((tab) => (
                   <button
                     key={tab}
                     type="button"
@@ -12107,6 +12167,9 @@ export function ManagerClient({
                       setPricingSettingsTab(tab);
                       if (tab === "referral") {
                         void loadReferralProgramSettings();
+                      }
+                      if (tab === "promo") {
+                        void loadPromoCodes();
                       }
                     }}
                     className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
@@ -12117,11 +12180,15 @@ export function ManagerClient({
                       ? t("longTermTab")
                       : tab === "short_term"
                         ? t("shortTermTab")
-                        : tab === "referral"
+                        : tab === "promo"
                           ? language === "vi"
-                            ? "Giới thiệu"
-                            : "Referral"
-                          : t("staffAccountsTab")}
+                            ? "Mã khuyến mãi"
+                            : "Promo codes"
+                          : tab === "referral"
+                            ? language === "vi"
+                              ? "Giới thiệu"
+                              : "Referral"
+                            : t("staffAccountsTab")}
                   </button>
                 ))}
               </div>
@@ -13107,6 +13174,416 @@ export function ManagerClient({
                     )}
                   </CollapsibleSettingsSection>
                 </>
+              )}
+            </section>
+          ) : null}
+
+          {managerSettingsMainSection === "pricing" && pricingSettingsTab === "promo" ? (
+            <section className="space-y-5">
+              {!canManageOwnersEmployees ? (
+                <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <p className="text-sm text-slate-500">{t("pricingRestricted")}</p>
+                </div>
+              ) : (
+                <div className="rounded-3xl border border-violet-200 bg-violet-50/30 p-6 shadow-sm space-y-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-base font-semibold text-violet-950">
+                        {language === "vi" ? "Mã khuyến mãi lưu trú" : "Stay promo codes"}
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-600">
+                        {language === "vi"
+                          ? "Mã gõ tay cho đăng ký dài hạn và/hoặc đặt phòng ngắn hạn. Có thể giới hạn số lần dùng, số đêm/tháng tối thiểu và giường cụ thể."
+                          : "Typed codes for long-term registration and/or short-term hostel booking. Limit uses, min nights/months, and specific beds."}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void loadPromoCodes()}
+                      className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700"
+                    >
+                      {promoCodesLoading ? t("refreshing") : t("refreshData")}
+                    </button>
+                  </div>
+                  {promoCodesLoading ? (
+                    <p className="text-sm text-slate-500">{t("refreshing")}</p>
+                  ) : promoCodes.length > 0 ? (
+                    <div className="space-y-3">
+                      {promoCodes.map((row) => (
+                        <div
+                          key={row.id}
+                          className={`rounded-2xl border p-4 space-y-2 ${row.enabled ? "border-slate-200 bg-white" : "border-slate-100 bg-slate-50 opacity-60"}`}
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div>
+                              <span className="font-mono text-sm font-semibold text-slate-900">{row.code}</span>
+                              <span className="ml-2 text-sm text-slate-700">{row.label}</span>
+                              {!row.enabled ? (
+                                <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-500">{t("disabledLabel")}</span>
+                              ) : null}
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPromoEdit({
+                                    id: row.id,
+                                    code: row.code,
+                                    label: row.label,
+                                    labelVi: row.labelVi ?? "",
+                                    notes: row.notes ?? "",
+                                    termType: row.termType,
+                                    benefitType: row.benefitType,
+                                    amountVnd: String(row.amountVnd ?? ""),
+                                    percentOff: String(row.percentOff ?? ""),
+                                    benefitUnits: String(row.benefitUnits ?? ""),
+                                    maxUses: String(row.maxUses),
+                                    minNights: row.minNights != null ? String(row.minNights) : "",
+                                    minMonths: row.minMonths != null ? String(row.minMonths) : "",
+                                    allowedBedsText: (row.allowedBeds ?? [])
+                                      .map((b) => `${b.branchId}:${b.bedNumber}`)
+                                      .join(", "),
+                                    enabled: row.enabled,
+                                    expiresAt: row.expiresAt ? row.expiresAt.slice(0, 10) : "",
+                                    saving: false,
+                                    result: ""
+                                  })
+                                }
+                                className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700"
+                              >
+                                {t("editLabel")}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  if (!window.confirm(row.usedCount > 0 ? `Disable "${row.code}"? (already used ${row.usedCount}×)` : `Delete "${row.code}"?`)) return;
+                                  const res = await fetch(
+                                    `${API_BASE_URL}/manager/promo-codes/${encodeURIComponent(row.id)}?actorEmail=${encodeURIComponent(normalizedEmail)}`,
+                                    { method: "DELETE" }
+                                  );
+                                  if (res.ok) void loadPromoCodes();
+                                }}
+                                className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-medium text-rose-600"
+                              >
+                                {row.usedCount > 0 ? (language === "vi" ? "Tắt" : "Disable") : t("deleteLabel")}
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2 text-xs">
+                            <span className="rounded-full bg-violet-100 px-2.5 py-1 text-violet-800 font-medium">{row.termType}</span>
+                            <span className="rounded-full bg-sky-100 px-2.5 py-1 text-sky-800">
+                              {row.benefitType === "FIXED_VND"
+                                ? `−${Number(row.amountVnd || 0).toLocaleString("vi-VN")} ₫`
+                                : row.benefitType === "PERCENT_OFF"
+                                  ? `${row.percentOff}%`
+                                  : `waive ×${row.benefitUnits}`}
+                            </span>
+                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-700">
+                              {row.usedCount}/{row.maxUses} uses
+                            </span>
+                            {row.minNights != null ? (
+                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-700">≥{row.minNights} nights</span>
+                            ) : null}
+                            {row.minMonths != null ? (
+                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-700">≥{row.minMonths} months</span>
+                            ) : null}
+                            {(row.allowedBeds ?? []).length > 0 ? (
+                              <span className="rounded-full bg-amber-100 px-2.5 py-1 text-amber-800">
+                                beds: {(row.allowedBeds ?? []).map((b) => `${b.branchId}-${b.bedNumber}`).join(", ")}
+                              </span>
+                            ) : null}
+                            {row.expiresAt ? (
+                              <span className="rounded-full bg-rose-100 px-2.5 py-1 text-rose-700">
+                                expires {row.expiresAt.slice(0, 10)}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-400 italic">
+                      {language === "vi" ? "Chưa có mã khuyến mãi." : "No promo codes yet."}
+                    </p>
+                  )}
+
+                  {promoEdit ? (
+                    <div className="rounded-2xl border border-violet-200 bg-white p-5 space-y-4">
+                      <p className="text-sm font-semibold text-violet-900">
+                        {promoEdit.id ? (language === "vi" ? "Sửa mã" : "Edit promo") : language === "vi" ? "Mã mới" : "New promo"}
+                      </p>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="space-y-1">
+                          <span className="text-xs font-medium text-slate-700">Code</span>
+                          <input
+                            value={promoEdit.code}
+                            onChange={(e) => setPromoEdit({ ...promoEdit, code: e.target.value.toUpperCase() })}
+                            placeholder="SUMMER10"
+                            className="w-full rounded-xl border border-slate-200 px-3 py-2 font-mono text-sm focus:border-violet-500 focus:outline-none"
+                          />
+                        </label>
+                        <label className="space-y-1">
+                          <span className="text-xs font-medium text-slate-700">Label</span>
+                          <input
+                            value={promoEdit.label}
+                            onChange={(e) => setPromoEdit({ ...promoEdit, label: e.target.value })}
+                            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
+                          />
+                        </label>
+                        <label className="space-y-1">
+                          <span className="text-xs font-medium text-slate-700">Label (VI)</span>
+                          <input
+                            value={promoEdit.labelVi}
+                            onChange={(e) => setPromoEdit({ ...promoEdit, labelVi: e.target.value })}
+                            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
+                          />
+                        </label>
+                        <label className="space-y-1">
+                          <span className="text-xs font-medium text-slate-700">Term</span>
+                          <select
+                            value={promoEdit.termType}
+                            onChange={(e) =>
+                              setPromoEdit({
+                                ...promoEdit,
+                                termType: e.target.value as "LONG_TERM" | "SHORT_TERM" | "BOTH"
+                              })
+                            }
+                            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
+                          >
+                            <option value="BOTH">Both</option>
+                            <option value="LONG_TERM">Long-term only</option>
+                            <option value="SHORT_TERM">Short-term only</option>
+                          </select>
+                        </label>
+                        <label className="space-y-1">
+                          <span className="text-xs font-medium text-slate-700">Benefit type</span>
+                          <select
+                            value={promoEdit.benefitType}
+                            onChange={(e) =>
+                              setPromoEdit({
+                                ...promoEdit,
+                                benefitType: e.target.value as "FIXED_VND" | "PERCENT_OFF" | "WAIVE_UNITS"
+                              })
+                            }
+                            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
+                          >
+                            <option value="FIXED_VND">Fixed VND</option>
+                            <option value="PERCENT_OFF">Percent off</option>
+                            <option value="WAIVE_UNITS">Waive nights/months</option>
+                          </select>
+                        </label>
+                        {promoEdit.benefitType === "FIXED_VND" ? (
+                          <label className="space-y-1">
+                            <span className="text-xs font-medium text-slate-700">Amount (VND)</span>
+                            <input
+                              type="number"
+                              min={1}
+                              value={promoEdit.amountVnd}
+                              onChange={(e) => setPromoEdit({ ...promoEdit, amountVnd: e.target.value })}
+                              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
+                            />
+                          </label>
+                        ) : null}
+                        {promoEdit.benefitType === "PERCENT_OFF" ? (
+                          <label className="space-y-1">
+                            <span className="text-xs font-medium text-slate-700">Percent (1–100)</span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={100}
+                              value={promoEdit.percentOff}
+                              onChange={(e) => setPromoEdit({ ...promoEdit, percentOff: e.target.value })}
+                              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
+                            />
+                          </label>
+                        ) : null}
+                        {promoEdit.benefitType === "WAIVE_UNITS" ? (
+                          <label className="space-y-1">
+                            <span className="text-xs font-medium text-slate-700">Units (nights or months)</span>
+                            <input
+                              type="number"
+                              min={1}
+                              value={promoEdit.benefitUnits}
+                              onChange={(e) => setPromoEdit({ ...promoEdit, benefitUnits: e.target.value })}
+                              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
+                            />
+                          </label>
+                        ) : null}
+                        <label className="space-y-1">
+                          <span className="text-xs font-medium text-slate-700">Max uses</span>
+                          <input
+                            type="number"
+                            min={1}
+                            value={promoEdit.maxUses}
+                            onChange={(e) => setPromoEdit({ ...promoEdit, maxUses: e.target.value })}
+                            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
+                          />
+                        </label>
+                        <label className="space-y-1">
+                          <span className="text-xs font-medium text-slate-700">Min nights (short-term)</span>
+                          <input
+                            type="number"
+                            min={1}
+                            value={promoEdit.minNights}
+                            onChange={(e) => setPromoEdit({ ...promoEdit, minNights: e.target.value })}
+                            placeholder="optional"
+                            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
+                          />
+                        </label>
+                        <label className="space-y-1">
+                          <span className="text-xs font-medium text-slate-700">Min months (long-term)</span>
+                          <input
+                            type="number"
+                            min={1}
+                            value={promoEdit.minMonths}
+                            onChange={(e) => setPromoEdit({ ...promoEdit, minMonths: e.target.value })}
+                            placeholder="optional"
+                            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
+                          />
+                        </label>
+                        <label className="space-y-1 sm:col-span-2">
+                          <span className="text-xs font-medium text-slate-700">
+                            Allowed beds (optional, e.g. D7:12, D7:13)
+                          </span>
+                          <input
+                            value={promoEdit.allowedBedsText}
+                            onChange={(e) => setPromoEdit({ ...promoEdit, allowedBedsText: e.target.value })}
+                            placeholder="leave blank = any bed"
+                            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
+                          />
+                        </label>
+                        <label className="space-y-1">
+                          <span className="text-xs font-medium text-slate-700">Expires (optional)</span>
+                          <input
+                            type="date"
+                            value={promoEdit.expiresAt}
+                            onChange={(e) => setPromoEdit({ ...promoEdit, expiresAt: e.target.value })}
+                            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
+                          />
+                        </label>
+                        <label className="flex items-center gap-2 self-end pb-2">
+                          <input
+                            type="checkbox"
+                            checked={promoEdit.enabled}
+                            onChange={(e) => setPromoEdit({ ...promoEdit, enabled: e.target.checked })}
+                            className="h-4 w-4 rounded border-slate-300 text-violet-600"
+                          />
+                          <span className="text-sm text-slate-700">Enabled</span>
+                        </label>
+                        <label className="space-y-1 sm:col-span-2">
+                          <span className="text-xs font-medium text-slate-700">Notes</span>
+                          <input
+                            value={promoEdit.notes}
+                            onChange={(e) => setPromoEdit({ ...promoEdit, notes: e.target.value })}
+                            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
+                          />
+                        </label>
+                      </div>
+                      {promoEdit.result ? (
+                        <p className={`text-sm font-medium ${promoEdit.result.startsWith("✓") ? "text-emerald-700" : "text-rose-700"}`}>
+                          {promoEdit.result}
+                        </p>
+                      ) : null}
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPromoEdit(null)}
+                          className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          disabled={promoEdit.saving || !promoEdit.code.trim() || !promoEdit.label.trim()}
+                          onClick={async () => {
+                            setPromoEdit({ ...promoEdit, saving: true, result: "" });
+                            try {
+                              const allowedBeds = promoEdit.allowedBedsText
+                                .split(/[,;\s]+/)
+                                .map((part) => part.trim())
+                                .filter(Boolean)
+                                .map((part) => {
+                                  const [branchId, bedRaw] = part.split(/[:\-]/);
+                                  return {
+                                    branchId: String(branchId || "").trim().toUpperCase(),
+                                    bedNumber: Number(bedRaw)
+                                  };
+                                })
+                                .filter((b) => b.branchId && Number.isFinite(b.bedNumber) && b.bedNumber >= 1);
+                              const res = await fetch(`${API_BASE_URL}/manager/promo-codes`, {
+                                method: "PUT",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                  actorEmail: normalizedEmail,
+                                  promo: {
+                                    id: promoEdit.id || undefined,
+                                    code: promoEdit.code,
+                                    label: promoEdit.label,
+                                    labelVi: promoEdit.labelVi || null,
+                                    notes: promoEdit.notes || null,
+                                    termType: promoEdit.termType,
+                                    benefitType: promoEdit.benefitType,
+                                    amountVnd: promoEdit.benefitType === "FIXED_VND" ? Number(promoEdit.amountVnd) || 0 : null,
+                                    percentOff: promoEdit.benefitType === "PERCENT_OFF" ? Number(promoEdit.percentOff) || 0 : null,
+                                    benefitUnits: promoEdit.benefitType === "WAIVE_UNITS" ? Number(promoEdit.benefitUnits) || 1 : null,
+                                    maxUses: Number(promoEdit.maxUses) || 1,
+                                    minNights: promoEdit.minNights ? Number(promoEdit.minNights) : null,
+                                    minMonths: promoEdit.minMonths ? Number(promoEdit.minMonths) : null,
+                                    allowedBeds: allowedBeds.length ? allowedBeds : null,
+                                    enabled: promoEdit.enabled,
+                                    expiresAt: promoEdit.expiresAt || null
+                                  }
+                                })
+                              });
+                              const data = (await res.json()) as { ok?: boolean; error?: string };
+                              if (!res.ok) throw new Error(data.error ?? "Failed");
+                              setPromoEdit(null);
+                              void loadPromoCodes();
+                            } catch (err) {
+                              setPromoEdit({
+                                ...promoEdit,
+                                saving: false,
+                                result: err instanceof Error ? err.message : "Failed"
+                              });
+                            }
+                          }}
+                          className="rounded-xl bg-violet-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                        >
+                          {promoEdit.saving ? t("saving") : t("saveLabel")}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPromoEdit({
+                          id: "",
+                          code: "",
+                          label: "",
+                          labelVi: "",
+                          notes: "",
+                          termType: "BOTH",
+                          benefitType: "FIXED_VND",
+                          amountVnd: "100000",
+                          percentOff: "10",
+                          benefitUnits: "1",
+                          maxUses: "1",
+                          minNights: "",
+                          minMonths: "",
+                          allowedBedsText: "",
+                          enabled: true,
+                          expiresAt: "",
+                          saving: false,
+                          result: ""
+                        })
+                      }
+                      className="rounded-xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 hover:border-violet-400 hover:text-violet-700"
+                    >
+                      {language === "vi" ? "+ Thêm mã khuyến mãi" : "+ Add promo code"}
+                    </button>
+                  )}
+                </div>
               )}
             </section>
           ) : null}

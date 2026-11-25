@@ -298,6 +298,7 @@ The main client sheet (`sheetName` in `google-sheets.ts`) has one row per contra
 
 | Version | Description |
 |---------|-------------|
+| 4.0.6 | Stay promo codes: staff-typed codes (fixed VND / % / waive nights-months) with max uses, min stay, bed allowlist; redeemable on long-term registration and short-term hostel booking; see `docs/stay-promo-codes.md`. |
 | 4.0.5 | AI Manager answers owner replies: posting in an open AI Manager topic now gets an LLM reply inside the same thread (same language as the owner; usage feature `ai_manager_owner_chat`). |
 | 4.0.4 | AI Manager owner reports post into manager Messages chat (no email); Settings drops report-email recipients. Digests still mirror into the owner AI Manager tab; Notification Center keeps escalation cards only. |
 | 4.0.3 | AI Manager chat uses **open/closed topics** with threaded replies so the agent follows owner guidance inside each topic instead of a flat message list. |

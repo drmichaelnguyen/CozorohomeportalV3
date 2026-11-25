@@ -978,3 +978,69 @@ model DonationFollowUp {
   @@unique([requestId, kind])
   @@index([status, scheduledFor])
 }
+
+enum StayPromoTermType {
+  LONG_TERM
+  SHORT_TERM
+  BOTH
+}
+
+enum StayPromoBenefitType {
+  FIXED_VND
+  PERCENT_OFF
+  WAIVE_UNITS
+}
+
+enum StayPromoRedemptionTerm {
+  LONG_TERM
+  SHORT_TERM
+}
+
+/// Staff-managed typed promo codes for long-term registration and/or short-term hostel stays.
+model StayPromoCode {
+  id              String               @id @default(cuid())
+  code            String               @unique @db.VarChar(32)
+  label           String               @db.VarChar(160)
+  labelVi         String?              @db.VarChar(160)
+  notes           String?              @db.Text
+  termType        StayPromoTermType
+  benefitType     StayPromoBenefitType
+  /// FIXED_VND amount (VND).
+  amountVnd       Int?
+  /// PERCENT_OFF (0–100).
+  percentOff      Int?
+  /// WAIVE_UNITS: nights (short-term) or rent months (long-term).
+  benefitUnits    Int?
+  maxUses         Int                  @default(1)
+  usedCount       Int                  @default(0)
+  minNights       Int?
+  minMonths       Int?
+  /// JSON: [{ "branchId": "D7", "bedNumber": 12 }, ...] — null means any bed.
+  allowedBedsJson String?              @db.Text
+  enabled         Boolean              @default(true)
+  expiresAt       DateTime?
+  createdByEmail  String               @db.VarChar(191)
+  updatedByEmail  String               @db.VarChar(191)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  redemptions     StayPromoRedemption[]
+
+  @@index([enabled, termType])
+  @@index([expiresAt])
+}
+
+model StayPromoRedemption {
+  id            String                  @id @default(cuid())
+  promoCodeId   String
+  promoCode     StayPromoCode           @relation(fields: [promoCodeId], references: [id], onDelete: Cascade)
+  code          String                  @db.VarChar(32)
+  email         String                  @db.VarChar(191)
+  termType      StayPromoRedemptionTerm
+  redemptionRef String                  @db.VarChar(191)
+  discountVnd   Int
+  createdAt     DateTime                @default(now())
+
+  @@unique([promoCodeId, redemptionRef])
+  @@index([code])
+  @@index([email])
+}
